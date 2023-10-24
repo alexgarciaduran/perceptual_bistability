@@ -41,9 +41,22 @@ Connections:
     
 """
 
+
+
+
+# ---GLOBAL VARIABLES
+pc_name = 'alex_CRM'
+if pc_name == 'alex':
+    DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/'  # Alex
+
+elif pc_name == 'alex_CRM':
+    DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/'  # Alex CRM
+
+
+
 # C matrix:
-    
-C = np.load('C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/c_mat.npy')
+c_data = DATA_FOLDER + 'c_mat.npy'
+C = np.load(c_data, allow_pickle=True)
 
 
 # THETA mat
@@ -52,6 +65,17 @@ THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [1, 0, 0, 1, 0, 0, 1, 0], [0, 1, 1, 0, 0, 0, 0, 1],
                   [1, 0, 0, 0, 0, 1, 1, 0], [0, 1, 0, 0, 1, 0, 0, 1],
                   [0, 0, 1, 0, 1, 0, 0, 1], [0, 0, 0, 1, 0, 1, 1, 0]])
+
+
+
+
+def get_theta_signed(j):
+    th = np.copy(THETA)
+    for t in range(8):
+        ind = get_connections(t)
+        th[t, ind] = [-2 if ((i >= 4) and (t <= 3)
+                             or (i <= 3) and (t >= 4)) else 1 for i in ind]
+    return th*j
 
 
 def get_connections(node):
@@ -237,7 +261,7 @@ def plot_k_vs_mu_analytical(eps=6e-2):
     plt.xlabel(r'$\mu$', fontsize=12)
 
 
-def compute_C():
+def compute_C(data_folder):
     combs = list(itertools.product([-1, 1], repeat=8))
     combs = np.array(combs, dtype=np.float64)
     c_mat = np.zeros((22, 22))
@@ -251,7 +275,7 @@ def compute_C():
                     c_mat[cl1, cl2] += 1
     for j in range(22):
         c_mat[j, :] = c_mat[j, :] / np.sum(c_mat[j, :]) * 8
-    np.save('C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/c_mat.npy', c_mat)
+    np.save(data_folder + 'c_mat.npy', c_mat)
 
 
 def comptue_C_with_vecs():
@@ -329,7 +353,7 @@ def get_classes(x_vec):
     return classes
 
 
-def plot_probs_gibbs(j_list = np.round(np.arange(0, 1, 0.0005), 4)):
+def plot_probs_gibbs(data_folder, j_list = np.round(np.arange(0, 1, 0.0005), 4)):
     # j_list = np.arange(0, 1, 0.01)
     # j_list = np.round(np.arange(0, 1, 0.0005), 4) 
     # j_list = [0, 0.25, 0.7, 0.9]   
@@ -342,7 +366,7 @@ def plot_probs_gibbs(j_list = np.round(np.arange(0, 1, 0.0005), 4)):
     n_iter = 50000
     probs = np.empty((len(j_list), 22))
     clas_values = np.arange(0, 23)
-    probs_data = 'C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/probsmat.npy'
+    probs_data = data_folder + 'probsmat.npy'
     os.makedirs(os.path.dirname(probs_data), exist_ok=True)
     if os.path.exists(probs_data):
         probs = np.load(probs_data, allow_pickle=True)
@@ -368,7 +392,7 @@ def plot_probs_gibbs(j_list = np.round(np.arange(0, 1, 0.0005), 4)):
             # ax[j_ind].set_title('J = ' + str(j))
             # ax[j_ind].set_xlabel(r'state')
             # ax[j_ind].set_ylabel(r'prob')
-        np.save('C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/probsmat_binom.npy', probs)
+        np.save(data_folder + 'probsmat_binom.npy', probs)
     plt.figure()
     im = plt.imshow(np.flipud(probs), aspect='auto', cmap='inferno', vmax=1)
     plt.yticks(np.arange(0, len(j_list), len(j_list)/10),
@@ -381,14 +405,14 @@ def plot_probs_gibbs(j_list = np.round(np.arange(0, 1, 0.0005), 4)):
     plt.title('Simulation')
 
 
-def c_vs_mu(j_list, ax):
+def c_vs_mu(j_list, ax, data_folder):
     init_state = np.random.choice([-1, 1], 8)
     # init_state = np.random.uniform(0, 1, 8)
     burn_in = 5000
     n_iter = 50000
     cmat = np.empty((len(j_list), 22))
     clas_values = np.arange(0, 23)
-    cmat_data = 'C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/c_mat.npy'
+    cmat_data = data_folder + 'c_mat.npy'
     os.makedirs(os.path.dirname(cmat_data), exist_ok=True)
     if os.path.exists(cmat_data):
         probs = np.load(cmat_data, allow_pickle=True)
@@ -414,7 +438,7 @@ def c_vs_mu(j_list, ax):
             # ax[j_ind].set_title('J = ' + str(j))
             # ax[j_ind].set_xlabel(r'state')
             # ax[j_ind].set_ylabel(r'prob')
-        np.save('C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/cmat_data.npy', cmat)
+        np.save(data_folder + 'c_mat.npy', cmat)
 
 
 def get_analytical_probs_all(j_list):
@@ -442,9 +466,9 @@ def get_analytical_probs_all(j_list):
     return analytical_probs
 
 
-def plot_analytical_prob(j_list = np.round(np.arange(0, 1, 0.0005), 4)):
+def plot_analytical_prob(data_folder, j_list = np.round(np.arange(0, 1, 0.0005), 4)):
     analytical_probs_data =\
-        'C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/probsmat_analytical.npy'
+        data_folder + 'probsmat_analytical.npy'
     clas_values = np.arange(0, 23)
     os.makedirs(os.path.dirname(analytical_probs_data), exist_ok=True)
     if os.path.exists(analytical_probs_data):
@@ -452,7 +476,7 @@ def plot_analytical_prob(j_list = np.round(np.arange(0, 1, 0.0005), 4)):
     else:
         analytical_probs = get_analytical_probs_all(j_list)
             # cte[classes] += prob_an
-        np.save('C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/probsmat_analytical.npy',
+        np.save(data_folder + 'probsmat_analytical.npy',
                 analytical_probs)
     fig, ax = plt.subplots(1)
     im = ax.imshow(np.flipud(analytical_probs), aspect='auto', cmap='inferno',
@@ -468,6 +492,6 @@ def plot_analytical_prob(j_list = np.round(np.arange(0, 1, 0.0005), 4)):
 
 
 if __name__ == '__main__':
-    plot_probs_gibbs()
-    plot_analytical_prob()
+    plot_probs_gibbs(data_folder=DATA_FOLDER)
+    plot_analytical_prob(data_folder=DATA_FOLDER)
     plot_k_vs_mu_analytical(eps=0)
