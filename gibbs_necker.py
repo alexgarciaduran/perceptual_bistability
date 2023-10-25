@@ -45,19 +45,12 @@ Connections:
 
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/'  # Alex
 
 elif pc_name == 'alex_CRM':
     DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/'  # Alex CRM
-
-
-
-# C matrix:
-c_data = DATA_FOLDER + 'c_mat.npy'
-C = np.load(c_data, allow_pickle=True)
-
 
 # THETA mat
 
@@ -136,6 +129,52 @@ def gibbs_samp_necker(init_state, burn_in, n_iter, j):
         if i >= burn_in:
             states_mat[i-burn_in, :] = x_vect
     return states_mat
+
+
+def mean_prob_gibbs(j, ax=None, burn_in = 1000, n_iter = 10000, wsize=100,
+                    node=None):
+    init_state = np.random.choice([-1, 1], 8)
+    states_mat = gibbs_samp_necker(init_state=init_state,
+                                   burn_in=burn_in, n_iter=n_iter, j=j)
+    states_mat = (states_mat + 1) / 2
+    conv_states_mat = np.copy(states_mat)
+    if wsize != 1:
+        for i in range(8):
+            conv_states_mat[:, i] = np.convolve(conv_states_mat[:, i],
+                                                np.ones(wsize)/wsize, mode='same')
+    if node is None:
+        mean_acc_nodes = np.nanmean(conv_states_mat, axis=1)
+    else:
+        mean_acc_nodes = conv_states_mat[:, node]
+    if ax is not None:
+        ax.plot(mean_acc_nodes, label=j)
+    if ax is None:
+        return mean_acc_nodes
+
+
+def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
+                         wsize=1, node=None):
+    fig, ax_tot = plt.subplots(ncols=2)
+    ax = ax_tot[0]
+    mean_nod = np.empty((len(j_list), n_iter-burn_in))
+    mean_nod[:] = np.nan
+    allmeans = np.empty((len(j_list)))
+    for ind_j, j in enumerate(j_list):
+        mean_nod[ind_j, :] = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
+                                             wsize=wsize, node=node)
+        allmeans[ind_j] = np.nanmean(mean_nod[ind_j, :])
+    im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic')
+    ax.set_yticks(np.arange(0, len(j_list), len(j_list)//2),
+                  j_list[np.arange(0, len(j_list), len(j_list)//2)][::-1])
+    plt.colorbar(im, label=r'$\frac{1}{8}\sum_i^8 {P(x_i = 1, t)}$', ax=ax,
+                 orientation='horizontal')
+    ax.set_ylabel('J')
+    ax.set_xlabel('Iter (time)')
+    ax = ax_tot[1]
+    ax.plot(j_list, allmeans, color='k')
+    # ax.plot(j_list, 1-allmeans, color='r')
+    ax.set_xlabel('J')
+    ax.set_ylabel(r'$<P(x=1)>_t$', fontsize=10)
 
 
 def get_mu(x_vec):
@@ -353,7 +392,7 @@ def get_classes(x_vec):
     return classes
 
 
-def plot_probs_gibbs(data_folder, j_list = np.round(np.arange(0, 1, 0.0005), 4)):
+def plot_probs_gibbs(data_folder, j_list=np.round(np.arange(0, 1, 0.0005), 4)):
     # j_list = np.arange(0, 1, 0.01)
     # j_list = np.round(np.arange(0, 1, 0.0005), 4) 
     # j_list = [0, 0.25, 0.7, 0.9]   
@@ -492,6 +531,12 @@ def plot_analytical_prob(data_folder, j_list = np.round(np.arange(0, 1, 0.0005),
 
 
 if __name__ == '__main__':
-    plot_probs_gibbs(data_folder=DATA_FOLDER)
-    plot_analytical_prob(data_folder=DATA_FOLDER)
-    plot_k_vs_mu_analytical(eps=0)
+    # C matrix:
+    c_data = DATA_FOLDER + 'c_mat.npy'
+    C = np.load(c_data, allow_pickle=True)
+
+    # plot_probs_gibbs(data_folder=DATA_FOLDER)
+    # plot_analytical_prob(data_folder=DATA_FOLDER)
+    # plot_k_vs_mu_analytical(eps=0)
+    plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
+                         wsize=1)

@@ -157,6 +157,11 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
     plt.plot(j_list, nlist, color='k')
     plt.xlabel('J')
     plt.ylabel('n_iter for convergence, thr = {}'.format(thr))
+    plt.figure()
+    plt.plot(nlist, lp, color='k')
+    plt.plot(nlist, ln, color='r')
+    plt.xlabel('n_iter for convergence, thr = {}'.format(thr))
+    plt.ylabel('q')
 
 
 if __name__ == '__main__':
