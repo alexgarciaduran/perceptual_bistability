@@ -9,7 +9,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy
 import itertools
+import seaborn as sns
 import os
+import scipy.stats as stats
 
 
 """
@@ -66,7 +68,7 @@ def get_theta_signed(j):
     th = np.copy(THETA)
     for t in range(8):
         ind = get_connections(t)
-        th[t, ind] = [-2 if ((i >= 4) and (t <= 3)
+        th[t, ind] = [-1 if ((i >= 4) and (t <= 3)
                              or (i <= 3) and (t >= 4)) else 1 for i in ind]
     return th*j
 
@@ -162,7 +164,7 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
     for ind_j, j in enumerate(j_list):
         mean_nod[ind_j, :] = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
                                              wsize=wsize, node=node)
-        allmeans[ind_j] = np.nanmean(mean_nod[ind_j, :])
+        allmeans[ind_j] = np.nanmean(np.abs(mean_nod[ind_j, :]*2-1))
     im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic')
     ax.set_yticks(np.arange(0, len(j_list), len(j_list)//2),
                   j_list[np.arange(0, len(j_list), len(j_list)//2)][::-1])
@@ -171,10 +173,46 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
     ax.set_ylabel('J')
     ax.set_xlabel('Iter (time)')
     ax = ax_tot[1]
-    ax.plot(j_list, allmeans, color='k')
+    ax.plot(j_list, allmeans, color='k')  # np.abs(allmeans*2-1)
     # ax.plot(j_list, 1-allmeans, color='r')
     ax.set_xlabel('J')
-    ax.set_ylabel(r'$<P(x=1)>_t$', fontsize=10)
+    ax.set_ylabel(r'$<P(state \in \{-1, 1\})>_t$', fontsize=10)
+
+
+def plot_duration_dominance_gamma_fit(j, burn_in=1000, n_iter=100000):
+    plt.figure()
+    vals_gibbs = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
+                                 wsize=1, node=None)
+    orders = rle(vals_gibbs)
+    time = orders[0][(orders[2] <= 0.05) + (orders[2] >= 0.95)]
+    sns.histplot(time, kde=True, label='Simulations', stat='density', fill=False,
+                 color='k', bins=30)
+    fit_alpha, fit_loc, fit_beta=stats.gamma.fit(time)
+    x = np.linspace(min(time), max(time), 10000)
+    y = stats.gamma.pdf(x, a=fit_alpha, scale=fit_beta)
+    plt.text(75, 0.04, r'$\alpha = ${}'.format(np.round(fit_alpha, 2))
+                       + '\n'+ r'$\beta = ${}'.format(np.round(fit_beta, 2)),
+                       fontsize=11)
+    plt.plot(x, y, label='Gamma distro. fit', color='k', linestyle='--')
+    plt.xlabel('Dominance duration')
+    plt.xlim(-5, 105)
+    plt.legend()
+
+
+def rle(inarray):
+        """ run length encoding. Partial credit to R rle function. 
+            Multi datatype arrays catered for including non Numpy
+            returns: tuple (runlengths, startpositions, values) """
+        ia = np.asarray(inarray)                # force numpy
+        n = len(ia)
+        if n == 0: 
+            return (None, None, None)
+        else:
+            y = ia[1:] != ia[:-1]               # pairwise unequal (string safe)
+            i = np.append(np.where(y), n - 1)   # must include last element posi
+            z = np.diff(np.append(-1, i))       # run lengths
+            p = np.cumsum(np.append(0, z))[:-1] # positions
+            return(z, p, ia[i])
 
 
 def get_mu(x_vec):
@@ -530,13 +568,59 @@ def plot_analytical_prob(data_folder, j_list = np.round(np.arange(0, 1, 0.0005),
     ax.set_title('Analytical solution')
 
 
+def tanh_act_bistab(n_iter, weight_prev_state, weight_noise, stim_state):
+    # SIMPLEST MODEL FOR BISTABILITY INDEP. OF STIM.
+    state = [0.5]
+    vals = [0.5]
+    dsdt = np.gradient(stim_state)
+    for j in range(1, n_iter):
+        val = np.tanh(np.random.randn()*weight_noise
+                      + weight_prev_state*state[j-1] + dsdt[j])
+        vals.append(val)
+        state.append(np.sign(val))
+    return state, vals
+
+
+def plot_prob_basic_model_coupling(n_iter, wpslist=np.linspace(0, 3, 100),
+                                   stim_state=1):
+    """
+    Stim. independent bistability generation. Single neuron with recurrent connection
+    and external noise.
+    P_{t+1} = (P_t) · w + N(0, 1) + dS/dt , --> dS/dt = 0
+    P_{t+1} = F(S, P_t) = g(S) + f(P_t) --> S cte. --> offset (baseline) cte
+    """
+    fig, ax = plt.subplots(ncols=2)
+    stim_state = np.repeat(stim_state, n_iter)
+    valslist = []
+    stdlist = []
+    for iw, weight_prev_state in enumerate(wpslist):
+        _, vals = tanh_act_bistab(n_iter=n_iter,
+                                  weight_prev_state=weight_prev_state,
+                                  weight_noise=0, stim_state=stim_state)
+        valslist.append(np.nanmean(vals))  # np.abs(vals)
+        vals = np.array(vals)
+        stdlist.append(np.nanstd((vals+1)/2))
+        # vals = np.round(vals, 5)
+        # plt.plot(np.repeat(iw, len(np.unique(vals))), np.unique(vals), color='k',
+        #          marker='o', linestyle='', markersize=1)
+    ax[0].plot(wpslist, valslist, color='k')
+    ax[0].plot(wpslist, 1-np.array(valslist), color='r')
+    ax[0].set_ylabel('Prob. x=+-1')
+    ax[0].set_xlabel(r'Coupling strength, $w$')
+    ax[0].set_title(r'$P_{t+1} = tanh(P_t * w + \xi), \;\; \xi \sim \mathcal{N}(\mu=0, \sigma=1)$')
+    ax[1].set_xlabel(r'Coupling strength, $w$')
+    ax[1].set_ylabel('Std(P(x=1))')
+    ax[1].plot(wpslist, stdlist, color='k')
+
+
 if __name__ == '__main__':
-    # C matrix:
+    # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
     C = np.load(c_data, allow_pickle=True)
 
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # plot_k_vs_mu_analytical(eps=0)
-    plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
-                         wsize=1)
+    # plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
+    #                      wsize=1)
+    plot_prob_basic_model_coupling(n_iter=1000, wpslist=np.linspace(0, 5, 200))
