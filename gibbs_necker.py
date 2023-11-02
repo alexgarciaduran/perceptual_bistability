@@ -187,12 +187,12 @@ def plot_duration_dominance_gamma_fit(j, burn_in=1000, n_iter=100000):
     time = orders[0][(orders[2] <= 0.05) + (orders[2] >= 0.95)]
     sns.histplot(time, kde=True, label='Simulations', stat='density', fill=False,
                  color='k', bins=30)
-    fit_alpha, fit_loc, fit_beta=stats.gamma.fit(time)
-    x = np.linspace(min(time), max(time), 10000)
+    fit_alpha, fit_loc, fit_beta = stats.gamma.fit(time)
+    x = np.linspace(min(time), max(time), 1000)
     y = stats.gamma.pdf(x, a=fit_alpha, scale=fit_beta)
-    plt.text(75, 0.04, r'$\alpha = ${}'.format(np.round(fit_alpha, 2))
-                       + '\n'+ r'$\beta = ${}'.format(np.round(fit_beta, 2)),
-                       fontsize=11)
+    plt.text(75, 0.04, r'$\alpha = ${}'.format(np.round(fit_alpha, 2)) 
+             + '\n'+ r'$\beta = ${}'.format(np.round(fit_beta, 2)),
+             fontsize=11)
     plt.plot(x, y, label='Gamma distro. fit', color='k', linestyle='--')
     plt.xlabel('Dominance duration')
     plt.xlim(-5, 105)
