@@ -53,12 +53,11 @@ def plot_solutions_mfield(j_list):
     for j in j_list:
         q = lambda q: gn.sigmoid(6*j*(2*q-1)) - q
         l.append(fsolve(q,1))
-        
+    plt.axhline(0.5, color='grey', alpha=1, linestyle='--')
     plt.plot(j_list, 1-np.array(l), color='k')
     plt.plot(j_list, l, color='r')
     plt.xlabel('J')
     plt.ylabel('q')
-      
     plt.title('Solutions of the dynamical system')
 
 if __name__ == '__main__':

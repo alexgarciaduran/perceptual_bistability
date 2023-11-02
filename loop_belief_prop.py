@@ -166,4 +166,5 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
 
 if __name__ == '__main__':
     plot_loopy_b_prop_sol(theta=THETA, num_iter=100,
-                          j_list=np.arange(0.00001, 2, 0.01))
+                          j_list=np.arange(0.00001, 2, 0.01),
+                          thr=1e-15)

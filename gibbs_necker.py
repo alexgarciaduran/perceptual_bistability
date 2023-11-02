@@ -574,43 +574,52 @@ def tanh_act_bistab(n_iter, weight_prev_state, weight_noise, stim_state):
     vals = [0.5]
     dsdt = np.gradient(stim_state)
     for j in range(1, n_iter):
-        val = np.tanh(np.random.randn()*weight_noise
-                      + weight_prev_state*state[j-1] + dsdt[j])
+        x = np.random.randn()*weight_noise\
+            + weight_prev_state*state[j-1] + dsdt[j]
+        val = sigmoid(x)  # x/np.sqrt(1+x**2)
         vals.append(val)
         state.append(np.sign(val))
     return state, vals
 
 
 def plot_prob_basic_model_coupling(n_iter, wpslist=np.linspace(0, 3, 100),
-                                   stim_state=1):
+                                   stim_state=1, weight_noise=0):
     """
     Stim. independent bistability generation. Single neuron with recurrent connection
     and external noise.
-    P_{t+1} = (P_t) · w + N(0, 1) + dS/dt , --> dS/dt = 0
+    P_{t+1} = (P_t) · w + w_n · N(0, 1) + dS/dt , --> dS/dt = 0
     P_{t+1} = F(S, P_t) = g(S) + f(P_t) --> S cte. --> offset (baseline) cte
+    
+    if w_n = 0 --> mean field model
     """
-    fig, ax = plt.subplots(ncols=2)
+    fig, ax = plt.subplots(ncols=1)
     stim_state = np.repeat(stim_state, n_iter)
     valslist = []
     stdlist = []
     for iw, weight_prev_state in enumerate(wpslist):
         _, vals = tanh_act_bistab(n_iter=n_iter,
                                   weight_prev_state=weight_prev_state,
-                                  weight_noise=0, stim_state=stim_state)
-        valslist.append(np.nanmean(vals))  # np.abs(vals)
+                                  weight_noise=weight_noise, stim_state=stim_state)
+        valslist.append(vals[-1])  # np.abs(vals)
         vals = np.array(vals)
         stdlist.append(np.nanstd((vals+1)/2))
         # vals = np.round(vals, 5)
         # plt.plot(np.repeat(iw, len(np.unique(vals))), np.unique(vals), color='k',
         #          marker='o', linestyle='', markersize=1)
-    ax[0].plot(wpslist, valslist, color='k')
-    ax[0].plot(wpslist, 1-np.array(valslist), color='r')
-    ax[0].set_ylabel('Prob. x=+-1')
-    ax[0].set_xlabel(r'Coupling strength, $w$')
-    ax[0].set_title(r'$P_{t+1} = tanh(P_t * w + \xi), \;\; \xi \sim \mathcal{N}(\mu=0, \sigma=1)$')
-    ax[1].set_xlabel(r'Coupling strength, $w$')
-    ax[1].set_ylabel('Std(P(x=1))')
-    ax[1].plot(wpslist, stdlist, color='k')
+    indw = \
+        np.where(np.abs(np.array(valslist)-0.5) ==
+                 np.min(np.abs(np.array(valslist)-0.5)))[0][0]
+    ax.axvline(wpslist[indw], color='grey', linestyle='--')
+    ax.text(1.5, 0.5, r'$w_{change} =$' + str(np.abs(np.round(wpslist[indw], 2))))
+    # ax[1].axvline(wpslist[indw], color='grey', linestyle='--')
+    ax.plot(wpslist, valslist, color='k')
+    ax.plot(wpslist, 1-np.array(valslist), color='r')
+    ax.set_ylabel('Prob. x=1')
+    ax.set_xlabel(r'Coupling strength, $w$')
+    ax.set_title(r'$P_{t+1} = tanh(P_t * w + \xi), \;\; \xi \sim \mathcal{N}(\mu=0, \sigma=1)$')
+    # ax[1].set_xlabel(r'Coupling strength, $w$')
+    # ax[1].set_ylabel('Std(P(x=1))')
+    # ax[1].plot(wpslist, stdlist, color='k')
 
 
 if __name__ == '__main__':
@@ -622,5 +631,5 @@ if __name__ == '__main__':
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # plot_k_vs_mu_analytical(eps=0)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
-    #                      wsize=1)
-    plot_prob_basic_model_coupling(n_iter=1000, wpslist=np.linspace(0, 5, 200))
+    #                       wsize=1)
+
