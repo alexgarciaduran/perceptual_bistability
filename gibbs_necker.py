@@ -12,6 +12,7 @@ import itertools
 import seaborn as sns
 import os
 import scipy.stats as stats
+import matplotlib.pylab as pl
 
 
 """
@@ -49,7 +50,7 @@ Connections:
 # ---GLOBAL VARIABLES
 pc_name = 'alex'
 if pc_name == 'alex':
-    DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/gibbs_sampling_necker/data_folder/'  # Alex
+    DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/gibbs_sampling_necker/data_folder/'  # Alex
 
 elif pc_name == 'alex_CRM':
     DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/'  # Alex CRM
@@ -186,14 +187,17 @@ def plot_duration_dominance_gamma_fit(j, burn_in=1000, n_iter=100000):
     orders = rle(vals_gibbs)
     time = orders[0][(orders[2] <= 0.05) + (orders[2] >= 0.95)]
     sns.histplot(time, kde=True, label='Simulations', stat='density', fill=False,
-                 color='k', bins=30)
+                 color='k', bins=np.arange(1, max(time)+10, 2))
     fit_alpha, fit_loc, fit_beta = stats.gamma.fit(time)
+    fix_loc_exp, fit_lmb = stats.expon.fit(time)
     x = np.linspace(min(time), max(time), 1000)
-    y = stats.gamma.pdf(x, a=fit_alpha, scale=fit_beta)
-    plt.text(75, 0.04, r'$\alpha = ${}'.format(np.round(fit_alpha, 2)) 
+    y = stats.gamma.pdf(x, a=fit_alpha, scale=fit_beta, loc=1)
+    y_exp = stats.expon.pdf(x, loc=fix_loc_exp, scale=fit_lmb)
+    plt.text(75, 0.02, r'$\alpha = ${}'.format(np.round(fit_alpha, 2)) 
              + '\n'+ r'$\beta = ${}'.format(np.round(fit_beta, 2)),
              fontsize=11)
     plt.plot(x, y, label='Gamma distro. fit', color='k', linestyle='--')
+    plt.plot(x, y_exp, label='Expo. distro. fit', color='r', linestyle='--')
     plt.xlabel('Dominance duration')
     plt.xlim(-5, 105)
     plt.legend()
@@ -622,14 +626,65 @@ def plot_prob_basic_model_coupling(n_iter, wpslist=np.linspace(0, 3, 100),
     # ax[1].plot(wpslist, stdlist, color='k')
 
 
+def prob_markov_chain_between_states(n_iter=int(1e6)):
+    # init_state = np.random.choice([-1, 1])
+    init_state = 0
+    tau = 8000  # equivalent to J=?, tau=8000 equivalent to J=1
+    eps = 1-np.exp(-1/tau)
+    ps = 1-eps
+    pt = eps
+    chain = [init_state]
+    # p_list = []
+    transition_matrix = np.array(((ps, pt), (pt, ps)))
+    mu_list = []
+    for i in range(1, n_iter):
+        if chain[i-1] == 0:
+            change = np.random.choice([0, 1], p=transition_matrix[0])
+            # p_list.append(transition_matrix[1][change])
+        if chain[i-1] == 1:
+            change = np.random.choice([0, 1], p=transition_matrix[1])
+            # p_list.append(transition_matrix[1][change])
+        chain.append(change)
+    mu_list = np.cumsum(chain)
+    mu_list_norm = mu_list / np.arange(len(mu_list))
+    # p_mu_N_1 = []
+    # chain = np.array(chain)
+    # for i_c, stat in enumerate(chain):
+    #     # p(X_N=1)*eps if prev state was 0, else p(X_N=1)*(1-eps)
+    #     p_mu_N_x1 = np.mean(chain[:(i_c+1)] == 1)*transition_matrix[1][chain[i_c]]
+    #     # p(X_N=0)*eps if prev state was 1, else p(X_N=0)*(1-eps)
+    #     p_mu_N_x0 = np.mean(chain[:(i_c+1)] == 0)*transition_matrix[0][chain[i_c]]
+    #     p_mu_N_1.append(p_mu_N_x1+p_mu_N_x0)
+    p_mu_N_1_x1 = []
+    chain = np.array(chain)
+    for i_c, stat in enumerate(chain):
+        # p(X_{N+1}=1)*eps if prev state was 0, if was 1 p(X_N=1)*(1-eps)
+        p_mu_N_x1 = np.mean(chain[:(i_c+1)] == 1)*(1-eps)
+        p_mu_N_x0 = np.mean(chain[:(i_c+1)] == 0)*eps
+        p_mu_N_1_x1.append(p_mu_N_x1+p_mu_N_x0)
+    vals_to_plot = np.logspace(4, 6, 9, dtype=int)
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(vals_to_plot)))
+    fig, ax = plt.subplots(1)
+    for j in range(len(vals_to_plot)):
+        # ax2 = ax.twinx()
+        sns.kdeplot(p_mu_N_1_x1[:vals_to_plot[j]],
+                    common_norm=False, color=colormap[j],
+                    ax=ax, bw_adjust=3)
+        # ax2.spines['right'].set_visible(False)
+        # ax2.spines['top'].set_visible(False)
+    # p_N(mu) = p_N(mu, x_N=0) + p_N(mu, x_N=1)
+    # p_N+1(mu, x_N=1) = p_N(mu-1, x_N=1)*(1-eps) + p_N(mu-1, x_N=0)*eps
+        
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
     C = np.load(c_data, allow_pickle=True)
 
-    # plot_probs_gibbs(data_folder=DATA_FOLDER)
-    # plot_analytical_prob(data_folder=DATA_FOLDER)
-    # plot_k_vs_mu_analytical(eps=0)
-    # plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
-    #                       wsize=1)
+    plot_probs_gibbs(data_folder=DATA_FOLDER)
+    plot_analytical_prob(data_folder=DATA_FOLDER)
+    plot_k_vs_mu_analytical(eps=0)
+    plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
+                          wsize=1)
 

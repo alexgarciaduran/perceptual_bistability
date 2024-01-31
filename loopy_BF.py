@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Oct 23 15:49:30 2023
+Created on Wed Nov 15 18:02:43 2023
 
 @author: alexg
 """
+
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy
@@ -13,9 +14,20 @@ import gibbs_necker as gn
 from scipy.optimize import fsolve
 import numpy as np
 
-THETA = gn.THETA
 
-
+def get_theta():
+    """
+    connections matrix for tree: 
+        y3 \
+             y2 \
+        y4 /     \
+                  X1
+                /
+        y5 - y1/
+    """
+    arr = np.array(([
+                    ]))
+    
 def jneigbours(j,i):
     """
     return the neighbours of j except i
@@ -165,6 +177,5 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
 
 
 if __name__ == '__main__':
-    plot_loopy_b_prop_sol(theta=THETA, num_iter=100,
-                          j_list=np.arange(0.00001, 2, 0.01),
-                          thr=1e-15)
+    # example tree
+    THETA = get_theta()
