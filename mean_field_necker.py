@@ -156,16 +156,17 @@ def plot_pot_evolution_mfield(j, num_iter=10, sigma=0.1):
     fig, ax = plt.subplots(ncols=5, nrows=2, figsize=(16, 6))
     plt.subplots_adjust(top=0.95, bottom=0.05, left=0.075, right=0.98,
                         hspace=0.3, wspace=0.5)
+    # fig.suptitle('J = '+ str(j))
     ax = ax.flatten()
-    # m_field = mean_field(j, num_iter=num_iter, sigma=0.1)
+    # m_field = mean_field(j, num_iter=num_iter, sigma=sigma)
     q = np.random.rand()
     m_field = []
     # time = np.arange(num_iter)*dt
     for i in range(num_iter):
         q = dyn_sys_mf(q, dt=1, j=j, sigma=sigma)
         m_field.append(q)
-    # q = np.arange(-.5,1.5, 0.001)
-    q = np.arange(0, 1, 0.001)
+    q = np.arange(-.25,1.25, 0.001)
+    # q = np.arange(0, 1, 0.001)
     pot = potential_mf(q, j)
     for i in range(len(ax)):
         ax[i].plot(q, pot, color='k')
@@ -173,6 +174,15 @@ def plot_pot_evolution_mfield(j, num_iter=10, sigma=0.1):
         pot_ind = potential_mf(q_ind, j)
         ax[i].plot(q_ind, pot_ind, marker='o', color='r')
         ax[i].set_title('iter' + str(i*num_iter//len(ax)+1))
+        if i != 0 and i != (len(ax)//2):
+            ax[i].set_yticks([])
+        else:
+            ax[i].set_ylabel('Potential')
+        if i < 5:
+            ax[i].set_xticks([0, 0.5, 1], ['', '', ''])
+        else:
+            ax[i].set_xticks([0, 0.5, 1])
+            ax[i].set_xlabel('q')
 
 
 if __name__ == '__main__':
