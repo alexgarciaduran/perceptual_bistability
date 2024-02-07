@@ -66,18 +66,34 @@ def mean_field_stim(J, num_iter, stim, sigma=1):
     return vec_time
 
 
-def mean_field_same_q(j_list, stim, num_iter=100):
-    qvls = []
+def mean_field_fixed_points(j_list, stim, num_iter=100):
+    qvls_01 = []
+    qvls_07 = []
+    qvls_bckw = []
     for j in j_list:
-        q_val = 0.7
+        q_val_01 = 0.1
+        q_val_07 = 0.7
+        q_val_bckw = 0.7
         all_q = np.empty((num_iter))
         all_q[:] = np.nan
         for i in range(num_iter):
-            q_val = gn.sigmoid(6*(j*(2*q_val-1)+stim))
-        qvls.append(q_val)
+            q_val_01 = gn.sigmoid(6*(j*(2*q_val_01-1)+stim))
+            q_val_07 = gn.sigmoid(6*(j*(2*q_val_07-1)+stim))
+            q_val_bckw = backwards(q_val_bckw, j, stim)
+        qvls_01.append(q_val_01)
+        qvls_07.append(q_val_07)
+        qvls_bckw.append(q_val_bckw)
+    qvls_01 = np.array(qvls_01)
+    qvls_07 = np.array(qvls_07)
+    qvls_bckw = np.array(qvls_bckw)
     plt.figure()
-    plt.plot(j_list, qvls, color='r')
-    plt.plot(j_list, 1-np.array(qvls), color='k')
+    plt.plot(j_list, qvls_07, color='r')
+    plt.plot(j_list[np.abs(qvls_01 - qvls_07) > 1e-5],
+             qvls_01[np.abs(qvls_01 - qvls_07) > 1e-5], color='r')
+    plt.plot(j_list, qvls_bckw, color='r', linestyle='--')
+    plt.xlabel('J')
+    plt.ylabel('q')
+    # plt.plot(j_list, 1-np.array(qvls), color='k')
 
 
 def plot_mf_sol_stim_bias(j_list, stim=0.1, num_iter=500):
