@@ -31,7 +31,7 @@ def jneigbours(j,i):
     return neigbours[neigbours!=i]
 
 
-def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5):
+def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5, stim=0):
     """
     Computes the exact approximate probability of having a front perception for
     the depth of the 8 nodes.
@@ -55,16 +55,16 @@ def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5):
         for i in range(8):
             for t in np.where(theta[i, :] != 0)[0]:
                 # positive y_i
-                mu_y_1[t, i] = np.exp(theta[i, t]) *\
+                mu_y_1[t, i] = np.exp(theta[i, t]+stim) *\
                         (mu_y_1[jneigbours(t, i)[0], t]*mu_y_1[jneigbours(t, i)[1], t])\
-                        + np.exp(-theta[i, t]) *\
+                        + np.exp(-theta[i, t]-stim) *\
                         (mu_y_neg1[jneigbours(t, i)[0], t] *
                          mu_y_neg1[jneigbours(t, i)[1], t])
                 # mu_y_1 += np.random.rand(8, 8)*1e-3
                 # negative y_i
-                mu_y_neg1[t, i] = np.exp(-theta[i, t]) *\
+                mu_y_neg1[t, i] = np.exp(-theta[i, t]-stim) *\
                     (mu_y_1[jneigbours(t, i)[0], t] * mu_y_1[jneigbours(t, i)[1], t])\
-                    + np.exp(theta[i, t]) *\
+                    + np.exp(theta[i, t]+stim) *\
                     (mu_y_neg1[jneigbours(t, i)[0], t] *
                      mu_y_neg1[jneigbours(t, i)[1], t])
 
@@ -151,7 +151,7 @@ def plot_loopy_b_prop_sol_difference(theta, num_iter, j_list=np.arange(0, 1, 0.1
 
 
 def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
-                          thr=1e-15):
+                          thr=1e-15, stim=0.1):
     lp = []
     ln = []
     nlist = []
@@ -159,13 +159,14 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
     for j in j_list:
         pos, neg, n = Loopy_belief_propagation(theta=theta,
                                                num_iter=num_iter,
-                                               j=j, thr=thr)
+                                               j=j, thr=thr,
+                                               stim=stim)
         lp.append(pos[0])
         ln.append(neg[0])
         nlist.append(n)
     plt.plot(j_list, lp, color='k')
     plt.plot(j_list, ln, color='r')
-    plot_sol_LBP(j_list=np.arange(0, max(j_list), 0.00001))
+    plot_sol_LBP(j_list=np.arange(0, max(j_list), 0.00001), stim=stim)
     plt.title('Loopy-BP solution (symmetric)')
     plt.xlabel('J')
     plt.ylabel('q')
@@ -192,11 +193,12 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
     # plt.ylabel(r'$y_{sol} - y_{sim}$')
 
 
-def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001)):
+def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
     q0_l = []
     q1_l = []
     q2_l = []
     for j in j_list:
+        j += stim
         # q0 = (np.exp(-j)+np.exp(j))**(-3)
         q0 = 1 / 2
         q0_l.append(q0)
@@ -215,8 +217,8 @@ def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001)):
     return q0_l, q1_l, q2_l
 
 
-def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001)):
-    q0_l, q1_l, q2_l = solutions_bp(j_list=j_list)
+def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
+    q0_l, q1_l, q2_l = solutions_bp(j_list=j_list, stim=stim)
     plt.plot(j_list, q0_l, color='b')
     plt.plot(j_list, q1_l, color='b')
     plt.plot(j_list, q2_l, color='b')
@@ -228,4 +230,4 @@ def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001)):
 if __name__ == '__main__':
     plot_loopy_b_prop_sol(theta=THETA, num_iter=1000,
                           j_list=np.arange(0.00001, 1, 0.01),
-                          thr=1e-12)
+                          thr=1e-12, stim=0.4)
