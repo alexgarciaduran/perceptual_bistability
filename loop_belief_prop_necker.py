@@ -43,44 +43,44 @@ def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5):
     - return a list of lenght 8 with the approximate depth probabilities
     """
     # multiply arrays element wise
-    M_y_1 = np.multiply(theta, np.random.rand(8, 8))
-    mat_memory_1 = np.copy(M_y_1)
-    M_y_neg1 = np.multiply(theta, np.random.rand(8, 8))
-    mat_memory_neg1 = np.copy(M_y_neg1)
-    theta = theta*j  # *(1-np.random.rand(8, 8))
+    mu_y_1 = np.multiply(theta, np.random.rand(8, 8))
+    mat_memory_1 = np.copy(mu_y_1)
+    mu_y_neg1 = np.multiply(theta, np.random.rand(8, 8))
+    mat_memory_neg1 = np.copy(mu_y_neg1)
+    theta = theta*j
     for n in range(num_iter):
-        mat_memory_1 = np.copy(M_y_1)
-        mat_memory_neg1 = np.copy(M_y_1)
+        mat_memory_1 = np.copy(mu_y_1)
+        mat_memory_neg1 = np.copy(mu_y_neg1)
         # for all the nodes that i is connected
         for i in range(8):
             for t in np.where(theta[i, :] != 0)[0]:
                 # positive y_i
-                M_y_1[t, i] = np.exp(theta[i, t]) *\
-                        (M_y_1[jneigbours(t, i)[0], t]*M_y_1[jneigbours(t, i)[1], t])\
+                mu_y_1[t, i] = np.exp(theta[i, t]) *\
+                        (mu_y_1[jneigbours(t, i)[0], t]*mu_y_1[jneigbours(t, i)[1], t])\
                         + np.exp(-theta[i, t]) *\
-                        (M_y_neg1[jneigbours(t, i)[0], t] *
-                         M_y_neg1[jneigbours(t, i)[1], t])
-                # M_y_1 += np.random.rand(8, 8)*1e-3
+                        (mu_y_neg1[jneigbours(t, i)[0], t] *
+                         mu_y_neg1[jneigbours(t, i)[1], t])
+                # mu_y_1 += np.random.rand(8, 8)*1e-3
                 # negative y_i
-                M_y_neg1[t, i] = np.exp(-theta[i, t]) *\
-                    (M_y_1[jneigbours(t, i)[0], t] * M_y_1[jneigbours(t, i)[1], t])\
+                mu_y_neg1[t, i] = np.exp(-theta[i, t]) *\
+                    (mu_y_1[jneigbours(t, i)[0], t] * mu_y_1[jneigbours(t, i)[1], t])\
                     + np.exp(theta[i, t]) *\
-                    (M_y_neg1[jneigbours(t, i)[0], t] *
-                     M_y_neg1[jneigbours(t, i)[1], t])
+                    (mu_y_neg1[jneigbours(t, i)[0], t] *
+                     mu_y_neg1[jneigbours(t, i)[1], t])
 
-                M_y_1[t, i] = M_y_1[t, i]/(M_y_1[t, i]+M_y_neg1[t, i])
-                M_y_neg1[t, i] = M_y_neg1[t, i]/(M_y_1[t, i]+M_y_neg1[t, i])
-                # M_y_neg1 += np.random.rand(8, 8)*1e-3
-        if np.sqrt(np.sum(mat_memory_1 - M_y_1)**2) <= thr:
-            # and\
-            # np.sqrt(np.sum(mat_memory_neg1 - M_y_neg1)**2) <= thr:
+                m_y_1_memory = np.copy(mu_y_1[t, i])
+                mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                # mu_y_neg1 += np.random.rand(8, 8)*1e-3
+        if np.sqrt(np.sum(mat_memory_1 - mu_y_1)**2) and\
+            np.sqrt(np.sum(mat_memory_neg1 - mu_y_neg1)**2) <= thr:
             break
 
     q_y_1 = np.zeros(8)
     q_y_neg1 = np.zeros(8)
     for i in range(8):
-        q1 = np.prod(M_y_1[np.where(theta[:, i] != 0), i])
-        qn1 = np.prod(M_y_neg1[np.where(theta[:, i] != 0), i])
+        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i])
+        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i])
         q_y_1[i] = q1/(q1+qn1)
         q_y_neg1[i] = qn1/(q1+qn1)
     return q_y_1, q_y_neg1, n+1
@@ -98,41 +98,41 @@ def nonsym_Loopy_belief_propagation(theta, num_iter, j, thr=1e-5):
     - return a list of lenght 8 with the approximate depth probabilities
     """
     # multiply arrays element wise
-    M_y_1 = np.multiply(theta, np.random.rand(8, 8))
-    mat_memory = np.copy(M_y_1)
-    M_y_neg1 = np.multiply(theta, np.random.rand(8, 8))
+    mu_y_1 = np.multiply(theta, np.random.rand(8, 8))
+    mat_memory = np.copy(mu_y_1)
+    mu_y_neg1 = np.multiply(theta, np.random.rand(8, 8))
     theta = theta*j
     for n in range(num_iter):
-        mat_memory = np.copy(M_y_1)
+        mat_memory = np.copy(mu_y_1)
         # for all the nodes that i is connected
         for i in range(8):
             for t in np.where(theta[i, :] != 0)[0]:
                 # positive y_i
-                M_y_1[t, i] = np.exp(theta[i, t]) *\
-                        (M_y_1[jneigbours(t, i)[0], t]*M_y_1[jneigbours(t, i)[1], t])\
+                mu_y_1[t, i] = np.exp(theta[i, t]) *\
+                        (mu_y_1[jneigbours(t, i)[0], t]*mu_y_1[jneigbours(t, i)[1], t])\
                         + np.exp(-theta[i, t]) *\
-                        (M_y_neg1[jneigbours(t, i)[0], t] *
-                         M_y_neg1[jneigbours(t, i)[1], t])
+                        (mu_y_neg1[jneigbours(t, i)[0], t] *
+                         mu_y_neg1[jneigbours(t, i)[1], t])
 
                 # negative y_i
-                M_y_neg1[t, i] = np.exp(-theta[i, t]) *\
-                    (M_y_1[jneigbours(t, i)[0], t] * M_y_1[jneigbours(t, i)[1], t])\
+                mu_y_neg1[t, i] = np.exp(-theta[i, t]) *\
+                    (mu_y_1[jneigbours(t, i)[0], t] * mu_y_1[jneigbours(t, i)[1], t])\
                     + np.exp(theta[i, t]) *\
-                    (M_y_neg1[jneigbours(t, i)[0], t] *
-                     M_y_neg1[jneigbours(t, i)[1], t])
+                    (mu_y_neg1[jneigbours(t, i)[0], t] *
+                     mu_y_neg1[jneigbours(t, i)[1], t])
 
-                M_y_1[t, i] = M_y_1[t, i]/(M_y_1[t, i]+M_y_neg1[t, i])
-                M_y_neg1[t, i] = M_y_neg1[t, i]/(M_y_1[t, i]+M_y_neg1[t, i])
-        # M_y_1 += np.random.rand(8, 8)*1e-2
-        # M_y_neg1 += np.random.rand(8, 8)*1e-2
-        if np.sqrt(np.sum(mat_memory - M_y_1)**2) <= thr:
+                mu_y_1[t, i] = mu_y_1[t, i]/(mu_y_1[t, i]+mu_y_neg1[t, i])
+                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(mu_y_1[t, i]+mu_y_neg1[t, i])
+        # mu_y_1 += np.random.rand(8, 8)*1e-2
+        # mu_y_neg1 += np.random.rand(8, 8)*1e-2
+        if np.sqrt(np.sum(mat_memory - mu_y_1)**2) <= thr:
             break
 
     q_y_1 = np.zeros(8)
     q_y_neg1 = np.zeros(8)
     for i in range(8):
-        q1 = np.prod(M_y_1[np.where(theta[:, i] != 0), i])
-        qn1 = np.prod(M_y_neg1[np.where(theta[:, i] != 0), i])
+        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i])
+        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i])
         q_y_1[i] = q1/(q1+qn1)
         q_y_neg1[i] = qn1/(q1+qn1)
     return q_y_1, q_y_neg1, n+1
@@ -165,6 +165,7 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
         nlist.append(n)
     plt.plot(j_list, lp, color='k')
     plt.plot(j_list, ln, color='r')
+    plot_sol_LBP(j_list=np.arange(0, max(j_list), 0.00001))
     plt.title('Loopy-BP solution (symmetric)')
     plt.xlabel('J')
     plt.ylabel('q')
@@ -177,21 +178,54 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
     plt.plot(nlist, ln, color='r')
     plt.xlabel('n_iter for convergence, thr = {}'.format(thr))
     plt.ylabel('q')
+    # plt.figure()
+    # q0_l, q1_l, q2_l = solutions_bp(j_list=j_list)
+    # val_stop = np.log(3)/2
+    # ind_stop = np.where(j_list >= val_stop)[0][0]
+    # plt.plot(j_list[:ind_stop],
+    #           np.array(ln[:ind_stop]) - np.array(q0_l[:ind_stop]), color='r')
+    # plt.plot(j_list, np.array(ln)-np.array(q1_l), color='r')
+    # plt.plot(j_list[:ind_stop],
+    #           np.array(lp[:ind_stop]) - np.array(q0_l[:ind_stop]), color='k')
+    # plt.plot(j_list, np.array(lp)-np.array(q2_l), color='k')
+    # plt.xlabel('J')
+    # plt.ylabel(r'$y_{sol} - y_{sim}$')
 
 
-def bp_sol(j, x=1):
-    return 1/j * np.arctanh(np.tanh(j) * np.tanh(x*j))
-
-
-def plot_bp_sol(j_list):
-    plt.figure()
-    sol = []
+def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001)):
+    q0_l = []
+    q1_l = []
+    q2_l = []
     for j in j_list:
-        sol.append(bp_sol(j))
-    plt.plot(j_list, sol)
+        # q0 = (np.exp(-j)+np.exp(j))**(-3)
+        q0 = 1 / 2
+        q0_l.append(q0)
+        if j >= np.log(3)/2:
+            r_1 = ((np.exp(2*j)-1+np.sqrt((np.exp(2*j)-1)*(np.exp(2*j)-1)-4))/2)**3
+            r_2 = ((np.exp(2*j)-1-np.sqrt((np.exp(2*j)-1)*(np.exp(2*j)-1)-4))/2)**3
+        else:
+            r_1 = np.nan
+            r_2 = np.nan
+        # q1 = (np.exp(-j)/r_1**2+np.exp(j))**(-3)
+        # q2 = (np.exp(-j)/r_2**2+np.exp(j))**(-3)
+        q1 = r_1 / (1+r_1)
+        q2 = r_2 / (1+r_2)
+        q1_l.append(q1)
+        q2_l.append(q2)
+    return q0_l, q1_l, q2_l
+
+
+def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001)):
+    q0_l, q1_l, q2_l = solutions_bp(j_list=j_list)
+    plt.plot(j_list, q0_l, color='b')
+    plt.plot(j_list, q1_l, color='b')
+    plt.plot(j_list, q2_l, color='b')
+    plt.xlabel('J')
+    plt.ylabel('q')
+    plt.title('Solutions of the dynamical system')
 
 
 if __name__ == '__main__':
-    plot_loopy_b_prop_sol(theta=THETA, num_iter=100,
-                          j_list=np.arange(0.0000001, 2, 0.01),
-                          thr=1e-10)
+    plot_loopy_b_prop_sol(theta=THETA, num_iter=1000,
+                          j_list=np.arange(0.00001, 1, 0.01),
+                          thr=1e-12)
