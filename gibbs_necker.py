@@ -63,6 +63,25 @@ THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [0, 0, 1, 0, 1, 0, 0, 1], [0, 0, 0, 1, 0, 1, 1, 0]])
 
 
+def return_theta(rows=10, columns=5, layers=2):
+    theta = np.zeros(((rows)*(columns)*(layers), (rows)*(columns)*(layers)))
+    for i in range((rows)*(columns)*(layers)):
+        theta[i, i+int((-i)**(i == (rows*columns*layers-1)))] = 1
+        theta[i, i-1] = 1
+        if (i % columns == 0 and i != 0) or (i > (rows*columns*layers - columns)):
+            theta[i, 0] = 1
+            theta[i, columns + i - rows*columns*layers] = 1
+        else:
+            theta[i, i+1] = 1
+            theta[i, i+columns] = 1
+                
+        # theta[i, i+int((-1)**(i >= (rows*columns*layers-columns)))*columns] = 1
+        # theta[i, i+int((-1)**(i >= columns))*columns] = 1
+        # theta[i, i+int(rows*columns*layers/2*(-1)**(i > rows*columns/2))] = 1
+    plt.imshow(theta)
+    # TODO: finish (connections for any graph with rowsxcolumnsxlayers structure)
+                
+    
 
 
 def get_theta_signed(j):
@@ -114,6 +133,19 @@ def mat_theta(x_vect_1, x_vect_2, j):
         for con in connections:
             mat[i, con] = x_vect_1[i] * x_vect_2[con] * j
     return mat
+
+
+def transition_matrix(J, C):
+    state_ks = [12*J,6*J,4*J,0,0,2*J,-2*J,-6*J,4*J,0,4*J,-4*J,-4*J,-12*J,-6*J,-2*J,2*J,0,0,4*J,6*J,12*J]
+    T = np.zeros((22,22))
+
+    for i, k_int_state in enumerate(state_ks):
+        for j, k_next_state in enumerate(state_ks):
+            T[i,j] = (C[i,j]/8)*sigmoid(state_ks[j] - state_ks[i]) #k estat final menys inicial
+            
+    np.fill_diagonal(T, [1-sum(row) for row in T])
+    
+    return T
 
 
 def gibbs_samp_necker(init_state, burn_in, n_iter, j):
@@ -663,13 +695,13 @@ def prob_markov_chain_between_states(n_iter=int(1e6)):
         p_mu_N_x0 = np.mean(chain[:(i_c+1)] == 0)*eps
         p_mu_N_1_x1.append(p_mu_N_x1+p_mu_N_x0)
     vals_to_plot = np.logspace(4, 6, 9, dtype=int)
-    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(vals_to_plot)))
+    colormap = pl.cm.Blues(np.linspace(0.08, 1, len(vals_to_plot)))
     fig, ax = plt.subplots(1)
     for j in range(len(vals_to_plot)):
         # ax2 = ax.twinx()
-        sns.kdeplot(p_mu_N_1_x1[:vals_to_plot[j]],
+        sns.kdeplot(mu_list_norm[:vals_to_plot[j]],
                     common_norm=False, color=colormap[j],
-                    ax=ax, bw_adjust=3)
+                    ax=ax, bw_adjust=3, label=vals_to_plot[j])
         # ax2.spines['right'].set_visible(False)
         # ax2.spines['top'].set_visible(False)
     # p_N(mu) = p_N(mu, x_N=0) + p_N(mu, x_N=1)
@@ -682,9 +714,9 @@ if __name__ == '__main__':
     c_data = DATA_FOLDER + 'c_mat.npy'
     C = np.load(c_data, allow_pickle=True)
 
-    plot_probs_gibbs(data_folder=DATA_FOLDER)
-    plot_analytical_prob(data_folder=DATA_FOLDER)
+    # plot_probs_gibbs(data_folder=DATA_FOLDER)
+    # plot_analytical_prob(data_folder=DATA_FOLDER)
     plot_k_vs_mu_analytical(eps=0)
-    plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
-                          wsize=1)
-
+    # plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
+    #                       wsize=1)
+    t = transition_matrix(0.2, C)
