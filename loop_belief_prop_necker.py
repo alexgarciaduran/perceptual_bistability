@@ -270,8 +270,8 @@ def cubic(a,b,c,d):
 def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
                      tol=1e-2):
     """
-    Searches for roots using bisection method in a small window of r,
-    super slow.
+    Searches for roots using bisection method in a interval of r, given by
+    [min_r, max_r], using a sliding window of of size w_size.
     
     """
     j_e = np.exp(2*j)
