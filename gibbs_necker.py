@@ -15,6 +15,7 @@ import scipy.stats as stats
 import matplotlib.pylab as pl
 
 
+
 """
 8x8 matrix, left-right order first front:
     
@@ -116,14 +117,15 @@ def sigmoid(x):
     return 1/(1+np.exp(-x))
 
 
-def k_val(x_vec, j_mat):
-    return np.matmul(np.matmul(x_vec.T, j_mat), x_vec)/2
+def k_val(x_vec, j_mat, stim=0):
+    return np.matmul(np.matmul(x_vec.T, j_mat), x_vec)/2 + np.sum(stim*x_vec)
 
 
-def change_prob(x_vect, x_vect1, j):
+def change_prob(x_vect, x_vect1, j, stim=0):
     j_mat = np.abs(mat_theta(x_vect, x_vect, j))
     j_mat1 = np.abs(mat_theta(x_vect1, x_vect1, j))
-    return sigmoid(j*(-k_val(x_vect, j_mat) + k_val(x_vect1, j_mat1)))
+    return sigmoid(j*(-k_val(x_vect, j_mat, stim=stim) +
+                      k_val(x_vect1, j_mat1, stim=stim)))
 
 
 def mat_theta(x_vect_1, x_vect_2, j):
@@ -148,7 +150,7 @@ def transition_matrix(J, C):
     return T
 
 
-def gibbs_samp_necker(init_state, burn_in, n_iter, j):
+def gibbs_samp_necker(init_state, burn_in, n_iter, j, stim=0):
     x_vect = init_state
     states_mat = np.empty((n_iter-burn_in, 8))
     states_mat[:] = np.nan
@@ -156,7 +158,7 @@ def gibbs_samp_necker(init_state, burn_in, n_iter, j):
         node = np.random.choice(np.arange(1, 9), p=np.repeat(1/8, 8))
         x_vect1 = np.copy(x_vect)
         x_vect1[node-1] = -x_vect1[node-1]
-        prob = change_prob(x_vect, x_vect1, j)
+        prob = change_prob(x_vect, x_vect1, j, stim=stim)
         # val_bool = np.random.choice([False, True], p=[1-prob, prob])
         val_bool = np.random.binomial(1, prob, size=None)
         if val_bool:
@@ -167,10 +169,11 @@ def gibbs_samp_necker(init_state, burn_in, n_iter, j):
 
 
 def mean_prob_gibbs(j, ax=None, burn_in = 1000, n_iter = 10000, wsize=100,
-                    node=None):
+                    node=None, stim=0):
     init_state = np.random.choice([-1, 1], 8)
     states_mat = gibbs_samp_necker(init_state=init_state,
-                                   burn_in=burn_in, n_iter=n_iter, j=j)
+                                   burn_in=burn_in, n_iter=n_iter, j=j,
+                                   stim=stim)
     states_mat = (states_mat + 1) / 2
     conv_states_mat = np.copy(states_mat)
     if wsize != 1:
@@ -188,7 +191,7 @@ def mean_prob_gibbs(j, ax=None, burn_in = 1000, n_iter = 10000, wsize=100,
 
 
 def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
-                         wsize=1, node=None):
+                         wsize=1, stim=0, node=None):
     fig, ax_tot = plt.subplots(ncols=2)
     ax = ax_tot[0]
     mean_nod = np.empty((len(j_list), n_iter-burn_in))
@@ -196,7 +199,7 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
     allmeans = np.empty((len(j_list)))
     for ind_j, j in enumerate(j_list):
         mean_nod[ind_j, :] = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
-                                             wsize=wsize, node=node)
+                                             wsize=wsize, node=node, stim=stim)
         allmeans[ind_j] = np.nanmean(np.abs(mean_nod[ind_j, :]*2-1))
     im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic')
     ax.set_yticks(np.arange(0, len(j_list), len(j_list)//2),
@@ -709,6 +712,61 @@ def prob_markov_chain_between_states(n_iter=int(1e6)):
         
 
 
+def true_posterior(theta=THETA, j=0.1, stim=0):
+    combs_7_vars = list(itertools.product([-1, 1], repeat=7))
+    np.random.shuffle(combs_7_vars)
+    x_vects_1 = [combs_7_vars[i] + (1,) for i in range(len(combs_7_vars))]
+    x_vects_0 = [combs_7_vars[i] + (-1,) for i in range(len(combs_7_vars))]
+    j_mat = theta
+    exponent_1 = 0
+    exponent_0 = 0
+    for x_vec_1, x_vec_0 in zip(x_vects_1, x_vects_0):
+        x_vec_1 = np.array(x_vec_1)
+        x_vec_0 = np.array(x_vec_0)
+        # x_vec_0[4:] *= -1
+        # x_vec_1[4:] *= -1
+        exponent_1 += np.exp(0.5*j*np.matmul(np.matmul(x_vec_1.T, j_mat), x_vec_1) + np.sum(stim*x_vec_1))
+        exponent_0 += np.exp(0.5*j*np.matmul(np.matmul(x_vec_0.T, j_mat), x_vec_0) + np.sum(stim*x_vec_0))
+    prob_x_1 = (exponent_1) / ((exponent_1)+(exponent_0))
+    return prob_x_1
+
+
+def sol_magnetization_hex_lattice(j_list, b):
+    sol = []
+    alpha = 6
+    for j in j_list:
+        numerator = np.exp(2*j*alpha)*np.cosh(b/2*alpha) - np.cosh(b/6*alpha)
+        denominator = np.exp(2*j*alpha)*np.cosh(b/2*alpha) + 3*np.cosh(b/6*alpha)
+        sol.append(np.sqrt(numerator/denominator))
+    plt.plot(j_list, sol)
+    
+
+
+def true_posterior_stim(stim_list=np.linspace(-0.05, 0.05, 1000)):
+    post_stim = []
+    for stim in stim_list:
+        post = true_posterior(theta=THETA, j=0.5, stim=stim)
+        post_stim.append(post)
+    plt.plot(stim_list, post_stim)
+    
+
+def true_posterior_plot_j(ax, color='b', j_list=np.arange(0.001, 1, 0.001), stim=0):
+    post_stim = []
+    for j in j_list:
+        post = true_posterior(theta=THETA, j=j, stim=stim)
+        post_stim.append(post)
+    ax.plot(j_list, post_stim, color=color)
+
+
+def occupancy_distro(state, ps, k, n=1, m=1000):
+    # ps: prob of stay
+    p_kn_k = scipy.special.binom(m, k)
+    val = 0
+    for j in range(k):
+        val += scipy.special.binom(k, j)*((-1)**(j-k))*(1-ps*(m-j)/m)**n
+    return p_kn_k*val
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
@@ -716,7 +774,7 @@ if __name__ == '__main__':
 
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
-    plot_k_vs_mu_analytical(eps=0)
-    # plot_mean_prob_gibbs(j_list=np.arange(0, 1, 0.05), burn_in=1000, n_iter=10000,
-    #                       wsize=1)
+    # plot_k_vs_mu_analytical(eps=0)
+    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
+                          wsize=1, stim=-0.1)
     t = transition_matrix(0.2, C)
