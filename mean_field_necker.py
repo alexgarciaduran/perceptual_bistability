@@ -112,7 +112,11 @@ def plot_mf_sol_stim_bias(j_list, stim=0.1, num_iter=500):
 
 
 def backwards(q, j, beta):
-    return 0.5*(1+ 1/j *(1/6 * np.log(q/(1-q)) - beta))
+    if 0 <= q <= 1:
+        q_new = 0.5*(1+ 1/j *(1/6 * np.log(q/(1-q)) - beta))
+    else:
+        q_new = np.nan
+    return q_new
 
 
 def plot_mf_sol(j_list, num_iter=500):
@@ -187,26 +191,37 @@ def plot_sols_mf_bias_stim_changing_j(j_list=[0.55, 0.6, 0.65, 0.7, 0.75, 0.8],
         ax[i_j].set_xlabel(r'$q$')
 
 
-def plot_crit_J_vs_B(j_list, num_iter=200, beta_list=np.arange(0, 0.1, 0.001)):
+def plot_crit_J_vs_B(j_list, num_iter=200, beta_list=np.arange(-0.5, 0.5, 0.001)):
     first_j = []
-    for beta in beta_list:
-        final_q = []
+    for i_b, beta in enumerate(beta_list):
         for j in j_list:
             q_fin = 0.65
             for i in range(num_iter):
                 q_fin = backwards(q_fin, j, beta)
-            final_q.append(q_fin)
-        first_j.append(j_list[~np.isnan(final_q)][0])
+            if ~np.isnan(q_fin):
+                first_j.append(j)
+                break
+        if len(first_j) != (i_b+1):
+            first_j.append(np.nan)
     plt.figure()
     plt.plot(beta_list, first_j, color='k', linewidth=2)
     plt.fill_between(beta_list, first_j, 1, color='mistyrose', alpha=0.6)
-    plt.text(0.03, 0.8, '1 repulsor, 2 attractor')
-    plt.text(0.03, 0.2, '1 attractor')
+    first_j = np.array(first_j)
+    plt.text(-0.15, 0.8, '1 repulsor, 2 attractor')
+    plt.text(-0.15, 0.2, '1 attractor')
     plt.fill_between(beta_list, 0, first_j, color='lightcyan', alpha=0.6)
+    idx_neg = np.isnan(first_j) * (beta_list < 0)
+    plt.fill_between(beta_list[idx_neg],
+                      np.repeat(0, np.sum(idx_neg)), 1, color='lightcyan', alpha=0.6)
+    idx_pos = np.isnan(first_j) * (beta_list > 0)
+    plt.fill_between(beta_list[idx_pos],
+                      np.repeat(0, np.sum(idx_pos)), 1, color='lightcyan', alpha=0.6)
     plt.ylabel('J*')
     plt.xlabel('B')
     plt.ylim(0, max(j_list))
-    plt.xlim(0, max(beta_list))
+    plt.yticks([0, 1/3, 0.5, 1], ['0', '1/3', '0.5', '1'])
+    plt.axhline(1/3, color='r', linestyle='--', alpha=0.5)
+    plt.xlim(min(beta_list), max(beta_list))
 
 
 def plot_sols_mf_bias_stim_changing_beta(
@@ -271,6 +286,7 @@ def solution_mf_sigma(ax, j_list, b):
     ax.legend()
     ax.set_xlabel('J')
     ax.set_ylabel('q')
+
 
 def plot_solution_mf_numeric_solver(j_list=np.arange(0.001, 1, 0.001),
                                     b_list=[0, 0.025, 0.05,
