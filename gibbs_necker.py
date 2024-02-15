@@ -13,6 +13,9 @@ import seaborn as sns
 import os
 import scipy.stats as stats
 import matplotlib.pylab as pl
+import networkx as nx
+import matplotlib as mpl
+from joblib import Parallel, delayed
 
 
 
@@ -64,29 +67,31 @@ THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [0, 0, 1, 0, 1, 0, 0, 1], [0, 0, 0, 1, 0, 1, 1, 0]])
 
 
-def return_theta(rows=10, columns=5, layers=2):
-    theta = np.zeros(((rows)*(columns)*(layers), (rows)*(columns)*(layers)))
-    for i in range((rows)*(columns)*(layers)):
-        theta[i, i+int((-i)**(i == (rows*columns*layers-1)))] = 1
-        theta[i, i-1] = 1
-        if (i % columns == 0 and i != 0) or (i > (rows*columns*layers - columns)):
-            theta[i, 0] = 1
-            theta[i, columns + i - rows*columns*layers] = 1
+def return_theta(rows=10, columns=5, layers=2, factor=1):
+    graph = nx.grid_graph(dim=(columns, rows, layers))
+    graph_array = nx.to_numpy_array(graph)
+    for i in range(rows*columns*layers):
+        if (i % columns) == 0 or ((i+1) % columns) == 0:
+            # if i < rows*columns:
+            #     graph_array[i, i+rows*columns] = factor
+            #     graph_array[i+rows*columns, i] = factor
+            # else:
+            #     graph_array[i, i-rows*columns] = factor
+            #     graph_array[i-rows*columns, i] = factor
+            continue
         else:
-            theta[i, i+1] = 1
-            theta[i, i+columns] = 1
-                
-        # theta[i, i+int((-1)**(i >= (rows*columns*layers-columns)))*columns] = 1
-        # theta[i, i+int((-1)**(i >= columns))*columns] = 1
-        # theta[i, i+int(rows*columns*layers/2*(-1)**(i > rows*columns/2))] = 1
-    plt.imshow(theta)
-    # TODO: finish (connections for any graph with rowsxcolumnsxlayers structure)
-                
-    
+            if i < rows*columns:
+                graph_array[i, i+rows*columns] = 0
+                graph_array[i+rows*columns, i] = 0
+            else:
+                graph_array[i, i-rows*columns] = 0
+                graph_array[i-rows*columns, i] = 0
+    # graph = nx.from_numpy_matrix(graph_array)
+    return graph_array
 
 
-def get_theta_signed(j):
-    th = np.copy(THETA)
+def get_theta_signed(j, theta):
+    th = np.copy(theta)
     for t in range(8):
         ind = get_connections(t)
         th[t, ind] = [-1 if ((i >= 4) and (t <= 3)
@@ -711,13 +716,7 @@ def prob_markov_chain_between_states(n_iter=int(1e6)):
     # p_N+1(mu, x_N=1) = p_N(mu-1, x_N=1)*(1-eps) + p_N(mu-1, x_N=0)*eps
         
 
-
-def true_posterior(theta=THETA, j=0.1, stim=0):
-    combs_7_vars = list(itertools.product([-1, 1], repeat=7))
-    np.random.shuffle(combs_7_vars)
-    x_vects_1 = [combs_7_vars[i] + (1,) for i in range(len(combs_7_vars))]
-    x_vects_0 = [combs_7_vars[i] + (-1,) for i in range(len(combs_7_vars))]
-    j_mat = theta
+def calc_exponents(x_vects_1, x_vects_0, j, stim, j_mat):
     exponent_1 = 0
     exponent_0 = 0
     for x_vec_1, x_vec_0 in zip(x_vects_1, x_vects_0):
@@ -727,6 +726,18 @@ def true_posterior(theta=THETA, j=0.1, stim=0):
         # x_vec_1[4:] *= -1
         exponent_1 += np.exp(0.5*j*np.matmul(np.matmul(x_vec_1.T, j_mat), x_vec_1) + np.sum(stim*x_vec_1))
         exponent_0 += np.exp(0.5*j*np.matmul(np.matmul(x_vec_0.T, j_mat), x_vec_0) + np.sum(stim*x_vec_0))
+    return exponent_1, exponent_0
+
+
+def true_posterior(theta=THETA, j=0.1, stim=0):
+    combs_7_vars = list(itertools.product([-1, 1], repeat=theta.shape[0]-1))
+    x_vects_1 = [combs_7_vars[i] + (1,) for i in range(len(combs_7_vars))]
+    x_vects_0 = [combs_7_vars[i] + (-1,) for i in range(len(combs_7_vars))]
+    j_mat = theta
+    # len_xv1 = len(x_vects_1)
+    # exponent_1, exponent_0 =\
+    #     Parallel(n_jobs=n_jobs)(delayed(calc_exponents)(x_vects_1[step*i:step*(i+1)], x_vects_0[step*i:step*(i+1)], j, stim, j_mat) for i in range(n_jobs))
+    exponent_1, exponent_0 = calc_exponents(x_vects_1, x_vects_0, j, stim, j_mat)
     prob_x_1 = (exponent_1) / ((exponent_1)+(exponent_0))
     return prob_x_1
 
@@ -742,12 +753,20 @@ def sol_magnetization_hex_lattice(j_list, b):
     
 
 
-def true_posterior_stim(stim_list=np.linspace(-0.05, 0.05, 1000)):
-    post_stim = []
-    for stim in stim_list:
-        post = true_posterior(theta=THETA, j=0.5, stim=stim)
-        post_stim.append(post)
-    plt.plot(stim_list, post_stim)
+def true_posterior_stim(stim_list=np.linspace(-0.05, 0.05, 1000), j=0.5,
+                        theta=THETA, data_folder=DATA_FOLDER):
+    posterior_stim = data_folder + str(theta.shape[0]) + '_' + str(j) + '_post_stim.npy'
+    os.makedirs(os.path.dirname(posterior_stim), exist_ok=True)
+    if os.path.exists(posterior_stim):
+        post_stim = np.load(posterior_stim, allow_pickle=True)
+    else:
+        post_stim = []
+        for stim in stim_list:
+            post = true_posterior(theta=theta, j=j, stim=stim)
+            post_stim.append(post)
+        np.save(data_folder + 'post_stim.npy', np.array(post_stim))    
+    return post_stim
+    # plt.plot(stim_list, post_stim)
     
 
 def true_posterior_plot_j(ax, color='b', j_list=np.arange(0.001, 1, 0.001), stim=0):
@@ -767,6 +786,77 @@ def occupancy_distro(state, ps, k, n=1, m=1000):
     return p_kn_k*val
 
 
+
+def plot_cylinder_true_posterior(j, stim, theta=THETA):
+    q = np.repeat(true_posterior(theta=theta, j=j, stim=stim), 8).reshape(2, 2, 2)
+    plot_cylinder(q=q, columns=2, rows=2, layers=2, offset=0.4, minmax_norm=False)
+
+
+def plot_cylinder(q=None, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False):
+    fig, ax = plt.subplots(1, figsize=(5, 10))
+    nodes = np.zeros((rows, columns, layers))
+    if q is None:
+        q = np.copy(nodes)
+    q_0 = q[:, :, 0].flatten()
+    q_1 = q[:, :, 1].flatten()
+    if minmax_norm:
+        colormap_array_0 = (q_0-np.min(q_0))/(np.max(q_0)-np.min(q_0))
+        colormap_array_1 = (q_1-np.min(q_1))/(np.max(q_1)-np.min(q_1))
+    else:
+        colormap_array_0 = q_0
+        colormap_array_1 = q_1
+    colormap_back = pl.cm.copper(colormap_array_0)
+    colormap_front = pl.cm.copper(colormap_array_1)
+    x_nodes_front = nodes[:, :, 0] + np.arange(columns)
+    y_nodes_front = (nodes[:, :, 0].T + np.arange(rows)).T
+    x_nodes_back = nodes[:, :, 1] + np.arange(columns) + offset
+    y_nodes_back = (nodes[:, :, 1].T + np.arange(rows)).T + offset
+    for i in range(rows):
+        for j in range(columns):
+            if j % columns == 0 or j == (columns-1):
+                ax.plot([x_nodes_front[i, j], x_nodes_back[i, j]],
+                        [y_nodes_front[i, j], y_nodes_back[i, j]],
+                        color='grey')
+            if (j+1) < columns:
+                ax.plot([x_nodes_front[i, j], x_nodes_front[i, j+1]],
+                        [y_nodes_front[i, j], y_nodes_front[i, j+1]],
+                        color='grey')
+                ax.plot([x_nodes_back[i, j], x_nodes_back[i, j+1]],
+                        [y_nodes_back[i, j], y_nodes_back[i, j+1]],
+                        color='grey')
+            if (i+1) < rows:
+                ax.plot([x_nodes_front[i, j], x_nodes_front[i+1, j]],
+                        [y_nodes_front[i, j], y_nodes_front[i+1, j]],
+                        color='grey')
+                ax.plot([x_nodes_back[i, j], x_nodes_back[i+1, j]],
+                        [y_nodes_back[i, j], y_nodes_back[i+1, j]],
+                        color='grey')
+    i = 0
+    for x_b, y_b, x_f, y_f in zip(x_nodes_back.flatten(), y_nodes_back.flatten(),
+                                  x_nodes_front.flatten(), y_nodes_front.flatten()):
+        ax.plot(x_b, y_b, marker='o', linestyle='', color=colormap_back[i],
+                markersize=8)
+        ax.plot(x_f, y_f, marker='o', linestyle='', color=colormap_front[i],
+                markersize=8)
+        i += 1
+    if np.sum(q) != 0:
+        ax_pos = ax.get_position()
+        ax.set_position([ax_pos.x0-ax_pos.width*0.1, ax_pos.y0,
+                         ax_pos.width, ax_pos.height])
+        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.92, ax_pos.y0+ax_pos.height*0.2,
+                                ax_pos.width*0.06, ax_pos.height*0.5])
+        mpl.colorbar.ColorbarBase(ax_cbar, cmap='copper')
+        ax_cbar.set_title('J')
+        ax_cbar.set_yticks([0, 0.5, 1], [np.round(np.min(q), 4),
+                                         np.round((np.min(q)+np.max(q))/2, 4),
+                                         np.round(np.max(q), 4)])
+    # ax.plot(x_nodes_back, y_nodes_back, marker='o', linestyle='', color='k',
+    #         markersize=8)
+    # ax.plot(x_nodes_front, y_nodes_front, marker='o', linestyle='', color='k',
+    #         markersize=8)
+    ax.axis('off')
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
@@ -775,6 +865,7 @@ if __name__ == '__main__':
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # plot_k_vs_mu_analytical(eps=0)
-    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
-                          wsize=1, stim=-0.1)
-    t = transition_matrix(0.2, C)
+    # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
+    #                       wsize=1, stim=-0.1)
+    # t = transition_matrix(0.2, C)
+    plot_cylinder_true_posterior(j=0.2, stim=0.05, theta=THETA)
