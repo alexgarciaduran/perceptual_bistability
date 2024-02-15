@@ -16,8 +16,9 @@ from scipy.integrate import solve_ivp
 import numpy as np
 import matplotlib.pylab as pl
 import matplotlib as mpl
-from scipy.optimize import fsolve
 import sympy
+from matplotlib.lines import Line2D
+
 
 
 
@@ -53,15 +54,19 @@ def mean_field(J, num_iter, sigma=1):
     return vec_time
 
 
-def mean_field_stim(J, num_iter, stim, sigma=1):
+def mean_field_stim(J, num_iter, stim, sigma=1, theta=theta, val_init=None):
     #initialize random state of the cube
-    vec = np.repeat(0.7, 8)
-    vec_time = np.empty((num_iter, 8))
+    if val_init is None:
+        vec = np.random.rand(theta.shape[0])
+    else:
+        vec = np.repeat(val_init, theta.shape[0])
+    vec_time = np.empty((num_iter, theta.shape[0]))
     vec_time[:] = np.nan
     for i in range(num_iter):
-        for q in range(8):
+        for q in range(theta.shape[0]):
             neighbours = theta[q].astype(dtype=bool)
-            vec[q] = gn.sigmoid(2*(sum(J*(2*vec[neighbours]-1)+stim))+np.random.randn()*sigma) 
+            th_vals = theta[q][theta[q] != 0]
+            vec[q] = gn.sigmoid(2*(sum(J*th_vals*(2*vec[neighbours]-1)+stim))+np.random.randn()*sigma) 
         vec_time[i, :] = vec
     return vec_time
 
@@ -96,18 +101,124 @@ def mean_field_fixed_points(j_list, stim, num_iter=100):
     # plt.plot(j_list, 1-np.array(qvls), color='k')
 
 
-def plot_mf_sol_stim_bias(j_list, stim=0.1, num_iter=500):
+def plot_mf_sol_stim_bias(j_list, stim=0.1, num_iter=500, theta=theta):
     pos = []
     neg = []
     for j in j_list:
-        v = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0)
+        v = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                            theta=theta)
         v_mn = v[-1, 0]
         pos.append(v_mn)
         neg.append(1-v_mn)
+        # plt.figure()
+        # plt.plot(v[-1, :])
+        # gn.plot_cylinder(q=v[-1, :].reshape(5, 10, 2),
+        #                   columns=5, rows=10, layers=2, offset=0.4,
+        #                   minmax_norm=True)
     plt.figure()
     plt.plot(j_list, pos, color='r', markersize=2)
     plt.plot(j_list, neg, color='k', markersize=2)
     plt.xlabel('J')
+    plt.ylabel('q')
+
+
+def find_repulsor(j=0.1, num_iter=20, q_i=0.001, q_f=0.999,
+                  stim=0, threshold=1e-10, theta=theta, neigh=3):
+    # q = q_i
+    # v_upper = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+    #                           theta=theta, val_init=q_f)[-1, :]
+    # neighs = np.sum(theta, axis=1)
+    # val_upper = v_upper[neighs == neigh][0]
+    # it = 0
+    # while epsilon >= threshold:
+    #     v = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+    #                         theta=theta, val_init=q)[-1, :]
+    #     val = v[neighs == neigh][0]
+    #     if val == val_upper and it == 0:
+    #         q = np.nan
+    #         break
+    #     if np.abs(val-val_upper) >= threshold:
+    #         q = q+epsilon
+    #     else:
+    #         epsilon = epsilon/10
+    #         q = find_repulsor(j=j, num_iter=num_iter, epsilon=epsilon,
+    #                           q_i=q-epsilon*10, q_f=q+epsilon,
+    #                           stim=stim, threshold=threshold, theta=theta,
+    #                           neigh=neigh)
+    #     if q > 1:
+    #         q = np.nan
+    #         break
+    #     it += 1
+    diff = 1
+    neighs = np.sum(theta, axis=1)
+    f_a = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                          theta=theta, val_init=q_f)[-1, neighs == neigh][0]
+    f_b = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                          theta=theta, val_init=q_i)[-1, neighs == neigh][0]
+    if np.abs(f_a-f_b) < threshold:
+        return np.nan
+    while diff >= threshold*1e-2:
+        c = (q_i+q_f)/2
+        f_c = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                              theta=theta, val_init=c)[-1, neighs == neigh][0]
+        if np.abs(f_a-f_c) < threshold and np.abs(f_b-f_c) < threshold:
+            return np.nan
+        if np.abs(f_a-f_c) < threshold:
+            q_f = c
+            f_a = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                                  theta=theta, val_init=q_f)[-1, neighs == neigh][0]
+        elif np.abs(f_b-f_c) < threshold:
+            q_i = c
+            f_b = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                                  theta=theta, val_init=q_i)[-1, neighs == neigh][0]
+        else:
+            return c
+        diff = np.abs(q_i-q_f)
+    return c
+
+
+def plot_mf_sol_stim_bias_different_sols(j_list, stim=0.1, num_iter=500,
+                                         theta=theta, ind_list=[4, 12, 2]):
+    vals_all_1 = np.empty((theta.shape[0], len(j_list)))
+    vals_all_1[:] = np.nan
+    vals_all_0 = np.empty((theta.shape[0], len(j_list)))
+    vals_all_0[:] = np.nan
+    vals_all_backwards = np.empty((3, len(j_list)))
+    vals_all_backwards[:] = np.nan
+    neighbors = np.unique(np.ceil(np.sum(theta, axis=1))).astype(int)
+    for i_j, j in enumerate(j_list):
+        v = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                            theta=theta, val_init=0.95)
+        vals_all_1[:, i_j] = v[-1, :]
+        v = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                            theta=theta, val_init=0.05)
+        vals_all_0[:, i_j] = v[-1, :]
+        # for i in range(len(neighbors)):
+        #     vals_all_backwards[i, i_j] = \
+        #         find_repulsor(j=j, num_iter=50, q_i=0.01,
+        #                       q_f=0.95, stim=stim, threshold=1e-2,
+        #                       theta=theta, neigh=neighbors[i])  # + 1e-2*i
+        # gn.plot_cylinder(q=v[-1, :].reshape(5, 10, 2),
+        #                   columns=5, rows=10, layers=2, offset=0.4,
+        #                   minmax_norm=True)
+    plt.figure()
+    neighs = np.sum(theta, axis=1, dtype=int)
+    neighs -= np.min(neighs)
+    colors = ['k', 'r', 'b']
+    for i_v, vals in enumerate(vals_all_1):
+        plt.plot(j_list, vals, color=colors[neighs[i_v]], alpha=0.1)
+        plt.plot(j_list[vals_all_0[i_v] != vals],
+                 vals_all_0[i_v][vals_all_0[i_v] != vals],
+                 color=colors[neighs[i_v]], alpha=0.1)
+    for i in range(len(neighbors)):
+        plt.plot(j_list, vals_all_backwards[i, :],
+                 color=colors[neighbors[i]-np.min(neighbors)],
+                 linestyle='--', alpha=1)
+    plt.xlabel('J')
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='3'),
+                      Line2D([0], [0], color='r', lw=2, label='4'),
+                      Line2D([0], [0], color='b', lw=2, label='5')]
+    plt.legend(handles=legendelements, title='Neighbors')
     plt.ylabel('q')
 
 
@@ -125,7 +236,7 @@ def plot_mf_sol(j_list, num_iter=500):
         v_mn = np.nanmean(v[100:, 0])
         plt.plot(j, v_mn, marker='o', color='g', markersize=2)
         plt.plot(j, 1-v_mn, marker='o', color='g', markersize=2)
-    
+
 
 def plot_mf_sol_sigma_j(data_folder, j_list, sigma_list, num_iter=2000):
     matrix_loc = data_folder + 'q_sigma_j_mat.npy'
@@ -149,10 +260,10 @@ def plot_mf_sol_sigma_j(data_folder, j_list, sigma_list, num_iter=2000):
     plt.ylabel('J')
 
 
-def plot_solutions_mfield(j_list, bias=0):
+def plot_solutions_mfield(j_list, stim=0, N=3):
     l = []
     for j in j_list:
-        q = lambda q: gn.sigmoid(6*j*(2*q-1)+ bias*6) - q 
+        q = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ stim*2*N) - q 
         l.append(np.clip(fsolve(q, 0.9), 0, 1))
     plt.axhline(0.5, color='grey', alpha=1, linestyle='--')
     plt.plot(j_list, 1-np.array(l), color='k')
@@ -163,17 +274,37 @@ def plot_solutions_mfield(j_list, bias=0):
 
 
 
-def plot_solutions_mfield_beta(j_list, beta=0):
+def plot_solutions_mfield_neighbors(ax, j_list, color='k', stim=0, N=3):
     l = []
     for j in j_list:
-        q = lambda q: gn.sigmoid(6*(j*(2*q-1) + beta)) - q
-        l.append(np.clip(fsolve(q,1), 0, 1))
-    plt.axhline(0.5, color='grey', alpha=1, linestyle='--')
-    plt.plot(j_list, 1-np.array(l), color='k')
-    plt.plot(j_list, l, color='r')
-    plt.xlabel('J')
-    plt.ylabel('q')
-    plt.title('Solutions of the dynamical system')
+        q = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ stim*2*N) - q 
+        l.append(np.clip(fsolve(q, 0.9), 0, 1))
+    ax.plot(j_list, l, label=N, color=color)
+
+
+def plot_solutions_mfield_for_N_neighbors(j_list, n_list=np.arange(1, 6), stim=0):
+    fig, ax = plt.subplots(1)
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(n_list)+1))
+    for n in n_list:
+        plot_solutions_mfield_neighbors(ax, j_list, color=colormap[n],
+                                        stim=stim, N=n)
+    ax.legend(title='Neighbors')
+    ax.set_xlabel('J')
+    ax.set_ylabel('q')
+
+
+def posterior_comparison_MF(stim_list=np.linspace(-2, 2, 1000), j=0.1):
+    true_posterior = gn.true_posterior_stim(stim_list=stim_list, j=j)
+    mf_post = []
+    for stim in stim_list:
+        q = lambda q: gn.sigmoid(6*j*(2*q-1)+ stim*6) - q 
+        mf_post.append(np.clip(fsolve(q, 0.98), 0, 1))
+    fig, ax = plt.subplots(1)
+    ax.plot(true_posterior, mf_post, color='k')
+    ax.plot([0, 1], [0, 1], color='grey', alpha=0.5)
+    ax.set_xlabel(r'True posterior $p(x_i=1 | B)$')
+    ax.set_ylabel(r'Mean-field posterior $q(x_i=1|B)$')
+    ax.set_title('J = 0.1')
 
 
 
@@ -414,8 +545,8 @@ def plot_potentials_mf(j_list, bias=0):
     fig, ax = plt.subplots(1)
     change_colormap = False
     for i_j, j in enumerate(j_list):
-        # pot = potential_mf(q, j, bias=bias)
-        pot = potential_expansion_any_order_any_point(q, j, b=0, order=8, point=0.5)
+        pot = potential_mf(q, j, bias=bias)
+        # pot = potential_expansion_any_order_any_point(q, j, b=0, order=8, point=0.5)
         # norm_cte = np.max(np.abs(pot))
         if abs(j - 0.333) < 0.01 and not change_colormap:
             color = 'r'
@@ -468,15 +599,18 @@ def plot_pot_evolution_mfield(j, num_iter=10, sigma=0.1, bias=1e-3):
 
 
 if __name__ == '__main__':
-    # plot_solutions_mfield(j_list=np.arange(0.00001, 2, 0.005))
-    # for num_iter in [200, 1000, 5000, 10000, 20000, 50000]:
-    #     plt.figure()
-    #     plot_mf_sol(j_list=np.arange(0.25, 0.65, 0.004), num_iter=num_iter)
-    #     plt.xlabel('J')
-    #     plt.ylabel('q*')
-    #     plt.title('num_iter: ' + str(num_iter))
-    # plot_mf_sol_sigma_j(data_folder=DATA_FOLDER, j_list=np.arange(0.0001, 1, 0.005),
-    #                     sigma_list=np.arange(0, 2, 0.01),
-    #                     num_iter=2000)
-    plot_potentials_mf(j_list=np.arange(0.001, 1, 0.1), bias=0)
+    # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.05)
     # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
+    # q_list = []
+    # for j in np.arange(0.01, 1, 0.01):
+    #     q_list.append(find_repulsor(j=j, num_iter=30, epsilon=1e-1, q_i=0.01,
+    #                                 q_f=0.95, stim=0.1, threshold=1e-5, theta=theta,
+    #                                 neigh=3))
+    # plt.plot(np.arange(0.01, 1, 0.01), q_list)
+    plot_mf_sol_stim_bias_different_sols(j_list=np.arange(0.001, 1, 0.005),
+                                         stim=0.01,
+                                         num_iter=20,
+                                         theta=gn.return_theta(columns=5, rows=10),
+                                         ind_list=[0, 12, 5])
+    # plot_mf_sol_stim_bias(j_list=np.arange(0.00001, 1, 0.001), stim=-0.1,
+    #                       num_iter=10)
