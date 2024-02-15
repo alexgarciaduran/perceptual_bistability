@@ -10,13 +10,20 @@ import scipy
 import itertools
 import os
 import gibbs_necker as gn
+import mean_field_necker as mfn
 from scipy.optimize import fsolve, bisect, root
+from scipy.integrate import solve_ivp
 import numpy as np
+from matplotlib.lines import Line2D
 
 THETA = gn.THETA
 
+pc_name = 'alex'
+if pc_name == 'alex':
+    DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/belief_propagation_necker/data_folder/'  # Alex
 
-def jneigbours(j,i):
+
+def jneigbours(j,i, theta=THETA):
     """
     return the neighbours of j except i
 
@@ -27,7 +34,7 @@ def jneigbours(j,i):
     - return a list with all the neighbours of neighbour of j except our 
       current node
     """
-    neigbours = np.array(np.where(THETA[j,:] != 0))
+    neigbours = np.array(np.where(theta[j,:] != 0))
     return neigbours[neigbours!=i]
 
 
@@ -43,31 +50,31 @@ def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5, stim=0):
     - return a list of lenght 8 with the approximate depth probabilities
     """
     # multiply arrays element wise
-    mu_y_1 = np.multiply(theta, np.random.rand(8, 8))
+    mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
     mat_memory_1 = np.copy(mu_y_1)
-    mu_y_neg1 = np.multiply(theta, np.random.rand(8, 8))
+    mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
     mat_memory_neg1 = np.copy(mu_y_neg1)
-    theta = theta*j
     for n in range(num_iter):
         mat_memory_1 = np.copy(mu_y_1)
         mat_memory_neg1 = np.copy(mu_y_neg1)
         # for all the nodes that i is connected
-        for i in range(8):
+        for i in range(theta.shape[0]):
             for t in np.where(theta[i, :] != 0)[0]:
                 # positive y_i
-                mu_y_1[t, i] = np.exp(theta[i, t]+stim) *\
-                        (mu_y_1[jneigbours(t, i)[0], t]*
-                         mu_y_1[jneigbours(t, i)[1], t])\
-                        + np.exp(-theta[i, t]+stim) *\
-                        (mu_y_neg1[jneigbours(t, i)[0], t] *
-                         mu_y_neg1[jneigbours(t, i)[1], t])
+                mu_y_1[t, i] = np.exp(j*theta[i, t]+stim) *\
+                        (mu_y_1[jneigbours(t, i, theta=theta)[0], t]*
+                         mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
+                        + np.exp(-j*theta[i, t]-stim) *\
+                        (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
+                         mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
                 # mu_y_1 += np.random.rand(8, 8)*1e-3
                 # negative y_i
-                mu_y_neg1[t, i] = np.exp(-theta[i, t]-stim) *\
-                    (mu_y_1[jneigbours(t, i)[0], t] * mu_y_1[jneigbours(t, i)[1], t])\
-                    + np.exp(theta[i, t]-stim) *\
-                    (mu_y_neg1[jneigbours(t, i)[0], t] *
-                     mu_y_neg1[jneigbours(t, i)[1], t])
+                mu_y_neg1[t, i] = np.exp(-j*theta[i, t]+stim) *\
+                    (mu_y_1[jneigbours(t, i, theta=theta)[0], t] *\
+                     mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
+                    + np.exp(j*theta[i, t]-stim) *\
+                    (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
+                     mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
 
                 m_y_1_memory = np.copy(mu_y_1[t, i])
                 mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
@@ -76,67 +83,42 @@ def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5, stim=0):
         if np.sqrt(np.sum(mat_memory_1 - mu_y_1)**2) and\
             np.sqrt(np.sum(mat_memory_neg1 - mu_y_neg1)**2) <= thr:
             break
-
-    q_y_1 = np.zeros(8)
-    q_y_neg1 = np.zeros(8)
-    for i in range(8):
-        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i])
-        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i])
+    q_y_1 = np.zeros(theta.shape[0])
+    q_y_neg1 = np.zeros(theta.shape[0])
+    for i in range(theta.shape[0]):
+        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(stim)
+        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-stim)
         q_y_1[i] = q1/(q1+qn1)
         q_y_neg1[i] = qn1/(q1+qn1)
+    # gn.plot_cylinder(q=q_y_1.reshape(5, 10, 2),
+    #                  columns=5, rows=10, layers=2, offset=0.4, minmax_norm=True)
     return q_y_1, q_y_neg1, n+1
 
 
-def nonsym_Loopy_belief_propagation(theta, num_iter, j, thr=1e-5):
-    """
-    Computes the exact approximate probability of having a front perception for
-    the depth of the 8 nodes.
-    Input:
-    - theta {matrix}: matrix that defines the Necker cube
-    - J {double}: coupling strengs
-    - num_iter {integer}: number of iterations for the algorithm to run
-    Output:
-    - return a list of lenght 8 with the approximate depth probabilities
-    """
-    # multiply arrays element wise
-    mu_y_1 = np.multiply(theta, np.random.rand(8, 8))
-    mat_memory = np.copy(mu_y_1)
-    mu_y_neg1 = np.multiply(theta, np.random.rand(8, 8))
-    theta = theta*j
-    for n in range(num_iter):
-        mat_memory = np.copy(mu_y_1)
-        # for all the nodes that i is connected
-        for i in range(8):
-            for t in np.where(theta[i, :] != 0)[0]:
-                # positive y_i
-                mu_y_1[t, i] = np.exp(theta[i, t]) *\
-                        (mu_y_1[jneigbours(t, i)[0], t]*mu_y_1[jneigbours(t, i)[1], t])\
-                        + np.exp(-theta[i, t]) *\
-                        (mu_y_neg1[jneigbours(t, i)[0], t] *
-                         mu_y_neg1[jneigbours(t, i)[1], t])
-
-                # negative y_i
-                mu_y_neg1[t, i] = np.exp(-theta[i, t]) *\
-                    (mu_y_1[jneigbours(t, i)[0], t] * mu_y_1[jneigbours(t, i)[1], t])\
-                    + np.exp(theta[i, t]) *\
-                    (mu_y_neg1[jneigbours(t, i)[0], t] *
-                     mu_y_neg1[jneigbours(t, i)[1], t])
-
-                mu_y_1[t, i] = mu_y_1[t, i]/(mu_y_1[t, i]+mu_y_neg1[t, i])
-                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(mu_y_1[t, i]+mu_y_neg1[t, i])
-        # mu_y_1 += np.random.rand(8, 8)*1e-2
-        # mu_y_neg1 += np.random.rand(8, 8)*1e-2
-        if np.sqrt(np.sum(mat_memory - mu_y_1)**2) <= thr:
-            break
-
-    q_y_1 = np.zeros(8)
-    q_y_neg1 = np.zeros(8)
-    for i in range(8):
-        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i])
-        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i])
-        q_y_1[i] = q1/(q1+qn1)
-        q_y_neg1[i] = qn1/(q1+qn1)
-    return q_y_1, q_y_neg1, n+1
+def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
+                               num_iter=100, thr=1e-12, theta=THETA,
+                               data_folder=DATA_FOLDER):
+    true_posterior = gn.true_posterior_stim(stim_list=stim_list, j=j, theta=theta,
+                                            data_folder=data_folder)
+    mf_post = []
+    bp_post = []
+    for stim in stim_list:
+        q = mfn.mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+                                theta=theta)
+        mf_post.append(q[-1, 0])
+        q_bp, _, _= Loopy_belief_propagation(theta=theta,
+                                             num_iter=num_iter,
+                                             j=j, thr=thr, stim=stim)
+        bp_post.append(q_bp[0])
+    fig, ax = plt.subplots(1)
+    ax.plot(true_posterior, bp_post, color='k', label='Belief propagation')
+    ax.plot(true_posterior, mf_post, color='r', label='Mean-field',
+            linestyle='--')
+    ax.plot([0, 1], [0, 1], color='grey', alpha=0.5)
+    ax.set_xlabel(r'True posterior $p(x_i=1 | B)$')
+    ax.set_ylabel(r'Approximated posterior $q(x_i=1|B)$')
+    ax.set_title('J = '+str(j))
+    ax.legend()
 
 
 def plot_loopy_b_prop_sol_difference(theta, num_iter, j_list=np.arange(0, 1, 0.1),
@@ -157,21 +139,37 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
     ln = []
     nlist = []
     fig, ax = plt.subplots(1)
-    for j in j_list:
+    vals_all = np.empty((theta.shape[0], len(j_list)))
+    vals_all[:] = np.nan
+    for i_j, j in enumerate(j_list):
         pos, neg, n = Loopy_belief_propagation(theta=theta,
                                                num_iter=num_iter,
                                                j=j, thr=thr,
                                                stim=stim)
+        # gn.plot_cylinder(q=pos.reshape(5, 10, 2),
+        #                   columns=5, rows=10, layers=2, offset=0.4, minmax_norm=True)
         lp.append(pos[0])
         ln.append(neg[0])
+        # to get upper attractor:
+        vals_all[:, i_j] = [np.max((p, n)) for p, n in zip(pos, neg)]
         nlist.append(n)
-    ax.plot(j_list, lp, color='k')
+    # ax.plot(j_list, lp, color='k')
+    neighs = np.sum(theta, axis=1, dtype=int)
+    neighs -= np.min(neighs)
+    colors = ['k', 'r', 'b']
+    for i_v, vals in enumerate(vals_all):
+        ax.plot(j_list, vals, color=colors[neighs[i_v]], alpha=0.1)
+    
     # plt.plot(j_list, ln, color='r')
     # plot_sol_LBP(j_list=np.arange(0, max(j_list), 0.00001), stim=stim)
-    gn.true_posterior_plot_j(ax=ax, stim=stim)
+    # gn.true_posterior_plot_j(ax=ax, stim=stim)
     ax.set_title('Loopy-BP solution (symmetric)')
     ax.set_xlabel('J')
     ax.set_ylabel('q')
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='3'),
+                      Line2D([0], [0], color='r', lw=2, label='4'),
+                      Line2D([0], [0], color='b', lw=2, label='5')]
+    plt.legend(handles=legendelements, title='Neighbors')
     ax.set_ylim(-0.05, 1.05)
     # plt.figure()
     # plt.plot(j_list, nlist, color='k')
@@ -183,17 +181,6 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
     # plt.xlabel('n_iter for convergence, thr = {}'.format(thr))
     # plt.ylabel('q')
     # plt.figure()
-    # q0_l, q1_l, q2_l = solutions_bp(j_list=j_list)
-    # val_stop = np.log(3)/2
-    # ind_stop = np.where(j_list >= val_stop)[0][0]
-    # plt.plot(j_list[:ind_stop],
-    #           np.array(ln[:ind_stop]) - np.array(q0_l[:ind_stop]), color='r')
-    # plt.plot(j_list, np.array(ln)-np.array(q1_l), color='r')
-    # plt.plot(j_list[:ind_stop],
-    #           np.array(lp[:ind_stop]) - np.array(q0_l[:ind_stop]), color='k')
-    # plt.plot(j_list, np.array(lp)-np.array(q2_l), color='k')
-    # plt.xlabel('J')
-    # plt.ylabel(r'$y_{sol} - y_{sim}$')
 
 
 def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
@@ -233,25 +220,27 @@ def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
 def plot_solution_BP(j_list, stim):
     j = np.exp(j_list*2)
     b = np.exp(stim*2)
-    c1 = (b * j) / 3
-    c2 = 2**(1/3) / (3 * (27 * b - 9 * b * j**2 + 2 * b**3 * j**3 + 3 * np.sqrt(3) * np.sqrt(27 * b**2 - 18 * b**2 * j**2 + 4 * j**3 + 4 * b**4 * j**3 - b**2 * j**4))**(1/3))
-    c3 = (27 * b - 9 * b * j**2 + 2 * b**3 * j**3 + 3 * np.sqrt(3) * np.sqrt(27 * b**2 - 18 * b**2 * j**2 + 4 * j**3 + 4 * b**4 * j**3 - b**2 * j**4))**(1/3) / (3 * 2**(1/3))
+    
+    # Define the constants
+    c1 = j / 3
+    c2 = 2**(1/3) * (3 * b * j - b**2 * j**2) / (3 * b * (27 * b**2 - 9 * b**2 * j**2 + 2 * b**3 * j**3 + 3 * np.sqrt(3) * np.sqrt(27 * b**4 - 18 * b**4 * j**2 + 4 * b**3 * j**3 + 4 * b**5 * j**3 - b**4 * j**4))**(1/3))
+    c3 = (27 * b**2 - 9 * b**2 * j**2 + 2 * b**3 * j**3 + 3 * np.sqrt(3) * np.sqrt(27 * b**4 - 18 * b**4 * j**2 + 4 * b**3 * j**3 + 4 * b**5 * j**3 - b**4 * j**4))**(1/3) / (3 * 2**(1/3) * b)
     
     # Define the equations
-    eq1 = c1 - c2 * (3 * j - b**2 * j**2) / (3 * c3) + c3 / (3 * 2**(1/3))
-    # eq2 = c1 + ((1 + 1j * np.sqrt(3)) * (3 * j - b**2 * j**2)) / (3 * 2**(2/3) * c3) - ((1 - 1j * np.sqrt(3)) * c3) / (6 * 2**(1/3))
-    # eq3 = c1 + ((1 - 1j * np.sqrt(3)) * (3 * j - b**2 * j**2)) / (3 * 2**(2/3) * c3) - ((1 + 1j * np.sqrt(3)) * c3) / (6 * 2**(1/3))
+    eq1 = c1 - c2 + c3
+    eq2 = c1 + ((1 + 1j * np.sqrt(3)) * (3 * b * j - b**2 * j**2)) / (3 * 2**(2/3) * b * (27 * b**2 - 9 * b**2 * j**2 + 2 * b**3 * j**3 + 3 * np.sqrt(3) * np.sqrt(27 * b**4 - 18 * b**4 * j**2 + 4 * b**3 * j**3 + 4 * b**5 * j**3 - b**4 * j**4))**(1/3)) - ((1 - 1j * np.sqrt(3)) * c3) / (6 * 2**(1/3) * b)
+    eq3 = c1 + ((1 - 1j * np.sqrt(3)) * (3 * b * j - b**2 * j**2)) / (3 * 2**(2/3) * b * (27 * b**2 - 9 * b**2 * j**2 + 2 * b**3 * j**3 + 3 * np.sqrt(3) * np.sqrt(27 * b**4 - 18 * b**4 * j**2 + 4 * b**3 * j**3 + 4 * b**5 * j**3 - b**4 * j**4))**(1/3)) - ((1 + 1j * np.sqrt(3)) * c3) / (6 * 2**(1/3) * b)
 
-    plt.plot(j_list, eq1**3 / (1+eq1**3), color='b')
-    plt.plot(j_list, 1 / (1+eq1**3), color='b')
+    plt.plot(j_list, np.exp(stim)*eq1**3 / (np.exp(-stim)*+np.exp(stim)*eq1**3), color='b')
+    # plt.plot(j_list, 1 / (1+eq1**3), color='b')
     # plt.plot(j_list, eq2**3 / (1+eq2**3), color='b')
     # plt.plot(j_list, 1 / (1+eq2**3), color='b')
     # plt.plot(j_list, eq3**3 / (1+eq3**3), color='b')
     # plt.plot(j_list, 1 / (1+eq3**3), color='b')
 
 
-def r_stim(x, j_e, b_e):
-    return x**3 - j_e * b_e * x**2 + j_e * x - b_e
+def r_stim(x, j_e, b_e, n_neigh=3):
+    return b_e*x**n_neigh - j_e * b_e * x**(n_neigh-1) + j_e * x - 1
 
 
 def r_stim_prime(x, j_e, b_e):
@@ -268,7 +257,7 @@ def cubic(a,b,c,d):
 
 
 def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
-                     tol=1e-2):
+                     tol=1e-2, n_neigh=3):
     """
     Searches for roots using bisection method in a interval of r, given by
     [min_r, max_r], using a sliding window of of size w_size.
@@ -281,11 +270,13 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
     while (min_r + (count+1) * w_size) <= max_r:
         a = min_r+count*w_size
         b = min_r+(count+1)*w_size
-        if np.sign(r_stim(a, j_e, b_e)*r_stim(b, j_e, b_e)) > 0:
+        if np.sign(r_stim(a, j_e, b_e, n_neigh=n_neigh)*
+                   r_stim(b, j_e, b_e, n_neigh=n_neigh)) > 0:
             count += 1
         else:
             solution_bisection = bisect(r_stim, a=a, b=b,
-                                        args=(j_e, b_e), xtol=1e-8)
+                                        args=(j_e, b_e, n_neigh),
+                                        xtol=1e-8)
             if len(sols) > 0:
                 if (np.abs(np.array(sols) - solution_bisection).any()> tol):
                     sols.append(solution_bisection)
@@ -338,12 +329,12 @@ def plot_j_b_crit_BP(j_list=np.arange(0.001, 1, 0.001),
             
 
 def plot_bp_solution(ax, j_list, b, tol=1e-12, min_r=-20, max_r=20,
-                     w_size=0.01):
+                     w_size=0.01, n_neigh=3, color='r'):
     sols = []
     for ind_j, j in enumerate(j_list):
         sol = []
         sol=find_solution_bp(j, b=b, min_r=min_r, max_r=max_r, w_size=w_size,
-                             tol=tol)
+                             tol=tol, n_neigh=n_neigh)
         # sol = np.array(sol)
         # plt.plot(j_list, sol**3 / (1+sol**3))
         sols.append(sol)
@@ -364,42 +355,114 @@ def plot_bp_solution(ax, j_list, b, tol=1e-12, min_r=-20, max_r=20,
             solutions_array[0, i] = sols[i][2]
             solutions_array[1, i] = sols[i][1]
             solutions_array[2, i] = sols[i][0]
-    linestyles = ['-', '--', '-']
+        if len(sols[i]) == 4:
+            solutions_array[0, i] = sols[i][3]
+            solutions_array[1, i] = sols[i][2]
+            solutions_array[2, i] = sols[i][1]
+            solutions_array[3, i] = sols[i][0]
+        if len(sols[i]) == 5:
+            solutions_array[0, i] = sols[i][4]
+            solutions_array[1, i] = sols[i][3]
+            solutions_array[2, i] = sols[i][2]
+            solutions_array[3, i] = sols[i][1]
+            solutions_array[4, i] = sols[i][0]
+    linestyles = ['-', '--', '-', '-', '-']
+    ax.set_ylim(-0.05, 1.05)
+    solutions_array[(np.abs(solutions_array) >= 1) * (solutions_array < 0)] = np.nan
     for i_s, sol in enumerate(solutions_array):
-        ax.plot(j_list, sol**3 / (1+sol**3), color='r', linestyle=linestyles[i_s])
+        ax.plot(j_list,
+                np.exp(b)*sol**3 / (np.exp(-b)+np.exp(b)*sol**3),
+                color=color, linestyle=linestyles[i_s])
     ax.set_xlabel('J')
     ax.set_ylabel('q')
 
 
-def backwards_bp(j, b, num_iter=100):
-    m1 = np.random.rand()
-    m_neg1 = np.random.rand()
-    m1_list = []
-    m_neg1_list = []
-    m1_mem = np.copy(m1)
-    m1 = m1 / (m1 + m_neg1)
-    m_neg1 = m_neg1 / (m1_mem + m_neg1)
-    for i in range(num_iter):
-        if np.isnan(np.sqrt((m1-np.exp(b-j)*m_neg1**2) / (np.exp(j+b)))):
-            break
-        m1 = np.sqrt((m1-np.exp(b-j)*m_neg1**2) / (np.exp(j+b)))
-        m_neg1 = np.sqrt((m_neg1-np.exp(-b-j)*m1**2) / (np.exp(j-b)))
-        m1_mem = np.copy(m1)
-        m1 = m1 / (m1 + m_neg1)
-        m_neg1 = m_neg1 / (m1_mem + m_neg1)
-        m1_list.append(m1)
-        m_neg1_list.append(m_neg1)
-    q = np.array(m1_list)**3 / (np.array(m1_list)**3+np.array(m_neg1_list)**3)
-    q_neg1 = np.array(m_neg1_list)**3  / (np.array(m1_list)**3+np.array(m_neg1_list)**3)
+def dynamical_system_BP(t, m, j, stim, theta):
+    m = m.reshape(16, 8)
+    mu_y_1 = m[:8, :]
+    mu_y_neg1 = m[8:, :]
+    theta = theta*j
+    for i in range(8):
+        for m in np.where(theta[i, :] != 0)[0]:
+            # positive y_i
+            mu_y_1[m, i] = np.exp(theta[i, m]+stim) *\
+                    (mu_y_1[jneigbours(m, i)[0], m]*
+                     mu_y_1[jneigbours(m, i)[1], m])\
+                    + np.exp(-theta[i, m]+stim) *\
+                    (mu_y_neg1[jneigbours(m, i)[0], m] *
+                     mu_y_neg1[jneigbours(m, i)[1], m])
+            # mu_y_1 += np.random.rand(8, 8)*1e-3
+            # negative y_i
+            mu_y_neg1[m, i] = np.exp(-theta[i, m]-stim) *\
+                (mu_y_1[jneigbours(m, i)[0], m] * mu_y_1[jneigbours(m, i)[1], m])\
+                + np.exp(theta[i, m]-stim) *\
+                (mu_y_neg1[jneigbours(m, i)[0], m] *
+                 mu_y_neg1[jneigbours(m, i)[1], m])
+
+            m_y_1_memory = np.copy(mu_y_1[m, i])
+            mu_y_1[m, i] = mu_y_1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
+            mu_y_neg1[m, i] = mu_y_neg1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
+    m = np.concatenate((mu_y_1.flatten(),
+                        mu_y_neg1.flatten()))
+    m = np.clip(m, 0, np.max(m))
+    return m
+
+
+def plot_dyn_sys_BP_solution():
+    j_list=np.arange(0.01, 1, 0.01)
+    q1_list = []
+    for j in j_list:
+        theta = THETA
+        mu_y_1 = np.multiply(theta, np.random.rand(8, 8))
+        mu_y_neg1 = np.multiply(theta, np.random.rand(8, 8))
+        init_cond = np.concatenate((mu_y_1, mu_y_neg1))
+        m_solution = solve_ivp(fun=dynamical_system_BP, t_span=[0, 10],
+                                y0=init_cond.flatten(),
+                                args=(j, 0.05, theta))
+        m = m_solution.y[:, -1].reshape(16, 8)
+        mu_y_1 = m[:8, :]
+        mu_y_1_memory = np.copy(mu_y_1)
+        mu_y_neg1 = m[8:, :]
+        mu_y_neg1_memory = np.copy(mu_y_1)
+        q_y_1 = np.zeros(8)
+        q_y_neg1 = np.zeros(8)
+        for i in range(8):
+            q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i])
+            qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i])
+            q_y_1[i] = q1/(q1+qn1)
+            q_y_neg1[i] = qn1/(q1+qn1)
+        q_1 = q_y_1[np.abs(q_y_1) <= 1][0]
+        q1_list.append(q_1)
+    plt.plot(j_list, q1_list)
+    plt.ylim(-0.05, 1.05)
+    plt.xlabel('J')
+    plt.ylabel('q')
+
+def plot_solutions_BP_depending_neighbors(j_list=np.arange(0.001, 1, 0.001),
+                                          neigh_list=[3, 4, 5]):
+    fig, ax = plt.subplots(ncols=3, figsize=(10, 6))
+    colors = ['k', 'r', 'b']
+    neigh_list = [3, 4, 5]
+    for n_neigh in neigh_list:
+        plot_bp_solution(ax[n_neigh-min(neigh_list)], j_list, b=0.05, tol=1e-10,
+                         min_r=-15, max_r=15,
+                         w_size=0.01, n_neigh=n_neigh,
+                         color=colors[n_neigh-min(neigh_list)])
+        ax[n_neigh-min(neigh_list)].set_title(str(n_neigh) + ' neighbors')
 
 
 if __name__ == '__main__':
-    for stim in [-0.1, 0, 0.05]:
-        plot_loopy_b_prop_sol(theta=THETA, num_iter=1000,
+    for stim in [0.1]:
+        plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=50,
                               j_list=np.arange(0.00001, 1, 0.01),
                               thr=1e-12, stim=stim)
-    j_list=np.arange(0.001, 1, 0.001)
-    fig, ax = plt.subplots(1)
-    plot_bp_solution(ax, j_list, b=0.1, tol=1e-12, min_r=-20, max_r=20,
-                     w_size=0.01)
     
+    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.,
+    #                             num_iter=40, thr=1e-8, theta=gn.return_theta())
+    # j_list=np.arange(0.001, 1, 0.001)
+    # fig, ax = plt.subplots(ncols=1)
+    # plot_bp_solution(ax, j_list, b=0.05, tol=1e-10,
+    #                  min_r=-15, max_r=15,
+    #                  w_size=0.01, n_neigh=3,
+    #                  color='r')
+
