@@ -13,8 +13,8 @@ import gibbs_necker as gn
 import mean_field_necker as mfn
 from scipy.optimize import fsolve, bisect, root
 from scipy.integrate import solve_ivp
-import numpy as np
 from matplotlib.lines import Line2D
+import matplotlib.pylab as pl
 
 THETA = gn.THETA
 
@@ -437,6 +437,111 @@ def plot_dyn_sys_BP_solution():
     plt.ylim(-0.05, 1.05)
     plt.xlabel('J')
     plt.ylabel('q')
+    
+
+def sols(b, jp, N):
+    """
+    returns value of epsilon ,from solution r=1+epsilon from BP
+    with bias (after expanding exp(2B) to 1+2B)
+    """
+    a = 2*b
+    j = np.exp(2*jp)
+    return a*(j-1) / (N-j*(N-1)+j)
+
+
+def g(r, b, j, N):
+    return np.exp(2*b)*r**N - np.exp(2*(j+b))*r**(N-1) + np.exp(2*j)*r-1
+
+
+def g_tay(r, b, j, N):
+    return r**N * (1+2*b)- np.exp(2*(j))*r**(N-1)*(1+2*b) + np.exp(2*j)*r-1
+
+
+def g_der(b, jp, N):
+    """
+    Returns value of derivative of solution of the polynomial from
+    the solution of the BP with bias, evaluated at 1+epsilon and 
+    with exp(2B) expanded as 1+2B.
+    """
+    j = np.exp(2*jp)
+    a = 2*b
+    return N*(1+a)*(1+(N-1)*sols(b,jp,N))-(N-1)*j*(1+a)*(1+(N-2)*sols(b,jp,N))+j
+
+
+def solution_of_g_with_stim(b, N, pos_sqrt=False):
+    # b = np.exp(2*b)
+    b = 2*b
+    if pos_sqrt:
+        val = 1
+    else:
+        val = -1
+    # return np.log((b*N-2*b-2
+    #                 + val* np.sqrt((-b*N+2*b+2)**2 - 4 *
+    #                           (-N*b*b+b*b+b+N) *
+    #                           (b*b*N-b*b +b*N - b - N +2))) /
+    #               (2 * (b*b*N - b*b + b*N - b - N + 2)))/2
+    return np.log((-1-b
+                    + val* np.sqrt((1+b)**2 -4*(2+b)*(-2*N*b**2+2*(2+b)*N**2))) /
+                  (2 * (2+b)))/2
+    # numerator = (-np.sqrt((-b * N**2 + 2 * b * N - N**2 + 3 * N)**2 - 4 * (b**2 * N - b**2 + b * N - b - N + 2) * (b**2 * (-N) + b**2 + b * N**2 - b * N + b + N**2)) + b * N**2 - 2 * b * N + N**2 - 3 * N)
+    # denominator = 2 * (b**2 * N - b**2 + b * N - b - N + 2)
+    # x = numerator / denominator
+    # return np.log(x)/2
+
+
+def plot_sol_j_vs_N(stim_list=[0, .01, 0.05, 0.1],
+                    N_list=np.arange(3, 20)):
+    plt.figure()
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(stim_list)))
+    for i_s, st in enumerate(stim_list):
+        plt.plot(N_list, solution_of_g_with_stim(st, N_list), alpha=1, color=colormap[i_s],
+                 label=st)
+    plt.plot(N_list, 0.5*np.log(N_list/(N_list-2)), label='orig b=0',
+             color='r', linestyle='--')
+    plt.legend(title='B')
+    plt.xlabel('N')
+    plt.ylabel('J*')
+
+
+def plot_g_and_j_approx_sol(N, j, b_val):
+    r=np.arange(-0.5, 1.5, 1e-4)
+    colors = ['b', 'g', 'k']
+    plt.figure()
+    for i_b, b in enumerate([0, b_val]):
+        plt.plot(r,g(r, b, j, N), label=b, color=colors[i_b])
+        plt.axvline(1+sols(b,j,N), color=colors[i_b])
+    plt.legend(title='B')
+    plt.xlabel('r')
+    plt.ylabel(r'$g(r,J,B,N)$')
+    plt.title('J = {}, N = {}'.format(j, N))
+    plt.axhline(0, color='r')
+    eps = np.abs(sols(b,j,N))
+    plt.xlim(1-4*eps, 1+4*eps)
+    plt.ylim(-4*eps, 4*eps)
+
+
+def plot_g_der_sols(N, plot_der=False):
+    if plot_der:
+        func = g_der
+        title = 'derivative at r=1+e'
+    else:
+        func = sols
+        title = 'epsilon'
+    plt.figure()
+    bvals = np.linspace(-0.025, 0.025, 1001)
+    jvals = np.linspace(0., 1.0, 1001)
+    bv, jv = np.meshgrid(bvals, jvals)
+    z = func(bv, jv, N)
+    im = plt.imshow(np.flipud(z), cmap='coolwarm', vmin=-2, vmax=2)
+    cb = plt.colorbar(im)
+    cb.ax.set_title(title)
+    plt.yticks(np.arange(0, 1001, 100), np.round(jvals[::100], 2)[::-1])
+    plt.ylabel('J')
+    plt.xticks(np.arange(0, 1001, 100), np.round(bvals[::100], 3))
+    plt.xlabel('B')
+    plt.axhline(1000-np.log(N/(N-2))*0.5*1e3, color='k')
+    plt.title(title + ', N = '+str(N))
+
 
 def plot_solutions_BP_depending_neighbors(j_list=np.arange(0.001, 1, 0.001),
                                           neigh_list=[3, 4, 5]):
@@ -452,13 +557,13 @@ def plot_solutions_BP_depending_neighbors(j_list=np.arange(0.001, 1, 0.001),
 
 
 if __name__ == '__main__':
-    for stim in [0.1]:
-        plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=50,
-                              j_list=np.arange(0.00001, 1, 0.01),
-                              thr=1e-12, stim=stim)
+    # for stim in [0.1]:
+    #     plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=50,
+    #                           j_list=np.arange(0.00001, 1, 0.01),
+    #                           thr=1e-12, stim=stim)
     
-    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.,
-    #                             num_iter=40, thr=1e-8, theta=gn.return_theta())
+    posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.2,
+                               num_iter=40, thr=1e-8, theta=gn.return_theta())
     # j_list=np.arange(0.001, 1, 0.001)
     # fig, ax = plt.subplots(ncols=1)
     # plot_bp_solution(ax, j_list, b=0.05, tol=1e-10,
