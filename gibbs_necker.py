@@ -666,27 +666,31 @@ def plot_prob_basic_model_coupling(n_iter, wpslist=np.linspace(0, 3, 100),
     # ax[1].plot(wpslist, stdlist, color='k')
 
 
-def prob_markov_chain_between_states(n_iter=int(1e6)):
+def prob_markov_chain_between_states(n_iter=int(1e7), tau=8000):
     # init_state = np.random.choice([-1, 1])
-    init_state = 0
-    tau = 8000  # equivalent to J=?, tau=8000 equivalent to J=1
+    # tau equivalent to J=?, tau=8000 equivalent to J=1
     eps = 1-np.exp(-1/tau)
     ps = 1-eps
     pt = eps
-    chain = [init_state]
-    # p_list = []
-    transition_matrix = np.array(((ps, pt), (pt, ps)))
-    mu_list = []
-    for i in range(1, n_iter):
-        if chain[i-1] == 0:
-            change = np.random.choice([0, 1], p=transition_matrix[0])
-            # p_list.append(transition_matrix[1][change])
-        if chain[i-1] == 1:
-            change = np.random.choice([0, 1], p=transition_matrix[1])
-            # p_list.append(transition_matrix[1][change])
-        chain.append(change)
-    mu_list = np.cumsum(chain)
-    mu_list_norm = mu_list / np.arange(len(mu_list))
+    mu_all = np.zeros((2, n_iter))
+    for init_state in [0]:
+        chain = [init_state]
+        # p_list = []
+        transition_matrix = np.array(((ps, pt), (pt, ps)))
+        mu_list = []
+        for i in range(1, n_iter):
+            if chain[i-1] == 0:
+                change = np.random.choice([0, 1], p=transition_matrix[0])
+                # p_list.append(transition_matrix[1][change])
+            if chain[i-1] == 1:
+                change = np.random.choice([0, 1], p=transition_matrix[1])
+                # p_list.append(transition_matrix[1][change])
+            chain.append(change)
+        mu_list = np.cumsum(chain)
+        mu_list_norm = mu_list / np.arange(len(mu_list))
+        mu_all[init_state, :] = mu_list_norm
+    # mu_all[np.isinf(mu_all)] = 0
+    # mu_list_norm = np.nansum(mu_all, axis=0)
     # p_mu_N_1 = []
     # chain = np.array(chain)
     # for i_c, stat in enumerate(chain):
@@ -695,23 +699,37 @@ def prob_markov_chain_between_states(n_iter=int(1e6)):
     #     # p(X_N=0)*eps if prev state was 1, else p(X_N=0)*(1-eps)
     #     p_mu_N_x0 = np.mean(chain[:(i_c+1)] == 0)*transition_matrix[0][chain[i_c]]
     #     p_mu_N_1.append(p_mu_N_x1+p_mu_N_x0)
-    p_mu_N_1_x1 = []
-    chain = np.array(chain)
-    for i_c, stat in enumerate(chain):
-        # p(X_{N+1}=1)*eps if prev state was 0, if was 1 p(X_N=1)*(1-eps)
-        p_mu_N_x1 = np.mean(chain[:(i_c+1)] == 1)*(1-eps)
-        p_mu_N_x0 = np.mean(chain[:(i_c+1)] == 0)*eps
-        p_mu_N_1_x1.append(p_mu_N_x1+p_mu_N_x0)
-    vals_to_plot = np.logspace(4, 6, 9, dtype=int)
+    # p_mu_N_1_x1 = []
+    # chain = np.array(chain)
+    # for i_c, stat in enumerate(chain):
+    #     # p(X_{N+1}=1)*eps if prev state was 0, if was 1 p(X_N=1)*(1-eps)
+    #     p_mu_N_x1 = np.mean(chain[:(i_c+1)] == 1)*(1-eps)
+    #     p_mu_N_x0 = np.mean(chain[:(i_c+1)] == 0)*eps
+    #     p_mu_N_1_x1.append(p_mu_N_x1+p_mu_N_x0)
+    vals_to_plot = np.logspace(4, np.log10(n_iter), 10, dtype=int)
     colormap = pl.cm.Blues(np.linspace(0.08, 1, len(vals_to_plot)))
     fig, ax = plt.subplots(1)
+    lsts = [':', 'solid']
     for j in range(len(vals_to_plot)):
         # ax2 = ax.twinx()
-        sns.kdeplot(mu_list_norm[:vals_to_plot[j]],
-                    common_norm=False, color=colormap[j],
-                    ax=ax, bw_adjust=3, label=vals_to_plot[j])
+        for init_state in [0, 1]:
+            if init_state == 2:
+                vals = np.random.beta((vals_to_plot[j])/tau,
+                                      (vals_to_plot[j])/tau,
+                                      100000)
+                sns.kdeplot(vals, label='beta: ' + str(vals_to_plot[j]),
+                            color=colormap[j], linestyle='--')
+            sns.kdeplot(mu_all[init_state, :vals_to_plot[j]],
+                        color=colormap[j],
+                        common_norm=False, linestyle=lsts[init_state],
+                        ax=ax, bw_adjust=3,
+                        label='IS' + str(init_state) + ', ' + str(vals_to_plot[j]))
         # ax2.spines['right'].set_visible(False)
         # ax2.spines['top'].set_visible(False)
+    ax.legend(title='N')
+    ax.set_xlim(-0.05, 1.05)
+    ax.axvline(0.5, color='r', linestyle='--', alpha=0.4)
+    ax.set_xlabel('')
     # p_N(mu) = p_N(mu, x_N=0) + p_N(mu, x_N=1)
     # p_N+1(mu, x_N=1) = p_N(mu-1, x_N=1)*(1-eps) + p_N(mu-1, x_N=0)*eps
         
@@ -753,7 +771,7 @@ def sol_magnetization_hex_lattice(j_list, b):
     
 
 
-def true_posterior_stim(stim_list=np.linspace(-0.05, 0.05, 1000), j=0.5,
+def true_posterior_stim(stim_list=np.linspace(-2, 2, 1000), j=0.5,
                         theta=THETA, data_folder=DATA_FOLDER):
     posterior_stim = data_folder + str(theta.shape[0]) + '_' + str(j) + '_post_stim.npy'
     os.makedirs(os.path.dirname(posterior_stim), exist_ok=True)
@@ -868,4 +886,5 @@ if __name__ == '__main__':
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
     #                       wsize=1, stim=-0.1)
     # t = transition_matrix(0.2, C)
-    plot_cylinder_true_posterior(j=0.2, stim=0.05, theta=THETA)
+    prob_markov_chain_between_states(n_iter=int(1e6), tau=100)
+    # plot_cylinder_true_posterior(j=0.2, stim=0.05, theta=THETA)
