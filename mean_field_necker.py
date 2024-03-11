@@ -65,8 +65,8 @@ def mean_field_stim(J, num_iter, stim, sigma=1, theta=theta, val_init=None):
     for i in range(num_iter):
         for q in range(theta.shape[0]):
             neighbours = theta[q].astype(dtype=bool)
-            th_vals = theta[q][theta[q] != 0]
-            vec[q] = gn.sigmoid(2*(sum(J*th_vals*(2*vec[neighbours]-1)+stim))+np.random.randn()*sigma) 
+            # th_vals = theta[q][theta[q] != 0]
+            vec[q] = gn.sigmoid(2*(sum(J*(2*vec[neighbours]-1)+stim))+np.random.randn()*sigma) 
         vec_time[i, :] = vec
     return vec_time
 
