@@ -6,6 +6,7 @@ Created on Thu Oct 19 10:45:48 2023
 """
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import scipy
 import itertools
@@ -666,70 +667,64 @@ def plot_prob_basic_model_coupling(n_iter, wpslist=np.linspace(0, 3, 100),
     # ax[1].plot(wpslist, stdlist, color='k')
 
 
-def prob_markov_chain_between_states(n_iter=int(1e7), tau=8000):
+def prob_markov_chain_between_states(n_iter_list=np.logspace(0, 4, 5),
+                                     tau=8000, iters_per_len=1000):
     # init_state = np.random.choice([-1, 1])
     # tau equivalent to J=?, tau=8000 equivalent to J=1
     eps = 1-np.exp(-1/tau)
     ps = 1-eps
     pt = eps
-    mu_all = np.zeros((2, n_iter))
-    for init_state in [0]:
-        chain = [init_state]
-        # p_list = []
-        transition_matrix = np.array(((ps, pt), (pt, ps)))
+    mu_vals_all = np.empty((len(n_iter_list), iters_per_len))
+    mu_vals_all[:] = np.nan
+    for i_n, n_iter in enumerate(n_iter_list):
         mu_list = []
-        for i in range(1, n_iter):
-            if chain[i-1] == 0:
-                change = np.random.choice([0, 1], p=transition_matrix[0])
-                # p_list.append(transition_matrix[1][change])
-            if chain[i-1] == 1:
-                change = np.random.choice([0, 1], p=transition_matrix[1])
-                # p_list.append(transition_matrix[1][change])
-            chain.append(change)
-        mu_list = np.cumsum(chain)
-        mu_list_norm = mu_list / np.arange(len(mu_list))
-        mu_all[init_state, :] = mu_list_norm
-    # mu_all[np.isinf(mu_all)] = 0
-    # mu_list_norm = np.nansum(mu_all, axis=0)
-    # p_mu_N_1 = []
-    # chain = np.array(chain)
-    # for i_c, stat in enumerate(chain):
-    #     # p(X_N=1)*eps if prev state was 0, else p(X_N=1)*(1-eps)
-    #     p_mu_N_x1 = np.mean(chain[:(i_c+1)] == 1)*transition_matrix[1][chain[i_c]]
-    #     # p(X_N=0)*eps if prev state was 1, else p(X_N=0)*(1-eps)
-    #     p_mu_N_x0 = np.mean(chain[:(i_c+1)] == 0)*transition_matrix[0][chain[i_c]]
-    #     p_mu_N_1.append(p_mu_N_x1+p_mu_N_x0)
-    # p_mu_N_1_x1 = []
-    # chain = np.array(chain)
-    # for i_c, stat in enumerate(chain):
-    #     # p(X_{N+1}=1)*eps if prev state was 0, if was 1 p(X_N=1)*(1-eps)
-    #     p_mu_N_x1 = np.mean(chain[:(i_c+1)] == 1)*(1-eps)
-    #     p_mu_N_x0 = np.mean(chain[:(i_c+1)] == 0)*eps
-    #     p_mu_N_1_x1.append(p_mu_N_x1+p_mu_N_x0)
-    vals_to_plot = np.logspace(4, np.log10(n_iter), 10, dtype=int)
-    colormap = pl.cm.Blues(np.linspace(0.08, 1, len(vals_to_plot)))
+        for j in range(iters_per_len):
+            transition_matrix = np.array(((ps, pt), (pt, ps)))
+            init_state = np.random.choice([0, 1])            
+            chain = [init_state]
+            # p_list = []
+            for i in range(1, int(n_iter)):
+                if chain[i-1] == 0:
+                    change = np.random.choice([0, 1], p=transition_matrix[0])
+                    # p_list.append(transition_matrix[1][change])
+                if chain[i-1] == 1:
+                    change = np.random.choice([0, 1], p=transition_matrix[1])
+                    # p_list.append(transition_matrix[1][change])
+                chain.append(change)
+            mu_list.append(np.mean(chain))
+        mu_vals_all[i_n, :] = mu_list
+    # dict_pd = {}
+    # for i_n, n_iter in enumerate(n_iter_list):
+    #     dict_pd[str(n_iter)] = mu_vals_all[i_n, :]
+    # df = pd.DataFrame(dict_pd)
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(n_iter_list)))
     fig, ax = plt.subplots(1)
-    lsts = [':', 'solid']
-    for j in range(len(vals_to_plot)):
+    f2, ax2 = plt.subplots(1)
+    sdlist = []
+    sdlist_beta = []
+    for j in range(len(n_iter_list)):
         # ax2 = ax.twinx()
-        for init_state in [0, 1]:
-            if init_state == 2:
-                vals = np.random.beta((vals_to_plot[j])/tau,
-                                      (vals_to_plot[j])/tau,
-                                      100000)
-                sns.kdeplot(vals, label='beta: ' + str(vals_to_plot[j]),
-                            color=colormap[j], linestyle='--')
-            sns.kdeplot(mu_all[init_state, :vals_to_plot[j]],
-                        color=colormap[j],
-                        common_norm=False, linestyle=lsts[init_state],
-                        ax=ax, bw_adjust=3,
-                        label='IS' + str(init_state) + ', ' + str(vals_to_plot[j]))
+        vals = np.random.beta((n_iter_list[j])/tau,
+                              (n_iter_list[j])/tau,
+                              iters_per_len)
+        sns.kdeplot(vals, label='beta: ' + str(n_iter_list[j]),
+                    color=colormap[j], linestyle='--', ax=ax2)
+        # sdlist.append(np.nanstd(mu_vals_all[j, :]))
+        # sdlist_norm.append(1/(4*(2*(n_iter_list[j])/tau+1)))
+        # sdlist_beta.append(np.nanstd(vals))
+        sns.kdeplot(mu_vals_all[j, :],
+                    color=colormap[j],
+                    common_norm=False,
+                    ax=ax, bw_adjust=1,
+                    label=str(n_iter_list[j]))
         # ax2.spines['right'].set_visible(False)
         # ax2.spines['top'].set_visible(False)
     ax.legend(title='N')
-    ax.set_xlim(-0.05, 1.05)
-    ax.axvline(0.5, color='r', linestyle='--', alpha=0.4)
-    ax.set_xlabel('')
+    for a in [ax, ax2]:
+        a.set_xlim(-0.05, 1.05)
+        a.axvline(0.5, color='r', linestyle='--', alpha=0.4)
+        a.set_xlabel('')
+    ax2.set_title('Beta')
     # p_N(mu) = p_N(mu, x_N=0) + p_N(mu, x_N=1)
     # p_N+1(mu, x_N=1) = p_N(mu-1, x_N=1)*(1-eps) + p_N(mu-1, x_N=0)*eps
         
@@ -886,5 +881,6 @@ if __name__ == '__main__':
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
     #                       wsize=1, stim=-0.1)
     # t = transition_matrix(0.2, C)
-    prob_markov_chain_between_states(n_iter=int(1e6), tau=100)
+    prob_markov_chain_between_states(tau=100, iters_per_len=200,
+                                     n_iter_list=np.logspace(0, 4, 5))
     # plot_cylinder_true_posterior(j=0.2, stim=0.05, theta=THETA)
