@@ -95,6 +95,63 @@ def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5, stim=0):
     return q_y_1, q_y_neg1, n+1
 
 
+def Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, stim=0):
+    """
+    Computes the exact approximate probability of having a front perception for
+    the depth of the 8 nodes.
+    Input:
+    - theta {matrix}: matrix that defines the Necker cube
+    - J {double}: coupling strengs
+    - num_iter {integer}: number of iterations for the algorithm to run
+    Output:
+    - return a list of lenght 8 with the approximate depth probabilities
+    """
+    # multiply arrays element wise
+    mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    mat_memory_1 = np.copy(mu_y_1)
+    mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    mat_memory_neg1 = np.copy(mu_y_neg1)
+    for n in range(num_iter):
+        mat_memory_1 = np.copy(mu_y_1)
+        mat_memory_neg1 = np.copy(mu_y_neg1)
+        # for all the nodes that i is connected
+        for i in range(theta.shape[0]):
+            for t in np.where(theta[i, :] != 0)[0]:
+                # positive y_i
+                mu_y_1[t, i] = np.exp(j*theta[i, t]+stim) *\
+                        (mu_y_1[jneigbours(t, i, theta=theta)[0], t]*
+                         mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
+                        + np.exp(-j*theta[i, t]-stim)**(alpha) *\
+                        (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
+                         mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
+                # mu_y_1 += np.random.rand(8, 8)*1e-3
+                # negative y_i
+                mu_y_neg1[t, i] = np.exp(-j*theta[i, t]+stim) *\
+                    (mu_y_1[jneigbours(t, i, theta=theta)[0], t] *\
+                     mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
+                    + np.exp(j*theta[i, t]-stim)**(alpha) *\
+                    (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
+                     mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
+
+                m_y_1_memory = np.copy(mu_y_1[t, i])
+                mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                # mu_y_neg1 += np.random.rand(8, 8)*1e-3
+        if np.sqrt(np.sum(mat_memory_1 - mu_y_1)**2) and\
+            np.sqrt(np.sum(mat_memory_neg1 - mu_y_neg1)**2) <= thr:
+            break
+    q_y_1 = np.zeros(theta.shape[0])
+    q_y_neg1 = np.zeros(theta.shape[0])
+    for i in range(theta.shape[0]):
+        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(stim)
+        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-stim)
+        q_y_1[i] = q1/(q1+qn1)
+        q_y_neg1[i] = qn1/(q1+qn1)
+    # gn.plot_cylinder(q=q_y_1.reshape(5, 10, 2),
+    #                  columns=5, rows=10, layers=2, offset=0.4, minmax_norm=True)
+    return q_y_1, q_y_neg1, n+1
+
+
 def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
                                num_iter=100, thr=1e-12, theta=THETA,
                                data_folder=DATA_FOLDER):
@@ -134,7 +191,7 @@ def plot_loopy_b_prop_sol_difference(theta, num_iter, j_list=np.arange(0, 1, 0.1
 
 
 def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
-                          thr=1e-15, stim=0.1):
+                          thr=1e-15, stim=0.1, alpha=1):
     lp = []
     ln = []
     nlist = []
@@ -290,6 +347,33 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
     # solution = root(r_stim, args=(j_e, b_e), x0=x0, tol=1e-12,
     #                 method='broyden2').x
     return sols
+
+
+def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1, 0.01),
+                          b_list=np.arange(-0.5, 0.5, 0.01),
+                          tol=1e-12, min_r=-20, max_r=20,
+                          w_size=0.1, neigh_list=np.arange(3, 11)):
+    ax = plt.figure().add_subplot(projection='3d')
+    for n_neigh in neigh_list:
+        print(n_neigh)
+        first_j = []
+        for i_b, b in enumerate(b_list):
+            for j in j_list:
+                sol = find_solution_bp(j, b=b, min_r=min_r, max_r=max_r, w_size=w_size,
+                                       tol=tol, n_neigh=n_neigh)
+                if len(sol) > 1:
+                    first_j.append(j)
+                    break
+            if len(first_j) != (i_b+1):
+                first_j.append(np.nan)
+        z = np.repeat(n_neigh, len(first_j))
+        ax.plot3D(z, b_list, first_j, color='k')
+    vals_b0 = np.log(neigh_list / (neigh_list - 2)) / 2
+    ax.plot3D(neigh_list, np.repeat(0, len(neigh_list)), vals_b0,
+              color='r', linestyle='--')
+    ax.set_xlabel('N')
+    ax.set_ylabel('B')
+    ax.set_zlabel('J*')
 
 
 def plot_j_b_crit_BP(j_list=np.arange(0.001, 1, 0.001),
@@ -475,14 +559,11 @@ def solution_of_g_with_stim(b, N, pos_sqrt=False):
         val = 1
     else:
         val = -1
-    # return np.log((b*N-2*b-2
-    #                 + val* np.sqrt((-b*N+2*b+2)**2 - 4 *
-    #                           (-N*b*b+b*b+b+N) *
-    #                           (b*b*N-b*b +b*N - b - N +2))) /
-    #               (2 * (b*b*N - b*b + b*N - b - N + 2)))/2
-    return np.log((-1-b
-                    + val* np.sqrt((1+b)**2 -4*(2+b)*(-2*N*b**2+2*(2+b)*N**2))) /
-                  (2 * (2+b)))/2
+    return np.log((b*N-2*b-2
+                    + val* np.sqrt((-b*N+2*b+2)**2 - 4 *
+                              (-N*b*b+b*b+b+N) *
+                              (b*b*N-b*b +b*N - b - N +2))) /
+                  (2 * (b*b*N - b*b + b*N - b - N + 2)))/2
     # numerator = (-np.sqrt((-b * N**2 + 2 * b * N - N**2 + 3 * N)**2 - 4 * (b**2 * N - b**2 + b * N - b - N + 2) * (b**2 * (-N) + b**2 + b * N**2 - b * N + b + N**2)) + b * N**2 - 2 * b * N + N**2 - 3 * N)
     # denominator = 2 * (b**2 * N - b**2 + b * N - b - N + 2)
     # x = numerator / denominator
@@ -557,13 +638,13 @@ def plot_solutions_BP_depending_neighbors(j_list=np.arange(0.001, 1, 0.001),
 
 
 if __name__ == '__main__':
-    # for stim in [0.1]:
-    #     plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=50,
-    #                           j_list=np.arange(0.00001, 1, 0.01),
-    #                           thr=1e-12, stim=stim)
+    for stim in [0., 0.1, 0.2]:
+        plot_loopy_b_prop_sol(theta=THETA, num_iter=100,
+                              j_list=np.arange(0.00001, 1, 0.01),
+                              thr=1e-12, stim=stim)
     
-    posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.2,
-                               num_iter=40, thr=1e-8, theta=gn.return_theta())
+    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.2,
+    #                            num_iter=40, thr=1e-8, theta=gn.return_theta())
     # j_list=np.arange(0.001, 1, 0.001)
     # fig, ax = plt.subplots(ncols=1)
     # plot_bp_solution(ax, j_list, b=0.05, tol=1e-10,

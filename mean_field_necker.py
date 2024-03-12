@@ -222,9 +222,9 @@ def plot_mf_sol_stim_bias_different_sols(j_list, stim=0.1, num_iter=500,
     plt.ylabel('q')
 
 
-def backwards(q, j, beta):
+def backwards(q, j, beta, n_neigh=3):
     if 0 <= q <= 1:
-        q_new = 0.5*(1+ 1/j *(1/6 * np.log(q/(1-q)) - beta))
+        q_new = 0.5*(1+ 1/j *(1/(2*n_neigh) * np.log(q/(1-q)) - beta))
     else:
         q_new = np.nan
     return q_new
@@ -320,6 +320,34 @@ def plot_sols_mf_bias_stim_changing_j(j_list=[0.55, 0.6, 0.65, 0.7, 0.75, 0.8],
         ax[i_j].set_title('J='+str(round(j, 2)))
         ax[i_j].set_ylabel(r'$f(q, J)$')
         ax[i_j].set_xlabel(r'$q$')
+
+
+
+def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
+                           beta_list=np.arange(-0.5, 0.5, 0.001),
+                           neigh_list=np.arange(3, 11)):
+    ax = plt.figure().add_subplot(projection='3d')
+    for n_neigh in neigh_list:
+        first_j = []
+        for i_b, beta in enumerate(beta_list):
+            for j in j_list:
+                q_fin = 0.65
+                for i in range(num_iter):
+                    q_fin = backwards(q_fin, j, beta, n_neigh)
+                if ~np.isnan(q_fin):
+                    first_j.append(j)
+                    break
+            if len(first_j) != (i_b+1):
+                first_j.append(np.nan)
+        z = np.repeat(n_neigh, len(first_j))
+        ax.plot3D(z, beta_list, first_j, color='k')
+    vals_b0 = 1 / neigh_list
+    ax.plot3D(neigh_list, np.repeat(0, len(neigh_list)), vals_b0,
+              color='r', linestyle='--')
+    ax.set_xlabel('N')
+    ax.set_ylabel('B')
+    ax.set_zlabel('J*')
+
 
 
 def plot_crit_J_vs_B(j_list, num_iter=200, beta_list=np.arange(-0.5, 0.5, 0.001)):
