@@ -13,6 +13,7 @@ import gibbs_necker as gn
 import mean_field_necker as mfn
 from scipy.optimize import fsolve, bisect, root
 from scipy.integrate import solve_ivp
+import matplotlib as mpl
 from matplotlib.lines import Line2D
 import matplotlib.pylab as pl
 
@@ -333,12 +334,14 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
         else:
             solution_bisection = bisect(r_stim, a=a, b=b,
                                         args=(j_e, b_e, n_neigh),
-                                        xtol=1e-8)
+                                        xtol=1e-12)
             if len(sols) > 0:
                 if (np.abs(np.array(sols) - solution_bisection).any()> tol):
                     sols.append(solution_bisection)
             else:
                 sols.append(solution_bisection)
+            if len(sols) == 3:
+                break
             count += 1
         
     # solution = fsolve(r_stim, fprime=r_stim_prime,
@@ -349,11 +352,19 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
     return sols
 
 
-def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1, 0.01),
+def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
                           b_list=np.arange(-0.5, 0.5, 0.01),
                           tol=1e-12, min_r=-20, max_r=20,
-                          w_size=0.1, neigh_list=np.arange(3, 11)):
-    ax = plt.figure().add_subplot(projection='3d')
+                          w_size=0.1, neigh_list=np.arange(3, 11),
+                          dim3=False):
+    if dim3:
+        ax = plt.figure().add_subplot(projection='3d')
+    else:
+        fig, ax = plt.subplots(1)
+        fig2, ax2 = plt.subplots(1)
+        ax2.set_xlabel('B')
+        ax2.set_ylabel(r'$( J^{*}_{sim.} - J^{*}_{app.})^2$')
+        colormap = pl.cm.Blues(np.linspace(0.2, 1, len(neigh_list)))
     for n_neigh in neigh_list:
         print(n_neigh)
         first_j = []
@@ -367,13 +378,53 @@ def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1, 0.01),
             if len(first_j) != (i_b+1):
                 first_j.append(np.nan)
         z = np.repeat(n_neigh, len(first_j))
-        ax.plot3D(z, b_list, first_j, color='k')
+        if dim3:
+            ax.plot3D(z, b_list, first_j, color='k')
+        else:
+            sol_list = []
+            for b in b_list:
+                solution = fsolve(equation_for_g_derivative_at_1_eps_no_small,
+                                  args=(b, n_neigh), x0=3, xtol=1e-10,
+                                  maxfev=1000)
+                sol_list.append(np.log(solution[0])/2)
+            first_j_arr = np.array(first_j)
+            ax2.plot(b_list, (np.array(sol_list)-first_j_arr)**2,
+                     color=colormap[int(n_neigh-np.min(neigh_list))])
+            ax.plot(b_list, first_j, color=colormap[int(n_neigh-min(neigh_list))],
+                    label=n_neigh)
+            # ax.plot(0, np.log(n_neigh/(n_neigh-2))/2, marker='o', color='k')
     vals_b0 = np.log(neigh_list / (neigh_list - 2)) / 2
-    ax.plot3D(neigh_list, np.repeat(0, len(neigh_list)), vals_b0,
-              color='r', linestyle='--')
-    ax.set_xlabel('N')
-    ax.set_ylabel('B')
-    ax.set_zlabel('J*')
+    # vals = solution_of_g_with_stim(-0.01, neigh_list, pos_sqrt=False)
+    # ax.plot3D(neigh_list, np.repeat(-0.01, len(neigh_list)), vals, color='b')
+    if dim3:
+        ax.plot3D(neigh_list, np.repeat(0, len(neigh_list)), vals_b0,
+                  color='r', linestyle='--')
+        ax.set_xlabel('N')
+        ax.set_ylabel('B')
+        ax.set_zlabel('J*')
+    else:
+        ax.set_xlabel('B')
+        ax.set_ylabel('J*')
+        ax_pos = ax.get_position()
+        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
+                                ax_pos.width*0.06, ax_pos.height*0.5])
+        newcmp = mpl.colors.ListedColormap(colormap)
+        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp)
+        ax_cbar.set_title('N')
+        ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
+                                         int(np.mean(neigh_list)),
+                                         np.max(neigh_list)])
+        ax_pos = ax2.get_position()
+        ax_cbar = fig2.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
+                                 ax_pos.width*0.06, ax_pos.height*0.5])
+        newcmp = mpl.colors.ListedColormap(colormap)
+        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp)
+        ax_cbar.set_title('N')
+        ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
+                                         np.mean(neigh_list),
+                                         np.max(neigh_list)])
+        fig.savefig(DATA_FOLDER+'/J_vs_NB_BP.png', dpi=400, bbox_inches='tight')
+        fig2.savefig(DATA_FOLDER+'/J_vs_NB_BP_error.png', dpi=400, bbox_inches='tight')
 
 
 def plot_j_b_crit_BP(j_list=np.arange(0.001, 1, 0.001),
@@ -537,6 +588,10 @@ def g(r, b, j, N):
     return np.exp(2*b)*r**N - np.exp(2*(j+b))*r**(N-1) + np.exp(2*j)*r-1
 
 
+def dg_dr(j, b, r, N):
+    return N*np.exp(2*b)*r**(N-1) - (N-1)*np.exp(2*(j+b))*r**(N-2) + np.exp(2*j)
+
+
 def g_tay(r, b, j, N):
     return r**N * (1+2*b)- np.exp(2*(j))*r**(N-1)*(1+2*b) + np.exp(2*j)*r-1
 
@@ -568,6 +623,53 @@ def solution_of_g_with_stim(b, N, pos_sqrt=False):
     # denominator = 2 * (b**2 * N - b**2 + b * N - b - N + 2)
     # x = numerator / denominator
     # return np.log(x)/2
+
+
+def equation_for_g_derivative_at_1_eps(x, b, N):
+    lhs = sols(b, np.log(x)/2, N)
+    b = 2*b
+    rhs_numerator = x*(b+2) - (b+1)*(N)*(x-1)
+    rhs_denominator = (b+1)*(N-1)*(N*(x-1)-2*x)
+    return lhs*rhs_denominator - rhs_numerator
+
+
+def equation_for_g_derivative_at_1_eps_no_small(x, b, N):
+    eps = sols(b, np.log(x)/2, N)
+    b = 2*b
+    eq = N*(1+b)*(1+eps)**(N-1) - (N-1)*(1+b)*x*(1+eps)**(N-2) + x
+    return eq
+
+
+def solve_equation_g_derivative(neigh_list = np.arange(3, 10),
+                                b_list=np.arange(-0.1, 0.1, 0.001),
+                                fun_approx=False):
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(neigh_list)))
+    fig, ax = plt.subplots(1)
+    if fun_approx:
+        fun = equation_for_g_derivative_at_1_eps
+    else:
+        fun = equation_for_g_derivative_at_1_eps_no_small
+    for n in neigh_list:
+        sol_list = []
+        for b in b_list:
+            solution = fsolve(fun,
+                                args=(b, n), x0=3, xtol=1e-10,
+                                maxfev=1000)
+            sol_list.append(np.log(solution)/2)
+        plt.plot(b_list, sol_list, color=colormap[int(n-np.min(neigh_list))])
+        plt.plot(0, np.log(n/(n-2))/2, marker='o', color='k')
+    plt.xlabel('B')
+    plt.ylabel('J*')
+    ax_pos = ax.get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
+                            ax_pos.width*0.06, ax_pos.height*0.5])
+    newcmp = mpl.colors.ListedColormap(colormap)
+    mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp)
+    ax_cbar.set_title('N')
+    ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
+                                     np.mean(neigh_list),
+                                     np.max(neigh_list)])
+    fig.savefig(DATA_FOLDER + 'J_vs_NB_numerical_poly_solution_BP.png')
 
 
 def plot_sol_j_vs_N(stim_list=[0, .01, 0.05, 0.1],
@@ -638,13 +740,20 @@ def plot_solutions_BP_depending_neighbors(j_list=np.arange(0.001, 1, 0.001),
 
 
 if __name__ == '__main__':
-    for stim in [0., 0.1, 0.2]:
-        plot_loopy_b_prop_sol(theta=THETA, num_iter=100,
-                              j_list=np.arange(0.00001, 1, 0.01),
-                              thr=1e-12, stim=stim)
+    # for stim in [0., 0.1, 0.2]:
+    #     plot_loopy_b_prop_sol(theta=THETA, num_iter=100,
+    #                           j_list=np.arange(0.00001, 1, 0.01),
+    #                           thr=1e-12, stim=stim)
     
     # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.2,
-    #                            num_iter=40, thr=1e-8, theta=gn.return_theta())
+    #                             num_iter=40, thr=1e-8, theta=gn.return_theta())
+    plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
+                          b_list=np.arange(-0.5, 0.5, 0.01),
+                          tol=1e-12, min_r=0, max_r=20,
+                          w_size=0.01, neigh_list=np.arange(3, 12),
+                          dim3=False)
+    plt.figure()
+    solve_equation_g_derivative()
     # j_list=np.arange(0.001, 1, 0.001)
     # fig, ax = plt.subplots(ncols=1)
     # plot_bp_solution(ax, j_list, b=0.05, tol=1e-10,
