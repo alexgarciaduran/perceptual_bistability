@@ -178,7 +178,7 @@ def find_repulsor(j=0.1, num_iter=20, q_i=0.001, q_f=0.999,
 
 
 def plot_mf_sol_stim_bias_different_sols(j_list, stim=0.1, num_iter=500,
-                                         theta=theta, ind_list=[4, 12, 2]):
+                                         theta=theta):
     vals_all_1 = np.empty((theta.shape[0], len(j_list)))
     vals_all_1[:] = np.nan
     vals_all_0 = np.empty((theta.shape[0], len(j_list)))
@@ -193,11 +193,11 @@ def plot_mf_sol_stim_bias_different_sols(j_list, stim=0.1, num_iter=500,
         v = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
                             theta=theta, val_init=0.05)
         vals_all_0[:, i_j] = v[-1, :]
-        # for i in range(len(neighbors)):
-        #     vals_all_backwards[i, i_j] = \
-        #         find_repulsor(j=j, num_iter=50, q_i=0.01,
-        #                       q_f=0.95, stim=stim, threshold=1e-2,
-        #                       theta=theta, neigh=neighbors[i])  # + 1e-2*i
+        for i in range(len(neighbors)):
+            vals_all_backwards[i, i_j] = \
+                find_repulsor(j=j, num_iter=50, q_i=0.01,
+                              q_f=0.95, stim=stim, threshold=1e-2,
+                              theta=theta, neigh=neighbors[i])  # + 1e-2*i
         # gn.plot_cylinder(q=v[-1, :].reshape(5, 10, 2),
         #                   columns=5, rows=10, layers=2, offset=0.4,
         #                   minmax_norm=True)
@@ -325,9 +325,15 @@ def plot_sols_mf_bias_stim_changing_j(j_list=[0.55, 0.6, 0.65, 0.7, 0.75, 0.8],
 
 def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
                            beta_list=np.arange(-0.5, 0.5, 0.001),
-                           neigh_list=np.arange(3, 11)):
-    ax = plt.figure().add_subplot(projection='3d')
+                           neigh_list=np.arange(3, 11),
+                           dim3=False):
+    if dim3:
+        ax = plt.figure().add_subplot(projection='3d')
+    else:
+        fig, ax = plt.subplots(1)
+        colormap = pl.cm.Blues(np.linspace(0.2, 1, len(neigh_list)))
     for n_neigh in neigh_list:
+        print(n_neigh)
         first_j = []
         for i_b, beta in enumerate(beta_list):
             for j in j_list:
@@ -340,13 +346,31 @@ def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
             if len(first_j) != (i_b+1):
                 first_j.append(np.nan)
         z = np.repeat(n_neigh, len(first_j))
-        ax.plot3D(z, beta_list, first_j, color='k')
+        if dim3:
+            ax.plot3D(z, beta_list, first_j, color='k')
+        else:
+            ax.plot(beta_list, first_j, color=colormap[int(n_neigh-min(neigh_list))],
+                    label=n_neigh)
     vals_b0 = 1 / neigh_list
-    ax.plot3D(neigh_list, np.repeat(0, len(neigh_list)), vals_b0,
-              color='r', linestyle='--')
-    ax.set_xlabel('N')
-    ax.set_ylabel('B')
-    ax.set_zlabel('J*')
+    if dim3:
+        ax.plot3D(neigh_list, np.repeat(0, len(neigh_list)), vals_b0,
+                  color='r', linestyle='--')
+        ax.set_xlabel('N')
+        ax.set_ylabel('B')
+        ax.set_zlabel('J*')
+    else:
+        ax.set_xlabel('B')
+        ax.set_ylabel('J*')
+        ax_pos = ax.get_position()
+        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
+                                ax_pos.width*0.06, ax_pos.height*0.5])
+        newcmp = mpl.colors.ListedColormap(colormap)
+        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp)
+        ax_cbar.set_title('N')
+        ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
+                                         int(np.mean(neigh_list)),
+                                         np.max(neigh_list)])
+        fig.savefig(DATA_FOLDER+'/J_vs_NB_MF.png', dpi=400, bbox_inches='tight')
 
 
 
@@ -626,19 +650,205 @@ def plot_pot_evolution_mfield(j, num_iter=10, sigma=0.1, bias=1e-3):
             ax[i].set_xlabel('q')
 
 
+def potential_2d_faces(x1, x2, j=1, b=0):
+    return 0.5*x1**2 + 0.5*x2**2 -\
+            np.log(1+np.exp(a_ij(x2, x1, j=j, b=b)))/(12*j) -\
+                    np.log(1+np.exp(a_ij(x1, x2, j=j, b=b)))/(12*j)
+
+
+def a_ij(xi, xj, j=1, b=0):
+    return 2*(j*(4*xi+2*xj-3)+b)
+
+
+def f_i(xi, xj, j=1, b=0):
+    return gn.sigmoid(a_ij(xi, xj, j=j, b=b)) - xi
+
+
+def plot_potential_2d(j=1, b=0):
+    ax = plt.figure().add_subplot(projection='3d')
+    x1 = np.arange(0, 1, 1e-3)
+    x2 = np.arange(0, 1, 1e-3)
+    x, y = np.meshgrid(x1, x2)
+    V_x = potential_2d_faces(x, y, j=j, b=b)
+    ax.plot_surface(x, y, V_x, alpha=0.4)
+    ax.set_xlabel(r'$x_1$')
+    ax.set_ylabel(r'$x_2$')
+    ax.set_zlabel(r'Potential, $V(\vec{x})$')
+    init_cond = np.random.rand(2)
+    t_eval = np.arange(0, 50, 0.5)
+    y0 = np.copy(init_cond)
+    m_solution = solve_ivp(fun=mf_sdo_2_faces, t_span=[0, 50],
+                           t_eval = t_eval, y0=y0,
+                           args=(j, b, 1, 1))
+    ax.plot3D(m_solution.y[0], m_solution.y[1],
+              potential_2d_faces(m_solution.y[0], m_solution.y[1], j=j, b=b),
+              color='r')
+    ax.plot3D(init_cond[0], init_cond[1],
+              potential_2d_faces(init_cond[0], init_cond[1], j=j, b=b),
+              marker='o', color='r')
+    ax.plot3D(m_solution.y[0][-1], m_solution.y[1][-1],
+              potential_2d_faces(m_solution.y[0][-1], m_solution.y[1][-1], j=j, b=b),
+              marker='x', color='r')
+    fig2, ax_2 = plt.subplots(ncols=2, figsize=(9, 4))
+    ax2, ax3 = ax_2
+    x1 = np.arange(0, 1.1, 5e-2)
+    x2 = np.arange(0, 1.1, 5e-2)
+    x, y = np.meshgrid(x1, x2)
+    u1 = f_i(x, y, j=j, b=b)
+    u2 = f_i(y, x, j=j, b=b)
+    init_cond = np.random.rand(2)
+    t_eval = np.arange(0, 10, 0.1)
+    y0 = np.copy(init_cond)
+    m_solution = solve_ivp(fun=mf_sdo_2_faces, t_span=[0, 10],
+                           t_eval = t_eval, y0=y0,
+                           args=(j, b, 1, 1))
+    ax2.plot(m_solution.y[0], m_solution.y[1], color='r')
+    ax2.plot(init_cond[0], init_cond[1], marker='o', color='r')
+    ax2.plot(m_solution.y[0][-1], m_solution.y[1][-1], marker='x', color='r')
+    # modulo = np.sqrt(u1**2 + u2**2)
+    # idxs_fp = np.where(modulo <= 1e-8)
+    # for i in range(len(idxs_fp[0])):
+    #     ax2.plot(x1[idxs_fp[0][i]], x2[idxs_fp[1][i]], marker='o', color='r',
+    #              linestyle='')
+    ax2.quiver(x, y, u1, u2)
+    ax2.set_xlabel(r'$x_1$')
+    ax2.set_ylabel(r'$x_2$')
+    # fig3, ax3 = plt.subplots(1)
+    x1 = np.arange(0, 1, 1e-3)
+    x2 = np.arange(0, 1, 1e-3)
+    # ax2.plot(x1, f_i(x1, x1, j=j, b=b))
+    x, y = np.meshgrid(x1, x2)
+    u1 = f_i(x, y, j=j, b=b)
+    u2 = f_i(y, x, j=j, b=b)
+    modulo = np.sqrt(u1**2 + u2**2)
+    image = ax3.imshow(np.flipud(modulo), extent=[0, 1, 0, 1],
+                       cmap='gist_gray')
+    plt.colorbar(image, label=r'speed, $||f(x_1, x_2)||$')
+    ax3.set_xlabel(r'$x_1$')
+    ax3.set_ylabel(r'$x_2$')
+    # eigenvalues
+    x = np.arange(0, 1+1e-3, 1e-3)
+    lam_2 = gn.sigmoid(6*j*(2*x-1))*(1-gn.sigmoid(6*j*(2*x-1)))*12*j-1
+    lam_1 = gn.sigmoid(6*j*(2*x-1))*(1-gn.sigmoid(6*j*(2*x-1)))*4*j-1
+    plt.figure()
+    plt.title('Eigenvalues at y=x')
+    plt.plot(x, lam_2, label='a+b', color='r')
+    plt.plot(x, lam_1, label='a-b', color='k')
+    plt.axhline(0, linestyle='--', color='b')
+    plt.xlabel('x')
+    plt.legend()
+    plt.ylabel(r'$\lambda$')
+    lam_2 = gn.sigmoid(6*j*(-2*x-1))*(1-gn.sigmoid(-6*j*(2*x-1)))*12*j-1
+    lam_1 = gn.sigmoid(6*j*(-2*x-1))*(1-gn.sigmoid(-6*j*(2*x-1)))*4*j-1
+    plt.figure()
+    plt.title('Eigenvalues at y=-x')
+    plt.plot(x, lam_2, label='a+b, -x', color='r')
+    plt.plot(x, lam_1, label='a-b, -x', color='k')
+    plt.axhline(0, linestyle='--', color='b')
+    plt.xlabel('x')
+    plt.legend()
+    plt.ylabel(r'$\lambda$')
+
+
+def mf_sdo(t, x, j, b, theta, noise, tau):
+    # q_idx = np.arange(8)
+    # np.random.shuffle(q_idx)
+    # for q in q_idx:
+    #     neighbours = theta[q].astype(dtype=bool)
+    #     x[q] = gn.sigmoid(2*j*sum(2*x[neighbours]-1) + 2*b) -\
+    #         x[q] + np.random.rand()*noise
+    x = gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 2*b) - x + np.random.randn(8)*noise
+    return x / tau
+
+
+def mf_sdo_2_faces(t, x, j, b, noise, tau):
+    # q_idx = np.arange(8)
+    # np.random.shuffle(q_idx)
+    # for q in q_idx:
+    #     neighbours = theta[q].astype(dtype=bool)
+    #     x[q] = gn.sigmoid(2*j*sum(2*x[neighbours]-1) + 2*b) -\
+    #         x[q] + np.random.rand()*noise
+    xi = x[0]
+    xj = x[1]
+    xi1 = f_i(xi, xj, j=j, b=b) + np.random.randn()*noise
+    xj1 = f_i(xj, xi, j=j, b=b) + np.random.randn()*noise
+    return np.array((xi1, xj1)) / tau
+
+
+
+def solution_mf_sdo(j, b, theta, noise, tau):
+    init_cond = np.random.rand(8)
+    t_eval = np.arange(0, 200, 1)
+    y0 = np.copy(init_cond)
+    m_solution = solve_ivp(fun=mf_sdo, t_span=[0, 200],
+                           t_eval = t_eval, y0=y0,
+                           args=(j, b, theta, noise, tau))
+    return m_solution.t, m_solution.y.T
+
+
+def vector_proj(u, v):
+    return (np.dot(u, v)/np.dot(v, v))*v 
+
+
+def get_n_eigenvects(n, theta):
+    eigvals, eigvects = np.linalg.eig(theta)
+    sorted_evals_idx = np.argsort(np.linalg.eig(theta)[0])[::-1]
+    return eigvects[sorted_evals_idx[:n]]
+
+
+def projection_mf_plot(theta, j=1, b=0, noise=0, tau=1):
+    t, X = solution_mf_sdo(j, b, theta, noise, tau)
+    # from sklearn.decomposition import PCA
+    # PCA = PCA(n_components=4)
+    # components = PCA.fit_transform(X)
+    # PCA.components_
+    fig, ax = plt.subplots(1)
+    for i in range(X.shape[1]):
+        ax.plot(t, X[:, i], label='Node ' + str(i), alpha=0.5)
+    ax.set_xlabel('Time')
+    ax.set_ylabel('q')
+    evects = get_n_eigenvects(4, theta).T
+    val_act = np.matmul(X, evects)
+    ax.plot(-val_act[:, 0], label='D1', color='r')
+    ax.legend()
+    fig, ax = plt.subplots(1)
+    ax.plot(np.nanmean(X, axis=1), -val_act[:, 0], color='k')
+    ax.set_xlabel(r'$<\vec{x}>$')
+    ax.set_ylabel('proj. to evec')
+    fig, ax = plt.subplots(1)
+    ax.plot(val_act[:, 0], label='D1')
+    ax.plot(val_act[:, 1], label='D2')
+    ax.plot(val_act[:, 2], label='D3')
+    ax.plot(val_act[:, 3], label='D4')
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Projection to evec')
+    ax.legend()
+    ax = plt.figure().add_subplot(projection='3d')
+    ax.plot3D(val_act[:, 0], val_act[:, 1], val_act[:, 2], color='r')
+    ax.set_xlabel('D1')
+    ax.set_ylabel('D2')
+    ax.set_zlabel('D3')
+    ax.plot3D(val_act[0, 0], val_act[0, 1], val_act[0, 2], color='r', marker='o')
+    ax.plot3D(val_act[-1, 0], val_act[-1, 1], val_act[-1, 2], color='r', marker='x')
+    
+
 if __name__ == '__main__':
     # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.05)
-    # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
+    plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
     # q_list = []
     # for j in np.arange(0.01, 1, 0.01):
     #     q_list.append(find_repulsor(j=j, num_iter=30, epsilon=1e-1, q_i=0.01,
     #                                 q_f=0.95, stim=0.1, threshold=1e-5, theta=theta,
     #                                 neigh=3))
     # plt.plot(np.arange(0.01, 1, 0.01), q_list)
-    plot_mf_sol_stim_bias_different_sols(j_list=np.arange(0.001, 1, 0.005),
-                                         stim=0.01,
-                                         num_iter=20,
-                                         theta=gn.return_theta(columns=5, rows=10),
-                                         ind_list=[0, 12, 5])
+    # plot_mf_sol_stim_bias_different_sols(j_list=np.arange(0.001, 1, 0.005),
+    #                                       stim=0.05,
+    #                                       num_iter=20,
+    #                                       theta=gn.return_theta(columns=5, rows=10))
+    # plot_crit_J_vs_B_neigh(j_list=np.arange(0.01, 1, 0.001),
+    #                        num_iter=200,
+    #                        beta_list=np.arange(-0.5, 0.5, 0.001),
+    #                        neigh_list=np.arange(3, 12),
+    #                        dim3=False)
     # plot_mf_sol_stim_bias(j_list=np.arange(0.00001, 1, 0.001), stim=-0.1,
     #                       num_iter=10)
