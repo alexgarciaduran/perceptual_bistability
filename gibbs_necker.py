@@ -127,11 +127,9 @@ def k_val(x_vec, j_mat, stim=0):
     return np.matmul(np.matmul(x_vec.T, j_mat), x_vec)/2 + np.sum(stim*x_vec)
 
 
-def change_prob(x_vect, x_vect1, j, stim=0):
-    j_mat = np.abs(mat_theta(x_vect, x_vect, j))
-    j_mat1 = np.abs(mat_theta(x_vect1, x_vect1, j))
-    return sigmoid(j*(-k_val(x_vect, j_mat, stim=stim) +
-                      k_val(x_vect1, j_mat1, stim=stim)))
+def change_prob(x_vect, x_vect1, j, stim=0, theta=THETA):
+    return sigmoid(j*(-k_val(x_vect, theta, stim=stim) +
+                      k_val(x_vect1, theta, stim=stim)))
 
 
 def mat_theta(x_vect_1, x_vect_2, j):
@@ -143,8 +141,9 @@ def mat_theta(x_vect_1, x_vect_2, j):
     return mat
 
 
-def transition_matrix(J, C):
+def transition_matrix(J, C, b=0):
     state_ks = [12*J,6*J,4*J,0,0,2*J,-2*J,-6*J,4*J,0,4*J,-4*J,-4*J,-12*J,-6*J,-2*J,2*J,0,0,4*J,6*J,12*J]
+    state_ks = np.array(state_ks) + np.array(state_ks)/(3*J) *b  # 
     T = np.zeros((22,22))
 
     for i, k_int_state in enumerate(state_ks):
@@ -156,15 +155,16 @@ def transition_matrix(J, C):
     return T
 
 
-def gibbs_samp_necker(init_state, burn_in, n_iter, j, stim=0):
+def gibbs_samp_necker(init_state, burn_in, n_iter, j, stim=0, theta=THETA):
     x_vect = init_state
-    states_mat = np.empty((n_iter-burn_in, 8))
+    states_mat = np.empty((n_iter-burn_in, theta.shape[0]))
     states_mat[:] = np.nan
     for i in range(n_iter):
-        node = np.random.choice(np.arange(1, 9), p=np.repeat(1/8, 8))
+        node = np.random.choice(np.arange(1, theta.shape[0]+1),
+                                p=np.repeat(1/theta.shape[0], theta.shape[0]))
         x_vect1 = np.copy(x_vect)
         x_vect1[node-1] = -x_vect1[node-1]
-        prob = change_prob(x_vect, x_vect1, j, stim=stim)
+        prob = change_prob(x_vect, x_vect1, j, stim=stim, theta=theta)
         # val_bool = np.random.choice([False, True], p=[1-prob, prob])
         val_bool = np.random.binomial(1, prob, size=None)
         if val_bool:
@@ -341,7 +341,7 @@ def plot_k_vs_mu(states_mat, j):
     plt.xlabel(r'$\mu$', fontsize=12)
 
 
-def plot_k_vs_mu_analytical(eps=6e-2):
+def plot_k_vs_mu_analytical(stim=0, eps=6e-2):
     nc = num_configs() / 256
     combs = list(itertools.product([-1, 1], repeat=8))
     combs = np.array(combs, dtype=np.float64)
@@ -352,7 +352,7 @@ def plot_k_vs_mu_analytical(eps=6e-2):
     for i_x, x_vec in enumerate(combs):
         x_vec = np.array(x_vec, dtype=np.float64)
         classes = check_class(x_vec)
-        k = k_val(x_vec, THETA)
+        k = k_val(x_vec, THETA, stim=stim)
         if classes in class_count:
             continue
         else:
@@ -366,21 +366,22 @@ def plot_k_vs_mu_analytical(eps=6e-2):
                     continue
                 else:
                     class_count2.append(classes2)
-                    pmat[classes2, classes] = change_prob(x_vec, x_vec2, j=1)
+                    pmat[classes2, classes] = change_prob(x_vec, x_vec2, j=1, stim=stim)
     cte = np.sum(pmat, axis=1)
     pmat /= cte
-    plt.figure()
+    # plt.figure()
     for ic, cl in enumerate(class_count):
         for ic2, cl2 in enumerate(class_count):
             plt.plot([muvec[ic]+eps, muvec[ic2]+eps], [klist[ic]+eps, klist[ic2]+eps], color='r',
-                     linewidth=C[class_count[ic], class_count[ic2]]/5)
+                     linewidth=np.sign(C[class_count[ic], class_count[ic]])/2)
             plt.plot([muvec[ic]-eps, muvec[ic2]-eps], [klist[ic]-eps, klist[ic2]-eps], color='r',
-                     linewidth=C[class_count[ic2], class_count[ic]]/5)
+                     linewidth=np.sign(C[class_count[ic2], class_count[ic]])/2)
     for i_c, classe in enumerate(class_count):
         plt.plot(muvec[i_c], klist[i_c], marker='o', linestyle='', color='k',
-                 markersize=nc[classe]*55+7)
-    plt.ylabel(r'$k = \frac{1}{2} \vec{x}^T \theta_{ij} \vec{x}$', fontsize=12)
+                 markersize=7)  # nc[classe]*55+
+    plt.ylabel(r'$k = \frac{1}{2} \vec{x}^T \theta_{ij} \vec{x} + \sum_i B x_i $', fontsize=12)
     plt.xlabel(r'$\mu$', fontsize=12)
+    plt.title('B = {}'.format(stim))
 
 
 def compute_C(data_folder):
@@ -709,9 +710,9 @@ def prob_markov_chain_between_states(n_iter_list=np.logspace(0, 4, 5),
                               iters_per_len)
         sns.kdeplot(vals, label='beta: ' + str(n_iter_list[j]),
                     color=colormap[j], linestyle='--', ax=ax2)
-        # sdlist.append(np.nanstd(mu_vals_all[j, :]))
+        sdlist.append(np.nanstd(mu_vals_all[j, :]))
         # sdlist_norm.append(1/(4*(2*(n_iter_list[j])/tau+1)))
-        # sdlist_beta.append(np.nanstd(vals))
+        sdlist_beta.append(np.nanstd(vals))
         sns.kdeplot(mu_vals_all[j, :],
                     color=colormap[j],
                     common_norm=False,
@@ -727,7 +728,11 @@ def prob_markov_chain_between_states(n_iter_list=np.logspace(0, 4, 5),
     ax2.set_title('Beta')
     # p_N(mu) = p_N(mu, x_N=0) + p_N(mu, x_N=1)
     # p_N+1(mu, x_N=1) = p_N(mu-1, x_N=1)*(1-eps) + p_N(mu-1, x_N=0)*eps
-        
+
+
+def magnetization_2d(J):
+    return (1-np.sinh(2*J*np.sinh(2*J))**(-2))**(1/8)
+
 
 def calc_exponents(x_vects_1, x_vects_0, j, stim, j_mat):
     exponent_1 = 0
@@ -790,13 +795,13 @@ def true_posterior_plot_j(ax, color='b', j_list=np.arange(0.001, 1, 0.001), stim
     ax.plot(j_list, post_stim, color=color)
 
 
-def occupancy_distro(state, ps, k, n=1, m=1000):
-    # ps: prob of stay
-    p_kn_k = scipy.special.binom(m, k)
-    val = 0
-    for j in range(k):
-        val += scipy.special.binom(k, j)*((-1)**(j-k))*(1-ps*(m-j)/m)**n
-    return p_kn_k*val
+# def occupancy_distro(state, ps, k, n=1, m=1000):
+#     # ps: prob of stay
+#     p_kn_k = scipy.special.binom(m, k)
+#     val = 0
+#     for j in range(k):
+#         val += scipy.special.binom(k, j)*((-1)**(j-k))*(1-ps*(m-j)/m)**n
+#     return p_kn_k*val
 
 
 
@@ -870,6 +875,251 @@ def plot_cylinder(q=None, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=
     ax.axis('off')
 
 
+def plot_tau_T_mat(C, ax=None, color='k',
+                   j_list=np.arange(0.0001, 1.01, 0.01), b=0):
+    if ax is None:
+        fig, ax = plt.subplots(1)
+        ax.set_xlabel('J')
+        ax.set_ylabel(r'$\tau$')
+    eig_vals = []
+    for j in j_list:
+        tmat = transition_matrix(j, C, b)
+        eig_val = np.sort(np.linalg.eig(tmat)[0])[-2]
+        eig_vals.append(-1/np.log(eig_val))
+    ax.plot(j_list, eig_vals, color=color, label=b)
+
+
+def plot_tau_vs_J_changing_B(C, b_list=[0, 0.1, 0.2]):
+    fig, ax = plt.subplots(1)
+    ax.set_xlabel('J')
+    ax.set_ylabel(r'$\tau$')
+    colors = pl.cm.copper(np.linspace(0, 1, len(b_list)))
+    for i_b, b in enumerate(b_list):
+        plot_tau_T_mat(C, ax=ax, color=colors[i_b],
+                           j_list=np.arange(0.001, 1.01, 0.01), b=b)
+    ax.legend()
+    ax.set_yscale('log')
+
+
+def occ_markov_discrete(p1, p2, n, x):
+    # eps = 1-np.exp(-1/tau)
+    # ps = 1-eps
+    # pt = eps
+    # p1 = ps
+    q1 = 1-p1
+    # p2 = ps
+    q2 = 1-p2
+    p01 = 0.5
+    p02 = 0.5
+    f = scipy.special.hyp2f1
+    lamb = q1*q2 / (p1*p2)
+    d = p1 - q2
+    p_n = (p1 ** x) * (p2 ** (n-x)) * f(-n+x, -x, 1, lamb) - \
+        p01*d*(p1 ** x) * (p2 ** (n-x-1)) * f(-n+x+1, -x, 1, lamb) - \
+        p02*d*(p1 ** (x-1)) * (p2 ** (n-x)) * f(-n+x, -x+1, 1, lamb)
+    # plt.plot(x/n, p_n)
+    return p_n
+
+
+def occ_function_markov(a, b, t, x):
+    p1 = 0.5
+    p2 = 0.5
+    def i_n(n, x):
+        return np.exp(x)*(1+(1-4*n**2)/(8*x)) / (2*np.pi*x)
+    first_exp = np.exp(-a*x - b*(t-x))
+    first_comp = p2*0**(x) + p1*0**(t-x)
+    x_arg = 2*np.sqrt(a*b*x*(t-x))
+    # i_0 = i_n(0, x_arg)
+    # i_1 = i_n(1, x_arg)
+    i_0 = scipy.special.i0(x_arg)
+    i_1 = scipy.special.i1(x_arg)
+    second_comp = (p1*np.sqrt(a*b*x/(t-x)) + p2*np.sqrt(a*b*(t-x)/x))*i_1
+    third_comp = (p1*a+p2*b)*i_0
+    eq_1 = first_exp*(second_comp + third_comp)
+    eq_2 = first_exp*first_comp
+    eq = np.nansum((eq_1, eq_2), axis=0)*t
+    return  eq
+
+
+def occ_function_markov_ch_var(rho, alpha, t, x):
+    p1 = 0.5
+    p2 = 0.5
+    # rho = np.sqrt(a/b)
+    # alpha = np.sqrt(a*b)
+    t_p = t*alpha
+    p = x/t
+    first_exp = np.exp(-rho*p*t_p - t_p*(1-p)/rho)
+    first_comp = p2*0**(p) + p1*0**(1-p)
+    x_arg = 2*np.sqrt(p*(1-p)*t_p*t_p)
+    i_0 = scipy.special.i0(x_arg)
+    i_1 = scipy.special.i1(x_arg)
+    second_comp = (p1*np.sqrt(p/(1-p)) + p2*np.sqrt((1-p)/p))*i_1
+    third_comp = (p1*rho+p2/rho)*i_0
+    eq_1 = first_exp*(second_comp + third_comp)
+    eq_2 = first_exp*first_comp*1e3  # 1e3 is just to illustrate the delta distro...
+    eq = np.nansum((eq_1, eq_2), axis=0)*t_p
+    return eq
+
+
+def plot_distro_markov_j(t_list, stim=0, j=1):
+    plt.figure()
+    k_2 = 12*j + 8*stim
+    k_1 = 12*j - 8*stim
+    k_u = 2*j
+    rho = np.exp(-(k_1-k_2)/2)
+    alpha = np.exp(-(k_1+k_2 - k_u*2)/2)
+    for t in t_list:
+        x = np.arange(0, t+1, 1)
+        vals = occ_function_markov_ch_var(rho, alpha, t, x)
+        plt.plot(x/t, vals, label=t)
+    plt.legend()
+
+
+def plot_distro_markov_discrete(n_list, stim=0, j=1):
+    k_1 = 12*j - 8*stim
+    k_u = 2*j
+    k_2 = 12*j + 8*stim
+    p1 = 1-np.exp(-k_1+k_u)
+    p2 = 1-np.exp(-k_2+k_u)
+    plt.figure()
+    for n in n_list:
+        x = np.arange(1, n, 1)
+        vals = occ_markov_discrete(p1, p2, n, x)
+        plt.plot(x/n, vals, label=n)
+    plt.legend(title='N')
+
+
+
+def trans_probs_well_height(theta, j, stim=0, burn_in=1000, n_iter=21000):
+    init_state = np.random.choice([-1, 1], 8)
+    states_mat = gibbs_samp_necker(init_state=init_state,
+                                   burn_in=burn_in, n_iter=n_iter, j=j,
+                                   stim=stim)
+    # states_mat = (states_mat + 1) / 2
+    # k_1 = k_val(np.repeat(-1, 8), theta*j, stim)
+    k_1 = 12*j - 8*stim
+    k_u = 2*j
+    # k_2 = k_val(np.repeat(1, 8), theta*j, stim)
+    k_2 = 12*j + 8*stim
+    prod_sigms = sigmoid(-12*j+6*j)*sigmoid(-6*j+4*j)*sigmoid(-4*j+2*j)  # *sigmoid(-2*j+4*j)
+    curr_state = np.sign(get_mu_from_mat_v2(states_mat))
+    trans_pos_neg = 0
+    trans_neg_pos = 0
+    curr_state = curr_state[curr_state != 0]
+    change_signs = np.diff(curr_state)
+    trans_neg_pos = sum(change_signs == 2)/len(states_mat)
+    trans_pos_neg = sum(change_signs == -2)/len(states_mat)
+    return trans_neg_pos, trans_pos_neg, np.exp(-k_1+k_u), np.exp(-k_2+k_u), prod_sigms
+    # for i_st in range(len(curr_state)):
+    #     if curr_state[i_st] == 0:
+    #         if curr_state[i_st-1] == curr_state[i_st+1]:
+    #             continue
+    #         if curr_state[i_st] == curr_state[i_st+1]:
+    #             continue
+    #         if curr_state[i_st] == curr_state[i_st-1]:
+    #             continue
+    #         if curr_state[i_st-1] == -1 and curr_state[i_st+1] == 1:
+    #             trans_neg_pos += 1
+    #             continue
+    #         if curr_state[i_st-1] == 1 and curr_state[i_st+1] == -1:
+    #             trans_pos_neg += 1
+    #             continue
+    # trans_neg_pos = trans_neg_pos / (n_iter-burn_in)
+    # trans_pos_neg = trans_pos_neg / (n_iter-burn_in)
+
+
+def plot_trans_probs_comparison(j_list, theta, stim):
+    p1l = []
+    p2l = []
+    pt1l = []
+    pt2l = []
+    psgsl = []
+    for j in j_list:
+        p1, p2, pt1, pt2, psigs =\
+            trans_probs_well_height(theta, j, stim=stim, burn_in=1000, n_iter=21000)
+        p1l.append(p1)
+        p2l.append(p2)
+        pt1l.append(pt1)
+        pt2l.append(pt2)
+        psgsl.append(psigs)
+    plt.figure()
+    plt.plot(j_list, p1l, label='p_t1')
+    plt.plot(j_list, p2l, label='p_t2')
+    plt.plot(j_list, pt1l, label='exp(-k_1 + k_u)', linestyle='--')
+    plt.plot(j_list, pt2l, label='exp(-k_2 + k_u)', linestyle='--')
+    plt.plot(j_list, psgsl, label='p_sigs', linestyle=':')
+    plt.ylabel(r'$p_t$')
+    plt.xlabel('J')
+    plt.legend()
+    tau_vals_theory_psgsl = 1/-np.log(1-np.array(psgsl))
+    plt.figure()
+    plt.plot(j_list[1:], tau_vals_theory_psgsl[1:], label='Tau theory sigmoid prod')
+    tau_vals_theory = []
+    eig_vals = []    
+    for j in j_list[1:]:
+        k_1 = 12*j - 8*stim
+        k_u = 2*j
+        tau_vals_theory.append(-1/np.log(1-np.exp(-k_1+k_u)))
+        tmat = transition_matrix(j, C, stim)
+        eig_val = np.sort(np.linalg.eig(tmat)[0])[-2]
+        eig_vals.append(-1/np.log(eig_val))
+    plt.plot(j_list[1:], tau_vals_theory, label='Tau theory expo')
+    plt.plot(j_list[1:], eig_vals, label='tau Transition')
+    plt.legend()
+    plt.ylabel(r'$\tau$')
+    plt.xlabel('J')
+    plt.yscale('log')
+
+
+def plot_occ_probs_gibbs(data_folder,
+                         n_iter_list=np.logspace(2, 5, 4, dtype=int),
+                         j=1, stim=0, n_repetitions=100, theta=THETA,
+                         burn_in=0.1):
+    burn_in = int(burn_in*n_iter_list[0])
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(n_iter_list)))
+    probs_data = data_folder + 'mu_mat_stim_' + str(stim) + '_j_' + str(j) + '_n_reps_' + str(n_repetitions) + '.npy'
+    os.makedirs(os.path.dirname(probs_data), exist_ok=True)
+    if os.path.exists(probs_data):
+        mu_vals_all = np.load(probs_data, allow_pickle=True)
+    else:
+        mu_vals_all = np.empty((len(n_iter_list), n_repetitions))
+        for i_n, n_iter in enumerate(n_iter_list):
+            print(n_iter)
+            mu_list = []
+            for i in range(n_repetitions):
+                init_state = np.random.choice([-1, 1], 8)
+                states_mat = gibbs_samp_necker(init_state=init_state,
+                                               burn_in=burn_in, n_iter=n_iter+burn_in, j=j,
+                                               stim=stim)
+                curr_state = np.sign(get_mu_from_mat_v2(states_mat))
+                curr_state = (curr_state[curr_state != 0]+1)/2
+                mu_list.append(np.mean(curr_state))
+            mu_vals_all[i_n, :] = mu_list
+        np.save(probs_data, mu_vals_all)
+    plt.figure()
+    for i_mu, mu_list in enumerate(mu_vals_all):
+        sns.kdeplot(mu_list, color=colormap[i_mu], label=n_iter_list[i_mu],
+                    bw_adjust=0.1, cumulative=True)
+        # plt.hist(mu_list, bins=40, color=colormap[i_n], label=n_iter)
+    plt.legend(title='N')
+    plt.xlim(-0.05, 1.05)
+    plt.xlabel(r'$\mu$')
+    # plt.figure()
+    k_1 = 12*j + 8*stim
+    k_u = 2*j
+    k_2 = 12*j - 8*stim
+    rho = np.exp(-(k_1-k_2)/2)
+    alpha = np.exp(-(k_1+k_2 - k_u*2)/2)
+    for i_t, t in enumerate(n_iter_list):
+        x = np.arange(0, t+1, 1)
+        vals = occ_function_markov_ch_var(rho, alpha, t, x)
+        cumsum = np.cumsum(vals)
+        plt.plot(x/t, cumsum / np.max(cumsum), label='analytical' + str(t), color=colormap[i_t],
+                 linestyle='--')
+    plt.legend()
+    plt.title('B = ' + str(stim))
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
@@ -877,10 +1127,15 @@ if __name__ == '__main__':
 
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
-    # plot_k_vs_mu_analytical(eps=0)
+    # plot_k_vs_mu_analytical(eps=0, stim=0.)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
     #                       wsize=1, stim=-0.1)
     # t = transition_matrix(0.2, C)
-    prob_markov_chain_between_states(tau=100, iters_per_len=200,
-                                     n_iter_list=np.logspace(0, 4, 5))
+    # prob_markov_chain_between_states(tau=100, iters_per_len=200,
+    #                                  n_iter_list=np.logspace(0, 4, 5))
     # plot_cylinder_true_posterior(j=0.2, stim=0.05, theta=THETA)
+
+    plot_occ_probs_gibbs(data_folder=DATA_FOLDER,
+                         n_iter_list=np.logspace(2, 6, 5, dtype=int),
+                         j=1, stim=0, n_repetitions=100, theta=THETA,
+                         burn_in=0.1)
