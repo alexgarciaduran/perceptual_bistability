@@ -18,6 +18,7 @@ import matplotlib.pylab as pl
 import matplotlib as mpl
 import sympy
 from matplotlib.lines import Line2D
+import seaborn as sns
 
 
 
@@ -664,7 +665,18 @@ def f_i(xi, xj, j=1, b=0):
     return gn.sigmoid(a_ij(xi, xj, j=j, b=b)) - xi
 
 
-def plot_potential_2d(j=1, b=0):
+def f_i_diagonal(x, j=1, b=0):
+    return gn.sigmoid(a_ij(x, x, j=j, b=b)) - x
+
+
+def f_i_diagonal_neg(x, j=1, b=0):
+    y = x[1]
+    x = x[0]
+    return [gn.sigmoid(2*(j*(2*x-1)+b)) - x,
+            gn.sigmoid(2*(j*(-2*y+1)+b)) + y - 1]
+
+
+def plot_potential_and_vector_field_2d(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2):
     ax = plt.figure().add_subplot(projection='3d')
     x1 = np.arange(0, 1, 1e-3)
     x2 = np.arange(0, 1, 1e-3)
@@ -674,12 +686,10 @@ def plot_potential_2d(j=1, b=0):
     ax.set_xlabel(r'$x_1$')
     ax.set_ylabel(r'$x_2$')
     ax.set_zlabel(r'Potential, $V(\vec{x})$')
+    # init_cond = [0.25, 0.75]
     init_cond = np.random.rand(2)
-    t_eval = np.arange(0, 50, 0.5)
-    y0 = np.copy(init_cond)
-    m_solution = solve_ivp(fun=mf_sdo_2_faces, t_span=[0, 50],
-                           t_eval = t_eval, y0=y0,
-                           args=(j, b, 1, 1))
+    m_solution = solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
+                                               time_end=time_end, dt=dt)
     ax.plot3D(m_solution.y[0], m_solution.y[1],
               potential_2d_faces(m_solution.y[0], m_solution.y[1], j=j, b=b),
               color='r')
@@ -688,7 +698,7 @@ def plot_potential_2d(j=1, b=0):
               marker='o', color='r')
     ax.plot3D(m_solution.y[0][-1], m_solution.y[1][-1],
               potential_2d_faces(m_solution.y[0][-1], m_solution.y[1][-1], j=j, b=b),
-              marker='x', color='r')
+              marker='x', color='b')
     fig2, ax_2 = plt.subplots(ncols=2, figsize=(9, 4))
     ax2, ax3 = ax_2
     x1 = np.arange(0, 1.1, 5e-2)
@@ -696,24 +706,13 @@ def plot_potential_2d(j=1, b=0):
     x, y = np.meshgrid(x1, x2)
     u1 = f_i(x, y, j=j, b=b)
     u2 = f_i(y, x, j=j, b=b)
-    init_cond = np.random.rand(2)
-    t_eval = np.arange(0, 10, 0.1)
-    y0 = np.copy(init_cond)
-    m_solution = solve_ivp(fun=mf_sdo_2_faces, t_span=[0, 10],
-                           t_eval = t_eval, y0=y0,
-                           args=(j, b, 1, 1))
-    ax2.plot(m_solution.y[0], m_solution.y[1], color='r')
-    ax2.plot(init_cond[0], init_cond[1], marker='o', color='r')
-    ax2.plot(m_solution.y[0][-1], m_solution.y[1][-1], marker='x', color='r')
-    # modulo = np.sqrt(u1**2 + u2**2)
-    # idxs_fp = np.where(modulo <= 1e-8)
-    # for i in range(len(idxs_fp[0])):
-    #     ax2.plot(x1[idxs_fp[0][i]], x2[idxs_fp[1][i]], marker='o', color='r',
-    #              linestyle='')
     ax2.quiver(x, y, u1, u2)
     ax2.set_xlabel(r'$x_1$')
     ax2.set_ylabel(r'$x_2$')
-    # fig3, ax3 = plt.subplots(1)
+    ax2.plot(m_solution.y[0], m_solution.y[1], color='r')
+    ax2.plot(init_cond[0], init_cond[1], marker='o', color='r')
+    ax2.plot(m_solution.y[0][-1], m_solution.y[1][-1], marker='x', color='b')
+    # modulo = np.sqrt(u1**2 + u2**2)
     x1 = np.arange(0, 1, 1e-3)
     x2 = np.arange(0, 1, 1e-3)
     # ax2.plot(x1, f_i(x1, x1, j=j, b=b))
@@ -726,6 +725,9 @@ def plot_potential_2d(j=1, b=0):
     plt.colorbar(image, label=r'speed, $||f(x_1, x_2)||$')
     ax3.set_xlabel(r'$x_1$')
     ax3.set_ylabel(r'$x_2$')
+
+
+def plot_eigenvalues_at_diagonals(j, b):
     # eigenvalues
     x = np.arange(0, 1+1e-3, 1e-3)
     lam_2 = gn.sigmoid(6*j*(2*x-1))*(1-gn.sigmoid(6*j*(2*x-1)))*12*j-1
@@ -738,16 +740,130 @@ def plot_potential_2d(j=1, b=0):
     plt.xlabel('x')
     plt.legend()
     plt.ylabel(r'$\lambda$')
-    lam_2 = gn.sigmoid(6*j*(-2*x-1))*(1-gn.sigmoid(-6*j*(2*x-1)))*12*j-1
-    lam_1 = gn.sigmoid(6*j*(-2*x-1))*(1-gn.sigmoid(-6*j*(2*x-1)))*4*j-1
+    lam_2 = get_eigen_1_neg(j, x, b)
+    lam_1 = get_eigen_2_neg(j, x, b)
     plt.figure()
-    plt.title('Eigenvalues at y=-x')
-    plt.plot(x, lam_2, label='a+b, -x', color='r')
-    plt.plot(x, lam_1, label='a-b, -x', color='k')
+    plt.title('Eigenvalues at y=1-x')
+    plt.plot(x, lam_2, label='l1, 1-x', color='r')
+    plt.plot(x, lam_1, label='l2, 1-x', color='k')
     plt.axhline(0, linestyle='--', color='b')
     plt.xlabel('x')
     plt.legend()
     plt.ylabel(r'$\lambda$')
+
+
+def plot_mf_evolution_2_faces(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2):
+    # time evolution of q1, q2
+    init_cond = np.random.rand(2)
+    m_solution = solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
+                                               time_end=time_end, dt=dt)
+    fig4, ax4 = plt.subplots(1)
+    ax4.plot(m_solution.t, m_solution.y[0], label='q_1')
+    ax4.plot(m_solution.t, m_solution.y[1], label='q_2')
+    ax4.legend()
+    ax4.set_ylabel('q')
+    ax4.set_xlabel('Time (s)')
+
+
+def plot_eigenvals_and_behavior_MF_2_faces(b=0, diag_neg=False):
+    if not diag_neg:
+        eigval_fun_1 = get_eigen_1
+        eigval_fun_2 = get_eigen_2
+        f_i_fun = f_i_diagonal
+        ini_conds = [0.1, 0.9, 0.48]
+    else:
+        eigval_fun_1 = get_eigen_1_neg
+        eigval_fun_2 = get_eigen_2_neg
+        f_i_fun = f_i_diagonal_neg  # 2d input
+        ini_conds = [[0.1, 0.9], [0.48, 0.52], [0.9, 0.1]]
+    # plots eigenvalues and solutions
+    fig2, ax_2 = plt.subplots(ncols=2, figsize=(9, 4))
+    ax2, ax3 = ax_2
+    j_list = np.arange(0, 2+1e-3, 1e-3)
+    sol_j_1 = []
+    sol_j_2 = []
+    sol_j_3 = []
+    for j in j_list:
+        sol_j_1.append(fsolve(f_i_fun, ini_conds[0], args=(j, b)))
+        sol_j_2.append(fsolve(f_i_fun, ini_conds[1], args=(j, b)))
+        sol_j_3.append(fsolve(f_i_fun, ini_conds[2], args=(j, b)))
+    for ax in ax_2:
+        ax.plot(sol_j_1, j_list, color='k')
+        ax.plot(sol_j_2, j_list, color='k')
+        ax.plot(sol_j_3, j_list, color='k')
+    x = np.arange(0, 1+1e-3, 1e-3)
+    x_g, j_g = np.meshgrid(x, j_list)
+    # lam_1 = 1*(get_eigen_1(j_g, x_g) > 0)*2-1
+    # lam_2 = 1*(get_eigen_2(j_g, x_g) > 0)*2-1
+    lam_1 = eigval_fun_1(j_g, x_g, b)
+    lam_2 = eigval_fun_2(j_g, x_g, b)
+    v_min = np.min((lam_1, lam_2))
+    v_max = np.max((lam_1, lam_2))
+    v_abs_max = np.max((np.abs(v_min), np.abs(v_max)))
+    # v_abs_max = 1
+    ax2.set_xlabel('x')
+    ax3.set_xlabel('x')
+    ax3.set_yticks([])
+    ax2.set_ylabel('J')
+    ax2.imshow(np.flipud(lam_1), cmap='coolwarm', vmin=-v_abs_max,
+               vmax=v_abs_max, extent=[0, 1, 0, np.max(j_list)], aspect='auto')
+    im_2 = ax3.imshow(np.flipud(lam_2), cmap='coolwarm', vmin=-v_abs_max,
+                      vmax=v_abs_max, extent=[0, 1, 0, np.max(j_list)], aspect='auto')
+    plt.colorbar(im_2, ax=ax3, label=r'$\lambda$')
+    # try to compact everything in single figure
+    fig, ax = plt.subplots(1)
+    lam_1 = 1*(eigval_fun_1(j_g, x_g, b) > 0)*2-1
+    lam_2 = 1*(eigval_fun_2(j_g, x_g, b) > 0)*2-1
+    lam_1_lam_2 = lam_1 * lam_2
+    ax.imshow(np.flipud(lam_1_lam_2 + lam_2), cmap='Pastel1',
+              extent=[0, 1, 0, np.max(j_list)], aspect='auto')
+    ax.text(0.15, 0.15, 'Stable fixed point')
+    ax.text(0.35, 0.6, 'Saddle\nnode')
+    ax.text(0.52, 1.17, 'Unstable fixed point', rotation='vertical')
+    if diag_neg:
+        label = 'Fixed points in y=1-x'
+    else:
+        label = 'Fixed points in y=x'
+    ax.plot(sol_j_1, j_list, color='k')
+    legendelements = [Line2D([0], [0], color='k', lw=2, label=label)]
+    ax.legend(bbox_to_anchor=(1., 1.12), frameon=False, handles=legendelements)
+    ax.plot(sol_j_2, j_list, color='k')
+    ax.plot(sol_j_3, j_list, color='k')
+    ax.set_ylabel('J')
+    ax.set_xlabel('x')
+    if b == 0:
+        ax.set_yticks([0, 1/3, 0.5, 1, 1.5, 2])
+        ax.axhline(1/3, color='r', linestyle='--', alpha=0.6)
+    else:
+        ax.set_yticks([0, 0.5, 1, 1.5, 2])
+    
+
+def get_eigen_1(j, x, b=0):
+    return gn.sigmoid(6*j*(2*x-1)+6*b)*(1-gn.sigmoid(6*j*(2*x-1)+6*b))*12*j-1
+
+
+def get_eigen_2(j, x, b=0):
+    return gn.sigmoid(6*j*(2*x-1)+6*b)*(1-gn.sigmoid(6*j*(2*x-1)+6*b))*4*j-1
+
+
+def k_1(x, j, b=0):
+    return gn.sigmoid(2*(j*(2*x-1)+b))*(1-gn.sigmoid(2*(j*(2*x-1)+b)))
+
+
+def k_2(x, j, b=0):
+    return gn.sigmoid(2*(j*(-2*x+1)+b))*(1-gn.sigmoid(2*(j*(-2*x+1)+b)))
+
+
+def get_eigen_1_neg(j, x, b=0):
+    k1 = k_1(x, j, b)
+    k2 = k_2(x, j, b)
+    return -1 + 4*j * (k1+k2 + np.sqrt(k1**2 + k2**2 - k1*k2))
+
+
+def get_eigen_2_neg(j, x, b=0):
+    k1 = k_1(x, j, b)
+    k2 = k_2(x, j, b)
+    return -1 + 4*j * (k1+k2 - np.sqrt(k1**2 + k2**2 - k1*k2))
 
 
 def mf_sdo(t, x, j, b, theta, noise, tau):
@@ -784,6 +900,61 @@ def solution_mf_sdo(j, b, theta, noise, tau):
                            t_eval = t_eval, y0=y0,
                            args=(j, b, theta, noise, tau))
     return m_solution.t, m_solution.y.T
+
+
+def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2):
+    time = np.arange(0, time_end+dt, dt)
+    x = np.random.rand(theta.shape[0])  # initial_cond
+    x_vec = np.empty((len(time), theta.shape[0]))
+    x_vec[:] = np.nan
+    x_vec[0, :] = x
+    for t in range(1, time.shape[0]):
+        x = x + (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 2*b) - x) +\
+            np.random.randn(theta.shape[0])*noise*np.sqrt(dt)) / tau
+        x_vec[t, :] = x
+    return time, x_vec
+
+
+def solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
+                                  time_end=50, dt=1e-2):
+    time = np.arange(0, time_end+dt, dt)
+    x1 = init_cond[0]  # initial_cond for q1
+    x2 = init_cond[1]  # initial_cond for q2
+    x_vec1 = np.empty((len(time)))
+    x_vec2 = np.empty((len(time)))
+    x_vec1[:] = np.nan
+    x_vec2[:] = np.nan
+    x_vec1[0] = x1
+    x_vec2[0] = x2
+    for t in range(1, time.shape[0]):
+        x1 = np.copy(x_vec1[t-1])
+        x2 = np.copy(x_vec2[t-1])
+        x1_temp = x1 + (dt*(f_i(x1, x2, j=j, b=b)) +\
+            np.sqrt(dt)*noise*np.random.randn()) / tau
+        x2_temp = x2 + (dt*(f_i(x2, x1, j=j, b=b)) +\
+            np.sqrt(dt)*noise*np.random.randn()) / tau
+        x1_temp = np.clip(x1_temp, 0, 1)
+        x2_temp = np.clip(x2_temp, 0, 1)
+        x_vec1[t] = x1_temp
+        x_vec2[t] = x2_temp
+        
+    result = type('result', (object,), {})
+    result.y = np.row_stack((x_vec1, x_vec2))
+    result.t = time
+    return result
+
+
+def plot_occupancy_distro(j, noise=0, tau=1, dt=1e-2, theta=theta, b=0,
+                          t_list=[0.1, 1, 10, 100], n_sims=100):
+    burn_in = min(t_list)*10
+    for t in t_list:
+        mean_list = []
+        for n in range(n_sims):
+            time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
+                                              time_end=t+burn_in, dt=1e-2)
+            mean_list.append(np.nanmean(vec[-1]))
+        sns.kdeplot(mean_list, label=t, bw_adjust=0.1)
+    plt.legend(title='T')
 
 
 def vector_proj(u, v):
@@ -824,7 +995,10 @@ def projection_mf_plot(theta, j=1, b=0, noise=0, tau=1):
     ax.set_ylabel('Projection to evec')
     ax.legend()
     ax = plt.figure().add_subplot(projection='3d')
-    ax.plot3D(val_act[:, 0], val_act[:, 1], val_act[:, 2], color='r')
+    ax.plot3D(val_act[:, 0], val_act[:, 1], val_act[:, 2], color='r', label='D1')
+    ax.plot3D(-np.nanmean(X, axis=1), val_act[:, 1], val_act[:, 2], color='k', alpha=0.3,
+              label=r'$<\vec{x}>$')
+    ax.legend()
     ax.set_xlabel('D1')
     ax.set_ylabel('D2')
     ax.set_zlabel('D3')
