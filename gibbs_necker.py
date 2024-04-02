@@ -949,14 +949,14 @@ def occ_function_markov_ch_var(rho, alpha, t, x):
     t_p = t*alpha
     p = x/t
     first_exp = np.exp(-rho*p*t_p - t_p*(1-p)/rho)
-    first_comp = p2*0**(p) + p1*0**(1-p)
+    first_comp = (p2*0**(p) + p1*0**(1-p))*1e5  # 1e10 is just to illustrate the delta distro...
     x_arg = 2*np.sqrt(p*(1-p)*t_p*t_p)
     i_0 = scipy.special.i0(x_arg)
     i_1 = scipy.special.i1(x_arg)
     second_comp = (p1*np.sqrt(p/(1-p)) + p2*np.sqrt((1-p)/p))*i_1
     third_comp = (p1*rho+p2/rho)*i_0
     eq_1 = first_exp*(second_comp + third_comp)
-    eq_2 = first_exp*first_comp*1e3  # 1e3 is just to illustrate the delta distro...
+    eq_2 = first_exp*first_comp
     eq = np.nansum((eq_1, eq_2), axis=0)*t_p
     return eq
 
@@ -1102,19 +1102,22 @@ def plot_occ_probs_gibbs(data_folder,
                     bw_adjust=0.1, cumulative=True)
         # plt.hist(mu_list, bins=40, color=colormap[i_n], label=n_iter)
     plt.legend(title='N')
+    plt.ylabel('CDF')
     plt.xlim(-0.05, 1.05)
+    plt.ylim(-0.05, 1.05)
     plt.xlabel(r'$\mu$')
     # plt.figure()
     k_1 = 12*j + 8*stim
-    k_u = 2*j
+    k_u = 2*j + 2*stim
     k_2 = 12*j - 8*stim
     rho = np.exp(-(k_1-k_2)/2)
     alpha = np.exp(-(k_1+k_2 - k_u*2)/2)
     for i_t, t in enumerate(n_iter_list):
         x = np.arange(0, t+1, 1)
         vals = occ_function_markov_ch_var(rho, alpha, t, x)
-        cumsum = np.cumsum(vals)
-        plt.plot(x/t, cumsum / np.max(cumsum), label='analytical' + str(t), color=colormap[i_t],
+        cumsum = np.nancumsum(vals)
+        plt.plot(x/t, cumsum / np.nanmax(cumsum),
+                 label='analytical' + str(t), color=colormap[i_t],
                  linestyle='--')
     plt.legend()
     plt.title('B = ' + str(stim))
@@ -1136,6 +1139,7 @@ if __name__ == '__main__':
     # plot_cylinder_true_posterior(j=0.2, stim=0.05, theta=THETA)
 
     plot_occ_probs_gibbs(data_folder=DATA_FOLDER,
-                         n_iter_list=np.logspace(2, 6, 5, dtype=int),
-                         j=1, stim=0, n_repetitions=100, theta=THETA,
-                         burn_in=0.1)
+                          n_iter_list=np.logspace(2, 6, 5, dtype=int),
+                          j=0.2, stim=0, n_repetitions=100, theta=THETA,
+                          burn_in=0.1)
+
