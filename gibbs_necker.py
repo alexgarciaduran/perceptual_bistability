@@ -16,6 +16,7 @@ import scipy.stats as stats
 import matplotlib.pylab as pl
 import networkx as nx
 import matplotlib as mpl
+from matplotlib.lines import Line2D
 from joblib import Parallel, delayed
 
 
@@ -1096,7 +1097,7 @@ def plot_occ_probs_gibbs(data_folder,
                 mu_list.append(np.mean(curr_state))
             mu_vals_all[i_n, :] = mu_list
         np.save(probs_data, mu_vals_all)
-    plt.figure()
+    fig, ax = plt.subplots(1)
     for i_mu, mu_list in enumerate(mu_vals_all):
         sns.kdeplot(mu_list, color=colormap[i_mu], label=n_iter_list[i_mu],
                     bw_adjust=0.1, cumulative=True)
@@ -1119,8 +1120,19 @@ def plot_occ_probs_gibbs(data_folder,
         plt.plot(x/t, cumsum / np.nanmax(cumsum),
                  label='analytical' + str(t), color=colormap[i_t],
                  linestyle='--')
-    plt.legend()
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='Simulation'),
+                      Line2D([0], [0], color='k', lw=2, linestyle='--',
+                             label='Analytical'),
+                      Line2D([0], [0], color=colormap[0], lw=2, label='1e2'),
+                      Line2D([0], [0], color=colormap[1], lw=2, label='1e3'),
+                      Line2D([0], [0], color=colormap[2], lw=2, label='1e4'),
+                      Line2D([0], [0], color=colormap[3], lw=2, label='1e5'),
+                      Line2D([0], [0], color=colormap[4], lw=2, label='1e6'),
+                      ]
+    plt.legend(bbox_to_anchor=(1., 1.), handles=legendelements)
     plt.title('B = ' + str(stim))
+    fig.savefig(DATA_FOLDER + 'CDF_gibbs_stim_' + str(stim) + '_j_' + str(j) + '.png',
+                dpi=400, bbox_inches='tight')
 
 
 if __name__ == '__main__':
@@ -1140,6 +1152,6 @@ if __name__ == '__main__':
 
     plot_occ_probs_gibbs(data_folder=DATA_FOLDER,
                           n_iter_list=np.logspace(2, 6, 5, dtype=int),
-                          j=0.2, stim=0, n_repetitions=100, theta=THETA,
+                          j=1, stim=-0.1, n_repetitions=100, theta=THETA,
                           burn_in=0.1)
 
