@@ -497,7 +497,7 @@ def solution_for_sigmoid_taylor_order2(j, beta):
 
 
 def dyn_sys_mf(q, dt, j, sigma=1, bias=0):
-    return np.clip(q + dt*(gn.sigmoid(6*j*(2*q-1))-q+bias)+
+    return np.clip(q + dt*(gn.sigmoid(6*j*(2*q-1)+6*bias)-q)+
         np.random.randn()*np.sqrt(dt)*sigma, 0, 1)
 
 
@@ -633,11 +633,11 @@ def plot_pot_evolution_mfield(j, num_iter=10, sigma=0.1, bias=1e-3):
         m_field.append(q)
     q = np.arange(0, 1., 0.001)
     # q = np.arange(0, 1, 0.001)
-    pot = potential_mf(q, j, -bias)
+    pot = potential_mf(q, j, bias)
     for i in range(len(ax)):
         ax[i].plot(q, pot, color='k')
         q_ind = m_field[i*num_iter//len(ax)]
-        pot_ind = potential_mf(q_ind, j, -bias)
+        pot_ind = potential_mf(q_ind, j, bias)
         ax[i].plot(q_ind, pot_ind, marker='o', color='r')
         ax[i].set_title('iter #' + str(i*num_iter//len(ax)+1))
         if i != 0 and i != (2*len(ax)//3) and i != (len(ax)//3):
@@ -866,13 +866,12 @@ def get_eigen_2_neg(j, x, b=0):
     return -1 + 4*j * (k1+k2 - np.sqrt(k1**2 + k2**2 - k1*k2))
 
 
+def eigens_neg_2_var(j, b=0):
+    x = fsolve(f_i_diagonal_neg, [0.1, 0.9], args=(j[0], b))
+    return get_eigen_1_neg(j, x[0], b=0)
+
+
 def mf_sdo(t, x, j, b, theta, noise, tau):
-    # q_idx = np.arange(8)
-    # np.random.shuffle(q_idx)
-    # for q in q_idx:
-    #     neighbours = theta[q].astype(dtype=bool)
-    #     x[q] = gn.sigmoid(2*j*sum(2*x[neighbours]-1) + 2*b) -\
-    #         x[q] + np.random.rand()*noise
     x = gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 2*b) - x + np.random.randn(8)*noise
     return x / tau
 
@@ -909,9 +908,10 @@ def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2):
     x_vec[:] = np.nan
     x_vec[0, :] = x
     for t in range(1, time.shape[0]):
-        x = x + (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 2*b) - x) +\
+        x = x + (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 6*b) - x) +\
             np.random.randn(theta.shape[0])*noise*np.sqrt(dt)) / tau
-        x_vec[t, :] = x
+        # x = np.clip(x, 0, 1)
+        x_vec[t, :] = x  # np.clip(x, 0, 1)
     return time, x_vec
 
 
@@ -944,17 +944,26 @@ def solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
     return result
 
 
-def plot_occupancy_distro(j, noise=0, tau=1, dt=1e-2, theta=theta, b=0,
-                          t_list=[0.1, 1, 10, 100], n_sims=100):
-    burn_in = min(t_list)*10
-    for t in t_list:
-        mean_list = []
-        for n in range(n_sims):
-            time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
-                                              time_end=t+burn_in, dt=1e-2)
-            mean_list.append(np.nanmean(vec[-1]))
-        sns.kdeplot(mean_list, label=t, bw_adjust=0.1)
-    plt.legend(title='T')
+def plot_occupancy_distro(j, noise=0.3, tau=1, dt=1e-1, theta=theta, b=0,
+                          t=100, burn_in=0.1, n_sims=20):
+    fig, ax = plt.subplots(1)
+    time_end = t*(1+burn_in)
+    vec = np.array(())
+    for n in range(n_sims):
+        time, vec_sims = solution_mf_sdo_euler(j, b, theta, noise, tau,
+                                               time_end=time_end, dt=dt)
+        vec_sims = vec_sims[time > t*burn_in]
+        vec_sims = np.nanmean(vec_sims, axis=1)
+        vec = np.concatenate((vec, vec_sims))
+    kws = dict(histtype= "stepfilled", linewidth = 1)
+    ax.hist(vec, label=t, cumulative=True, bins=150, density=True,
+            color='mistyrose', edgecolor='k', **kws)
+    # sns.kdeplot(vec, label=t, bw_adjust=0.05, cumulative=True)
+    plot_boltzmann_distro(j, noise, b=b, ax=ax)
+    plt.legend()
+    ax.set_ylabel('CDF(x)')
+    ax.set_xlabel('x')
+    ax.set_xlim(-0.05, 1.05)
 
 
 def vector_proj(u, v):
@@ -1006,9 +1015,21 @@ def projection_mf_plot(theta, j=1, b=0, noise=0, tau=1):
     ax.plot3D(val_act[-1, 0], val_act[-1, 1], val_act[-1, 2], color='r', marker='x')
     
 
+def plot_boltzmann_distro(j, noise, b=0, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(1)
+    q = np.arange(0, 1.001, 0.001)
+    pot = potential_mf(q, j, bias=b)
+    distro = np.exp(-0.5*pot/noise**2)
+    ax.plot(q, np.cumsum(distro) / np.sum(distro),
+            color='r', label='analytical')
+
+
 if __name__ == '__main__':
     # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.05)
-    plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
+    # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
+    plot_occupancy_distro(j=0.5, noise=0.01, tau=1, dt=1, theta=theta, b=0,
+                          t=100000, burn_in=0.001, n_sims=1)
     # q_list = []
     # for j in np.arange(0.01, 1, 0.01):
     #     q_list.append(find_repulsor(j=j, num_iter=30, epsilon=1e-1, q_i=0.01,
