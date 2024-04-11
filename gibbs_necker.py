@@ -370,7 +370,7 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2):
                     pmat[classes2, classes] = change_prob(x_vec, x_vec2, j=1, stim=stim)
     cte = np.sum(pmat, axis=1)
     pmat /= cte
-    # plt.figure()
+    plt.figure()
     for ic, cl in enumerate(class_count):
         for ic2, cl2 in enumerate(class_count):
             plt.plot([muvec[ic]+eps, muvec[ic2]+eps], [klist[ic]+eps, klist[ic2]+eps], color='r',
@@ -380,10 +380,21 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2):
     for i_c, classe in enumerate(class_count):
         plt.plot(muvec[i_c], klist[i_c], marker='o', linestyle='', color='k',
                  markersize=7)  # nc[classe]*55+
-    plt.ylabel(r'$k = \frac{1}{2} \vec{x}^T \theta_{ij} \vec{x} + \sum_i B x_i $', fontsize=12)
+    plt.annotate(text='', xy=(-8, 11.5), xytext=(-8, 2),
+                 arrowprops=dict(arrowstyle='<->'))
+    plt.text(-7.5, 4, r'$\Delta k_1$')
+    plt.annotate(text='', xy=(8, 11.5), xytext=(8, 2),
+                 arrowprops=dict(arrowstyle='<->'))
+    plt.text(6.7, 4, r'$\Delta k_2$')
+    plt.annotate(text='', xy=(0, 0.5), xytext=(0, 3.5),
+                 arrowprops=dict(arrowstyle='<->'))
+    plt.text(-1, 1.5, r'$\Delta k_u$')
+    plt.ylabel(r'$k = \frac{1}{2} \vec{x}^T \theta \vec{x} + B \mu$', fontsize=12)
+    plt.plot([-8, -2], [2, 2], color='k', linestyle='--', alpha=0.4)
+    plt.plot([8, 2], [2, 2], color='k', linestyle='--', alpha=0.4)
     plt.xlabel(r'$\mu$', fontsize=12)
     plt.title('B = {}'.format(stim))
-
+    
 
 def compute_C(data_folder):
     combs = list(itertools.product([-1, 1], repeat=8))
@@ -1103,10 +1114,10 @@ def plot_occ_probs_gibbs(data_folder,
                     bw_adjust=0.1, cumulative=True)
         # plt.hist(mu_list, bins=40, color=colormap[i_n], label=n_iter)
     plt.legend(title='N')
-    plt.ylabel('CDF')
+    plt.ylabel(r'CDF of $X(T)$')
     plt.xlim(-0.05, 1.05)
     plt.ylim(-0.05, 1.05)
-    plt.xlabel(r'$\mu$')
+    plt.xlabel(r'Time proportion, $t/T$')
     # plt.figure()
     k_1 = 12*j + 8*stim
     k_u = 2*j + 2*stim
@@ -1123,16 +1134,41 @@ def plot_occ_probs_gibbs(data_folder,
     legendelements = [Line2D([0], [0], color='k', lw=2, label='Simulation'),
                       Line2D([0], [0], color='k', lw=2, linestyle='--',
                              label='Analytical'),
-                      Line2D([0], [0], color=colormap[0], lw=2, label='1e2'),
-                      Line2D([0], [0], color=colormap[1], lw=2, label='1e3'),
-                      Line2D([0], [0], color=colormap[2], lw=2, label='1e4'),
-                      Line2D([0], [0], color=colormap[3], lw=2, label='1e5'),
-                      Line2D([0], [0], color=colormap[4], lw=2, label='1e6'),
+                      Line2D([0], [0], color=colormap[0], lw=2, label='T=1e2'),
+                      Line2D([0], [0], color=colormap[1], lw=2, label='T=1e3'),
+                      Line2D([0], [0], color=colormap[2], lw=2, label='T=1e4'),
+                      Line2D([0], [0], color=colormap[3], lw=2, label='T=1e5'),
+                      Line2D([0], [0], color=colormap[4], lw=2, label='T=1e6'),
                       ]
     plt.legend(bbox_to_anchor=(1., 1.), handles=legendelements)
     plt.title('B = ' + str(stim))
     fig.savefig(DATA_FOLDER + 'CDF_gibbs_stim_' + str(stim) + '_j_' + str(j) + '.png',
                 dpi=400, bbox_inches='tight')
+
+
+def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False):
+    fig, ax = plt.subplots(1)
+    ax.plot([0, 1], [0, 0], color='k')
+    ax.plot([0, 0], [0, 1], color='k')
+    ax.plot([0, 1], [1, 1], color='k')
+    ax.plot([1, 1], [0, 1], color='k')
+    ax.plot([0, offset], [1, 1+offset], color='k')
+    ax.plot([1, 1+offset], [0+offset, 0+offset], color='k')
+    ax.plot([offset, 1+offset], [1+offset, 1+offset], color='k')
+    ax.plot([1+offset, 1+offset], [0+offset, 1+offset], color='k')
+    ax.plot([1, 1+offset], [1, 1+offset], color='k')
+    if whole:
+        ax.plot([offset, offset], [offset, 1+offset], color='k')
+        ax.plot([offset, 1+offset], [offset, offset], color='k')
+        ax.plot([0, offset], [0, offset], color='k')
+        ax.plot([1, 1+offset], [0, offset], color='k')
+    else:
+        ax.plot([offset, offset], [1, 1+offset], color='k')
+        ax.plot([1, 1+offset], [0, offset], color='k')
+    if interp_sfa:
+        ax.set_xlim(1.35, -0.1)
+        ax.set_ylim(1.35, -0.1)
+    plt.axis('off')
 
 
 if __name__ == '__main__':
@@ -1152,6 +1188,6 @@ if __name__ == '__main__':
 
     plot_occ_probs_gibbs(data_folder=DATA_FOLDER,
                           n_iter_list=np.logspace(2, 6, 5, dtype=int),
-                          j=1, stim=-0.1, n_repetitions=100, theta=THETA,
+                          j=1, stim=0.1, n_repetitions=100, theta=THETA,
                           burn_in=0.1)
 
