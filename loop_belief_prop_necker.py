@@ -191,7 +191,7 @@ def plot_loopy_b_prop_sol_difference(theta, num_iter, j_list=np.arange(0, 1, 0.1
     plt.plot(j_list, diff, color='k')
 
 
-def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
+def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.001),
                           thr=1e-15, stim=0.1, alpha=1):
     lp = []
     ln = []
@@ -213,10 +213,12 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
         nlist.append(n)
     # ax.plot(j_list, lp, color='k')
     neighs = np.sum(theta, axis=1, dtype=int)
-    neighs -= np.min(neighs)
+    min_neighs = np.min(neighs)
+    neighs -= min_neighs
     colors = ['k', 'r', 'b']
     for i_v, vals in enumerate(vals_all):
-        ax.plot(j_list, vals, color=colors[neighs[i_v]], alpha=0.1)
+        ax.plot(j_list, vals, color=colors[neighs[i_v]], alpha=1)
+        ax.plot(j_list, 1-vals, color=colors[neighs[i_v]], alpha=1)
     
     # plt.plot(j_list, ln, color='r')
     # plot_sol_LBP(j_list=np.arange(0, max(j_list), 0.00001), stim=stim)
@@ -224,21 +226,28 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.1),
     ax.set_title('Loopy-BP solution (symmetric)')
     ax.set_xlabel('J')
     ax.set_ylabel('q')
+    # plt.plot([np.log(3)/2, 1], [0.5, 0.5], color='grey', alpha=1, linestyle='--',
+    #          label='Unstable FP')
     legendelements = [Line2D([0], [0], color='k', lw=2, label='3'),
-                      Line2D([0], [0], color='r', lw=2, label='4'),
-                      Line2D([0], [0], color='b', lw=2, label='5')]
+                      Line2D([0], [0], color='r', lw=2, label='4')]
+    # legendelements = [Line2D([0], [0], color='k', lw=2, label='Stable FP'),
+    #                   Line2D([0], [0], color='k', lw=2, label='Unstable FP')]
     plt.legend(handles=legendelements, title='Neighbors')
+    # plt.legend(title='Neighbors')
     ax.set_ylim(-0.05, 1.05)
-    # plt.figure()
-    # plt.plot(j_list, nlist, color='k')
-    # plt.xlabel('J')
-    # plt.ylabel('n_iter for convergence, thr = {}'.format(thr))
-    # plt.figure()
-    # plt.plot(nlist, lp, color='k')
-    # plt.plot(nlist, ln, color='r')
-    # plt.xlabel('n_iter for convergence, thr = {}'.format(thr))
-    # plt.ylabel('q')
-    # plt.figure()
+    plt.figure()
+    plt.plot(j_list, nlist, color='k')
+    plt.xlabel('J')
+    plt.ylabel('n_iter for convergence, thr = {}'.format(thr))
+    plt.figure()
+    plt.plot(nlist, lp, color='k')
+    plt.plot(nlist, ln, color='r')
+    plt.xlabel('n_iter for convergence, thr = {}'.format(thr))
+    plt.ylabel('q')
+    # plot_bp_solution(ax, j_list, b=stim, tol=1e-10,
+    #                  min_r=0, max_r=15,
+    #                  w_size=0.05, n_neigh=3,
+    #                  color='b')
 
 
 def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
@@ -267,12 +276,16 @@ def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
 
 def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
     q0_l, q1_l, q2_l = solutions_bp(j_list=j_list, stim=stim)
-    plt.plot(j_list, q0_l, color='b')
-    plt.plot(j_list, q1_l, color='b')
-    plt.plot(j_list, q2_l, color='b')
+    # plt.plot(j_list, q0_l, color='grey', linestyle='--')
+    plt.plot([0, np.log(3)/2], [0.5, 0.5], color='grey', alpha=1, label='Stable FP')
+    plt.plot(j_list, q1_l, color='k')
+    plt.plot(j_list, q2_l, color='k')
     plt.xlabel('J')
+    plt.plot([np.log(3)/2, 1], [0.5, 0.5], color='grey', alpha=1, linestyle='--',
+             label='Unstable FP')
     plt.ylabel('q')
-    plt.title('Solutions of the dynamical system')
+    # plt.title('Solutions of the dynamical system')
+    plt.legend()
 
 
 def plot_solution_BP(j_list, stim):
@@ -508,71 +521,60 @@ def plot_bp_solution(ax, j_list, b, tol=1e-12, min_r=-20, max_r=20,
         ax.plot(j_list,
                 np.exp(b)*sol**3 / (np.exp(-b)+np.exp(b)*sol**3),
                 color=color, linestyle=linestyles[i_s])
+        if b == 0:
+            ax.plot(j_list,
+                    1-np.exp(b)*sol**3 / (np.exp(-b)+np.exp(b)*sol**3),
+                    color=color, linestyle=linestyles[i_s])
     ax.set_xlabel('J')
     ax.set_ylabel('q')
 
 
-def dynamical_system_BP(t, m, j, stim, theta):
-    m = m.reshape(16, 8)
-    mu_y_1 = m[:8, :]
-    mu_y_neg1 = m[8:, :]
+def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2):
+    time = np.arange(0, t_end, dt)
+    mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
     theta = theta*j
-    for i in range(8):
-        for m in np.where(theta[i, :] != 0)[0]:
-            # positive y_i
-            mu_y_1[m, i] = np.exp(theta[i, m]+stim) *\
-                    (mu_y_1[jneigbours(m, i)[0], m]*
-                     mu_y_1[jneigbours(m, i)[1], m])\
-                    + np.exp(-theta[i, m]+stim) *\
-                    (mu_y_neg1[jneigbours(m, i)[0], m] *
-                     mu_y_neg1[jneigbours(m, i)[1], m])
-            # mu_y_1 += np.random.rand(8, 8)*1e-3
-            # negative y_i
-            mu_y_neg1[m, i] = np.exp(-theta[i, m]-stim) *\
-                (mu_y_1[jneigbours(m, i)[0], m] * mu_y_1[jneigbours(m, i)[1], m])\
-                + np.exp(theta[i, m]-stim) *\
-                (mu_y_neg1[jneigbours(m, i)[0], m] *
-                 mu_y_neg1[jneigbours(m, i)[1], m])
-
-            m_y_1_memory = np.copy(mu_y_1[m, i])
-            mu_y_1[m, i] = mu_y_1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
-            mu_y_neg1[m, i] = mu_y_neg1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
-    m = np.concatenate((mu_y_1.flatten(),
-                        mu_y_neg1.flatten()))
-    m = np.clip(m, 0, np.max(m))
-    return m
-
-
-def plot_dyn_sys_BP_solution():
-    j_list=np.arange(0.01, 1, 0.01)
-    q1_list = []
-    for j in j_list:
-        theta = THETA
-        mu_y_1 = np.multiply(theta, np.random.rand(8, 8))
-        mu_y_neg1 = np.multiply(theta, np.random.rand(8, 8))
-        init_cond = np.concatenate((mu_y_1, mu_y_neg1))
-        m_solution = solve_ivp(fun=dynamical_system_BP, t_span=[0, 10],
-                                y0=init_cond.flatten(),
-                                args=(j, 0.05, theta))
-        m = m_solution.y[:, -1].reshape(16, 8)
-        mu_y_1 = m[:8, :]
-        mu_y_1_memory = np.copy(mu_y_1)
-        mu_y_neg1 = m[8:, :]
-        mu_y_neg1_memory = np.copy(mu_y_1)
-        q_y_1 = np.zeros(8)
-        q_y_neg1 = np.zeros(8)
-        for i in range(8):
-            q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i])
-            qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i])
-            q_y_1[i] = q1/(q1+qn1)
-            q_y_neg1[i] = qn1/(q1+qn1)
-        q_1 = q_y_1[np.abs(q_y_1) <= 1][0]
-        q1_list.append(q_1)
-    plt.plot(j_list, q1_list)
+    q_y_1 = np.zeros((len(time), theta.shape[0]))
+    q_y_neg1 = np.zeros((len(time), theta.shape[0]))
+    for i_t, t in enumerate(time):
+        for i in range(theta.shape[0]):
+            q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(stim)
+            qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-stim)
+            q_y_1[i_t, i] = q1/(q1+qn1)
+            q_y_neg1[i_t, i] = qn1/(q1+qn1)
+        for i in range(theta.shape[0]):
+            for m in np.where(theta[i, :] != 0)[0]:
+                # positive y_i
+                mu_y_1[m, i] += (np.exp(theta[i, m]+stim) *\
+                        (mu_y_1[jneigbours(m, i, theta=theta)[0], m]*
+                         mu_y_1[jneigbours(m, i, theta=theta)[1], m])\
+                        + np.exp(-theta[i, m]+stim) *\
+                        (mu_y_neg1[jneigbours(m, i, theta=theta)[0], m] *
+                         mu_y_neg1[jneigbours(m, i, theta=theta)[1], m]) -
+                        mu_y_1[m, i])*dt +\
+                    np.sqrt(dt)*noise*np.random.randn()
+                # negative y_i
+                mu_y_neg1[m, i] += (np.exp(-theta[i, m]-stim) *\
+                    (mu_y_1[jneigbours(m, i, theta=theta)[0], m] *\
+                     mu_y_1[jneigbours(m, i, theta=theta)[1], m])\
+                    + np.exp(theta[i, m]-stim) *\
+                    (mu_y_neg1[jneigbours(m, i, theta=theta)[0], m] *
+                     mu_y_neg1[jneigbours(m, i, theta=theta)[1], m]) -
+                    mu_y_neg1[m, i])*dt +\
+                np.sqrt(dt)*noise*np.random.randn()
+                m_y_1_memory = np.copy(mu_y_1[m, i])
+                mu_y_1[m, i] = mu_y_1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
+                mu_y_neg1[m, i] = mu_y_neg1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
+    plt.figure()
+    for q in q_y_1.T:
+        plt.plot(time, q, alpha=0.8)
     plt.ylim(-0.05, 1.05)
-    plt.xlabel('J')
-    plt.ylabel('q')
-    
+    # plt.figure()
+    # for q in q_y_neg1.T:
+    #     plt.plot(time, q, alpha=0.8)
+    # plt.ylim(-0.05, 1.05)
+    return q_y_1, q_y_neg1
+
 
 def sols(b, jp, N):
     """
@@ -727,33 +729,34 @@ def plot_g_der_sols(N, plot_der=False):
 
 
 def plot_solutions_BP_depending_neighbors(j_list=np.arange(0.001, 1, 0.001),
-                                          neigh_list=[3, 4, 5]):
+                                          neigh_list=[3, 4, 5], b=0):
     fig, ax = plt.subplots(ncols=3, figsize=(10, 6))
     colors = ['k', 'r', 'b']
     neigh_list = [3, 4, 5]
     for n_neigh in neigh_list:
-        plot_bp_solution(ax[n_neigh-min(neigh_list)], j_list, b=0.05, tol=1e-10,
-                         min_r=-15, max_r=15,
-                         w_size=0.01, n_neigh=n_neigh,
+        plot_bp_solution(ax[n_neigh-min(neigh_list)], j_list, b=b, tol=1e-10,
+                         min_r=0, max_r=15,
+                         w_size=0.05, n_neigh=n_neigh,
                          color=colors[n_neigh-min(neigh_list)])
         ax[n_neigh-min(neigh_list)].set_title(str(n_neigh) + ' neighbors')
 
 
 if __name__ == '__main__':
-    # for stim in [0., 0.1, 0.2]:
-    #     plot_loopy_b_prop_sol(theta=THETA, num_iter=100,
-    #                           j_list=np.arange(0.00001, 1, 0.01),
-    #                           thr=1e-12, stim=stim)
-    
+    # for stim in [0.]:
+    #     plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=200,
+    #                           j_list=np.arange(0.00001, 1, 0.001),
+    #                           thr=1e-10, stim=stim)
+    dynamical_system_BP_euler(j=0.1, stim=0, theta=THETA, noise=0.02,
+                              t_end=20, dt=5e-2)
     # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.2,
     #                             num_iter=40, thr=1e-8, theta=gn.return_theta())
-    plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
-                          b_list=np.arange(-0.5, 0.5, 0.01),
-                          tol=1e-12, min_r=0, max_r=20,
-                          w_size=0.01, neigh_list=np.arange(3, 12),
-                          dim3=False)
-    plt.figure()
-    solve_equation_g_derivative()
+    # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
+    #                       b_list=np.arange(-0.5, 0.5, 0.01),
+    #                       tol=1e-12, min_r=0, max_r=20,
+    #                       w_size=0.01, neigh_list=np.arange(3, 12),
+    #                       dim3=False)
+    # plt.figure()
+    # solve_equation_g_derivative()
     # j_list=np.arange(0.001, 1, 0.001)
     # fig, ax = plt.subplots(ncols=1)
     # plot_bp_solution(ax, j_list, b=0.05, tol=1e-10,
