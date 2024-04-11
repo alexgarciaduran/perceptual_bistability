@@ -217,8 +217,8 @@ def plot_mf_sol_stim_bias_different_sols(j_list, stim=0.1, num_iter=500,
                  linestyle='--', alpha=1)
     plt.xlabel('J')
     legendelements = [Line2D([0], [0], color='k', lw=2, label='3'),
-                      Line2D([0], [0], color='r', lw=2, label='4'),
-                      Line2D([0], [0], color='b', lw=2, label='5')]
+                      Line2D([0], [0], color='r', lw=2, label='4')]
+                      # Line2D([0], [0], color='b', lw=2, label='5')]
     plt.legend(handles=legendelements, title='Neighbors')
     plt.ylabel('q')
 
@@ -266,12 +266,14 @@ def plot_solutions_mfield(j_list, stim=0, N=3):
     for j in j_list:
         q = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ stim*2*N) - q 
         l.append(np.clip(fsolve(q, 0.9), 0, 1))
-    plt.axhline(0.5, color='grey', alpha=1, linestyle='--')
+    plt.plot([1/3, 1], [0.5, 0.5], color='grey', alpha=1, linestyle='--',
+             label='Unstable FP')
     plt.plot(j_list, 1-np.array(l), color='k')
-    plt.plot(j_list, l, color='r')
+    plt.plot(j_list, l, color='k', label='Stable FP')
     plt.xlabel('J')
     plt.ylabel('q')
-    plt.title('Solutions of the dynamical system')
+    # plt.title('Solutions of the dynamical system')
+    plt.legend()
 
 
 
@@ -518,6 +520,10 @@ def potential_mf(q, j, bias=0):
     return q*q/2 - np.log(1+np.exp(6*(j*(2*q-1)+bias)))/(12*j) #  + q*bias
 
 
+def potential_mf_neighs(q, j, bias=0, neighs=3):
+    return q*q/2 - np.log(1+np.exp(2*neighs*(j*(2*q-1)+bias)))/(4*neighs*j)
+
+
 def plot_potentials_different_beta(j=0.5, beta_list=[-0.1, -0.05, 0, 0.05, 0.1]):
     plt.figure()
     colormap = pl.cm.Blues(np.linspace(0.2, 1, len(beta_list)))
@@ -583,7 +589,7 @@ def taylor_expansion_pot_at_05(q, j ,b):
     return expansion
 
 
-def plot_potentials_mf(j_list, bias=0):
+def plot_potentials_mf(j_list, bias=0, neighs=3):
     # colormap = pl.cm.Blues(np.linspace(0.2, 1, len(j_list)))
     # colormap_1 = pl.cm.Purples(np.linspace(0.4, 1, len(j_list)))
     Blues = pl.cm.get_cmap('Blues', 100)
@@ -598,7 +604,7 @@ def plot_potentials_mf(j_list, bias=0):
     fig, ax = plt.subplots(1)
     change_colormap = False
     for i_j, j in enumerate(j_list):
-        pot = potential_mf(q, j, bias=bias)
+        pot = potential_mf_neighs(q, j, bias=bias, neighs=neighs)
         # pot = potential_expansion_any_order_any_point(q, j, b=0, order=8, point=0.5)
         # norm_cte = np.max(np.abs(pot))
         if abs(j - 0.333) < 0.01 and not change_colormap:
@@ -763,6 +769,15 @@ def plot_mf_evolution_2_faces(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2):
     ax4.legend()
     ax4.set_ylabel('q')
     ax4.set_xlabel('Time (s)')
+
+
+def plot_mf_evolution_all_nodes(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2):
+    time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
+                                      time_end=time_end, dt=dt)
+    plt.figure()
+    for q in vec.T:
+        plt.plot(time, q)
+    plt.ylim(-0.05, 1.05)
 
 
 def plot_eigenvals_and_behavior_MF_2_faces(b=0, diag_neg=False):
@@ -955,8 +970,9 @@ def plot_occupancy_distro(j, noise=0.3, tau=1, dt=1e-1, theta=theta, b=0,
         vec_sims = vec_sims[time > t*burn_in]
         vec_sims = np.nanmean(vec_sims, axis=1)
         vec = np.concatenate((vec, vec_sims))
+    print(len(vec))
     kws = dict(histtype= "stepfilled", linewidth = 1)
-    ax.hist(vec, label=t, cumulative=True, bins=150, density=True,
+    ax.hist(vec, label=int(t*n_sims), cumulative=True, bins=150, density=True,
             color='mistyrose', edgecolor='k', **kws)
     # sns.kdeplot(vec, label=t, bw_adjust=0.05, cumulative=True)
     plot_boltzmann_distro(j, noise, b=b, ax=ax)
@@ -1020,26 +1036,123 @@ def plot_boltzmann_distro(j, noise, b=0, ax=None):
         fig, ax = plt.subplots(1)
     q = np.arange(0, 1.001, 0.001)
     pot = potential_mf(q, j, bias=b)
-    distro = np.exp(-0.5*pot/noise**2)
+    distro = np.exp(-2*pot/noise**2)
     ax.plot(q, np.cumsum(distro) / np.sum(distro),
             color='r', label='analytical')
 
 
+def second_derivative_potential(q, j, b=0):
+    expo = 6*(j*(2*q-1)+b)
+    return 1 - 12*j*gn.sigmoid(expo)*(1-gn.sigmoid(expo))
+
+
+def k_i_to_j(j, xi, xj, noise, b=0):
+    v_2_xi = second_derivative_potential(xi, j, b=0)
+    v_2_xj = second_derivative_potential(xj, j, b=0)
+    v_xi = potential_mf(xi, j, b)
+    v_xj = potential_mf(xj, j, b)
+    return np.sqrt(np.abs(v_2_xi*v_2_xj))*np.exp(-2*(v_xi - v_xj)/noise**2) / (2*np.pi)
+
+
+def transition_probs_j(t_dur, noise,
+                       j_list=np.arange(0.001, 3.01, 0.005),
+                       b=0, tol=1e-10):
+    trans_prob_u_to_s_1 = []
+    trans_prob_u_to_s_2 = []
+    trans_prob_s_to_u_1 = []
+    trans_prob_s_to_u_2 = []
+    # trans_prob_i_to_j = []
+    # trans_prob_j_to_i = []
+    for j in j_list:
+        diff_1 = 0
+        diff_2 = 0
+        init_cond_unst = 0.5
+        q1 = lambda q: gn.sigmoid(6*j*(2*q-1)+ b*6) - q
+        sol_1, _, flag, _ =\
+            fsolve(q1, 1, full_output=True)
+        if flag == 1:
+            x_stable_1 = sol_1[0]
+        else:
+            x_stable_1 = np.nan
+        sol_2, _, flag, _ =\
+            fsolve(q1, 0, full_output=True)
+        if flag == 1:
+            x_stable_2 = sol_2[0]
+        else:
+            x_stable_2 = np.nan
+        while np.abs(diff_1) <= tol or np.abs(diff_2) <= tol:
+            if np.abs(x_stable_1-x_stable_2) <= tol:
+                x_unstable = np.nan
+                break
+            sol_unstable, _, flag, _ =\
+                fsolve(q1, init_cond_unst, full_output=True)
+            if flag == 1:
+                x_unstable = sol_unstable[0]
+            else:
+                x_unstable = np.nan
+                break
+            diff_1 = x_unstable - x_stable_1
+            diff_2 = x_unstable - x_stable_2
+            init_cond_unst = np.random.rand()
+        k_x_u_to_s_1 = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+        k_x_u_to_s_2 = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
+        k_x_s_to_u_1 = k_i_to_j(j, x_unstable, x_stable_1, noise, b)
+        k_x_s_to_u_2 = k_i_to_j(j, x_unstable, x_stable_2, noise, b)
+        # k = k_x_ij + k_x_ji
+        # p_is = k_i_to_j(j, xi, xj, noise, b) / k
+        # p_js = k_i_to_j(j, xj, xi, noise, b) / k
+        # P_is is prob to stay in i at end of trial given by t_dur
+        # P_js is prob to stay in j at end of trial given by t_sdur
+        # trans_prob_ij.append(p_is * (1 - np.exp(-k*t_dur)))  # prob of at some point going from j to i
+        # trans_prob_ji.append(p_js * (1 - np.exp(-k*t_dur))) # prob of at some point going from i to j
+        trans_prob_u_to_s_1.append(1-np.exp(-k_x_u_to_s_1*t_dur))
+        trans_prob_u_to_s_2.append(1-np.exp(-k_x_u_to_s_2*t_dur))
+        trans_prob_s_to_u_1.append(1-np.exp(-k_x_s_to_u_1*t_dur))
+        trans_prob_s_to_u_2.append(1-np.exp(-k_x_s_to_u_2*t_dur))
+        # trans_prob_i_to_j.append(1-np.exp(-(k_x_s_to_u_2+k_x_u_to_s_1)*t_dur))
+        # trans_prob_j_to_i.append(1-np.exp(-(k_x_s_to_u_1+k_x_u_to_s_2)*t_dur))
+        # 1 - np.exp(-k*t_dur) is prob to change from i->j and vice-versa
+    trans_prob_j_to_i = np.array(trans_prob_u_to_s_1)*np.array(trans_prob_s_to_u_2)
+    trans_prob_i_to_j = np.array(trans_prob_u_to_s_2)*np.array(trans_prob_s_to_u_1)
+    plt.figure()
+    plt.plot(j_list, trans_prob_u_to_s_1, label='P_u_to_s_1')
+    plt.plot(j_list, trans_prob_u_to_s_2, label='P_u_to_s_2')
+    plt.plot(j_list, trans_prob_s_to_u_1, label='P_s_to_u_1')
+    plt.plot(j_list, trans_prob_s_to_u_2, label='P_s_to_u_2')
+    plt.xlabel('J')
+    plt.ylabel('Transition probability')
+    plt.legend()
+    plt.figure()
+    plt.plot(j_list, trans_prob_i_to_j, label='P_ij')
+    plt.plot(j_list, trans_prob_j_to_i, label='P_ji')
+    plt.xlabel('J')
+    plt.ylabel('Transition probability')
+    plt.legend()
+    plt.figure()
+    plt.plot(trans_prob_i_to_j, trans_prob_j_to_i)
+    plt.xlabel('T_ij')
+    plt.ylabel('T_ji')
+
+
 if __name__ == '__main__':
+    # plot_potential_and_vector_field_2d(j=1, b=0, noise=0., tau=1,
+    #                                     time_end=50, dt=5e-2)
     # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.05)
     # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
-    plot_occupancy_distro(j=0.5, noise=0.01, tau=1, dt=1, theta=theta, b=0,
-                          t=100000, burn_in=0.001, n_sims=1)
+    # plot_occupancy_distro(j=0.6, noise=0.2, tau=1, dt=5e-2, theta=theta, b=0,
+    #                       t=5000, burn_in=0.001, n_sims=50)
+    plot_mf_evolution_all_nodes(j=.1, b=0., noise=0.02, tau=1, time_end=20,
+                                dt=5e-2)
     # q_list = []
     # for j in np.arange(0.01, 1, 0.01):
     #     q_list.append(find_repulsor(j=j, num_iter=30, epsilon=1e-1, q_i=0.01,
     #                                 q_f=0.95, stim=0.1, threshold=1e-5, theta=theta,
     #                                 neigh=3))
     # plt.plot(np.arange(0.01, 1, 0.01), q_list)
-    # plot_mf_sol_stim_bias_different_sols(j_list=np.arange(0.001, 1, 0.005),
-    #                                       stim=0.05,
-    #                                       num_iter=20,
-    #                                       theta=gn.return_theta(columns=5, rows=10))
+    # plot_mf_sol_stim_bias_different_sols(j_list=np.arange(0.001, 1, 0.01),
+    #                                      stim=0.0,
+    #                                      num_iter=40,
+    #                                      theta=gn.return_theta(columns=5, rows=10))
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0.01, 1, 0.001),
     #                        num_iter=200,
     #                        beta_list=np.arange(-0.5, 0.5, 0.001),
