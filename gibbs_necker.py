@@ -342,11 +342,10 @@ def plot_k_vs_mu(states_mat, j):
     plt.xlabel(r'$\mu$', fontsize=12)
 
 
-def plot_k_vs_mu_analytical(stim=0, eps=6e-2):
-    nc = num_configs() / 256
+def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False):
+    nc = np.sum(np.sign(np.copy(C) / 8), axis=1) / 8
     combs = list(itertools.product([-1, 1], repeat=8))
     combs = np.array(combs, dtype=np.float64)
-    pmat = np.zeros((22, 22))
     class_count = []
     klist = []
     muvec = []
@@ -360,26 +359,19 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2):
             muvec.append(get_mu_v2(x_vec))
             klist.append(k)
             class_count.append(classes)
-            class_count2 = []
-            for i_x2, x_vec2 in enumerate(combs):
-                classes2 = check_class(x_vec2)
-                if classes2 in class_count2:
-                    continue
-                else:
-                    class_count2.append(classes2)
-                    pmat[classes2, classes] = change_prob(x_vec, x_vec2, j=1, stim=stim)
-    cte = np.sum(pmat, axis=1)
-    pmat /= cte
-    plt.figure()
-    for ic, cl in enumerate(class_count):
-        for ic2, cl2 in enumerate(class_count):
-            plt.plot([muvec[ic]+eps, muvec[ic2]+eps], [klist[ic]+eps, klist[ic2]+eps], color='r',
-                     linewidth=np.sign(C[class_count[ic], class_count[ic]])/2)
-            plt.plot([muvec[ic]-eps, muvec[ic2]-eps], [klist[ic]-eps, klist[ic2]-eps], color='r',
-                     linewidth=np.sign(C[class_count[ic2], class_count[ic]])/2)
+        if len(class_count) == 22:
+            break            
+    fig, ax = plt.subplots(1)
+    if plot_arist:
+        for ic, cl in enumerate(class_count):
+            for ic2, cl2 in enumerate(class_count):
+                plt.plot([muvec[ic]+eps, muvec[ic2]+eps], [klist[ic]+eps, klist[ic2]+eps], color='r',
+                         linewidth=np.sign(C[class_count[ic], class_count[ic]])/2)
+                plt.plot([muvec[ic]-eps, muvec[ic2]-eps], [klist[ic]-eps, klist[ic2]-eps], color='r',
+                         linewidth=np.sign(C[class_count[ic2], class_count[ic]])/2)
     for i_c, classe in enumerate(class_count):
         plt.plot(muvec[i_c], klist[i_c], marker='o', linestyle='', color='k',
-                 markersize=7)  # nc[classe]*55+
+                 markersize=nc[classe]*15+1)  # nc[classe]*55+
     plt.annotate(text='', xy=(-8, 11.5), xytext=(-8, 2),
                  arrowprops=dict(arrowstyle='<->'))
     plt.text(-7.5, 4, r'$\Delta k_1$')
@@ -394,6 +386,11 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2):
     plt.plot([8, 2], [2, 2], color='k', linestyle='--', alpha=0.4)
     plt.xlabel(r'$\mu$', fontsize=12)
     plt.title('B = {}'.format(stim))
+    plot_necker_cubes(ax=ax, mu=-8)
+    plot_necker_cubes(ax=ax, mu=-6)
+    plot_necker_cubes(ax=ax, mu=8)
+    plot_necker_cubes(ax=ax, mu=0, bot=False)
+    plot_necker_cubes(ax=ax, mu=0)
     
 
 def compute_C(data_folder):
@@ -1171,6 +1168,75 @@ def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False):
     plt.axis('off')
 
 
+def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5):
+    # fig, ax = plt.subplots(1, figsize=(4, 3.5))
+    if mu == -8:
+        color_back = ['k']*4
+        color_front = ['k']*4
+        val_off_x = 0.75
+        val_off_y = 4
+    if mu == -6:
+        color_back = ['k']*4
+        color_front = ['white'] + ['k']*3
+        val_off_x = 0.75
+        val_off_y = .8
+    if mu == 8:
+        color_back = ['white']*4
+        color_front = ['white']*4
+        val_off_x = -2.6
+        val_off_y = 4
+    if mu == 0 and not bot:
+        color_back = ['k']*4
+        color_front = ['white']*4
+        val_off_x = -1
+        val_off_y = 5.4
+    if mu == 0 and bot:
+        color_back = ['k', 'white', 'k', 'white']
+        color_front = ['white', 'k', 'white', 'k']
+        val_off_x = 1.2
+        val_off_y = -12.5
+    nodes = np.zeros((2, 2, 2))
+    x_nodes_front = (nodes[:, :, 0] + np.arange(2))*factor + mu + val_off_x
+    y_nodes_front = ((nodes[:, :, 0].T + 2.2*np.arange(2)).T)*factor + np.abs(mu) + val_off_y
+    x_nodes_back = (nodes[:, :, 1] + np.arange(2))*factor + offset + mu + val_off_x
+    y_nodes_back = ((nodes[:, :, 1].T + 2.2*np.arange(2)).T)*factor + offset + np.abs(mu) + val_off_y
+    for i in range(2):
+        for j in range(2):
+            if j % 2 == 0 or j == 1:
+                ax.plot([x_nodes_front[i, j], x_nodes_back[i, j]],
+                        [y_nodes_front[i, j], y_nodes_back[i, j]],
+                        color='grey',
+                        alpha=0.6)
+            if (j+1) < 2:
+                ax.plot([x_nodes_front[i, j], x_nodes_front[i, j+1]],
+                        [y_nodes_front[i, j], y_nodes_front[i, j+1]],
+                        color='grey',
+                        alpha=0.6)
+                ax.plot([x_nodes_back[i, j], x_nodes_back[i, j+1]],
+                        [y_nodes_back[i, j], y_nodes_back[i, j+1]],
+                        color='grey',
+                        alpha=0.6)
+            if (i+1) < 2:
+                ax.plot([x_nodes_front[i, j], x_nodes_front[i+1, j]],
+                        [y_nodes_front[i, j], y_nodes_front[i+1, j]],
+                        color='grey',
+                        alpha=0.6)
+                ax.plot([x_nodes_back[i, j], x_nodes_back[i+1, j]],
+                        [y_nodes_back[i, j], y_nodes_back[i+1, j]],
+                        color='grey',
+                        alpha=0.6)
+    i = 0
+    for x_b, y_b, x_f, y_f in zip(x_nodes_back.flatten(), y_nodes_back.flatten(),
+                                  x_nodes_front.flatten(), y_nodes_front.flatten()):
+        ax.plot(x_b, y_b, marker='o', linestyle='', color=color_back[i],
+                markersize=4, markeredgecolor='k')
+        ax.plot(x_f, y_f, marker='o', linestyle='', color=color_front[i],
+                markersize=4, markeredgecolor='k')
+        i += 1
+    # ax.axis('off')
+    
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
@@ -1178,7 +1244,7 @@ if __name__ == '__main__':
 
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
-    # plot_k_vs_mu_analytical(eps=0, stim=0.)
+    plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
     #                       wsize=1, stim=-0.1)
     # t = transition_matrix(0.2, C)
@@ -1186,8 +1252,8 @@ if __name__ == '__main__':
     #                                  n_iter_list=np.logspace(0, 4, 5))
     # plot_cylinder_true_posterior(j=0.2, stim=0.05, theta=THETA)
 
-    plot_occ_probs_gibbs(data_folder=DATA_FOLDER,
-                          n_iter_list=np.logspace(2, 6, 5, dtype=int),
-                          j=1, stim=0.1, n_repetitions=100, theta=THETA,
-                          burn_in=0.1)
+    # plot_occ_probs_gibbs(data_folder=DATA_FOLDER,
+    #                       n_iter_list=np.logspace(2, 6, 5, dtype=int),
+    #                       j=1, stim=0.1, n_repetitions=100, theta=THETA,
+    #                       burn_in=0.1)
 
