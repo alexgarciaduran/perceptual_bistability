@@ -529,7 +529,8 @@ def plot_bp_solution(ax, j_list, b, tol=1e-12, min_r=-20, max_r=20,
     ax.set_ylabel('q')
 
 
-def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2):
+def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2,
+                              ax=None, ylabel=True):
     time = np.arange(0, t_end, dt)
     mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
     mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
@@ -565,14 +566,17 @@ def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2):
                 m_y_1_memory = np.copy(mu_y_1[m, i])
                 mu_y_1[m, i] = mu_y_1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
                 mu_y_neg1[m, i] = mu_y_neg1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
-    plt.figure()
+    if ax is None:
+        fig, ax = plt.subplots(1)
     for q in q_y_1.T:
-        plt.plot(time, q, alpha=0.8)
-    plt.ylim(-0.05, 1.05)
-    # plt.figure()
-    # for q in q_y_neg1.T:
-    #     plt.plot(time, q, alpha=0.8)
-    # plt.ylim(-0.05, 1.05)
+        ax.plot(time, q, alpha=0.8)
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_title('J = ' + str(j) + ', B = ' + str(stim))
+    ax.set_xlabel('Time (s)')
+    if ylabel:
+        ax.set_ylabel(r'$q_i(x=1)$')
+    else:
+        ax.set_yticks([])
     return q_y_1, q_y_neg1
 
 
@@ -746,8 +750,19 @@ if __name__ == '__main__':
     #     plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=200,
     #                           j_list=np.arange(0.00001, 1, 0.001),
     #                           thr=1e-10, stim=stim)
-    dynamical_system_BP_euler(j=0.1, stim=0, theta=THETA, noise=0.02,
-                              t_end=20, dt=5e-2)
+    j_list = [0.25, 0.25, 0.58]
+    b_list = [0, 0.1, 0]
+    fig, ax = plt.subplots(ncols=3, figsize=(10, 3.5))
+    i = 0
+    dtlist = [5e-2, 5e-2, 5e-1]
+    time_end = [30, 30, 1000]
+    for j, b, dt, t_end in zip(j_list, b_list, dtlist, time_end):
+        dynamical_system_BP_euler(j=j, stim=b, theta=THETA, noise=0.08,
+                                  t_end=t_end, dt=dt, ax=ax[i],
+                                  ylabel=i==0)
+        i += 1
+    fig.tight_layout()
+    plt.subplots_adjust(wspace=0.2, bottom=0.16, top=0.88)
     # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.2,
     #                             num_iter=40, thr=1e-8, theta=gn.return_theta())
     # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
