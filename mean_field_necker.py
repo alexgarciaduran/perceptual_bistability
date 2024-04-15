@@ -771,13 +771,21 @@ def plot_mf_evolution_2_faces(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2):
     ax4.set_xlabel('Time (s)')
 
 
-def plot_mf_evolution_all_nodes(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2):
+def plot_mf_evolution_all_nodes(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2,
+                                ax=None, ylabel=False, time_min=0):
     time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
                                       time_end=time_end, dt=dt)
-    plt.figure()
+    if ax is None:
+        fig, ax = plt.subplots(1)
     for q in vec.T:
-        plt.plot(time, q)
-    plt.ylim(-0.05, 1.05)
+        ax.plot(time[time >= time_min], q[time >= time_min])
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_title('J = ' + str(j) + ', B = ' + str(b))
+    ax.set_xlabel('Time (s)')
+    if ylabel:
+        ax.set_ylabel(r'$q_i(x=1)$')
+    else:
+        ax.set_yticks([])
 
 
 def plot_eigenvals_and_behavior_MF_2_faces(b=0, diag_neg=False):
@@ -1119,19 +1127,24 @@ def transition_probs_j(t_dur, noise,
     plt.plot(j_list, trans_prob_u_to_s_2, label='P_u_to_s_2')
     plt.plot(j_list, trans_prob_s_to_u_1, label='P_s_to_u_1')
     plt.plot(j_list, trans_prob_s_to_u_2, label='P_s_to_u_2')
+    plt.xlim(-0.05, np.max(j_list)+0.05)
     plt.xlabel('J')
     plt.ylabel('Transition probability')
+    plt.title('B =' + str(b))
     plt.legend()
     plt.figure()
     plt.plot(j_list, trans_prob_i_to_j, label='P_ij')
     plt.plot(j_list, trans_prob_j_to_i, label='P_ji')
     plt.xlabel('J')
+    plt.title('B =' + str(b))
+    plt.xlim(-0.05, np.max(j_list)+0.05)
     plt.ylabel('Transition probability')
     plt.legend()
     plt.figure()
     plt.plot(trans_prob_i_to_j, trans_prob_j_to_i)
     plt.xlabel('T_ij')
     plt.ylabel('T_ji')
+    plt.title('B =' + str(b))
 
 
 if __name__ == '__main__':
@@ -1141,8 +1154,23 @@ if __name__ == '__main__':
     # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
     # plot_occupancy_distro(j=0.6, noise=0.2, tau=1, dt=5e-2, theta=theta, b=0,
     #                       t=5000, burn_in=0.001, n_sims=50)
-    plot_mf_evolution_all_nodes(j=.1, b=0., noise=0.02, tau=1, time_end=20,
-                                dt=5e-2)
+    j_list = [0.2, 0.2, 0.36]
+    b_list = [0, 0.1, 0]
+    fig, ax = plt.subplots(ncols=3, figsize=(10, 3.5))
+    i = 0
+    times = [30, 30, 1000]
+    time_min = [0, 0, 0]
+    dt_list = [5e-2, 5e-2, 5e-1]
+    noise_list = [0.05, 0.05, 0.08]
+    for j, b, t_end, dt, noise, t_min in zip(j_list, b_list, times, dt_list,
+                                             noise_list, time_min):
+        plot_mf_evolution_all_nodes(j=j, b=b, noise=noise, tau=1, time_end=t_end,
+                                    dt=dt, ax=ax[i], ylabel=i==0,
+                                    time_min=t_min)
+        i += 1
+    fig.tight_layout()
+    plt.subplots_adjust(wspace=0.2, bottom=0.16, top=0.88)
+
     # q_list = []
     # for j in np.arange(0.01, 1, 0.01):
     #     q_list.append(find_repulsor(j=j, num_iter=30, epsilon=1e-1, q_i=0.01,
