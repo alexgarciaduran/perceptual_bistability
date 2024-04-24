@@ -261,7 +261,19 @@ def plot_mf_sol_sigma_j(data_folder, j_list, sigma_list, num_iter=2000):
     plt.ylabel('J')
 
 
-def plot_solutions_mfield(j_list, stim=0, N=3):
+def plot_stim_effect(stim_list=np.linspace(0, 0.04, 4), j=0.4, N=3):
+    q = np.arange(0, 1.001, 0.001)
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(stim_list)))[::-1]
+    plt.axhline(0, color='k', alpha=0.4)
+    for i_s, stim in enumerate(stim_list[::-1]):
+        vals = gn.sigmoid(2*N*j*(2*q-1)+ stim*2*N) - q
+        plt.plot(q, vals, color=colormap[i_s], label=stim)
+    plt.xlabel('q')
+    plt.legend(title='B')
+    plt.ylabel('f(q)')
+
+
+def plot_solutions_mfield(j_list, stim=0, N=3, plot_approx=False):
     l = []
     for j in j_list:
         q = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ stim*2*N) - q 
@@ -270,11 +282,26 @@ def plot_solutions_mfield(j_list, stim=0, N=3):
              label='Unstable FP')
     plt.plot(j_list, 1-np.array(l), color='k')
     plt.plot(j_list, l, color='k', label='Stable FP')
-    plt.xlabel('J')
-    plt.ylabel('q')
+    plt.xlabel(r'Coupling $J$')
+    plt.ylabel(r'Posterior $q$')
     # plt.title('Solutions of the dynamical system')
+    if plot_approx:
+        j_list1 = np.arange(1/N, 1, 0.001)
+        r = (j_list1*N-1)*3/(4*(j_list1*N)**3)
+        plt.plot(j_list1, np.sqrt(r)+0.5, color='b', linestyle='--')
+        plt.plot(j_list1, -np.sqrt(r)+0.5, label=r'$q=0.5 \pm \sqrt{r}$',
+                 color='b', linestyle='--')
+        plt.plot([0, 1/N], [0.5, 0.5], color='r', label=r'$q=0.5$',
+                 linestyle='--')
+    plt.axvline(1/N, color='r', alpha=0.2)
+    plt.text(1/N-0.05, 0.12,  r'$J^{\ast}=1/3$', rotation='vertical')
+    # xtcks = [0, 0.2, 0.4, 0.6, 0.8, 1]
+    # xtcks = np.sort(np.unique([0, 0.2, 0.4, 1/N, 0.6, 0.8, 1]))
+    # labs = [x for x in xtcks]
+    # pos = np.where(xtcks == 1/N)[0][0]
+    # labs[pos] = r'$J^{\ast}$'  # '1/'+str(N)
+    # plt.xticks(xtcks, labs)
     plt.legend()
-
 
 
 def plot_solutions_mfield_neighbors(ax, j_list, color='k', stim=0, N=3):
@@ -333,7 +360,7 @@ def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
     if dim3:
         ax = plt.figure().add_subplot(projection='3d')
     else:
-        fig, ax = plt.subplots(1)
+        fig, ax = plt.subplots(1, figsize=(5, 4))
         colormap = pl.cm.Blues(np.linspace(0.2, 1, len(neigh_list)))
     for n_neigh in neigh_list:
         print(n_neigh)
@@ -359,21 +386,21 @@ def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
         ax.plot3D(neigh_list, np.repeat(0, len(neigh_list)), vals_b0,
                   color='r', linestyle='--')
         ax.set_xlabel('N')
-        ax.set_ylabel('B')
-        ax.set_zlabel('J*')
+        ax.set_ylabel('Sensory evidence B')
+        ax.set_zlabel('Critical coupling J*')
     else:
-        ax.set_xlabel('B')
-        ax.set_ylabel('J*')
+        ax.set_xlabel(r'Sensory evidence $B$')
+        ax.set_ylabel(r'Critical coupling $J^{\ast}$')
         ax_pos = ax.get_position()
         ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
                                 ax_pos.width*0.06, ax_pos.height*0.5])
         newcmp = mpl.colors.ListedColormap(colormap)
-        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp)
-        ax_cbar.set_title('N')
+        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label='Neighbors N')
         ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
                                          int(np.mean(neigh_list)),
                                          np.max(neigh_list)])
         fig.savefig(DATA_FOLDER+'/J_vs_NB_MF.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER+'/J_vs_NB_MF.svg', dpi=400, bbox_inches='tight')
 
 
 
@@ -559,6 +586,30 @@ def potential_expansion_at_any_point_order_4(q, j, b, point):
     return -expansion/(2*k) + 0.5*q**2
 
 
+def crit_val_J(b, N):
+    j_ini = 1/N
+    e2bn = np.exp(2*b*N)
+    first_val_sum = 4*(e2bn) / (e2bn+1)**2
+    second_val_sum = -2*np.sqrt(-(8*e2bn*(e2bn-1)/(e2bn+1)**3)*(1/(1+e2bn) - 1/2))
+    return j_ini/(first_val_sum+second_val_sum)
+
+
+def f_expansion_any_order_any_point(q, j, b, order, point):
+    x = sympy.symbols('x')
+    b = sympy.symbols('b')
+    alpha = 6*j*(2*x-1) + 6*b
+    func_0 = -x + 1/(1+sympy.exp(-alpha))
+    funcs_diffs = [func_0]
+    for i in range(order):
+        funcs_diffs.append(sympy.diff(funcs_diffs[i], x))
+    coefs = [funcs_diffs[n].subs(x, point) / fact(n) for n in range(order+1)]
+    q_vals = [(q-point)**n for n in range(order+1)]
+    expansion = 0
+    for i in range(order+1):
+        expansion = expansion + (coefs[i]*q_vals[i])
+    return expansion
+
+
 def potential_expansion_any_order_any_point(q, j, b, order, point):
     x = sympy.symbols('x')
     k = 6*(j+b)
@@ -601,7 +652,7 @@ def plot_potentials_mf(j_list, bias=0, neighs=3):
     newcolors[(len(j_list)//3+1):, :] = newcolors_purples[(len(j_list)//3+1):]
     newcmp = mpl.colors.ListedColormap(newcolors)
     q = np.arange(0, 1, 0.001)
-    fig, ax = plt.subplots(1)
+    fig, ax = plt.subplots(1, figsize=(6, 4))
     change_colormap = False
     for i_j, j in enumerate(j_list):
         pot = potential_mf_neighs(q, j, bias=bias, neighs=neighs)
@@ -616,12 +667,14 @@ def plot_potentials_mf(j_list, bias=0, neighs=3):
     ax_pos = ax.get_position()
     ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.02, ax_pos.y0,
                             ax_pos.width*0.04, ax_pos.height*0.9])
-    mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp)
+    mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling $J$')
     ax_cbar.set_yticks([0, max(j_list)/3, max(j_list)/2, max(j_list)], [0, 0.33, max(j_list)/2, max(j_list)])
-    ax_cbar.set_title('J')
-    ax.set_xlabel('q')
+    # ax_cbar.set_title(r'Coupling $J$')
+    ax.set_xlabel(r'Posterior $q$')
     ax.set_ylabel(r'Mean-centered potential $V_J(q)$')
     # ax.legend(title='J:')
+    fig.savefig(DATA_FOLDER + 'potentials_vs_q.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'potentials_vs_q.svg', dpi=400, bbox_inches='tight')
 
 
 def plot_pot_evolution_mfield(j, num_iter=10, sigma=0.1, bias=1e-3):
@@ -778,6 +831,7 @@ def plot_mf_evolution_all_nodes(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2,
     if ax is None:
         fig, ax = plt.subplots(1)
     for q in vec.T:
+        # q = np.convolve(q, np.ones(10)/10, mode='same')
         ax.plot(time[time >= time_min], q[time >= time_min])
     ax.set_ylim(-0.05, 1.05)
     ax.set_title('J = ' + str(j) + ', B = ' + str(b))
@@ -976,18 +1030,20 @@ def plot_occupancy_distro(j, noise=0.3, tau=1, dt=1e-1, theta=theta, b=0,
         time, vec_sims = solution_mf_sdo_euler(j, b, theta, noise, tau,
                                                time_end=time_end, dt=dt)
         vec_sims = vec_sims[time > t*burn_in]
-        vec_sims = np.nanmean(vec_sims, axis=1)
+        # vec_sims = np.nanmean(vec_sims, axis=1)
+        vec_sims = vec_sims[:, 0]
         vec = np.concatenate((vec, vec_sims))
     print(len(vec))
     kws = dict(histtype= "stepfilled", linewidth = 1)
     ax.hist(vec, label=int(t*n_sims), cumulative=True, bins=150, density=True,
             color='mistyrose', edgecolor='k', **kws)
-    # sns.kdeplot(vec, label=t, bw_adjust=0.05, cumulative=True)
+    # sns.kdeplot(vec, label='simulation', bw_adjust=0.05, cumulative=True, color='k')
     plot_boltzmann_distro(j, noise, b=b, ax=ax)
     plt.legend()
     ax.set_ylabel('CDF(x)')
     ax.set_xlabel('x')
     ax.set_xlim(-0.05, 1.05)
+    ax.set_title('J =' + str(j) + ', B =' + str(b) + r', $\sigma$=' + str(noise))
 
 
 def vector_proj(u, v):
@@ -1065,10 +1121,10 @@ def k_i_to_j(j, xi, xj, noise, b=0):
 def transition_probs_j(t_dur, noise,
                        j_list=np.arange(0.001, 3.01, 0.005),
                        b=0, tol=1e-10):
-    trans_prob_u_to_s_1 = []
-    trans_prob_u_to_s_2 = []
-    trans_prob_s_to_u_1 = []
-    trans_prob_s_to_u_2 = []
+    trans_prob_s2_to_s1 = []
+    trans_prob_s1_to_s2 = []
+    trans_prob_s2_to_s2 = []
+    trans_prob_s1_to_s1 = []
     # trans_prob_i_to_j = []
     # trans_prob_j_to_i = []
     for j in j_list:
@@ -1102,58 +1158,39 @@ def transition_probs_j(t_dur, noise,
             diff_1 = x_unstable - x_stable_1
             diff_2 = x_unstable - x_stable_2
             init_cond_unst = np.random.rand()
-        k_x_u_to_s_1 = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
-        k_x_u_to_s_2 = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
-        k_x_s_to_u_1 = k_i_to_j(j, x_unstable, x_stable_1, noise, b)
-        k_x_s_to_u_2 = k_i_to_j(j, x_unstable, x_stable_2, noise, b)
-        # k = k_x_ij + k_x_ji
-        # p_is = k_i_to_j(j, xi, xj, noise, b) / k
-        # p_js = k_i_to_j(j, xj, xi, noise, b) / k
+        k_x_s1_to_s2 = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+        k_x_s2_to_s1 = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
+        k = k_x_s1_to_s2 + k_x_s2_to_s1
+        p_is = k_i_to_j(j, x_stable_1, x_unstable, noise, b) / k
+        p_js = k_i_to_j(j, x_stable_2, x_unstable, noise, b) / k
         # P_is is prob to stay in i at end of trial given by t_dur
         # P_js is prob to stay in j at end of trial given by t_sdur
-        # trans_prob_ij.append(p_is * (1 - np.exp(-k*t_dur)))  # prob of at some point going from j to i
-        # trans_prob_ji.append(p_js * (1 - np.exp(-k*t_dur))) # prob of at some point going from i to j
-        trans_prob_u_to_s_1.append(1-np.exp(-k_x_u_to_s_1*t_dur))
-        trans_prob_u_to_s_2.append(1-np.exp(-k_x_u_to_s_2*t_dur))
-        trans_prob_s_to_u_1.append(1-np.exp(-k_x_s_to_u_1*t_dur))
-        trans_prob_s_to_u_2.append(1-np.exp(-k_x_s_to_u_2*t_dur))
+        trans_prob_s1_to_s2.append(p_is*(1-np.exp(-k_x_s1_to_s2*t_dur))) # prob of at some point going from s1 to s2
+        trans_prob_s2_to_s1.append(p_js*(1-np.exp(-k_x_s2_to_s1*t_dur))) # prob of at some point going from s2 to s1
+        trans_prob_s2_to_s2.append(p_is)
+        trans_prob_s1_to_s1.append(p_js)
         # trans_prob_i_to_j.append(1-np.exp(-(k_x_s_to_u_2+k_x_u_to_s_1)*t_dur))
         # trans_prob_j_to_i.append(1-np.exp(-(k_x_s_to_u_1+k_x_u_to_s_2)*t_dur))
         # 1 - np.exp(-k*t_dur) is prob to change from i->j and vice-versa
-    trans_prob_j_to_i = np.array(trans_prob_u_to_s_1)*np.array(trans_prob_s_to_u_2)
-    trans_prob_i_to_j = np.array(trans_prob_u_to_s_2)*np.array(trans_prob_s_to_u_1)
+    colors = ['k', 'k', 'r', 'r']
+    lst = ['-', '--', '-', '--']
     plt.figure()
-    plt.plot(j_list, trans_prob_u_to_s_1, label='P_u_to_s_1')
-    plt.plot(j_list, trans_prob_u_to_s_2, label='P_u_to_s_2')
-    plt.plot(j_list, trans_prob_s_to_u_1, label='P_s_to_u_1')
-    plt.plot(j_list, trans_prob_s_to_u_2, label='P_s_to_u_2')
+    plt.plot(j_list, trans_prob_s1_to_s2, label='P_s1_to_s2', color=colors[0],
+             linestyle=lst[0])
+    plt.plot(j_list, trans_prob_s2_to_s1, label='P_s2_to_s1', color=colors[2],
+             linestyle=lst[2])
+    # plt.plot(j_list, trans_prob_s1_to_s1, label='P_s2_to_s2', color=colors[1],
+    #          linestyle=lst[1])
+    # plt.plot(j_list, trans_prob_s2_to_s2, label='P_s1_to_s1', color=colors[3],
+    #          linestyle=lst[3])
     plt.xlim(-0.05, np.max(j_list)+0.05)
     plt.xlabel('J')
     plt.ylabel('Transition probability')
     plt.title('B =' + str(b))
     plt.legend()
-    plt.figure()
-    plt.plot(j_list, trans_prob_i_to_j, label='P_ij')
-    plt.plot(j_list, trans_prob_j_to_i, label='P_ji')
-    plt.xlabel('J')
-    plt.title('B =' + str(b))
-    plt.xlim(-0.05, np.max(j_list)+0.05)
-    plt.ylabel('Transition probability')
-    plt.legend()
-    plt.figure()
-    plt.plot(trans_prob_i_to_j, trans_prob_j_to_i)
-    plt.xlabel('T_ij')
-    plt.ylabel('T_ji')
-    plt.title('B =' + str(b))
 
 
-if __name__ == '__main__':
-    # plot_potential_and_vector_field_2d(j=1, b=0, noise=0., tau=1,
-    #                                     time_end=50, dt=5e-2)
-    # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.05)
-    # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
-    # plot_occupancy_distro(j=0.6, noise=0.2, tau=1, dt=5e-2, theta=theta, b=0,
-    #                       t=5000, burn_in=0.001, n_sims=50)
+def plot_3_examples_mf_evolution():
     j_list = [0.2, 0.2, 0.36]
     b_list = [0, 0.1, 0]
     fig, ax = plt.subplots(ncols=3, figsize=(10, 3.5))
@@ -1163,7 +1200,7 @@ if __name__ == '__main__':
     dt_list = [5e-2, 5e-2, 5e-1]
     noise_list = [0.05, 0.05, 0.08]
     for j, b, t_end, dt, noise, t_min in zip(j_list, b_list, times, dt_list,
-                                             noise_list, time_min):
+                                              noise_list, time_min):
         plot_mf_evolution_all_nodes(j=j, b=b, noise=noise, tau=1, time_end=t_end,
                                     dt=dt, ax=ax[i], ylabel=i==0,
                                     time_min=t_min)
@@ -1171,20 +1208,65 @@ if __name__ == '__main__':
     fig.tight_layout()
     plt.subplots_adjust(wspace=0.2, bottom=0.16, top=0.88)
 
+
+def plot_3d_solution_mf_vs_j_b(j_list, b_list, N=3,
+                               num_iter=50, tol=1e-6):
+    ax = plt.figure().add_subplot(projection='3d')
+    solutions = np.empty((len(j_list), len(b_list), 3))
+    for i_j, j in enumerate(j_list):
+        for i_b, b in enumerate(b_list):
+            q_val_01 = 0.
+            q_val_07 = 1
+            q_val_bckw = 0.7
+            for i in range(num_iter):
+                q_val_01 = gn.sigmoid(6*(j*(2*q_val_01-1)+b))
+                q_val_07 = gn.sigmoid(6*(j*(2*q_val_07-1)+b))
+            for i in range(num_iter*20):
+                q_val_bckw = backwards(q_val_bckw, j, b)
+                if q_val_bckw < 0 or q_val_bckw > 1:
+                        q_val_bckw = np.nan
+                        break
+            if np.abs(q_val_01 - q_val_07) <= tol:
+                q_val_01 = np.nan
+            solutions[i_j, i_b, 0] = q_val_01
+            solutions[i_j, i_b, 1] = q_val_07
+            solutions[i_j, i_b, 2] = q_val_bckw
+    x, y = np.meshgrid(j_list, b_list)
+    ax.plot_surface(x, y, solutions[:, :, 0].T, alpha=0.4, color='b')
+    ax.plot_surface(x, y, solutions[:, :, 1].T, alpha=0.4, color='b')
+    ax.plot_surface(x, y, solutions[:, :, 2].T, alpha=0.4, color='r')
+    ax.set_xlabel('J')
+    ax.set_ylabel('B')
+    ax.set_zlabel('q')
+
+
+if __name__ == '__main__':
+    # plot_potential_and_vector_field_2d(j=1, b=0, noise=0., tau=1,
+    #                                     time_end=50, dt=5e-2)
+    # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.05)
+    # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
+    # plot_occupancy_distro(j=0.36, noise=0.08, tau=1, dt=5e-1, theta=theta, b=0,
+    #                       t=10000, burn_in=0.001, n_sims=500)
     # q_list = []
     # for j in np.arange(0.01, 1, 0.01):
     #     q_list.append(find_repulsor(j=j, num_iter=30, epsilon=1e-1, q_i=0.01,
     #                                 q_f=0.95, stim=0.1, threshold=1e-5, theta=theta,
     #                                 neigh=3))
     # plt.plot(np.arange(0.01, 1, 0.01), q_list)
-    # plot_mf_sol_stim_bias_different_sols(j_list=np.arange(0.001, 1, 0.01),
-    #                                      stim=0.0,
-    #                                      num_iter=40,
-    #                                      theta=gn.return_theta(columns=5, rows=10))
-    # plot_crit_J_vs_B_neigh(j_list=np.arange(0.01, 1, 0.001),
-    #                        num_iter=200,
-    #                        beta_list=np.arange(-0.5, 0.5, 0.001),
-    #                        neigh_list=np.arange(3, 12),
-    #                        dim3=False)
+    # plot_mf_sol_stim_bias_different_sols(j_list=np.arange(0.001, 1, 0.001),
+    #                                       stim=0.,
+    #                                       num_iter=40,
+    #                                       theta=theta)
+    # plot_solutions_mfield(j_list=np.arange(0.001, 1.01, 0.001), stim=0, N=3,
+    #                       plot_approx=False)
+    # plot_3_examples_mf_evolution()
+    plot_crit_J_vs_B_neigh(j_list=np.arange(0.01, 1, 0.001),
+                            num_iter=200,
+                            beta_list=np.arange(-0.5, 0.5, 0.001),
+                            neigh_list=np.arange(3, 12),
+                            dim3=False)
+    # plot_potentials_mf(j_list=[0, 0.1, 0.2, 1/3, 0.4, 0.5,
+    #                            0.6, 0.7, 0.8, 0.9, 1],
+    #                    bias=0, neighs=3)
     # plot_mf_sol_stim_bias(j_list=np.arange(0.00001, 1, 0.001), stim=-0.1,
     #                       num_iter=10)
