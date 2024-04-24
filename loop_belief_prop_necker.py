@@ -14,6 +14,7 @@ import mean_field_necker as mfn
 from scipy.optimize import fsolve, bisect, root
 from scipy.integrate import solve_ivp
 import matplotlib as mpl
+from skimage.transform import resize
 from matplotlib.lines import Line2D
 import matplotlib.pylab as pl
 
@@ -153,30 +154,128 @@ def Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, sti
     return q_y_1, q_y_neg1, n+1
 
 
+def posterior_vs_b(stim_list=np.linspace(-2, 2, 10001),
+                   j=0.1, theta=THETA, data_folder=DATA_FOLDER):
+    true_posterior = gn.true_posterior_stim(stim_list=stim_list, j=j, theta=theta,
+                                            data_folder=data_folder,
+                                            load_data=True, save_data=False)
+    mf_post = []
+    bp_post = []
+    N = 3
+    init_cond = 0
+    init_conds_bp = [10, 5, 20, 1, 0]
+    n_its = len(init_conds_bp)
+    for stim in stim_list:
+        q1 = lambda q: gn.sigmoid(2*N*j*(2*q-1) + stim*2*N) - q
+        sol, _, flag, _ =\
+            fsolve(q1, init_cond, full_output=True)
+        if stim >= 0:
+            init_cond = 1
+        if flag != 1:
+            sol = np.nan
+            mf_post.append(sol)
+        if flag == 1:
+            if stim < 0 and sol < 0.5:
+                mf_post.append(sol)
+            if stim < 0 and sol >= 0.5:
+                mf_post.append(1-sol)
+            if stim >= 0:
+                mf_post.append(sol)
+        g_fun = lambda q: g(q, b=stim, j=j, N=3)
+        flag = 2
+        its = 0
+        while flag != 1 and its < n_its:
+            sol, _, flag, _ =\
+                fsolve(g_fun, init_conds_bp[its], full_output=True)    
+            its += 1
+        if flag != 1:
+            sol = np.nan
+            bp_post.append(sol)
+        if flag == 1:
+            sol = (sol**N) * np.exp(stim) / (np.exp(-stim) + np.exp(stim) * (sol**N))
+            if stim < 0 and sol < 0.5:
+                bp_post.append(sol)
+            if stim < 0 and sol >= 0.5:
+                bp_post.append(1-sol)
+            if stim >= 0 and sol >= 0.5:
+                bp_post.append(sol)
+            if stim >= 0 and sol < 0.5:
+                bp_post.append(1-sol)
+    return np.array(true_posterior), np.array(mf_post), np.array(bp_post)
+
+
+def plot_overconfidence_vs_j(j_list=np.arange(0, 1.05, 0.01),
+                             stim_list=np.linspace(0, 2, 101),
+                             t_list=[100, 1000, 10000],
+                             data_folder=DATA_FOLDER, theta=THETA):
+    mse_mf = []
+    mse_bp = []
+    for j in j_list:
+        true_posterior, mf_post, bp_post =\
+            posterior_vs_b(stim_list=stim_list,
+                           j=j, theta=theta, data_folder=data_folder)
+        mse_mf.append(np.trapz(mf_post.T-true_posterior, true_posterior))
+        mse_bp.append(np.trapz(bp_post.T-true_posterior, true_posterior))
+    burn_in = 200
+    gibbs_overconf_100 = []
+    gibbs_overconf_1000 = []
+    gibbs_overconf_10000 = []
+    gibbs_overconf = [gibbs_overconf_100, gibbs_overconf_1000, gibbs_overconf_10000]
+    for i_t, t in enumerate(t_list):
+        for j in j_list:
+            gibbs_post = []
+            for b in stim_list:
+                init_state = np.random.choice([-1, 1], 8)
+                states_mat = gn.gibbs_samp_necker(init_state=init_state,
+                                                  burn_in=burn_in,
+                                                  n_iter=t+burn_in, j=j,
+                                                  stim=b)
+                states_mat = (states_mat + 1) / 2
+                gibbs_post.append(np.nanmean(states_mat))
+            gibbs_post = np.array(gibbs_post)
+            gibbs_overconf[i_t].append(np.trapz(gibbs_post-true_posterior, true_posterior))
+    fig, ax = plt.subplots(1, figsize=(4, 3))
+    ax.plot(j_list, mse_mf, color='r', label='MF')
+    ax.plot(j_list, mse_bp, color='k', label='LBP')
+    ax.legend()
+    ax.set_xlabel(r'Coupling $J$')
+    ax.set_ylabel('Over-confidence')
+    fig.tight_layout()
+    fig.savefig(data_folder + 'over_confidence.png')
+    fig.savefig(data_folder + 'over_confidence.svg')
+
+
 def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
                                num_iter=100, thr=1e-12, theta=THETA,
                                data_folder=DATA_FOLDER):
-    true_posterior = gn.true_posterior_stim(stim_list=stim_list, j=j, theta=theta,
-                                            data_folder=data_folder)
-    mf_post = []
-    bp_post = []
-    for stim in stim_list:
-        q = mfn.mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
-                                theta=theta)
-        mf_post.append(q[-1, 0])
-        q_bp, _, _= Loopy_belief_propagation(theta=theta,
-                                             num_iter=num_iter,
-                                             j=j, thr=thr, stim=stim)
-        bp_post.append(q_bp[0])
-    fig, ax = plt.subplots(1)
+    true_posterior, mf_post, bp_post = posterior_vs_b(
+        stim_list=stim_list, j=j, theta=theta,
+        data_folder=data_folder)
+        # q = mfn.mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
+        #                        theta=theta)
+        # mf_post.append(q[-1, 0])
+        # q_bp, _, _= Loopy_belief_propagation(theta=theta,
+        #                                      num_iter=num_iter,
+        #                                      j=j, thr=thr, stim=stim)
+        # bp_post.append(q_bp[0])
+    fig, ax = plt.subplots(1, figsize=(4, 3))
     ax.plot(true_posterior, bp_post, color='k', label='Belief propagation')
     ax.plot(true_posterior, mf_post, color='r', label='Mean-field',
             linestyle='--')
+    ax.fill_between(true_posterior, true_posterior, mf_post.T[0],
+                    color='r', alpha=0.08)
     ax.plot([0, 1], [0, 1], color='grey', alpha=0.5)
     ax.set_xlabel(r'True posterior $p(x_i=1 | B)$')
     ax.set_ylabel(r'Approximated posterior $q(x_i=1|B)$')
-    ax.set_title('J = '+str(j))
+    ax.text(0.5, 0.1, 'Over-confidence')
+    ax.arrow(0.35, 0.195, 0.11, -0.06, head_width=0.02, color='k')
+    # ax.set_title('J = '+str(j))
     ax.legend()
+    fig.tight_layout()
+    fig.savefig(data_folder + 'mf_BP_necker_posterior_comparison.png',
+                dpi=400, bbox_inches='tight')
+    fig.savefig(data_folder + 'mf_BP_necker_posterior_comparison.svg',
+                dpi=400, bbox_inches='tight')
 
 
 def plot_loopy_b_prop_sol_difference(theta, num_iter, j_list=np.arange(0, 1, 0.1),
@@ -277,13 +376,21 @@ def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
 def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
     q0_l, q1_l, q2_l = solutions_bp(j_list=j_list, stim=stim)
     # plt.plot(j_list, q0_l, color='grey', linestyle='--')
-    plt.plot([0, np.log(3)/2], [0.5, 0.5], color='grey', alpha=1, label='Stable FP')
+    plt.plot([0, np.log(3)/2], [0.5, 0.5], color='k', alpha=1, label='Stable FP')
     plt.plot(j_list, q1_l, color='k')
     plt.plot(j_list, q2_l, color='k')
-    plt.xlabel('J')
+    plt.xlabel(r'Coupling $J$')
     plt.plot([np.log(3)/2, 1], [0.5, 0.5], color='grey', alpha=1, linestyle='--',
              label='Unstable FP')
-    plt.ylabel('q')
+    plt.axvline(np.log(3)/2, color='r', alpha=0.2)
+    # xtcks = np.sort(np.unique([0, 0.25, 0.75, 0.5, np.log(3)/2, 1]))
+    # labs = [x for x in xtcks]
+    # pos = np.where(xtcks == np.log(3)/2)[0][0]
+    # labs[pos] = r'$J^{\ast}$'
+    # plt.xticks(xtcks, labs)
+    plt.text(np.log(3)/2 - 0.05, 0.08, r'$J^{\ast} = \log{(3)}/2$',
+             rotation='vertical')
+    plt.ylabel(r'Posterior $q$')
     # plt.title('Solutions of the dynamical system')
     plt.legend()
 
@@ -354,6 +461,7 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
             else:
                 sols.append(solution_bisection)
             if len(sols) == 3:
+                count += 1000
                 break
             count += 1
         
@@ -373,7 +481,7 @@ def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
     if dim3:
         ax = plt.figure().add_subplot(projection='3d')
     else:
-        fig, ax = plt.subplots(1)
+        fig, ax = plt.subplots(1, figsize=(5, 4))
         fig2, ax2 = plt.subplots(1)
         ax2.set_xlabel('B')
         ax2.set_ylabel(r'$( J^{*}_{sim.} - J^{*}_{app.})^2$')
@@ -416,14 +524,14 @@ def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
         ax.set_ylabel('B')
         ax.set_zlabel('J*')
     else:
-        ax.set_xlabel('B')
-        ax.set_ylabel('J*')
+        ax.set_xlabel(r'Sensory evidence $B$')
+        ax.set_ylabel(r'Critical coupling $J^{\ast}$')
         ax_pos = ax.get_position()
         ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
                                 ax_pos.width*0.06, ax_pos.height*0.5])
         newcmp = mpl.colors.ListedColormap(colormap)
-        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp)
-        ax_cbar.set_title('N')
+        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label='Neighbors N')
+        # ax_cbar.set_title('N')
         ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
                                          int(np.mean(neigh_list)),
                                          np.max(neigh_list)])
@@ -431,12 +539,13 @@ def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
         ax_cbar = fig2.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
                                  ax_pos.width*0.06, ax_pos.height*0.5])
         newcmp = mpl.colors.ListedColormap(colormap)
-        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp)
-        ax_cbar.set_title('N')
+        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label='Neighbors N')
+        # ax_cbar.set_title('N')
         ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
                                          np.mean(neigh_list),
                                          np.max(neigh_list)])
         fig.savefig(DATA_FOLDER+'/J_vs_NB_BP.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER+'/J_vs_NB_BP.svg', dpi=400, bbox_inches='tight')
         fig2.savefig(DATA_FOLDER+'/J_vs_NB_BP_error.png', dpi=400, bbox_inches='tight')
 
 
@@ -745,11 +854,8 @@ def plot_solutions_BP_depending_neighbors(j_list=np.arange(0.001, 1, 0.001),
         ax[n_neigh-min(neigh_list)].set_title(str(n_neigh) + ' neighbors')
 
 
-if __name__ == '__main__':
-    # for stim in [0.]:
-    #     plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=200,
-    #                           j_list=np.arange(0.00001, 1, 0.001),
-    #                           thr=1e-10, stim=stim)
+
+def plot_lbp_3_examples():
     j_list = [0.25, 0.25, 0.58]
     b_list = [0, 0.1, 0]
     fig, ax = plt.subplots(ncols=3, figsize=(10, 3.5))
@@ -763,12 +869,286 @@ if __name__ == '__main__':
         i += 1
     fig.tight_layout()
     plt.subplots_adjust(wspace=0.2, bottom=0.16, top=0.88)
-    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.2,
-    #                             num_iter=40, thr=1e-8, theta=gn.return_theta())
-    # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
+
+
+def plot_lbp_explanation(eps=2e-1):
+    fig, ax = plt.subplots(1, figsize=(4, 3))
+    gn.plot_necker_cubes(ax, mu=8, bot=True, offset=0.6, factor=1.5,
+                         msize=10)
+    plt.axis('off')
+    x_pos_1 = 5.4
+    y_pos_1 = 15.3
+    y_pos_3 = 12
+    y_pos_5 = 15.9
+    x_pos_5 = 6
+    x_pos_2 = 6.9
+    ax.arrow(x_pos_5-eps, y_pos_5+eps, x_pos_1-x_pos_5+eps, y_pos_1-y_pos_5+eps,
+             head_width=eps/2, color='k', head_length=eps/2)
+    ax.arrow(x_pos_1-eps/2, y_pos_3+10*eps, 0, y_pos_1-y_pos_3-12*eps,
+             head_width=eps/2, color='k', head_length=eps/2)
+    ax.arrow(x_pos_2-5*eps, y_pos_1-eps, x_pos_1-x_pos_2+6*eps, 0,
+             head_width=eps/2, color='k', head_length=eps/2)
+    
+def mse(p, q):
+    return np.sqrt(np.sum((p-q)**2))
+
+
+def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
+                            b_list=np.arange(-1, 1, 0.01),
+                            data_folder=DATA_FOLDER,
+                            theta=THETA, dist_metric='mse', nrows=2):
+    if dist_metric is not None:
+        if dist_metric == 'mse':
+            dist = mse
+            label_0 = ', MSE = '
+        if dist_metric == 'kl':
+            dist = kl
+            label_0 = ', KL = '
+    if nrows == 2:
+        figsize = (8, 5)
+        ncols = 3
+    else:
+        figsize = (12, 2)
+        ncols = 6
+    fig, ax = plt.subplots(ncols=ncols, nrows=nrows, figsize=figsize)
+    fig.tight_layout()
+    plt.subplots_adjust(hspace=0.35)
+    ax = ax.flatten()
+    # true posterior
+    matrix_true_file = data_folder + 'true_vs_JB_05.npy'
+    os.makedirs(os.path.dirname(matrix_true_file), exist_ok=True)
+    print('True posterior')
+    if os.path.exists(matrix_true_file):
+        mat_true = np.load(matrix_true_file, allow_pickle=True)
+    else:
+        mat_true = np.empty((len(j_list), len(b_list)))
+        mat_true[:] = np.nan
+        for i_j, j in enumerate(j_list):
+            true_posterior = gn.true_posterior_stim(stim_list=b_list, j=j,
+                                                    theta=theta,
+                                                    data_folder=data_folder,
+                                                    load_data=False)
+            mat_true[i_j, :] = true_posterior
+        np.save(matrix_true_file, mat_true)
+    ax[0].imshow(np.flipud(mat_true), aspect='auto', interpolation=None,
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
+    ax[0].set_title('True posterior')
+    # Mean-field
+    matrix_mf_file = data_folder + 'mf_posterior_vs_JB_sim_05.npy'
+    jcrit_mf_file = data_folder + 'mf_jcrit_vs_b_n3.npy'
+    jcrit_mf = np.load(jcrit_mf_file, allow_pickle=True)
+    os.makedirs(os.path.dirname(matrix_mf_file), exist_ok=True)
+    print('MF')
+    if os.path.exists(matrix_mf_file):
+        mat_mf = np.load(matrix_mf_file, allow_pickle=True)
+    else:
+        mat_mf = np.empty((len(j_list), len(b_list)))
+        mat_mf[:] = np.nan
+        # N=3
+        for i_b, b in enumerate(b_list):
+            l = []
+            for j in j_list:
+                # q1 = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ b*2*N) - q 
+                # sol_1, _, flag1, _ =\
+                #     fsolve(q1, 1, full_output=True)
+                # if flag1 != 1:
+                #     sol_1, _, flag, _ =\
+                #         fsolve(q1, 0, full_output=True)
+                # l.append(sol_1)
+                q = mfn.mean_field_stim(j, num_iter=40, stim=b, sigma=0,
+                                        theta=theta)
+                l.append(q[-1, 0])
+                
+            mat_mf[:, i_b] = l
+        np.save(matrix_mf_file, mat_mf)
+    ax[1].imshow(np.flipud(mat_mf), aspect='auto', interpolation=None,
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
+    first_j = jcrit_mf
+    b_list_1 = np.arange(-1, 1, 0.01)
+    ax[1].plot(b_list_1, first_j, color='k')
+    ax[1].set_xlim(-0.5, 0.5)
+    if dist_metric is not None:
+        label = label_0 + str(dist(mat_true, mat_mf))
+    else:
+        label = ''
+    ax[1].set_title('Mean-field'+ label)
+    # belief propagation
+    matrix_bp_file = data_folder + 'lbp_posterior_vs_JB_05.npy'
+    jcrit_bp_file = data_folder + 'jcrit_vs_b_n3.npy'
+    os.makedirs(os.path.dirname(matrix_bp_file), exist_ok=True)
+    jcrit_bp = np.load(jcrit_bp_file, allow_pickle=True)
+    print('BP')
+    if os.path.exists(matrix_bp_file):
+        mat_lbp = np.load(matrix_bp_file, allow_pickle=True)
+    else:
+        mat_lbp = np.empty((len(j_list), len(b_list)))
+        mat_lbp[:] = np.nan
+        for i_b, b in enumerate(b_list):
+            l = []
+            for j in j_list:
+                pos, neg, n = Loopy_belief_propagation(theta=theta,
+                                                       num_iter=100,
+                                                       j=j, thr=1e-5, stim=b)
+                l.append(pos[0])
+            mat_lbp[:, i_b] = l
+        np.save(matrix_bp_file, mat_lbp)
+    ax[2].imshow(np.flipud(mat_lbp), aspect='auto',
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
+    if dist_metric is not None:
+        label = label_0 + str(dist(mat_true, mat_lbp))
+    else:
+        label = ''
+    ax[2].set_title('Belief propagation' + label)
+    ax[2].plot(b_list_1, jcrit_bp, color='k', label=r'$J^{\ast}$')
+    ax[2].set_xlim(-0.5, 0.5)
+    ax[2].legend(bbox_to_anchor=(0, 1.2), frameon=False)
+    
+    # Gibbs for 3 different T
+    # T=100
+    print('GS T=100')
+    matrix_gn_file = data_folder + '100_gibbs_posterior_vs_JB_05.npy'
+    os.makedirs(os.path.dirname(matrix_gn_file), exist_ok=True)
+    if os.path.exists(matrix_gn_file):
+        mat_gn = (np.load(matrix_gn_file, allow_pickle=True)+1)/2
+    else:
+        mat_gn = np.empty((len(j_list), len(b_list)))
+        mat_gn[:] = np.nan
+        for i_b, b in enumerate(b_list):
+            if (i_b+1) % 10 == 0:
+                print(i_b+1)
+            l = []
+            for j in j_list:
+                init_state = np.random.choice([-1, 1], 8)
+                states_mat = gn.gibbs_samp_necker(init_state=init_state,
+                                                  burn_in=1000,
+                                                  n_iter=1100, j=j,
+                                                  stim=b)
+                l.append(np.nanmean(states_mat))
+            mat_gn[:, i_b] = l
+        np.save(matrix_gn_file, mat_gn)
+    if dist_metric is not None:
+        label = label_0 + str(dist(mat_true, mat_gn))
+    else:
+        label = ''
+    ax[3].imshow(np.flipud(mat_gn), aspect='auto',
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
+    ax[3].set_title('Gibbs sampling\nT=100' + label)
+    # T=10000
+    matrix_gn_file = data_folder + '1000_gibbs_posterior_vs_JB_05.npy'
+    os.makedirs(os.path.dirname(matrix_gn_file), exist_ok=True)
+    print('GS T=1000')
+    if os.path.exists(matrix_gn_file):
+        mat_gn = (np.load(matrix_gn_file, allow_pickle=True)+1)/2
+    else:
+        mat_gn = np.empty((len(j_list), len(b_list)))
+        mat_gn[:] = np.nan
+        for i_b, b in enumerate(b_list):
+            if (i_b+1) % 10 == 0:
+                print(i_b+1)
+            l = []
+            for j in j_list:
+                init_state = np.random.choice([-1, 1], 8)
+                states_mat = gn.gibbs_samp_necker(init_state=init_state,
+                                                  burn_in=1000,
+                                                  n_iter=2000, j=j,
+                                                  stim=b)
+                l.append(np.nanmean(states_mat))
+            mat_gn[:, i_b] = l
+        np.save(matrix_gn_file, mat_gn)
+    if dist_metric is not None:
+        label = label_0 + str(dist(mat_true, mat_gn))
+    else:
+        label = ''
+    ax[4].imshow(np.flipud(mat_gn), aspect='auto',
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
+    ax[4].set_title('Gibbs sampling\nT=1000' + label)
+    # T=100000
+    matrix_gn_file = data_folder + '10000_gibbs_posterior_vs_JB_05.npy'
+    os.makedirs(os.path.dirname(matrix_gn_file), exist_ok=True)
+    print('GS T=10000')
+    if os.path.exists(matrix_gn_file):
+        mat_gn = (np.load(matrix_gn_file, allow_pickle=True)+1)/2
+    else:
+        mat_gn = np.empty((len(j_list), len(b_list)))
+        mat_gn[:] = np.nan
+        for i_b, b in enumerate(b_list):
+            if (i_b+1) % 10 == 0:
+                print(i_b+1)
+            l = []
+            for j in j_list:
+                init_state = np.random.choice([-1, 1], 8)
+                states_mat = gn.gibbs_samp_necker(init_state=init_state,
+                                                  burn_in=1000,
+                                                  n_iter=11000, j=j,
+                                                  stim=b)
+                l.append(np.nanmean(states_mat))
+            mat_gn[:, i_b] = l
+        np.save(matrix_gn_file, mat_gn)
+    # mat_gn = resize(mat_gn, (201, 200))
+    if dist_metric is not None:
+        label = label_0 + str(dist(resize(mat_true, (41, 40)), mat_gn))
+    else:
+        label = ''
+    im = ax[5].imshow(np.flipud(mat_gn), aspect='auto',
+                      extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1,
+                      interpolation=None)
+    ax[5].set_title('Gibbs sampling\nT=10000' + label)
+    ax_pos = ax[5].get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
+                            ax_pos.width*0.06, ax_pos.height*0.7])
+    plt.colorbar(im, cax=ax_cbar, orientation='vertical', label='Posterior')
+    ax[0].set_ylabel(r'Coupling $J$')
+    if nrows != 2:
+        for i in range(1, 6):
+            ax[i].set_yticks([])
+        for i in range(6):
+            ax[i].set_xlabel(r'Stimulus $B$')
+    else:
+        ax[1].set_yticks([])
+        ax[2].set_yticks([])
+        ax[1].set_xticks([])
+        ax[0].set_xticks([])
+        ax[2].set_xticks([])
+        ax[4].set_yticks([])
+        ax[5].set_yticks([])
+        ax[3].set_ylabel(r'Coupling $J$')
+        ax[3].set_xlabel(r'Stimulus $B$')
+        ax[4].set_xlabel(r'Stimulus $B$')
+        ax[5].set_xlabel(r'Stimulus $B$')
+    fig.savefig(data_folder+'/comparison_all.png', dpi=400, bbox_inches='tight')
+    fig.savefig(data_folder+'/comparison_all.svg', dpi=400, bbox_inches='tight')
+
+
+def kl(p, q, eps=1e-10):
+    """Kullback-Leibler divergence D(P || Q) for discrete distributions
+    
+    Parameters
+    ----------
+    p, q : array-like, dtype=float, shape=n
+    Discrete probability distributions.
+    """
+    p = np.asarray(p, dtype=float) + eps
+    q = np.asarray(q, dtype=float) + eps
+    
+    return np.round(np.sum(np.where(p != 0, p * np.log(p / q), 0)), 2)
+
+
+if __name__ == '__main__':
+    # for stim in [-1]:
+    #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
+    #                           j_list=np.arange(0.00001, 1, 0.001),
+    #                           thr=1e-10, stim=stim)
+    all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
+                            b_list=np.arange(-.5, .5005, 0.005),
+                            data_folder=DATA_FOLDER,
+                            theta=THETA, dist_metric=None, nrows=2)
+    # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
+    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 10001), j=0.1,
+    #                             num_iter=40, thr=1e-8, theta=THETA)
+    # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.005),
     #                       b_list=np.arange(-0.5, 0.5, 0.01),
-    #                       tol=1e-12, min_r=0, max_r=20,
-    #                       w_size=0.01, neigh_list=np.arange(3, 12),
+    #                       tol=1e-8, min_r=0, max_r=20,
+    #                       w_size=0.05, neigh_list=np.arange(3, 12),
     #                       dim3=False)
     # plt.figure()
     # solve_equation_g_derivative()
@@ -778,4 +1158,5 @@ if __name__ == '__main__':
     #                  min_r=-15, max_r=15,
     #                  w_size=0.01, n_neigh=3,
     #                  color='r')
-
+    # plot_lbp_3_examples()
+    # plot_lbp_explanation()
