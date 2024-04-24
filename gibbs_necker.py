@@ -129,8 +129,8 @@ def k_val(x_vec, j_mat, stim=0):
 
 
 def change_prob(x_vect, x_vect1, j, stim=0, theta=THETA):
-    return sigmoid(j*(-k_val(x_vect, theta, stim=stim) +
-                      k_val(x_vect1, theta, stim=stim)))
+    return sigmoid((-k_val(x_vect, j*theta, stim=stim) +
+                    k_val(x_vect1, j*theta, stim=stim)))
 
 
 def mat_theta(x_vect_1, x_vect_2, j):
@@ -181,7 +181,7 @@ def mean_prob_gibbs(j, ax=None, burn_in = 1000, n_iter = 10000, wsize=100,
     states_mat = gibbs_samp_necker(init_state=init_state,
                                    burn_in=burn_in, n_iter=n_iter, j=j,
                                    stim=stim)
-    states_mat = (states_mat + 1) / 2
+    # states_mat = (states_mat + 1) / 2
     conv_states_mat = np.copy(states_mat)
     if wsize != 1:
         for i in range(8):
@@ -198,9 +198,32 @@ def mean_prob_gibbs(j, ax=None, burn_in = 1000, n_iter = 10000, wsize=100,
 
 
 def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
-                         wsize=1, stim=0, node=None):
-    fig, ax_tot = plt.subplots(ncols=2)
-    ax = ax_tot[0]
+                         wsize=1, stim=0, node=None, j_ex=0.8):
+    # fig, ax_tot = plt.subplots(ncols=2, figsize=(10, 3))
+    # ax = ax_tot[0]
+    fig, ax1 = plt.subplots(ncols=2, figsize=(11, 3))
+    init_state = np.random.choice([-1, 1], 8)
+    states_mat = gibbs_samp_necker(init_state=init_state,
+                                   burn_in=burn_in, n_iter=n_iter, j=j_ex,
+                                   stim=stim)
+    # states_mat = (states_mat+1)/2
+    for ax in ax1:
+        ax.imshow(states_mat.T, aspect='auto', cmap='seismic',  # PuOr
+                  interpolation='none')
+        ax.set_ylabel(r'Node $i$')
+        # ax.set_title('J =' + str(j_ex))
+        ax.set_xlabel('Sample')
+        ax.set_yticks(np.arange(8), np.arange(8)+1)
+    legendelements = [Line2D([0], [0], color='b', lw=2, label=r'$x_i=1$'),
+                      Line2D([0], [0], color='firebrick', lw=2, label=r'$x_i=-1$')]
+    ax1[0].legend(bbox_to_anchor=(1, 1.25), handles=legendelements,
+                  frameon=False)
+    fig.savefig(DATA_FOLDER + 'gibbs_simulation_fixed_j_all_nodes' + '.png',
+                dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'gibbs_simulation_fixed_j_all_nodes' + '.svg',
+                dpi=400, bbox_inches='tight')
+    # ax = ax_tot[1]
+    fig, ax = plt.subplots(ncols=1, figsize=(5.5, 3))
     mean_nod = np.empty((len(j_list), n_iter-burn_in))
     mean_nod[:] = np.nan
     allmeans = np.empty((len(j_list)))
@@ -208,18 +231,25 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
         mean_nod[ind_j, :] = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
                                              wsize=wsize, node=node, stim=stim)
         allmeans[ind_j] = np.nanmean(np.abs(mean_nod[ind_j, :]*2-1))
-    im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic')
+    im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic',
+                   interpolation='none')
     ax.set_yticks(np.arange(0, len(j_list), len(j_list)//2),
                   j_list[np.arange(0, len(j_list), len(j_list)//2)][::-1])
-    plt.colorbar(im, label=r'$\frac{1}{8}\sum_i^8 {P(x_i = 1, t)}$', ax=ax,
-                 orientation='horizontal')
-    ax.set_ylabel('J')
-    ax.set_xlabel('Iter (time)')
-    ax = ax_tot[1]
-    ax.plot(j_list, allmeans, color='k')  # np.abs(allmeans*2-1)
-    # ax.plot(j_list, 1-allmeans, color='r')
-    ax.set_xlabel('J')
-    ax.set_ylabel(r'$<P(state \in \{-1, 1\})>_t$', fontsize=10)
+    ax_pos = ax.get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
+                            ax_pos.width*0.06, ax_pos.height*0.7])
+    ax_cbar.set_title(r'  $\frac{1}{8}\sum_i^8 {x_i}$')
+    plt.colorbar(im, cax=ax_cbar, orientation='vertical')
+    ax.set_ylabel(r'Coupling $J$')
+    ax.set_xlabel('Sample')
+    # ax.plot(j_list, allmeans, color='k')  # np.abs(allmeans*2-1)
+    # # ax.plot(j_list, 1-allmeans, color='r')
+    # ax.set_xlabel('J')
+    # ax.set_ylabel(r'$<P(state \in \{-1, 1\})>_t$', fontsize=10)
+    fig.savefig(DATA_FOLDER + 'gibbs_simulation_all' + '.png',
+                dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'gibbs_simulation_all' + '.svg',
+                dpi=400, bbox_inches='tight')
 
 
 def plot_duration_dominance_gamma_fit(j, burn_in=1000, n_iter=100000):
@@ -361,7 +391,7 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False):
             class_count.append(classes)
         if len(class_count) == 22:
             break            
-    fig, ax = plt.subplots(1)
+    fig, ax = plt.subplots(1, figsize=(5, 4))
     if plot_arist:
         for ic, cl in enumerate(class_count):
             for ic2, cl2 in enumerate(class_count):
@@ -369,28 +399,40 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False):
                          linewidth=np.sign(C[class_count[ic], class_count[ic]])/2)
                 plt.plot([muvec[ic]-eps, muvec[ic2]-eps], [klist[ic]-eps, klist[ic2]-eps], color='r',
                          linewidth=np.sign(C[class_count[ic2], class_count[ic]])/2)
+    msize = 4
     for i_c, classe in enumerate(class_count):
+        if plot_arist:
+            msize = nc[classe]*15+1
         plt.plot(muvec[i_c], klist[i_c], marker='o', linestyle='', color='k',
-                 markersize=nc[classe]*15+1)  # nc[classe]*55+
-    plt.annotate(text='', xy=(-8, 11.5), xytext=(-8, 2),
-                 arrowprops=dict(arrowstyle='<->'))
-    plt.text(-7.5, 4, r'$\Delta k_1$')
-    plt.annotate(text='', xy=(8, 11.5), xytext=(8, 2),
-                 arrowprops=dict(arrowstyle='<->'))
-    plt.text(6.7, 4, r'$\Delta k_2$')
-    plt.annotate(text='', xy=(0, 0.5), xytext=(0, 3.5),
-                 arrowprops=dict(arrowstyle='<->'))
-    plt.text(-1, 1.5, r'$\Delta k_u$')
-    plt.ylabel(r'$k = \frac{1}{2} \vec{x}^T \theta \vec{x} + B \mu$', fontsize=12)
-    plt.plot([-8, -2], [2, 2], color='k', linestyle='--', alpha=0.4)
-    plt.plot([8, 2], [2, 2], color='k', linestyle='--', alpha=0.4)
+                 markersize=msize)  # nc[classe]*55+
+    # plt.annotate(text='', xy=(0, 0.5), xytext=(0, 3.5),
+    #              arrowprops=dict(arrowstyle='<->'))
+    # plt.text(-1, 1.5, r'$\Delta k_u$')
+    plt.ylabel(r'$k=\frac{1}{2} \, \vec{y}^{\, T} \, \mathcal{V}_{ij} \, \vec{y} + B \mu$', fontsize=12)
     plt.xlabel(r'$\mu$', fontsize=12)
-    plt.title('B = {}'.format(stim))
-    plot_necker_cubes(ax=ax, mu=-8)
-    plot_necker_cubes(ax=ax, mu=-6)
-    plot_necker_cubes(ax=ax, mu=8)
-    plot_necker_cubes(ax=ax, mu=0, bot=False)
-    plot_necker_cubes(ax=ax, mu=0)
+    # plt.title('B = {}'.format(stim))
+    if plot_arist:
+        plt.plot([-8, -2], [2, 2], color='k', linestyle='--', alpha=0.4)
+        plt.plot([8, 2], [2, 2], color='k', linestyle='--', alpha=0.4)
+        plot_necker_cubes(ax=ax, mu=-8)
+        plot_necker_cubes(ax=ax, mu=-6)
+        plot_necker_cubes(ax=ax, mu=8)
+        plot_necker_cubes(ax=ax, mu=0, bot=False)
+        plot_necker_cubes(ax=ax, mu=0)
+        x_vec_1 = np.repeat(-1, 8)
+        k1 = k_val(x_vec_1, THETA, stim=stim)
+        x_vec_2 = np.repeat(1, 8)
+        k2 = k_val(x_vec_2, THETA, stim=stim)
+        plt.annotate(text='', xy=(-8, k1-0.5), xytext=(-8, 2),
+                     arrowprops=dict(arrowstyle='<->'))
+        plt.text(-7.5, 4, r'$\Delta k_1$')
+        plt.annotate(text='', xy=(8, k2-0.5), xytext=(8, 2),
+                     arrowprops=dict(arrowstyle='<->'))
+        plt.text(6.7, 4, r'$\Delta k_2$')
+    else:
+        plt.xticks([-8, -4, 0, 4, 8])
+    fig.savefig(DATA_FOLDER + 'k_vs_mu.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'k_vs_mu.svg', dpi=400, bbox_inches='tight')
     
 
 def compute_C(data_folder):
@@ -781,17 +823,19 @@ def sol_magnetization_hex_lattice(j_list, b):
 
 
 def true_posterior_stim(stim_list=np.linspace(-2, 2, 1000), j=0.5,
-                        theta=THETA, data_folder=DATA_FOLDER):
+                        theta=THETA, data_folder=DATA_FOLDER, load_data=False,
+                        save_data=True):
     posterior_stim = data_folder + str(theta.shape[0]) + '_' + str(j) + '_post_stim.npy'
     os.makedirs(os.path.dirname(posterior_stim), exist_ok=True)
-    if os.path.exists(posterior_stim):
+    if os.path.exists(posterior_stim) and load_data:
         post_stim = np.load(posterior_stim, allow_pickle=True)
     else:
         post_stim = []
         for stim in stim_list:
             post = true_posterior(theta=theta, j=j, stim=stim)
             post_stim.append(post)
-        np.save(data_folder + 'post_stim.npy', np.array(post_stim))    
+        if save_data:
+            np.save(data_folder + 'post_stim.npy', np.array(post_stim))    
     return post_stim
     # plt.plot(stim_list, post_stim)
     
@@ -1105,16 +1149,16 @@ def plot_occ_probs_gibbs(data_folder,
                 mu_list.append(np.mean(curr_state))
             mu_vals_all[i_n, :] = mu_list
         np.save(probs_data, mu_vals_all)
-    fig, ax = plt.subplots(1)
+    fig, ax = plt.subplots(1, figsize=(5, 4))
     for i_mu, mu_list in enumerate(mu_vals_all):
         sns.kdeplot(mu_list, color=colormap[i_mu], label=n_iter_list[i_mu],
                     bw_adjust=0.1, cumulative=True)
         # plt.hist(mu_list, bins=40, color=colormap[i_n], label=n_iter)
-    plt.legend(title='N')
+    # plt.legend(title='N')
     plt.ylabel(r'CDF of $X(T)$')
     plt.xlim(-0.05, 1.05)
     plt.ylim(-0.05, 1.05)
-    plt.xlabel(r'Time proportion, $t/T$')
+    plt.xlabel(r'Approximate posterior $q$')
     # plt.figure()
     k_1 = 12*j + 8*stim
     k_u = 2*j + 2*stim
@@ -1137,9 +1181,12 @@ def plot_occ_probs_gibbs(data_folder,
                       Line2D([0], [0], color=colormap[3], lw=2, label='T=1e5'),
                       Line2D([0], [0], color=colormap[4], lw=2, label='T=1e6'),
                       ]
-    plt.legend(bbox_to_anchor=(1., 1.), handles=legendelements)
-    plt.title('B = ' + str(stim))
+    if stim == 0.1:
+        plt.legend(bbox_to_anchor=(1., 1.), handles=legendelements)
+    # plt.title('B = ' + str(stim))
     fig.savefig(DATA_FOLDER + 'CDF_gibbs_stim_' + str(stim) + '_j_' + str(j) + '.png',
+                dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'CDF_gibbs_stim_' + str(stim) + '_j_' + str(j) + '.svg',
                 dpi=400, bbox_inches='tight')
 
 
@@ -1154,23 +1201,23 @@ def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False):
     ax.plot([offset, 1+offset], [1+offset, 1+offset], color='k')
     ax.plot([1+offset, 1+offset], [0+offset, 1+offset], color='k')
     ax.plot([1, 1+offset], [1, 1+offset], color='k')
-    if whole:
-        ax.plot([offset, offset], [offset, 1+offset], color='k')
-        ax.plot([offset, 1+offset], [offset, offset], color='k')
-        ax.plot([0, offset], [0, offset], color='k')
-        ax.plot([1, 1+offset], [0, offset], color='k')
-    else:
-        ax.plot([offset, offset], [1, 1+offset], color='k')
-        ax.plot([1, 1+offset], [0, offset], color='k')
-    if interp_sfa:
-        ax.set_xlim(1.35, -0.1)
-        ax.set_ylim(1.35, -0.1)
+    ax.plot([offset, offset], [offset, 1+offset], color='k')
+    ax.plot([offset, 1+offset], [offset, offset], color='k')
+    ax.plot([0, offset], [0, offset], color='k')
+    ax.plot([1, 1+offset], [0, offset], color='k')
+    if not whole:
+        if interp_sfa:
+            ax.fill_between([0, 1], [1, 1], color='gray', alpha=0.6)
+        if not interp_sfa:
+            ax.fill_between([offset, 1+offset],
+                            [1+offset, 1+offset], [offset, offset],
+                            color='gray', alpha=0.6)
     plt.axis('off')
 
 
-def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5):
+def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
     # fig, ax = plt.subplots(1, figsize=(4, 3.5))
-    if mu == -8:
+    if np.round(mu) == -8:
         color_back = ['k']*4
         color_front = ['k']*4
         val_off_x = 0.75
@@ -1180,7 +1227,7 @@ def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5):
         color_front = ['white'] + ['k']*3
         val_off_x = 0.75
         val_off_y = .8
-    if mu == 8:
+    if np.round(mu) == 8:
         color_back = ['white']*4
         color_front = ['white']*4
         val_off_x = -2.6
@@ -1229,9 +1276,9 @@ def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5):
     for x_b, y_b, x_f, y_f in zip(x_nodes_back.flatten(), y_nodes_back.flatten(),
                                   x_nodes_front.flatten(), y_nodes_front.flatten()):
         ax.plot(x_b, y_b, marker='o', linestyle='', color=color_back[i],
-                markersize=4, markeredgecolor='k')
+                markersize=msize, markeredgecolor='k')
         ax.plot(x_f, y_f, marker='o', linestyle='', color=color_front[i],
-                markersize=4, markeredgecolor='k')
+                markersize=msize, markeredgecolor='k')
         i += 1
     # ax.axis('off')
     
@@ -1244,9 +1291,9 @@ if __name__ == '__main__':
 
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
-    plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True)
-    # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
-    #                       wsize=1, stim=-0.1)
+    # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True)
+    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
+                          n_iter=10000, wsize=1, stim=0, j_ex=0.9)
     # t = transition_matrix(0.2, C)
     # prob_markov_chain_between_states(tau=100, iters_per_len=200,
     #                                  n_iter_list=np.logspace(0, 4, 5))
@@ -1254,6 +1301,6 @@ if __name__ == '__main__':
 
     # plot_occ_probs_gibbs(data_folder=DATA_FOLDER,
     #                       n_iter_list=np.logspace(2, 6, 5, dtype=int),
-    #                       j=1, stim=0.1, n_repetitions=100, theta=THETA,
+    #                       j=1, stim=0., n_repetitions=100, theta=THETA,
     #                       burn_in=0.1)
 
