@@ -1233,32 +1233,45 @@ def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False):
 
 
 def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
-    # fig, ax = plt.subplots(1, figsize=(4, 3.5))
-    if np.round(mu) == -8:
-        color_back = ['k']*4
-        color_front = ['k']*4
+    if ax is None:
+        fig, ax = plt.subplots(1, figsize=(4, 3.2))
+    mu_None = False
+    if mu is not None:
+        if np.round(mu) == -8:
+            color_back = ['k']*4
+            color_front = ['k']*4
+            val_off_x = 0.75
+            val_off_y = 4
+        if mu == -6:
+            color_back = ['k']*4
+            color_front = ['white'] + ['k']*3
+            val_off_x = 0.75
+            val_off_y = .8
+        if np.round(mu) == 8:
+            color_back = ['white']*4
+            color_front = ['white']*4
+            val_off_x = -2.6
+            val_off_y = 4
+        if mu == 0 and not bot:
+            color_back = ['k']*4
+            color_front = ['white']*4
+            val_off_x = -1
+            val_off_y = 5.4
+        if mu == 0 and bot:
+            color_back = ['k', 'white', 'k', 'white']
+            color_front = ['white', 'k', 'white', 'k']
+            val_off_x = 1.2
+            val_off_y = -12.5
+    else:
         val_off_x = 0.75
         val_off_y = 4
-    if mu == -6:
-        color_back = ['k']*4
-        color_front = ['white'] + ['k']*3
-        val_off_x = 0.75
-        val_off_y = .8
-    if np.round(mu) == 8:
-        color_back = ['white']*4
-        color_front = ['white']*4
-        val_off_x = -2.6
-        val_off_y = 4
-    if mu == 0 and not bot:
-        color_back = ['k']*4
-        color_front = ['white']*4
-        val_off_x = -1
-        val_off_y = 5.4
-    if mu == 0 and bot:
-        color_back = ['k', 'white', 'k', 'white']
-        color_front = ['white', 'k', 'white', 'k']
-        val_off_x = 1.2
-        val_off_y = -12.5
+        colors_tab = list(matplotlib.colors.TABLEAU_COLORS.keys())
+        color_back = colors_tab[4:9]
+        color_front = colors_tab[:4]
+        mu = -8
+        msize = 12
+        ax.axis('off')
+        mu_None = True
     nodes = np.zeros((2, 2, 2))
     x_nodes_front = (nodes[:, :, 0] + np.arange(2))*factor + mu + val_off_x
     y_nodes_front = ((nodes[:, :, 0].T + 2.2*np.arange(2)).T)*factor + np.abs(mu) + val_off_y
@@ -1297,7 +1310,11 @@ def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
         ax.plot(x_f, y_f, marker='o', linestyle='', color=color_front[i],
                 markersize=msize, markeredgecolor='k')
         i += 1
-    # ax.axis('off')
+    if mu_None:
+        fig.savefig(DATA_FOLDER + 'necker_color_nodes.png',
+                    dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'necker_color_nodes.svg',
+                    dpi=400, bbox_inches='tight')
     
 
 
@@ -1308,7 +1325,8 @@ if __name__ == '__main__':
 
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
-    plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True, plot_cubes=False)
+    # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True, plot_cubes=False)
+    plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
     #                       n_iter=10000, wsize=1, stim=0, j_ex=0.9, f_all=False)
     # t = transition_matrix(0.2, C)
