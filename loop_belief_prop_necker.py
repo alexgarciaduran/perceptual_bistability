@@ -155,10 +155,14 @@ def Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, sti
 
 
 def posterior_vs_b(stim_list=np.linspace(-2, 2, 10001),
-                   j=0.1, theta=THETA, data_folder=DATA_FOLDER):
-    true_posterior = gn.true_posterior_stim(stim_list=stim_list, j=j, theta=theta,
-                                            data_folder=data_folder,
-                                            load_data=True, save_data=False)
+                   j=0.1, theta=THETA, data_folder=DATA_FOLDER,
+                   compute_posterior=True):
+    if compute_posterior:
+        true_posterior = gn.true_posterior_stim(stim_list=stim_list, j=j, theta=theta,
+                                                data_folder=data_folder,
+                                                load_data=True, save_data=False)
+    else:
+        true_posterior = np.nan
     mf_post = []
     bp_post = []
     N = 3
@@ -206,8 +210,8 @@ def posterior_vs_b(stim_list=np.linspace(-2, 2, 10001),
 
 def plot_overconfidence_vs_j(j_list=np.arange(0, 1.05, 0.01),
                              stim_list=np.linspace(0, 2, 101),
-                             t_list=[100, 1000, 10000],
-                             data_folder=DATA_FOLDER, theta=THETA):
+                             data_folder=DATA_FOLDER, theta=THETA,
+                             gibbs=True):
     mse_mf = []
     mse_bp = []
     for j in j_list:
@@ -216,33 +220,77 @@ def plot_overconfidence_vs_j(j_list=np.arange(0, 1.05, 0.01),
                            j=j, theta=theta, data_folder=data_folder)
         mse_mf.append(np.trapz(mf_post.T-true_posterior, true_posterior))
         mse_bp.append(np.trapz(bp_post.T-true_posterior, true_posterior))
-    burn_in = 200
-    gibbs_overconf_100 = []
-    gibbs_overconf_1000 = []
-    gibbs_overconf_10000 = []
-    gibbs_overconf = [gibbs_overconf_100, gibbs_overconf_1000, gibbs_overconf_10000]
-    for i_t, t in enumerate(t_list):
-        for j in j_list:
-            gibbs_post = []
-            for b in stim_list:
-                init_state = np.random.choice([-1, 1], 8)
-                states_mat = gn.gibbs_samp_necker(init_state=init_state,
-                                                  burn_in=burn_in,
-                                                  n_iter=t+burn_in, j=j,
-                                                  stim=b)
-                states_mat = (states_mat + 1) / 2
-                gibbs_post.append(np.nanmean(states_mat))
-            gibbs_post = np.array(gibbs_post)
-            gibbs_overconf[i_t].append(np.trapz(gibbs_post-true_posterior, true_posterior))
     fig, ax = plt.subplots(1, figsize=(4, 3))
-    ax.plot(j_list, mse_mf, color='r', label='MF')
     ax.plot(j_list, mse_bp, color='k', label='LBP')
+    ax.plot(j_list, mse_mf, color='r', label='MF')
     ax.legend()
     ax.set_xlabel(r'Coupling $J$')
     ax.set_ylabel('Over-confidence')
     fig.tight_layout()
     fig.savefig(data_folder + 'over_confidence.png')
     fig.savefig(data_folder + 'over_confidence.svg')
+
+
+def plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
+                               b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA):
+    b_list = np.arange(-.5, 0.5005, 0.005)
+    # ind_0 = np.where(abs(b_list_orig) < 1e-15)[0][0]
+    ind_0 = 0
+    # True posterior
+    matrix_true_file = data_folder + 'true_vs_JB_05.npy'
+    mat_true = np.load(matrix_true_file, allow_pickle=True)
+    # Gibbs for 3 different T
+    # T=100
+    matrix_gn_file = data_folder + '100_gibbs_posterior_vs_JB_05.npy'
+    mat_gn_1e2 = (np.load(matrix_gn_file, allow_pickle=True)+1)/2
+    # T=1000
+    matrix_gn_file = data_folder + '1000_gibbs_posterior_vs_JB_05.npy'
+    mat_gn_1e3 = (np.load(matrix_gn_file, allow_pickle=True)+1)/2
+    # T=10000
+    matrix_gn_file = data_folder + '10000_gibbs_posterior_vs_JB_05.npy'
+    mat_gn_1e4 = (np.load(matrix_gn_file, allow_pickle=True)+1)/2
+    # Confidence
+    conf_mf = []
+    conf_lbp = []
+    conf_g1e2 = []
+    conf_g1e3 = []
+    conf_g1e4 = []
+    for i_j, j in enumerate(j_list):
+        # true posterior
+        true_posterior = mat_true[i_j, ind_0:]
+        # MF/LBP
+        _, mf_post, bp_post =\
+            posterior_vs_b(stim_list=b_list,
+                           j=j, theta=theta, data_folder=data_folder,
+                           compute_posterior=False)
+        # MF
+        conf_mf.append(np.trapz(abs(mf_post.T-true_posterior), true_posterior))
+        # LBP
+        conf_lbp.append(np.trapz(abs(bp_post.T-true_posterior), true_posterior))
+        # Gibbs 100
+        vals_gibs_100 = mat_gn_1e2[i_j, ind_0:]
+        conf_g1e2.append(np.trapz(abs(vals_gibs_100-true_posterior), true_posterior))
+        # Gibbs 1000
+        vals_gibs_1000 = mat_gn_1e3[i_j, ind_0:]
+        conf_g1e3.append(np.trapz(abs(vals_gibs_1000-true_posterior), true_posterior))
+        # Gibbs 10000
+        vals_gibs_10000 = mat_gn_1e4[i_j, ind_0:]
+        conf_g1e4.append(np.trapz(abs(vals_gibs_10000-true_posterior), true_posterior))
+    fig, ax = plt.subplots(1, figsize=(5, 3.4))
+    ax.plot(j_list, conf_lbp, color='k', label='LBP')
+    ax.plot(j_list, conf_mf, color='r', label='MF')
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, 3))
+    wsize = 1
+    ax.plot(j_list, np.convolve(conf_g1e2, np.ones(wsize)/wsize, 'same'), color=colormap[0], label='Gibbs 1e2')
+    ax.plot(j_list, np.convolve(conf_g1e3, np.ones(wsize)/wsize, 'same'), color=colormap[1], label='Gibbs 1e3')
+    ax.plot(j_list, np.convolve(conf_g1e4, np.ones(wsize)/wsize, 'same'), color=colormap[2], label='Gibbs 1e4')
+    ax.legend()
+    ax.set_xlabel(r'Coupling $J$')
+    ax.set_ylabel('Over-confidence')
+    fig.tight_layout()
+    fig.savefig(data_folder + 'over_confidence_all.png')
+    fig.savefig(data_folder + 'over_confidence_all.svg')
+
 
 
 def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
@@ -258,13 +306,15 @@ def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
         #                                      num_iter=num_iter,
         #                                      j=j, thr=thr, stim=stim)
         # bp_post.append(q_bp[0])
+    
     fig, ax = plt.subplots(1, figsize=(4, 3))
-    ax.plot(true_posterior, bp_post, color='k', label='Belief propagation')
-    ax.plot(true_posterior, mf_post, color='r', label='Mean-field',
+    ax.plot(true_posterior, mf_post, color='r', label='MF',
+            linestyle='--')
+    ax.plot(true_posterior, bp_post, color='k', label='LBP',
             linestyle='--')
     ax.fill_between(true_posterior, true_posterior, mf_post.T[0],
                     color='r', alpha=0.08)
-    ax.plot([0, 1], [0, 1], color='grey', alpha=0.5)
+    ax.plot([0, 1], [0, 1], color='grey', alpha=0.5, label='y=x, True')
     ax.set_xlabel(r'True posterior $p(x_i=1 | B)$')
     ax.set_ylabel(r'Approximated posterior $q(x_i=1|B)$')
     ax.text(0.5, 0.1, 'Over-confidence')
@@ -998,7 +1048,7 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
         label = label_0 + str(dist(mat_true, mat_lbp))
     else:
         label = ''
-    ax[2].set_title('Belief propagation' + label)
+    ax[2].set_title('Loopy\nbelief propagation' + label)
     ax[2].plot(b_list_1, jcrit_bp, color='k', label=r'$J^{\ast}$')
     ax[2].set_xlim(-0.5, 0.5)
     ax[2].legend(bbox_to_anchor=(0, 1.2), frameon=False)
@@ -1032,7 +1082,8 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
         label = ''
     ax[3].imshow(np.flipud(mat_gn), aspect='auto',
                  extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
-    ax[3].set_title('Gibbs sampling\nT=100' + label)
+    ax[3].set_title('Gibbs sampling\nT=1e2' + label)
+    # ax[3].plot(b_list, (np.log(100)+8*b_list*np.sign(b_list))/10, color='k')
     # T=10000
     matrix_gn_file = data_folder + '1000_gibbs_posterior_vs_JB_05.npy'
     os.makedirs(os.path.dirname(matrix_gn_file), exist_ok=True)
@@ -1061,7 +1112,9 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
         label = ''
     ax[4].imshow(np.flipud(mat_gn), aspect='auto',
                  extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
-    ax[4].set_title('Gibbs sampling\nT=1000' + label)
+    ax[4].set_title('Gibbs sampling\nT=1e3' + label)
+    # ax[4].plot(b_list, (np.log(1000)+8*b_list*np.sign(b_list))/10, color='k')
+    ax[4].set_ylim(0, 1)
     # T=100000
     matrix_gn_file = data_folder + '10000_gibbs_posterior_vs_JB_05.npy'
     os.makedirs(os.path.dirname(matrix_gn_file), exist_ok=True)
@@ -1092,7 +1145,9 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
     im = ax[5].imshow(np.flipud(mat_gn), aspect='auto',
                       extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1,
                       interpolation=None)
-    ax[5].set_title('Gibbs sampling\nT=10000' + label)
+    ax[5].set_title('Gibbs sampling\nT=1e4' + label)
+    # ax[5].plot(b_list, (np.log(10000)+8*b_list*np.sign(b_list))/10, color='k')
+    ax[5].set_ylim(0, 1)
     ax_pos = ax[5].get_position()
     ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
                             ax_pos.width*0.06, ax_pos.height*0.7])
@@ -1138,6 +1193,8 @@ if __name__ == '__main__':
     #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
     #                           j_list=np.arange(0.00001, 1, 0.001),
     #                           thr=1e-10, stim=stim)
+    # plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
+    #                            b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
     all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
                             b_list=np.arange(-.5, .5005, 0.005),
                             data_folder=DATA_FOLDER,
