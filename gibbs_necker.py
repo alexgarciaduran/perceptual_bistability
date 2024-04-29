@@ -8,6 +8,7 @@ Created on Thu Oct 19 10:45:48 2023
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib
 import scipy
 import itertools
 import seaborn as sns
@@ -51,7 +52,11 @@ Connections:
 """
 
 
-
+matplotlib.rcParams['font.size'] = 12
+plt.rcParams['legend.title_fontsize'] = 11
+plt.rcParams['legend.fontsize'] = 11
+plt.rcParams['xtick.labelsize']= 11
+plt.rcParams['ytick.labelsize']= 11
 
 # ---GLOBAL VARIABLES
 pc_name = 'alex'
@@ -198,20 +203,28 @@ def mean_prob_gibbs(j, ax=None, burn_in = 1000, n_iter = 10000, wsize=100,
 
 
 def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
-                         wsize=1, stim=0, node=None, j_ex=0.8):
-    # fig, ax_tot = plt.subplots(ncols=2, figsize=(10, 3))
-    # ax = ax_tot[0]
+                         wsize=1, stim=0, node=None, j_ex=0.8, f_all=False):
     fig, ax1 = plt.subplots(ncols=2, figsize=(11, 3))
     init_state = np.random.choice([-1, 1], 8)
     states_mat = gibbs_samp_necker(init_state=init_state,
                                    burn_in=burn_in, n_iter=n_iter, j=j_ex,
                                    stim=stim)
+    mean_states = np.nanmean(states_mat, axis=1)
+    # states_mat = np.column_stack((mean_states, states_mat))
     # states_mat = (states_mat+1)/2
+    # ticks_labels = [str(i) if i > 0 else r'$<\vec{x}^{\,t}>$' for i in range(9)]
     for ax in ax1:
+        ax_pos = ax.get_position()
+        ax.set_position([ax_pos.x0, ax_pos.y0-ax_pos.height*0.12,
+                         ax_pos.width, ax_pos.height])
+        ax_new = fig.add_axes([ax_pos.x0, ax_pos.y0+ax_pos.height*0.92,
+                               ax_pos.width, ax_pos.height/7.5])
+        ax_new.plot(mean_states, color='k')
+        ax_new.set_ylabel(r'$<\vec{x}^{\,t}>$')
+        ax_new.set_xticks([])
         ax.imshow(states_mat.T, aspect='auto', cmap='seismic',  # PuOr
                   interpolation='none')
         ax.set_ylabel(r'Node $i$')
-        # ax.set_title('J =' + str(j_ex))
         ax.set_xlabel('Sample')
         ax.set_yticks(np.arange(8), np.arange(8)+1)
     legendelements = [Line2D([0], [0], color='b', lw=2, label=r'$x_i=1$'),
@@ -222,34 +235,35 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
                 dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'gibbs_simulation_fixed_j_all_nodes' + '.svg',
                 dpi=400, bbox_inches='tight')
-    # ax = ax_tot[1]
-    fig, ax = plt.subplots(ncols=1, figsize=(5.5, 3))
-    mean_nod = np.empty((len(j_list), n_iter-burn_in))
-    mean_nod[:] = np.nan
-    allmeans = np.empty((len(j_list)))
-    for ind_j, j in enumerate(j_list):
-        mean_nod[ind_j, :] = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
-                                             wsize=wsize, node=node, stim=stim)
-        allmeans[ind_j] = np.nanmean(np.abs(mean_nod[ind_j, :]*2-1))
-    im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic',
-                   interpolation='none')
-    ax.set_yticks(np.arange(0, len(j_list), len(j_list)//2),
-                  j_list[np.arange(0, len(j_list), len(j_list)//2)][::-1])
-    ax_pos = ax.get_position()
-    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
-                            ax_pos.width*0.06, ax_pos.height*0.7])
-    ax_cbar.set_title(r'  $\frac{1}{8}\sum_i^8 {x_i}$')
-    plt.colorbar(im, cax=ax_cbar, orientation='vertical')
-    ax.set_ylabel(r'Coupling $J$')
-    ax.set_xlabel('Sample')
-    # ax.plot(j_list, allmeans, color='k')  # np.abs(allmeans*2-1)
-    # # ax.plot(j_list, 1-allmeans, color='r')
-    # ax.set_xlabel('J')
-    # ax.set_ylabel(r'$<P(state \in \{-1, 1\})>_t$', fontsize=10)
-    fig.savefig(DATA_FOLDER + 'gibbs_simulation_all' + '.png',
-                dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'gibbs_simulation_all' + '.svg',
-                dpi=400, bbox_inches='tight')
+    if f_all:
+        fig, ax = plt.subplots(ncols=1, figsize=(5.5, 3))
+        mean_nod = np.empty((len(j_list), n_iter-burn_in))
+        mean_nod[:] = np.nan
+        allmeans = np.empty((len(j_list)))
+        for ind_j, j in enumerate(j_list):
+            mean_nod[ind_j, :] = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
+                                                 wsize=wsize, node=node, stim=stim)
+            allmeans[ind_j] = np.nanmean(np.abs(mean_nod[ind_j, :]*2-1))
+        im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic',
+                       interpolation='none')
+        ax.set_yticks(np.arange(0, len(j_list), len(j_list)//2),
+                      j_list[np.arange(0, len(j_list), len(j_list)//2)][::-1])
+        ax_pos = ax.get_position()
+        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
+                                ax_pos.width*0.06, ax_pos.height*0.7])
+        # ax_cbar.set_title(r'  $\frac{1}{8}\sum_i^8 {x_i}$')
+        ax_cbar.set_title(r'  $<\vec{x}^{\,t}>$')
+        plt.colorbar(im, cax=ax_cbar, orientation='vertical')
+        ax.set_ylabel(r'Coupling $J$')
+        ax.set_xlabel('Sample')
+        # ax.plot(j_list, allmeans, color='k')  # np.abs(allmeans*2-1)
+        # # ax.plot(j_list, 1-allmeans, color='r')
+        # ax.set_xlabel('J')
+        # ax.set_ylabel(r'$<P(state \in \{-1, 1\})>_t$', fontsize=10)
+        fig.savefig(DATA_FOLDER + 'gibbs_simulation_all' + '.png',
+                    dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'gibbs_simulation_all' + '.svg',
+                    dpi=400, bbox_inches='tight')
 
 
 def plot_duration_dominance_gamma_fit(j, burn_in=1000, n_iter=100000):
@@ -372,8 +386,9 @@ def plot_k_vs_mu(states_mat, j):
     plt.xlabel(r'$\mu$', fontsize=12)
 
 
-def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False):
+def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False, plot_cubes=False):
     nc = np.sum(np.sign(np.copy(C) / 8), axis=1) / 8
+    nc = num_configs() / 8
     combs = list(itertools.product([-1, 1], repeat=8))
     combs = np.array(combs, dtype=np.float64)
     class_count = []
@@ -401,34 +416,36 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False):
                          linewidth=np.sign(C[class_count[ic2], class_count[ic]])/2)
     msize = 4
     for i_c, classe in enumerate(class_count):
-        if plot_arist:
-            msize = nc[classe]*15+1
+        # if plot_arist:
+        msize = nc[classe]*2+4
         plt.plot(muvec[i_c], klist[i_c], marker='o', linestyle='', color='k',
                  markersize=msize)  # nc[classe]*55+
     # plt.annotate(text='', xy=(0, 0.5), xytext=(0, 3.5),
     #              arrowprops=dict(arrowstyle='<->'))
     # plt.text(-1, 1.5, r'$\Delta k_u$')
-    plt.ylabel(r'$k=\frac{1}{2} \, \vec{y}^{\, T} \, \mathcal{V}_{ij} \, \vec{y} + B \mu$', fontsize=12)
+    plt.ylabel(r'$k=\frac{J}{2} \, \vec{y}^{\, T} \, \mathcal{V}_{ij} \, \vec{y} + B \mu$', fontsize=12)
     plt.xlabel(r'$\mu$', fontsize=12)
     # plt.title('B = {}'.format(stim))
-    if plot_arist:
-        plt.plot([-8, -2], [2, 2], color='k', linestyle='--', alpha=0.4)
-        plt.plot([8, 2], [2, 2], color='k', linestyle='--', alpha=0.4)
+    if plot_cubes:
         plot_necker_cubes(ax=ax, mu=-8)
         plot_necker_cubes(ax=ax, mu=-6)
         plot_necker_cubes(ax=ax, mu=8)
         plot_necker_cubes(ax=ax, mu=0, bot=False)
         plot_necker_cubes(ax=ax, mu=0)
+    if plot_arist:
+        plt.plot([-8, -2], [2, 2], color='k', linestyle='--', alpha=0.4)
+        plt.plot([8, 2], [2, 2], color='k', linestyle='--', alpha=0.4)
         x_vec_1 = np.repeat(-1, 8)
         k1 = k_val(x_vec_1, THETA, stim=stim)
         x_vec_2 = np.repeat(1, 8)
         k2 = k_val(x_vec_2, THETA, stim=stim)
         plt.annotate(text='', xy=(-8, k1-0.5), xytext=(-8, 2),
                      arrowprops=dict(arrowstyle='<->'))
-        plt.text(-7.5, 4, r'$\Delta k_1$')
+        plt.text(-7.6, 4, r'$\Delta k_1$')
         plt.annotate(text='', xy=(8, k2-0.5), xytext=(8, 2),
                      arrowprops=dict(arrowstyle='<->'))
-        plt.text(6.7, 4, r'$\Delta k_2$')
+        plt.text(6.2, 4, r'$\Delta k_2$')
+        plt.xticks([-8, -4, 0, 4, 8])
     else:
         plt.xticks([-8, -4, 0, 4, 8])
     fig.savefig(DATA_FOLDER + 'k_vs_mu.png', dpi=400, bbox_inches='tight')
@@ -1291,9 +1308,9 @@ if __name__ == '__main__':
 
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
-    # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True)
-    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
-                          n_iter=10000, wsize=1, stim=0, j_ex=0.9)
+    plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True, plot_cubes=False)
+    # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
+    #                       n_iter=10000, wsize=1, stim=0, j_ex=0.9, f_all=False)
     # t = transition_matrix(0.2, C)
     # prob_markov_chain_between_states(tau=100, iters_per_len=200,
     #                                  n_iter_list=np.logspace(0, 4, 5))
