@@ -352,6 +352,30 @@ def plot_sols_mf_bias_stim_changing_j(j_list=[0.55, 0.6, 0.65, 0.7, 0.75, 0.8],
         ax[i_j].set_xlabel(r'$q$')
 
 
+def plot_q_bifurcation_vs_JB(j_list, stim_list=np.arange(-0.5, 0.5, 0.001)):
+    fig, ax = plt.subplots(1, figsize=(5, 4))
+    N = 3
+    first_val = []
+    for i_b, b in enumerate(stim_list):
+        for j in j_list:
+            q1 = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ b*2*N) - q
+            i_conds = np.linspace(0, 1, 10)
+            sols, _, flag, _ = fsolve(q1, i_conds, full_output=True,
+                                      xtol=1e-10)
+            if flag != 1:
+                continue
+            un_sols = np.sort(np.unique(np.round(sols, 6)))
+            if len(un_sols) == 3:
+                first_val.append(un_sols[1])
+                break
+            else:
+                continue
+        if len(first_val) != (i_b+1):
+            first_val.append(np.nan)
+    ax.plot(stim_list, first_val, color='k')
+    ax.set_ylabel('q*')
+    ax.set_xlabel('B')
+
 
 def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
                            beta_list=np.arange(-0.5, 0.5, 0.001),
@@ -1260,11 +1284,13 @@ if __name__ == '__main__':
     # plot_solutions_mfield(j_list=np.arange(0.001, 1.01, 0.001), stim=0, N=3,
     #                       plot_approx=False)
     # plot_3_examples_mf_evolution()
-    plot_crit_J_vs_B_neigh(j_list=np.arange(0.01, 1, 0.001),
-                            num_iter=200,
-                            beta_list=np.arange(-0.5, 0.5, 0.001),
-                            neigh_list=np.arange(3, 12),
-                            dim3=False)
+    # plot_crit_J_vs_B_neigh(j_list=np.arange(0.01, 1, 0.001),
+    #                         num_iter=200,
+    #                         beta_list=np.arange(-0.5, 0.5, 0.001),
+    #                         neigh_list=np.arange(3, 12),
+    #                         dim3=False)
+    plot_q_bifurcation_vs_JB(j_list=np.arange(1/3, 1, 0.0001),
+                             stim_list=np.arange(-0.1, 0.1, 0.001))
     # plot_potentials_mf(j_list=[0, 0.1, 0.2, 1/3, 0.4, 0.5,
     #                            0.6, 0.7, 0.8, 0.9, 1],
     #                    bias=0, neighs=3)
