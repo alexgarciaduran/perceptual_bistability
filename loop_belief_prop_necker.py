@@ -20,6 +20,14 @@ import matplotlib.pylab as pl
 
 THETA = gn.THETA
 
+
+mpl.rcParams['font.size'] = 14
+plt.rcParams['legend.title_fontsize'] = 14
+plt.rcParams['legend.fontsize'] = 13
+plt.rcParams['xtick.labelsize']= 12
+plt.rcParams['ytick.labelsize']= 12
+
+
 pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/belief_propagation_necker/data_folder/'  # Alex
@@ -292,7 +300,6 @@ def plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.0
     fig.savefig(data_folder + 'over_confidence_all.svg')
 
 
-
 def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
                                num_iter=100, thr=1e-12, theta=THETA,
                                data_folder=DATA_FOLDER):
@@ -307,16 +314,16 @@ def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
         #                                      j=j, thr=thr, stim=stim)
         # bp_post.append(q_bp[0])
     
-    fig, ax = plt.subplots(1, figsize=(4, 3))
-    ax.plot(true_posterior, mf_post, color='r', label='MF',
-            linestyle='--')
+    fig, ax = plt.subplots(1, figsize=(5, 3.5))
     ax.plot(true_posterior, bp_post, color='k', label='LBP',
+            linestyle='--')
+    ax.plot(true_posterior, mf_post, color='r', label='MF',
             linestyle='--')
     ax.fill_between(true_posterior, true_posterior, mf_post.T[0],
                     color='r', alpha=0.08)
     ax.plot([0, 1], [0, 1], color='grey', alpha=0.5, label='y=x, True')
-    ax.set_xlabel(r'True posterior $p(x_i=1 | B)$')
-    ax.set_ylabel(r'Approximated posterior $q(x_i=1|B)$')
+    ax.set_xlabel(r'True posterior $p(x|B)$')
+    ax.set_ylabel(r'Approximated posterior $q(x|B)$')
     ax.text(0.5, 0.1, 'Over-confidence')
     ax.arrow(0.35, 0.195, 0.11, -0.06, head_width=0.02, color='k')
     # ax.set_title('J = '+str(j))
@@ -424,6 +431,7 @@ def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
 
 
 def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
+    fig = plt.figure(figsize=(6, 4))
     q0_l, q1_l, q2_l = solutions_bp(j_list=j_list, stim=stim)
     # plt.plot(j_list, q0_l, color='grey', linestyle='--')
     plt.plot([0, np.log(3)/2], [0.5, 0.5], color='k', alpha=1, label='Stable FP')
@@ -443,6 +451,9 @@ def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
     plt.ylabel(r'Posterior $q$')
     # plt.title('Solutions of the dynamical system')
     plt.legend()
+    plt.tight_layout()
+    fig.savefig(DATA_FOLDER + 'bp_solutions.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'bp_solutions.svg', dpi=400, bbox_inches='tight')
 
 
 def plot_solution_BP(j_list, stim):
@@ -1194,13 +1205,13 @@ if __name__ == '__main__':
     #                           j_list=np.arange(0.00001, 1, 0.001),
     #                           thr=1e-10, stim=stim)
     # plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
-    #                            b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
-    all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
-                            b_list=np.arange(-.5, .5005, 0.005),
-                            data_folder=DATA_FOLDER,
-                            theta=THETA, dist_metric=None, nrows=2)
-    # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
-    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 10001), j=0.1,
+    #                             b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
+    # all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
+    #                         b_list=np.arange(-.5, .5005, 0.005),
+    #                         data_folder=DATA_FOLDER,
+    #                         theta=THETA, dist_metric=None, nrows=2)
+    plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
+    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1001), j=0.1,
     #                             num_iter=40, thr=1e-8, theta=THETA)
     # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.005),
     #                       b_list=np.arange(-0.5, 0.5, 0.01),
