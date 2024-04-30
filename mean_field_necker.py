@@ -21,6 +21,11 @@ from matplotlib.lines import Line2D
 import seaborn as sns
 
 
+mpl.rcParams['font.size'] = 14
+plt.rcParams['legend.title_fontsize'] = 14
+plt.rcParams['legend.fontsize'] = 13
+plt.rcParams['xtick.labelsize']= 12
+plt.rcParams['ytick.labelsize']= 12
 
 
 # ---GLOBAL VARIABLES
@@ -274,6 +279,7 @@ def plot_stim_effect(stim_list=np.linspace(0, 0.04, 4), j=0.4, N=3):
 
 
 def plot_solutions_mfield(j_list, stim=0, N=3, plot_approx=False):
+    fig = plt.figure(figsize=(6, 4))
     l = []
     for j in j_list:
         q = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ stim*2*N) - q 
@@ -294,7 +300,7 @@ def plot_solutions_mfield(j_list, stim=0, N=3, plot_approx=False):
         plt.plot([0, 1/N], [0.5, 0.5], color='r', label=r'$q=0.5$',
                  linestyle='--')
     plt.axvline(1/N, color='r', alpha=0.2)
-    plt.text(1/N-0.05, 0.12,  r'$J^{\ast}=1/3$', rotation='vertical')
+    plt.text(1/N-0.065, 0.12,  r'$J^{\ast}=1/3$', rotation='vertical')
     # xtcks = [0, 0.2, 0.4, 0.6, 0.8, 1]
     # xtcks = np.sort(np.unique([0, 0.2, 0.4, 1/N, 0.6, 0.8, 1]))
     # labs = [x for x in xtcks]
@@ -302,6 +308,9 @@ def plot_solutions_mfield(j_list, stim=0, N=3, plot_approx=False):
     # labs[pos] = r'$J^{\ast}$'  # '1/'+str(N)
     # plt.xticks(xtcks, labs)
     plt.legend()
+    plt.tight_layout()
+    fig.savefig(DATA_FOLDER + 'mf_solutions.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'mf_solutions.svg', dpi=400, bbox_inches='tight')
 
 
 def plot_solutions_mfield_neighbors(ax, j_list, color='k', stim=0, N=3):
@@ -694,7 +703,7 @@ def plot_potentials_mf(j_list, bias=0, neighs=3):
     mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling $J$')
     ax_cbar.set_yticks([0, max(j_list)/3, max(j_list)/2, max(j_list)], [0, 0.33, max(j_list)/2, max(j_list)])
     # ax_cbar.set_title(r'Coupling $J$')
-    ax.set_xlabel(r'Posterior $q$')
+    ax.set_xlabel(r'Approximate posterior $q$')
     ax.set_ylabel(r'Mean-centered potential $V_J(q)$')
     # ax.legend(title='J:')
     fig.savefig(DATA_FOLDER + 'potentials_vs_q.png', dpi=400, bbox_inches='tight')
@@ -1289,10 +1298,10 @@ if __name__ == '__main__':
     #                         beta_list=np.arange(-0.5, 0.5, 0.001),
     #                         neigh_list=np.arange(3, 12),
     #                         dim3=False)
-    plot_q_bifurcation_vs_JB(j_list=np.arange(1/3, 1, 0.0001),
-                             stim_list=np.arange(-0.1, 0.1, 0.001))
-    # plot_potentials_mf(j_list=[0, 0.1, 0.2, 1/3, 0.4, 0.5,
-    #                            0.6, 0.7, 0.8, 0.9, 1],
-    #                    bias=0, neighs=3)
+    # plot_q_bifurcation_vs_JB(j_list=np.arange(1/3, 1, 0.0001),
+    #                          stim_list=np.arange(-0.1, 0.1, 0.001))
+    plot_potentials_mf(j_list=[0, 0.1, 0.2, 1/3, 0.4, 0.5,
+                                0.6, 0.7, 0.8, 0.9, 1],
+                        bias=0, neighs=3)
     # plot_mf_sol_stim_bias(j_list=np.arange(0.00001, 1, 0.001), stim=-0.1,
     #                       num_iter=10)
