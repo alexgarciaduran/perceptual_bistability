@@ -52,11 +52,11 @@ Connections:
 """
 
 
-matplotlib.rcParams['font.size'] = 12
-plt.rcParams['legend.title_fontsize'] = 11
-plt.rcParams['legend.fontsize'] = 11
-plt.rcParams['xtick.labelsize']= 11
-plt.rcParams['ytick.labelsize']= 11
+mpl.rcParams['font.size'] = 14
+plt.rcParams['legend.title_fontsize'] = 14
+plt.rcParams['legend.fontsize'] = 13
+plt.rcParams['xtick.labelsize']= 12
+plt.rcParams['ytick.labelsize']= 12
 
 # ---GLOBAL VARIABLES
 pc_name = 'alex'
@@ -213,13 +213,20 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
     # states_mat = np.column_stack((mean_states, states_mat))
     # states_mat = (states_mat+1)/2
     # ticks_labels = [str(i) if i > 0 else r'$<\vec{x}^{\,t}>$' for i in range(9)]
-    for ax in ax1:
+    for i_ax, ax in enumerate(ax1):
         ax_pos = ax.get_position()
-        ax.set_position([ax_pos.x0, ax_pos.y0-ax_pos.height*0.12,
-                         ax_pos.width, ax_pos.height])
-        ax_new = fig.add_axes([ax_pos.x0, ax_pos.y0+ax_pos.height*0.92,
-                               ax_pos.width, ax_pos.height/7.5])
+        if i_ax == 0:
+            ax.set_position([ax_pos.x0, ax_pos.y0-ax_pos.height*0.12,
+                             ax_pos.width, ax_pos.height])
+            ax_new = fig.add_axes([ax_pos.x0, ax_pos.y0+ax_pos.height*0.92,
+                                   ax_pos.width, ax_pos.height/7.5])
+        else:
+            ax.set_position([ax_pos.x0, ax_pos.y0-ax_pos.height*0.12,
+                             ax_pos.width/2, ax_pos.height])
+            ax_new = fig.add_axes([ax_pos.x0, ax_pos.y0+ax_pos.height*0.92,
+                                   ax_pos.width/2, ax_pos.height/7.5])
         ax_new.plot(mean_states, color='k')
+        ax_new.set_xlim(-1, len(mean_states)+1)
         ax_new.set_ylabel(r'$<\vec{x}^{\,t}>$')
         ax_new.set_xticks([])
         ax.imshow(states_mat.T, aspect='auto', cmap='seismic',  # PuOr
@@ -227,8 +234,8 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
         ax.set_ylabel(r'Node $i$')
         ax.set_xlabel('Sample')
         ax.set_yticks(np.arange(8), np.arange(8)+1)
-    legendelements = [Line2D([0], [0], color='b', lw=2, label=r'$x_i=1$'),
-                      Line2D([0], [0], color='firebrick', lw=2, label=r'$x_i=-1$')]
+    legendelements = [Line2D([0], [0], color='b', lw=2, label=r'$x_i=-1$'),
+                      Line2D([0], [0], color='firebrick', lw=2, label=r'$x_i=1$')]
     ax1[0].legend(bbox_to_anchor=(1, 1.25), handles=legendelements,
                   frameon=False)
     fig.savefig(DATA_FOLDER + 'gibbs_simulation_fixed_j_all_nodes' + '.png',
@@ -1326,9 +1333,9 @@ if __name__ == '__main__':
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True, plot_cubes=False)
-    plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
-    # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
-    #                       n_iter=10000, wsize=1, stim=0, j_ex=0.9, f_all=False)
+    # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
+    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
+                         n_iter=10000, wsize=1, stim=0, j_ex=0.9, f_all=False)
     # t = transition_matrix(0.2, C)
     # prob_markov_chain_between_states(tau=100, iters_per_len=200,
     #                                  n_iter_list=np.logspace(0, 4, 5))
