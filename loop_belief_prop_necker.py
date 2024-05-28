@@ -128,7 +128,7 @@ def Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, sti
         for i in range(theta.shape[0]):
             for t in np.where(theta[i, :] != 0)[0]:
                 # positive y_i
-                mu_y_1[t, i] = np.exp(j*theta[i, t]+stim) *\
+                mu_y_1[t, i] = np.exp(j*theta[i, t]+stim)**(alpha) *\
                         (mu_y_1[jneigbours(t, i, theta=theta)[0], t]*
                          mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
                         + np.exp(-j*theta[i, t]-stim)**(alpha) *\
@@ -136,7 +136,7 @@ def Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, sti
                          mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
                 # mu_y_1 += np.random.rand(8, 8)*1e-3
                 # negative y_i
-                mu_y_neg1[t, i] = np.exp(-j*theta[i, t]+stim) *\
+                mu_y_neg1[t, i] = np.exp(-j*theta[i, t]+stim)**(alpha) *\
                     (mu_y_1[jneigbours(t, i, theta=theta)[0], t] *\
                      mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
                     + np.exp(j*theta[i, t]-stim)**(alpha) *\
@@ -153,8 +153,8 @@ def Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, sti
     q_y_1 = np.zeros(theta.shape[0])
     q_y_neg1 = np.zeros(theta.shape[0])
     for i in range(theta.shape[0]):
-        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(stim)
-        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-stim)
+        q1 = np.prod((mu_y_1[np.where(theta[:, i] != 0), i])**(1-alpha)) * np.exp(stim)
+        qn1 = np.prod((mu_y_neg1[np.where(theta[:, i] != 0), i])**(1-alpha)) * np.exp(-stim)
         q_y_1[i] = q1/(q1+qn1)
         q_y_neg1[i] = qn1/(q1+qn1)
     # gn.plot_cylinder(q=q_y_1.reshape(5, 10, 2),
@@ -1199,6 +1199,173 @@ def kl(p, q, eps=1e-10):
     return np.round(np.sum(np.where(p != 0, p * np.log(p / q), 0)), 2)
 
 
+def potential_lbp(r, j, b, n, q1=True):
+    z = np.exp(2*j)
+    y = np.exp(2*b)
+    f = scipy.special.hyp2f1
+    # if not q1:
+    #     q = 1-q
+    # r = (1/(y*(1/q-1)))**(1/n)
+    if q1:
+        r = (1/(y*(1/r-1)))**(1/n)
+    vals = (z-1/z)*f(1, 1/(1-n), 1+1/(1-n), -z/y*r**(1-n))
+    pot_0 = 0.5*r**2
+    pot_1 =  - r/z
+    pot_2 = - r*vals
+    return pot_0 + pot_1 + pot_2
+
+
+def ratio_evolution(r_0, j, b, n=3, n_iter=20, dt=1e-3):
+    r = r_0
+    e2j = np.exp(2*j)
+    e2b = np.exp(2*b)
+    r_list = [r]
+    v = e2b*r_0**n
+    time = np.arange(0, n_iter, dt)
+    for i in range(1, len(time)):
+        r += dt*((1 + e2j*e2b*r**(n-1))/(e2j + e2b*r**(n-1))-r)
+        r_list.append(r)
+    v_list = [v]
+    e2bn = np.exp(2*b/n)
+    for k in range(1, len(time)):
+        v += dt*(-v*n + e2bn * n * v**(1-1/n) * (1+e2bn*e2j*v**(1-1/n)) / (e2j +e2bn*v**(1-1/n)))
+        v_list.append(v)
+    r_list = np.array(r_list)
+    # plt.figure()
+    # plt.plot(time, r_list)
+    # plt.ylabel('r')
+    plt.figure()
+    plt.plot(time, np.exp(b)*r_list**n / (np.exp(b)*r_list**n + np.exp(-b)), label='q1')
+    plt.xlabel('time')
+    plt.ylabel('approximated posterior q')
+    plt.legend()
+    plt.figure()
+    v_list = np.array(v_list)
+    plt.plot(time, 1/(1+v_list), label='v-sys')
+    plt.plot(time, np.exp(-b) / (np.exp(b)*r_list**n + np.exp(-b)), linestyle='--',
+             label='q2')
+    plt.xlabel('time')
+    plt.ylabel('approximated posterior q')
+    plt.legend()
+    # plt.figure()
+    # v_list = np.array(v_list)
+    # plt.plot(time, 1/(1+v_list))
+
+
+def plot_potential_lbp(q=np.arange(0.0001, 1, 0.0001),
+                       j_list=[0.1, 0.4, 0.5, np.log(3)/2, 0.57, 0.585, 0.6, .65],
+                       b=0, n=3):
+    # colormap = pl.cm.Purples(np.linspace(0.1, 1, len(j_list)))
+    plt.figure()
+    for i_j, j in enumerate(j_list):
+        pot = pot_lbp(q, j, b, n)
+        pot_min = pot-np.min(pot)
+        if b >= 0:
+            ind = q > 0.5
+        else:
+            ind = q > 0.8
+        val_norm = np.max(pot_min[ind])
+        if j == np.log(3)/2:
+            label = r'$J^{\ast}=log(3)/2$'
+        else:
+            label = str(j)
+        plt.plot(q, pot_min/val_norm, label=label)  # , color=colormap[i_j]
+    plt.ylim(-.05, 1.1)
+    plt.legend(title='Coupling J')
+    plt.xlabel('Approximate posterior q(x=-1)')
+    plt.ylabel('Normalized potential V(q(x=-1))')
+    plt.title('B = ' + str(b))
+
+
+def pot_lbp(v, j, b, n, q=True):
+    f = scipy.special.hyp2f1
+    k = np.exp(2*j)
+    c = np.exp(2*b/n)
+    if q:
+        v = (1/v - 1)
+    pot_0 = 0.5*n*v**2
+    pot_1 = c*k*n*(v**(1-1/n)) / (1-2*n)
+    pot_2 = (k**2-1)*f(1, 1/(1/n - 1), 1/(1-n), -k/c*v**(1/n-1))
+    return pot_0 + n*v*(pot_1 + pot_2)
+
+
+def plot_sol_from_potential(q=np.arange(0.0001, 1, 0.001),
+                            j_list=np.arange(0.001, 1, 0.001),
+                            b=0, n=3):
+    sol = []
+    for j in j_list:
+        ind = np.where(pot_lbp(q,j,b,n) == np.min(pot_lbp(q,j,b,n)))[0][0]
+        sol.append(q[ind])
+    plt.figure()
+    plt.xlabel('Coupling J')
+    plt.ylabel('Approximate posterior q(x=1)')
+    plt.plot(j_list, 1-np.array(sol), color='k')
+    if b == 0:
+        plt.plot(j_list, sol, color='k')
+    plt.ylim(-0.05, 1.05)
+
+
+def plot_potentials_lbp(j_list, b=0, neighs=3, q1=True):
+    # colormap = pl.cm.Blues(np.linspace(0.2, 1, len(j_list)))
+    # colormap_1 = pl.cm.Purples(np.linspace(0.4, 1, len(j_list)))
+    Blues = pl.cm.get_cmap('Blues', 100)
+    Purples = pl.cm.get_cmap('Purples', 100)
+    newcolors = Blues(np.linspace(0.2, 1, len(j_list)))
+    newcolors_purples = Purples(np.linspace(0.4, 1, len(j_list)))
+    red = np.array([1, 0, 0, 1])
+    ind_red = np.where(np.round(j_list, 1) == np.round(np.log(3)/2, 1))[0][0]
+    newcolors[ind_red, :] = red
+    newcolors[(ind_red+1):, :] = newcolors_purples[(ind_red+1):]
+    newcmp = mpl.colors.ListedColormap(newcolors)
+    q = np.arange(0.001, 10., 0.001)
+    fig, ax = plt.subplots(1, figsize=(6, 4))
+    change_colormap = False
+    for i_j, j in enumerate(j_list):
+        pot = potential_lbp(q, j, b=b, n=neighs, q1=q1)
+        # pot = potential_expansion_any_order_any_point(q, j, b=0, order=8, point=0.5)
+        # norm_cte = np.max(np.abs(pot))
+        if j == ind_red and not change_colormap:
+            color = 'r'
+            change_colormap = True
+        else:
+            color = newcolors[i_j]
+        ax.plot(q, pot-np.mean(pot), color=color, label=np.round(j, 2))
+    ax_pos = ax.get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.02, ax_pos.y0,
+                            ax_pos.width*0.04, ax_pos.height*0.9])
+    mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling $J$')
+    ax_cbar.set_yticks([0, max(j_list)/2, np.log(3)/2, max(j_list)], [0, max(j_list)/2, 'J*', max(j_list)])
+    # ax_cbar.set_title(r'Coupling $J$')
+    # if q1:
+    #     ax.set_xlabel(r'Approx posterior $q(x=1)$')
+    # else:
+    #     ax.set_xlabel(r'Approx posterior $q(x=-1)$')
+    ax.set_xlabel(r'Message ratio $r$')
+    ax.set_ylabel(r'Mean-centered potential $V_J(q)$')
+    # ax.set_ylim(-4, 1)
+    # ax.legend(title='J:')
+    fig.savefig(DATA_FOLDER + 'potentials_vs_q.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'potentials_vs_q.svg', dpi=400, bbox_inches='tight')
+
+
+def plot_sols_FLBP(alpha, j_list=np.arange(0, 3, 0.001), theta=THETA,
+                   num_iter=100):
+    sols_pos = []
+    sols_neg = []
+    for j in j_list:
+        pos, neg, n = Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, stim=0)
+        sols_pos.append(np.max((pos[0], neg[0])))
+        sols_neg.append(np.min((pos[0], neg[0])))
+    plt.figure()
+    plt.plot(j_list, sols_pos, color='k')
+    plt.plot(j_list, sols_neg, color='k')
+    plt.xlabel('Coupling J')
+    plt.ylabel('Approximated posterior q')
+    plt.ylim(-0.05, 1.05)
+    n = 3
+    plt.axvline(np.log(n/(n-2))/(2*alpha), color='r', alpha=0.3)
+
+
 if __name__ == '__main__':
     # for stim in [-1]:
     #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
@@ -1206,11 +1373,12 @@ if __name__ == '__main__':
     #                           thr=1e-10, stim=stim)
     # plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
     #                             b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
-    # all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
-    #                         b_list=np.arange(-.5, .5005, 0.005),
-    #                         data_folder=DATA_FOLDER,
-    #                         theta=THETA, dist_metric=None, nrows=2)
-    plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
+    all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
+                            b_list=np.arange(-.5, .5005, 0.005),
+                            data_folder=DATA_FOLDER,
+                            theta=THETA, dist_metric=None, nrows=2)
+    # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
+    # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1001), j=0.1,
     #                             num_iter=40, thr=1e-8, theta=THETA)
     # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.005),
