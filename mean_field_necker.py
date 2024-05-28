@@ -1160,6 +1160,8 @@ def transition_probs_j(t_dur, noise,
     trans_prob_s1_to_s1 = []
     # trans_prob_i_to_j = []
     # trans_prob_j_to_i = []
+    probs_well_s1 = []
+    probs_well_s2 = []
     for j in j_list:
         diff_1 = 0
         diff_2 = 0
@@ -1202,6 +1204,13 @@ def transition_probs_j(t_dur, noise,
         trans_prob_s2_to_s1.append(p_js*(1-np.exp(-k_x_s2_to_s1*t_dur))) # prob of at some point going from s2 to s1
         trans_prob_s2_to_s2.append(p_is)
         trans_prob_s1_to_s1.append(p_js)
+        v_unst = potential_mf(x_unstable, j, b)
+        v_s1 = potential_mf(x_stable_1, j, b)
+        v_s2 = potential_mf(x_stable_2, j, b)
+        p_s1 = np.exp((v_unst-v_s1)/noise**2)
+        p_s2 = np.exp((v_unst-v_s2)/noise**2)
+        probs_well_s1.append(p_s1/(p_s1+p_s2))
+        probs_well_s2.append(p_s2/(p_s1+p_s2))
         # trans_prob_i_to_j.append(1-np.exp(-(k_x_s_to_u_2+k_x_u_to_s_1)*t_dur))
         # trans_prob_j_to_i.append(1-np.exp(-(k_x_s_to_u_1+k_x_u_to_s_2)*t_dur))
         # 1 - np.exp(-k*t_dur) is prob to change from i->j and vice-versa
@@ -1221,6 +1230,13 @@ def transition_probs_j(t_dur, noise,
     plt.ylabel('Transition probability')
     plt.title('B =' + str(b))
     plt.legend()
+    plt.figure()
+    plt.plot(j_list, probs_well_s1, label='p(x=1)', color='k')
+    plt.plot(j_list, probs_well_s2, label='p(x=-1)', color='r')
+    plt.legend()
+    plt.xlabel('J')
+    plt.ylabel(r'$p \propto e^{\Delta V / \sigma^2}$')
+    plt.xlim(np.min(j_list)-0.02, np.max(j_list)+0.02)
 
 
 def plot_3_examples_mf_evolution():
@@ -1273,10 +1289,68 @@ def plot_3d_solution_mf_vs_j_b(j_list, b_list, N=3,
     ax.set_zlabel('q')
 
 
+def plot_slope_wells_vs_B(j_list=np.arange(0.6, 1.01, 0.1),
+                          b_list=np.arange(-.3, .3, 0.01)):
+    fig, ax = plt.subplots(ncols=1)
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(j_list)))
+    for i_j, j in enumerate(j_list):
+        slope = []
+        for b in b_list:
+            q1 = lambda q: gn.sigmoid(6*j*(2*q-1)+ b*6) - q
+            sol_1, _, flag, _ =\
+                fsolve(q1, 1, full_output=True, xtol=1e-10)
+            if flag == 1:
+                x_stable_1 = sol_1[0]
+            else:
+                x_stable_1 = np.nan
+            sol_2, _, flag, _ =\
+                fsolve(q1, 0, full_output=True, xtol=1e-10)
+            if flag == 1:
+                x_stable_2 = sol_2[0]
+            else:
+                x_stable_2 = np.nan
+            val_min_0 = potential_mf(q=x_stable_1, j=j, bias=b)
+            val_min_1 = potential_mf(q=x_stable_2, j=j, bias=b)
+            slope.append((val_min_0-val_min_1) / (x_stable_1-x_stable_2))
+        ax.plot(b_list, slope, color=colormap[i_j], label=np.round(j, 1))
+    ax.legend(title='J')
+    ax.set_xlabel('Sensory evidence, B')
+    ax.set_ylabel('Slope of wells')
+
+
+def solutions_high_j_lambert(j_list=np.arange(0.1, 2.01, 0.001),
+                             b=0):
+    q1 = []
+    q2 = []
+    q3 = []
+    q = [q1, q2, q3]
+    sol_real_0 = []
+    sol_real_05 = []
+    for j in j_list:
+        q0 = lambda q: gn.sigmoid(6*j*(2*q-1)+ b*6) - q
+        sol_real_0.append(fsolve(q0, 0))
+        sol_real_05.append(fsolve(q0, 0.5))
+        for k in range(len(q)):
+            z = -12*j*np.exp(b-6*j)
+            q[k].append(scipy.special.lambertw(z, k=k, tol=1e-8)/(-12*j))
+    plt.figure()
+    plt.plot(j_list, sol_real_0, label='solution', color='k')
+    plt.plot(j_list, sol_real_05, color='k')
+    for k in range(len(q)):
+        plt.plot(j_list, q[k], label='k = {}'.format(k))
+    plt.ylim(0, 1)
+    plt.xlabel('J')
+    plt.ylabel('q(x=1)')
+    plt.legend()
+
+
+
+
+
 if __name__ == '__main__':
     # plot_potential_and_vector_field_2d(j=1, b=0, noise=0., tau=1,
     #                                     time_end=50, dt=5e-2)
-    # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.05)
+    plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.15)
     # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
     # plot_occupancy_distro(j=0.36, noise=0.08, tau=1, dt=5e-1, theta=theta, b=0,
     #                       t=10000, burn_in=0.001, n_sims=500)
@@ -1300,8 +1374,11 @@ if __name__ == '__main__':
     #                         dim3=False)
     # plot_q_bifurcation_vs_JB(j_list=np.arange(1/3, 1, 0.0001),
     #                          stim_list=np.arange(-0.1, 0.1, 0.001))
-    plot_potentials_mf(j_list=[0, 0.1, 0.2, 1/3, 0.4, 0.5,
-                                0.6, 0.7, 0.8, 0.9, 1],
-                        bias=0, neighs=3)
+    # plot_potentials_mf(j_list=[0, 0.1, 0.2, 1/3, 0.4, 0.5,
+    #                             0.6, 0.7, 0.8, 0.9, 1],
+    #                     bias=0, neighs=3)
     # plot_mf_sol_stim_bias(j_list=np.arange(0.00001, 1, 0.001), stim=-0.1,
     #                       num_iter=10)
+    transition_probs_j(t_dur=1, noise=0.3,
+                       j_list=np.arange(0.001, 3.01, 0.005),
+                       b=.1, tol=1e-10)
