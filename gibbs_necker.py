@@ -1323,6 +1323,38 @@ def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
         fig.savefig(DATA_FOLDER + 'necker_color_nodes.svg',
                     dpi=400, bbox_inches='tight')
     
+    
+def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7):
+    p_thr = n_nodes_th/8
+    init_state = np.random.choice([-1, 1], 8)
+    burn_in = 100
+    states_mat =\
+        gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
+                          n_iter=chain_length+burn_in,
+                          j=j, stim=b, theta=THETA)
+    # mu = get_mu_from_mat_v2(states_mat)
+    # mu_signed = np.sign(mu[mu != 0])
+    mean_states = np.mean((states_mat+1)/2, axis=1)
+    mean_states[mean_states >= p_thr] = 1
+    mean_states[mean_states <= (1-p_thr)] = 1
+    mean_states[(mean_states > (1-p_thr)) & (mean_states < p_thr)] = 0
+    orders = rle(mean_states)
+    time = orders[0][orders[2] == 1]
+
+    # plotting
+    plt.figure()
+    hist_bins = np.arange(-5, 1020, 10)
+    time = time[time <= max(hist_bins)]
+    plt.hist(time, bins=hist_bins, label='Simulation', density=True)
+    fit_alpha, fit_loc, fit_beta = stats.gamma.fit(time)
+    fix_loc_exp, fit_lmb = stats.expon.fit(time)
+    x = np.linspace(0, max(hist_bins), 1000)
+    y = stats.gamma.pdf(x, a=fit_alpha, scale=fit_beta, loc=fit_loc)
+    y_exp = stats.expon.pdf(x, loc=fix_loc_exp, scale=fit_lmb)
+    plt.plot(x, y, label='Gamma distro. fit', color='k', linestyle='--')
+    plt.plot(x, y_exp, label='Expo. distro. fit', color='r', linestyle='--')
+    plt.xlabel('Dominance duration')
+    plt.legend()
 
 
 if __name__ == '__main__':
@@ -1334,8 +1366,8 @@ if __name__ == '__main__':
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True, plot_cubes=False)
     # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
-    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
-                         n_iter=10000, wsize=1, stim=0, j_ex=0.9, f_all=False)
+    # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
+    #                      n_iter=10000, wsize=1, stim=0, j_ex=0.9, f_all=False)
     # t = transition_matrix(0.2, C)
     # prob_markov_chain_between_states(tau=100, iters_per_len=200,
     #                                  n_iter_list=np.logspace(0, 4, 5))
@@ -1345,4 +1377,4 @@ if __name__ == '__main__':
     #                       n_iter_list=np.logspace(2, 6, 5, dtype=int),
     #                       j=1, stim=0., n_repetitions=100, theta=THETA,
     #                       burn_in=0.1)
-
+    plot_dominance_duration(j=.7, b=0, chain_length=int(1e3), n_nodes_th=7)
