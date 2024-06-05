@@ -1366,6 +1366,65 @@ def plot_sols_FLBP(alpha, j_list=np.arange(0, 3, 0.001), theta=THETA,
     plt.axvline(np.log(n/(n-2))/(2*alpha), color='r', alpha=0.3)
 
 
+def plot_lbp_hysteresis(j_list=np.arange(0.3, .8, 0.1),
+                        b_list=np.linspace(-0.5, 0.5, 1001),
+                        theta=THETA):
+    b_list = np.concatenate((b_list[:-1], b_list[::-1]))
+    plt.figure()
+    colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))
+    for i_j, j in enumerate(j_list):
+        vec = lbp_changing_stim(j, b_list,
+                                theta=theta)
+        plt.plot(b_list, vec[:, 0], color=colormap[i_j],
+                 label=np.round(j, 1))
+    plt.xlabel('Sensory evidence, B')
+    plt.ylabel('Approximate posterior q(x=1)')
+    plt.legend(title='J')
+
+
+def lbp_changing_stim(j, b_list, theta=THETA,
+                      burn_in=10):
+    num_iter = len(b_list)+burn_in
+    b_list = np.concatenate((np.repeat(b_list[0], burn_in),
+                             b_list))
+    mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    q_y_1 = np.zeros((num_iter, theta.shape[0]))
+    q_y_neg1 = np.zeros((num_iter, theta.shape[0]))
+    for n in range(num_iter):
+        stim = b_list[n]
+        # for all the nodes that i is connected
+        for i in range(theta.shape[0]):
+            for t in np.where(theta[i, :] != 0)[0]:
+                # positive y_i
+                mu_y_1[t, i] = np.exp(j*theta[i, t]+stim) *\
+                        (mu_y_1[jneigbours(t, i, theta=theta)[0], t]*
+                         mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
+                        + np.exp(-j*theta[i, t]-stim) *\
+                        (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
+                         mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
+                # mu_y_1 += np.random.rand(8, 8)*1e-3
+                # negative y_i
+                mu_y_neg1[t, i] = np.exp(-j*theta[i, t]+stim) *\
+                    (mu_y_1[jneigbours(t, i, theta=theta)[0], t] *\
+                     mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
+                    + np.exp(j*theta[i, t]-stim) *\
+                    (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
+                     mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
+    
+                m_y_1_memory = np.copy(mu_y_1[t, i])
+                mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                # mu_y_neg1 += np.random.rand(8, 8)*1e-3
+            q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(stim)
+            qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-stim)
+            q_y_1[n, i] = q1/(q1+qn1)
+            q_y_neg1[n, i] = qn1/(q1+qn1)
+    # gn.plot_cylinder(q=q_y_1.reshape(5, 10, 2),
+    #                  columns=5, rows=10, layers=2, offset=0.4, minmax_norm=True)
+    return q_y_1[burn_in:]
+
+
 if __name__ == '__main__':
     # for stim in [-1]:
     #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
