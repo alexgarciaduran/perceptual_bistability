@@ -17,6 +17,7 @@ import scipy.stats as stats
 import matplotlib.pylab as pl
 import networkx as nx
 import matplotlib as mpl
+import cv2
 from matplotlib.lines import Line2D
 from joblib import Parallel, delayed
 
@@ -1214,29 +1215,52 @@ def plot_occ_probs_gibbs(data_folder,
                 dpi=400, bbox_inches='tight')
 
 
-def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False):
-    fig, ax = plt.subplots(1)
-    ax.plot([0, 1], [0, 0], color='k')
-    ax.plot([0, 0], [0, 1], color='k')
-    ax.plot([0, 1], [1, 1], color='k')
-    ax.plot([1, 1], [0, 1], color='k')
-    ax.plot([0, offset], [1, 1+offset], color='k')
-    ax.plot([1, 1+offset], [0+offset, 0+offset], color='k')
-    ax.plot([offset, 1+offset], [1+offset, 1+offset], color='k')
-    ax.plot([1+offset, 1+offset], [0+offset, 1+offset], color='k')
-    ax.plot([1, 1+offset], [1, 1+offset], color='k')
-    ax.plot([offset, offset], [offset, 1+offset], color='k')
-    ax.plot([offset, 1+offset], [offset, offset], color='k')
-    ax.plot([0, offset], [0, offset], color='k')
-    ax.plot([1, 1+offset], [0, offset], color='k')
+def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False,
+                           index=0, color='grey'):
+    fig, ax = plt.subplots(1, figsize=(4, 3.5))
+    ax.plot([0, 1], [0, 0], color='k', zorder=1)
+    ax.plot([0, 0], [0, 1], color='k', zorder=1)
+    ax.plot([0, 1], [1, 1], color='k', zorder=1)
+    ax.plot([0, offset], [1, 1+offset], color='k', zorder=1)
+    ax.plot([1, 1+offset], [0+offset, 0+offset], color='k', zorder=1)
+    ax.plot([offset, 1+offset], [1+offset, 1+offset], color='k', zorder=1)
+    ax.plot([1+offset, 1+offset], [0+offset, 1+offset], color='k', zorder=1)
+    ax.plot([1, 1+offset], [1, 1+offset], color='k', zorder=1)
+    ax.plot([offset, 1+offset], [offset, offset], color='k', zorder=1)
+    ax.plot([0, offset], [0, offset], color='k', zorder=1)
+    ax.plot([1, 1+offset], [0, offset], color='k', zorder=1)
     if not whole:
         if interp_sfa:
-            ax.fill_between([0, 1], [1, 1], color='gray', alpha=0.6)
+            ax.fill_between([0, 1], [1, 1], color=color, alpha=1, zorder=2)
+            ax.plot([1, 1], [0, 1], color='k', zorder=1)
         if not interp_sfa:
             ax.fill_between([offset, 1+offset],
                             [1+offset, 1+offset], [offset, offset],
-                            color='gray', alpha=0.6)
+                            color=color, alpha=1, zorder=2)
+            ax.plot([offset, offset], [offset, 1+offset], color='k', zorder=1)
+    else:
+        ax.plot([offset, offset], [offset, 1+offset], color='k', zorder=1)
+        ax.plot([1, 1], [0, 1], color='k', zorder=1)
     plt.axis('off')
+    img_path = DATA_FOLDER + '/necker_images/fig_' + str(index) + '.png'
+    fig.savefig(img_path, dpi=25, bbox_inches='tight')
+    # img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+    # imgrot = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE) / 255
+    # img_path = DATA_FOLDER + '/necker_images/fig_rot_' + str(index) + '.png'
+    # cv2.imwrite(img_path, imgrot)
+
+
+def save_necker_cubes(offset=np.arange(0.1, 0.45, 0.01)):
+    index = 0
+    conds = np.array(list(itertools.product([True, False], repeat=2)))
+    color = 'silver'
+    for of in offset:
+        for arr in conds:
+            sfa, whole = arr
+            plot_necker_cube_faces(interp_sfa=sfa, offset=of, whole=whole,
+                                   index=index, color=color)
+            index += 1
+            plt.close('all')
 
 
 def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
@@ -1324,17 +1348,19 @@ def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
                     dpi=400, bbox_inches='tight')
     
     
-def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7):
+def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7,
+                            gibbs=True, mean_states=[]):
     p_thr = n_nodes_th/8
-    init_state = np.random.choice([-1, 1], 8)
-    burn_in = 100
-    states_mat =\
-        gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
-                          n_iter=chain_length+burn_in,
-                          j=j, stim=b, theta=THETA)
-    # mu = get_mu_from_mat_v2(states_mat)
-    # mu_signed = np.sign(mu[mu != 0])
-    mean_states = np.mean((states_mat+1)/2, axis=1)
+    if gibbs:
+        init_state = np.random.choice([-1, 1], 8)
+        burn_in = 100
+        states_mat =\
+            gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
+                              n_iter=chain_length+burn_in,
+                              j=j, stim=b, theta=THETA)
+        # mu = get_mu_from_mat_v2(states_mat)
+        # mu_signed = np.sign(mu[mu != 0])
+        mean_states = np.mean((states_mat+1)/2, axis=1)
     mean_states[mean_states >= p_thr] = 1
     mean_states[mean_states <= (1-p_thr)] = 1
     mean_states[(mean_states > (1-p_thr)) & (mean_states < p_thr)] = 0
@@ -1343,7 +1369,7 @@ def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7):
 
     # plotting
     plt.figure()
-    hist_bins = np.arange(-5, 1020, 10)
+    hist_bins = np.arange(-2, max(time), 4)
     time = time[time <= max(hist_bins)]
     plt.hist(time, bins=hist_bins, label='Simulation', density=True)
     fit_alpha, fit_loc, fit_beta = stats.gamma.fit(time)
@@ -1357,13 +1383,46 @@ def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7):
     plt.legend()
 
 
+def hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
+                      j_list=[0.1, 0.3, 0.6, 0.8], burn_in=10,
+                      n_iter=100, n_sims=100, data_folder=DATA_FOLDER):
+    fig, ax = plt.subplots(1)
+    b_list = np.concatenate((b_list[:-1], b_list[::-1]))
+    posterior_matrix = np.empty((len(j_list), len(b_list), n_sims))
+    posterior_matrix[:] = np.nan
+    colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))
+    print('Plotting hysteresis Gibbs')
+    for i_j, j in enumerate(j_list):
+        for n in range(n_sims):
+            init_state = np.random.choice([-1, 1], 8)
+            posterior_list = []
+            for i_b, b in enumerate(b_list):
+                states_mat =\
+                    gibbs_samp_necker(init_state, burn_in, n_iter+burn_in,
+                                      j, stim=b, theta=THETA)
+                states_mat_01 = (states_mat+1)/2
+                posterior_list.append(np.nanmean(states_mat_01))
+                init_state = states_mat[-1]
+            posterior_matrix[i_j, :, n] = np.array(posterior_list)
+        posterior_b = np.nanmean(posterior_matrix[i_j], axis=1)
+        ax.plot(b_list, posterior_b, color=colormap[i_j], label=np.round(j, 1))
+    ax.legend()
+    plt.xlabel('Sensory evidence, B')
+    plt.ylabel('Approximate posterior q(x=1)')
+    plt.legend(title='J')
+
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
     C = np.load(c_data, allow_pickle=True)
-
+    hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
+                          j_list=[0.1, 0.5, 0.8], burn_in=0,
+                          n_iter=300, n_sims=300)
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
+    # save_necker_cubes(offset=np.arange(0.1, 0.55, 0.01))
     # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True, plot_cubes=False)
     # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
@@ -1377,4 +1436,4 @@ if __name__ == '__main__':
     #                       n_iter_list=np.logspace(2, 6, 5, dtype=int),
     #                       j=1, stim=0., n_repetitions=100, theta=THETA,
     #                       burn_in=0.1)
-    plot_dominance_duration(j=.7, b=0, chain_length=int(1e3), n_nodes_th=7)
+    # plot_dominance_duration(j=.7, b=0, chain_length=int(1e3), n_nodes_th=7)
