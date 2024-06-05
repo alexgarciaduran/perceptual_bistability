@@ -1331,7 +1331,7 @@ def solutions_high_j_lambert(j_list=np.arange(0.1, 2.01, 0.001),
         sol_real_0.append(fsolve(q0, 0))
         sol_real_05.append(fsolve(q0, 0.5))
         for k in range(len(q)):
-            z = -12*j*np.exp(b-6*j)
+            z = -12*j*np.exp(b*6-6*j)
             q[k].append(scipy.special.lambertw(z, k=k, tol=1e-8)/(-12*j))
     plt.figure()
     plt.plot(j_list, sol_real_0, label='solution', color='k')
@@ -1344,13 +1344,103 @@ def solutions_high_j_lambert(j_list=np.arange(0.1, 2.01, 0.001),
     plt.legend()
 
 
+def slopes_high_j_lambert(j_list=np.arange(0.7, 2.01, 0.1),
+                          b_list=np.arange(-.3, .3, 0.01)):
+    k = 0
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(j_list)))
+    fig, ax = plt.subplots(1)
+    for i_j, j in enumerate(j_list):
+        v_0 = []
+        v_1 = []
+        pot_0_list = []
+        pot_1_list = []
+        for b in b_list:
+            z = -12*j*np.exp(b-6*j)
+            val = scipy.special.lambertw(z, k=k, tol=1e-8)/(-12*j)
+            v_0.append(np.real(val))
+            v_1.append(1-np.real(val))
+            pot_0 = potential_mf(q=np.real(val), j=j, bias=b)
+            pot_1 = potential_mf(q=1-np.real(val), j=j, bias=b)
+            pot_0_list.append(pot_0)
+            pot_1_list.append(pot_1)
+        v_1 = np.array(v_1)
+        v_0 = np.array(v_0)
+        pot_1_list = np.array(pot_1_list)
+        pot_0_list = np.array(pot_0_list)
+        dV_dq = (pot_0_list - pot_1_list)/(v_0-v_1)
+        plt.plot(b_list, dV_dq,
+                 color=colormap[i_j], label=np.round(j, 1))
+    ax.legend(title='J')
+    ax.set_xlabel('Sensory evidence, B')
+    ax.set_ylabel('Slope of wells')
 
+
+def plot_dominance_duration_mean_field(j, b, theta=theta, noise=0,
+                                       tau=1, time_end=10, dt=1e-1):
+    time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
+                                      time_end=time_end, dt=dt)
+    mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
+    gn.plot_dominance_duration(j, b=0, n_nodes_th=6,
+                               gibbs=False, mean_states=mean_states)
+
+def mean_field_stim_change(j, b_list,
+                           val_init=None, theta=theta,
+                           burn_in=10):
+    num_iter = len(b_list)+burn_in
+    b_list = np.concatenate((np.repeat(b_list[0], burn_in),
+                             b_list))
+    if val_init is None:
+        vec = np.random.rand(theta.shape[0])
+    else:
+        vec = np.repeat(val_init, theta.shape[0])
+    vec_time = np.empty((num_iter, theta.shape[0]))
+    vec_time[:] = np.nan
+    for i in range(num_iter):
+        for q in range(theta.shape[0]):
+            neighbours = theta[q].astype(dtype=bool)
+            # th_vals = theta[q][theta[q] != 0]
+            vec[q] = gn.sigmoid(2*(sum(j*(2*vec[neighbours]-1)+b_list[i])))
+        vec_time[i, :] = vec
+    return vec_time[burn_in:]
+
+
+def plot_posterior_vs_stim(j_list=[0.2, 0.4, 0.9],
+                           b_list=np.linspace(-0.5, 0.5, 1001),
+                           theta=theta):
+    plt.figure()
+    colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))[::-1]
+    for i_j, j in enumerate(j_list):
+        vec_vals = []
+        for b in b_list:
+            vec = mean_field_stim(j, stim=b, num_iter=20, val_init=0.8,
+                                  theta=theta, sigma=0)
+            vec_vals.append(vec[-1, 0])
+        plt.plot(b_list, vec_vals, color=colormap[i_j],
+                 label=np.round(j, 1))
+    plt.xlabel('Sensory evidence, B')
+    plt.ylabel('Approximate posterior q(x=1)')
+    plt.legend(title='J')
+
+def plot_mf_hysteresis(j_list=np.arange(0.1, .6, 0.1),
+                       b_list=np.linspace(-0.5, 0.5, 1001),
+                       theta=theta):
+    b_list = np.concatenate((b_list[:-1], b_list[::-1]))
+    plt.figure()
+    colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))
+    for i_j, j in enumerate(j_list):
+        vec = mean_field_stim_change(j, b_list,
+                                     val_init=None, theta=theta)
+        plt.plot(b_list, vec[:, 0], color=colormap[i_j],
+                 label=np.round(j, 1))
+    plt.xlabel('Sensory evidence, B')
+    plt.ylabel('Approximate posterior q(x=1)')
+    plt.legend(title='J')
 
 
 if __name__ == '__main__':
     # plot_potential_and_vector_field_2d(j=1, b=0, noise=0., tau=1,
     #                                     time_end=50, dt=5e-2)
-    plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.15)
+    # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.15)
     # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
     # plot_occupancy_distro(j=0.36, noise=0.08, tau=1, dt=5e-1, theta=theta, b=0,
     #                       t=10000, burn_in=0.001, n_sims=500)
@@ -1379,6 +1469,13 @@ if __name__ == '__main__':
     #                     bias=0, neighs=3)
     # plot_mf_sol_stim_bias(j_list=np.arange(0.00001, 1, 0.001), stim=-0.1,
     #                       num_iter=10)
-    transition_probs_j(t_dur=1, noise=0.3,
-                       j_list=np.arange(0.001, 3.01, 0.005),
-                       b=.1, tol=1e-10)
+    # transition_probs_j(t_dur=1, noise=0.3,
+    #                    j_list=np.arange(0.001, 3.01, 0.005),
+    #                    b=.1, tol=1e-10)
+    # plot_dominance_duration_mean_field(j=.9, b=0, theta=theta, noise=0.05,
+    #                                    tau=0.01, time_end=250, dt=1e-3)
+    # plot_slope_wells_vs_B(j_list=np.arange(0.6, 1.01, 0.1),
+    #                       b_list=np.arange(-.3, .3, 0.01))
+    plot_posterior_vs_stim(j_list=[0.2, 0.26, 0.41],
+                           b_list=np.linspace(-0.5, 0.5, 1001),
+                           theta=theta)
