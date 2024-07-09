@@ -30,7 +30,7 @@ plt.rcParams['ytick.labelsize']= 12
 
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/mean_field_necker/data_folder/'  # Alex
 
@@ -1699,12 +1699,13 @@ def plot_dominance_duration_mean_field(j, b, theta=theta, noise=0,
     plt.figure()
     mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
     plt.plot(mean_states)
-    plt.axhline(0.5, color='k')
+    plt.axhline(5/8, color='k')
+    plt.axhline(1-5/8, color='k')
     plt.ylim(0, 1)
     filt_post = scipy.signal.medfilt(mean_states, 1001)
     plt.plot(filt_post)
-    gn.plot_dominance_duration(j, b=b, n_nodes_th=6,
-                                gibbs=False, mean_states=filt_post)
+    gn.plot_dominance_duration(j, b=b, n_nodes_th=5,
+                               gibbs=False, mean_states=filt_post)
 
 
 def mean_field_stim_change(j, b_list,
@@ -1931,8 +1932,8 @@ if __name__ == '__main__':
     #                          j_list=np.linspace(0.001, 2, 200),
     #                          b_list=np.linspace(-0.2, 0.2, 100),
     #                          tol=1e-10)
-    plot_dominance_duration_mean_field(j=.38, b=0, theta=theta, noise=0.09,
-                                       tau=0.01, time_end=6000, dt=1e-3)
+    plot_dominance_duration_mean_field(j=.39, b=0, theta=theta, noise=0.1,
+                                       tau=0.008, time_end=20000, dt=1e-3)
     # plot_slope_wells_vs_B(j_list=np.arange(0.6, 1.01, 0.1),
     #                       b_list=np.arange(-.3, .3, 0.01))
     # plot_posterior_vs_stim(j_list=[0.05, 0.2, 0.41],
