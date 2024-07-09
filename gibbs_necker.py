@@ -162,7 +162,8 @@ def transition_matrix(J, C, b=0):
     return T
 
 
-def gibbs_samp_necker(init_state, burn_in, n_iter, j, stim=0, theta=THETA):
+def gibbs_samp_necker(init_state, burn_in, n_iter, j, stim=0, theta=THETA,
+                      save_step=1):
     x_vect = init_state
     states_mat = np.empty((n_iter-burn_in, theta.shape[0]))
     states_mat[:] = np.nan
@@ -204,12 +205,13 @@ def mean_prob_gibbs(j, ax=None, burn_in = 1000, n_iter = 10000, wsize=100,
 
 
 def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
-                         wsize=1, stim=0, node=None, j_ex=0.8, f_all=False):
+                         wsize=1, stim=0, node=None, j_ex=0.8, f_all=False,
+                         theta=THETA):
     fig, ax1 = plt.subplots(ncols=2, figsize=(11, 3))
-    init_state = np.random.choice([-1, 1], 8)
+    init_state = np.random.choice([-1, 1], theta.shape[0])
     states_mat = gibbs_samp_necker(init_state=init_state,
                                    burn_in=burn_in, n_iter=n_iter, j=j_ex,
-                                   stim=stim)
+                                   stim=stim, theta=theta)
     mean_states = np.nanmean(states_mat, axis=1)
     # states_mat = np.column_stack((mean_states, states_mat))
     # states_mat = (states_mat+1)/2
@@ -234,7 +236,10 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
                   interpolation='none')
         ax.set_ylabel(r'Node $i$')
         ax.set_xlabel('Sample')
-        ax.set_yticks(np.arange(8), np.arange(8)+1)
+        if theta.shape[0] == 8:
+            ax.set_yticks(np.arange(theta.shape[0]), np.arange(theta.shape[0])+1)
+        else:
+            ax.set_yticks(np.arange(10, theta.shape[0], 10))
     legendelements = [Line2D([0], [0], color='b', lw=2, label=r'$x_i=-1$'),
                       Line2D([0], [0], color='firebrick', lw=2, label=r'$x_i=1$')]
     ax1[0].legend(bbox_to_anchor=(1, 1.25), handles=legendelements,
@@ -888,7 +893,8 @@ def plot_cylinder_true_posterior(j, stim, theta=THETA):
     plot_cylinder(q=q, columns=2, rows=2, layers=2, offset=0.4, minmax_norm=False)
 
 
-def plot_cylinder(q=None, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False):
+def plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False,
+                  save_fig=False, n_fig=0):
     fig, ax = plt.subplots(1, figsize=(5, 10))
     nodes = np.zeros((rows, columns, layers))
     if q is None:
@@ -903,6 +909,9 @@ def plot_cylinder(q=None, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=
         colormap_array_1 = q_1
     colormap_back = pl.cm.copper(colormap_array_0)
     colormap_front = pl.cm.copper(colormap_array_1)
+    if states:
+        colormap_back = pl.cm.bwr(colormap_array_0)
+        colormap_front = pl.cm.bwr(colormap_array_1)
     x_nodes_front = nodes[:, :, 0] + np.arange(columns)
     y_nodes_front = (nodes[:, :, 0].T + np.arange(rows)).T
     x_nodes_back = nodes[:, :, 1] + np.arange(columns) + offset
@@ -935,13 +944,15 @@ def plot_cylinder(q=None, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=
         ax.plot(x_f, y_f, marker='o', linestyle='', color=colormap_front[i],
                 markersize=8)
         i += 1
-    if np.sum(q) != 0:
+    if np.sum(q) != 0 or states:
         ax_pos = ax.get_position()
         ax.set_position([ax_pos.x0-ax_pos.width*0.1, ax_pos.y0,
                          ax_pos.width, ax_pos.height])
         ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.92, ax_pos.y0+ax_pos.height*0.2,
                                 ax_pos.width*0.06, ax_pos.height*0.5])
         mpl.colorbar.ColorbarBase(ax_cbar, cmap='copper')
+        if states:
+            mpl.colorbar.ColorbarBase(ax_cbar, cmap='bwr')
         ax_cbar.set_title('J')
         ax_cbar.set_yticks([0, 0.5, 1], [np.round(np.min(q), 4),
                                          np.round((np.min(q)+np.max(q))/2, 4),
@@ -951,6 +962,49 @@ def plot_cylinder(q=None, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=
     # ax.plot(x_nodes_front, y_nodes_front, marker='o', linestyle='', color='k',
     #         markersize=8)
     ax.axis('off')
+    if save_fig:
+        fig.savefig(DATA_FOLDER + "/gibbs_video_0495_zoom/" + str(n_fig) + '.png',
+                    dpi=100)
+
+
+def plot_states_cylinder(j_ex, stim, n_iter=201000, theta=THETA, burn_in=1000):
+    init_state = np.random.choice([-1, 1], theta.shape[0])
+    states_mat = gibbs_samp_necker(init_state=init_state,
+                                   burn_in=burn_in, n_iter=n_iter, j=j_ex,
+                                   stim=stim, theta=theta)
+    fig, ax = plt.subplots(1, figsize=(12, 8))
+    # mu = np.sum(states_mat, axis=1)
+    plt.imshow(states_mat.T, cmap='bwr', aspect='auto')
+    fig.savefig(DATA_FOLDER + "/gibbs_video_0495_zoom/" + 'whole_sim.png',
+                dpi=100)
+    n_fig = 0
+    index_min = int(input('index min: '))  # 0
+    index_max = int(input('index max: '))  # 50000
+    step = int(input('step: '))  # 100
+    for i in np.arange(index_min, index_max, step):
+        # save each 1 iterations, total of 5000 images
+        plot_cylinder(q=states_mat[i].reshape(5, 10, 2),
+                      states=True, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False,
+                      save_fig=True, n_fig=n_fig)
+        plt.close('all')
+        n_fig += 1
+
+
+def video_create(image_folder=DATA_FOLDER + '/gibbs_video_0495_zoom/',
+                 fps=50, videoname='cylinder_0495.mp4'):
+    video_name = image_folder + videoname
+    images = [img for img in os.listdir(image_folder) if img.endswith(".png")]
+    images = [images[i].replace('.png', '') for i in range(len(images))]
+    images.sort(key=float)
+    images = [images[i] + '.png' for i in range(len(images))]
+    frame = cv2.imread(os.path.join(image_folder, images[0]))
+    height, width, layers = frame.shape
+    video = cv2.VideoWriter(video_name, cv2.VideoWriter_fourcc(*'XVID'),
+                            fps, (width,height))
+    for image in images:
+        video.write(cv2.imread(os.path.join(image_folder, image)))
+    cv2.destroyAllWindows()
+    video.release()
 
 
 def plot_tau_T_mat(C, ax=None, color='k',
@@ -1369,7 +1423,7 @@ def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7,
 
     # plotting
     plt.figure()
-    hist_bins = np.arange(-2, max(time), 4)
+    hist_bins = np.arange(-2, max(time), 50)
     time = time[time <= max(hist_bins)]
     plt.hist(time, bins=hist_bins, label='Simulation', density=True)
     fit_alpha, fit_loc, fit_beta = stats.gamma.fit(time)
@@ -1412,21 +1466,68 @@ def hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
     plt.legend(title='J')
 
 
+def plot_posterior_vs_b_diff_js(j_list=[0.05, 0.4, 0.7],
+                                b_list=np.linspace(0, 0.25, 101),
+                                theta=THETA, burn_in=100, n_iter=int(1e4)):
+    plt.figure()
+    # colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))
+    colormap = ['navajowhite', 'orange', 'saddlebrown']
+    for i_j, j in enumerate(reversed(j_list)):
+        vec_vals = []
+        for b in b_list:
+            init_state = np.random.choice([-1, 1], theta.shape[0])
+            val = gibbs_samp_necker_post(init_state, burn_in, n_iter, j,
+                                         stim=b, theta=theta)
+            val = np.max((val, 1-val))
+            vec_vals.append(val)
+        plt.plot(b_list, vec_vals, color=colormap[i_j],
+                 label=np.round(j, 1), linewidth=4)
+    plt.xlabel('Stimulus strength, B')
+    plt.ylabel('Confidence')
+    plt.legend(title='J')
+
+
+def gibbs_samp_necker_post(init_state, burn_in, n_iter, j, stim=0, theta=THETA):
+    x_vect = init_state
+    mean_vector = np.sum((np.copy(x_vect)+1)/2)
+    for i in range(n_iter):
+        node = np.random.choice(np.arange(1, theta.shape[0]+1),
+                                p=np.repeat(1/theta.shape[0], theta.shape[0]))
+        x_vect1 = np.copy(x_vect)
+        x_vect1[node-1] = -x_vect1[node-1]
+        prob = change_prob(x_vect, x_vect1, j, stim=stim, theta=theta)
+        # val_bool = np.random.choice([False, True], p=[1-prob, prob])
+        val_bool = np.random.binomial(1, prob, size=None)
+        if val_bool:
+            x_vect[node-1] = -x_vect[node-1]
+        if i >= burn_in:
+            x_vect_mean = np.sum((np.copy(x_vect)+1)/2)
+            mean_vector += x_vect_mean
+    return mean_vector/theta.shape[0]/(n_iter-burn_in)
+
+
 
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
     C = np.load(c_data, allow_pickle=True)
-    hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
-                          j_list=[0.1, 0.5, 0.8], burn_in=0,
-                          n_iter=300, n_sims=300)
+    # hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
+    #                       j_list=[0.1, 0.5, 0.8], burn_in=0,
+    #                       n_iter=300, n_sims=300)
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # save_necker_cubes(offset=np.arange(0.1, 0.55, 0.01))
     # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True, plot_cubes=False)
     # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
-    #                      n_iter=10000, wsize=1, stim=0, j_ex=0.9, f_all=False)
+    #                       n_iter=200000, wsize=1, stim=0, j_ex=0.495, f_all=False,
+    #                       theta=return_theta(rows=10, columns=5, layers=2))
+    # plot_states_cylinder(j_ex=0.495,
+    #                      stim=0, n_iter=201000,
+    #                      theta=return_theta(rows=10, columns=5, layers=2),
+    #                      burn_in=1000)
+    video_create(image_folder=DATA_FOLDER + '/gibbs_video_0495_zoom/',
+                 fps=80, videoname='cylinder_0495.mp4')
     # t = transition_matrix(0.2, C)
     # prob_markov_chain_between_states(tau=100, iters_per_len=200,
     #                                  n_iter_list=np.logspace(0, 4, 5))
@@ -1437,3 +1538,7 @@ if __name__ == '__main__':
     #                       j=1, stim=0., n_repetitions=100, theta=THETA,
     #                       burn_in=0.1)
     # plot_dominance_duration(j=.7, b=0, chain_length=int(1e3), n_nodes_th=7)
+    # plot_posterior_vs_b_diff_js(j_list=[0.05, 0.21, 0.45],
+    #                             b_list=np.linspace(0, 0.25, 11),
+    #                             theta=return_theta(rows=10, columns=5, layers=2),
+    #                             burn_in=100, n_iter=int(1e3))
