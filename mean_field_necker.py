@@ -19,6 +19,7 @@ import matplotlib as mpl
 import sympy
 from matplotlib.lines import Line2D
 import seaborn as sns
+import cv2
 
 
 mpl.rcParams['font.size'] = 14
@@ -68,13 +69,31 @@ def mean_field_stim(J, num_iter, stim, sigma=1, theta=theta, val_init=None):
         vec = np.repeat(val_init, theta.shape[0])
     vec_time = np.empty((num_iter, theta.shape[0]))
     vec_time[:] = np.nan
-    for i in range(num_iter):
+    vec_time[0, :] = vec
+    for i in range(1, num_iter):
         for q in range(theta.shape[0]):
             neighbours = theta[q].astype(dtype=bool)
             # th_vals = theta[q][theta[q] != 0]
             vec[q] = gn.sigmoid(2*(sum(J*(2*vec[neighbours]-1)+stim))+np.random.randn()*sigma) 
         vec_time[i, :] = vec
     return vec_time
+
+
+def mean_field_mean_neighs(J, num_iter, stim, theta=theta, val_init=None):
+    #initialize random state of the cube
+    if val_init is None:
+        vec = np.random.rand()
+    else:
+        vec = val_init
+    vec_time = np.empty((num_iter))
+    vec_time[:] = np.nan
+    vec_time[0] = vec
+    mean_neighs = 4 # np.mean(np.sum(theta, axis=0))
+    for i in range(1, num_iter):
+        vec = gn.sigmoid(2*mean_neighs*(J*(2*vec-1)+stim))
+        vec_time[i] = vec
+    return vec_time
+
 
 
 def mean_field_fixed_points(j_list, stim, num_iter=100):
@@ -1025,6 +1044,28 @@ def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2):
     return time, x_vec
 
 
+
+def solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau, time_end=50, dt=1e-2,
+                                   tau_n=1):
+    time = np.arange(0, time_end+dt, dt)
+    x = np.random.rand(theta.shape[0])  # initial_cond
+    x_vec = np.empty((len(time), theta.shape[0]))
+    ou_vec = np.empty((len(time), theta.shape[0]))
+    x_vec[:] = np.nan
+    x_vec[0, :] = x
+    ou_vec[:] = np.nan
+    ou_val = np.random.rand(theta.shape[0])
+    ou_vec[0, :] = ou_val
+    for t in range(1, time.shape[0]):
+        x_n = (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 6*b) - x)) / tau
+        ou_val = dt*(-ou_val / tau_n) + (np.random.randn(theta.shape[0])*noise*np.sqrt(2*dt/tau_n))
+        x = x + x_n + ou_val
+        # x = np.clip(x, 0, 1)
+        x_vec[t, :] = x  # np.clip(x, 0, 1)
+    return time, x_vec
+
+
+
 def solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
                                   time_end=50, dt=1e-2):
     time = np.arange(0, time_end+dt, dt)
@@ -1196,12 +1237,12 @@ def transition_probs_j(t_dur, noise,
         k_x_s1_to_s2 = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
         k_x_s2_to_s1 = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
         k = k_x_s1_to_s2 + k_x_s2_to_s1
-        p_is = k_i_to_j(j, x_stable_1, x_unstable, noise, b) / k
-        p_js = k_i_to_j(j, x_stable_2, x_unstable, noise, b) / k
+        p_is = k_x_s1_to_s2 / k
+        p_js = k_x_s2_to_s1 / k
         # P_is is prob to stay in i at end of trial given by t_dur
         # P_js is prob to stay in j at end of trial given by t_sdur
-        trans_prob_s1_to_s2.append(p_is*(1-np.exp(-k_x_s1_to_s2*t_dur))) # prob of at some point going from s1 to s2
-        trans_prob_s2_to_s1.append(p_js*(1-np.exp(-k_x_s2_to_s1*t_dur))) # prob of at some point going from s2 to s1
+        trans_prob_s1_to_s2.append(p_is*(1-np.exp(-k*t_dur))) # prob of at some point going from s1 to s2
+        trans_prob_s2_to_s1.append(p_js*(1-np.exp(-k*t_dur))) # prob of at some point going from s2 to s1
         trans_prob_s2_to_s2.append(p_is)
         trans_prob_s1_to_s1.append(p_js)
         v_unst = potential_mf(x_unstable, j, b)
@@ -1237,6 +1278,281 @@ def transition_probs_j(t_dur, noise,
     plt.xlabel('J')
     plt.ylabel(r'$p \propto e^{\Delta V / \sigma^2}$')
     plt.xlim(np.min(j_list)-0.02, np.max(j_list)+0.02)
+
+
+def plot_exit_time(j, b=0, noise=0.01):
+    q = np.arange(0, 1, 1e-2)
+    v2_a = second_derivative_potential(q, j=j, b=b)
+    q1 = lambda q: gn.sigmoid(6*j*(2*q-1)+ b*6) - q
+    flag = 0
+    x0 = 0
+    n_iters = 0
+    while flag != 1 or n_iters > 100:
+        sol_1, _, flag, _ =\
+            fsolve(q1, x0, full_output=True)
+        if flag == 1:
+            x_stable_1 = sol_1[0]
+        else:
+            x0 = np.random.uniform(0, 0.4)
+            n_iters += 1
+        sol_2, _, flag, _ =\
+            fsolve(q1, 1-x0, full_output=True)
+        if flag == 1:
+            x_stable_2 = sol_2[0]
+        else:
+            x0 = np.random.uniform(0, 0.4)
+        n_iters += 1
+    x_stable_1 = sol_1[0]
+    x_stable_2 = sol_2[0]
+    q_val_bckw = 0.5
+    for i in range(50):
+        q_val_bckw = backwards(q_val_bckw, j, b)
+    v2_a = second_derivative_potential(q, j=j, b=b)
+    v2_b = second_derivative_potential(q_val_bckw, j=j, b=b)
+    if v2_b < 0:
+        print('it is unstable')
+    time_from_a_to_b = []
+    time_from_a_to_b_approx = []
+    splitting_prob_x_through_a = []
+    for q_val in q:
+        # n_cte_ps = scipy.integrate.quad(lambda x: np.exp(-2*potential_mf(x, j=j, bias=b)/noise**2),
+        #                                 0, 1)[0]
+        time_from_a_to_b_approx.append(np.abs(1/noise * scipy.integrate.quad(lambda x: np.exp(2*potential_mf(x, j=j, bias=b)/noise**2),
+                                                                             q_val, x_stable_1)[0] *
+                                              scipy.integrate.quad(lambda x: np.exp(-2*potential_mf(x, j=j, bias=b)/noise**2),
+                                                                   0, q_val_bckw)[0]))
+        time_from_a_to_b.append(np.abs(1/noise *  scipy.integrate.quad(lambda x: np.exp(2*potential_mf(x, j=j, bias=b)/noise**2)*
+                                                                       scipy.integrate.quad(
+                                                                           lambda y: np.exp(-2*potential_mf(y, j=j, bias=b)/noise**2),
+                                                                           0, x)[0],
+                                                            q_val, x_stable_1)[0]))
+        n_cte = scipy.integrate.quad(lambda x: np.exp(2*potential_mf(x, j=j, bias=b)/noise**2),
+                                     x_stable_1, x_stable_2, epsabs=1e-10, epsrel=1e-10)[0]
+        splitting_prob_x_through_a.append(np.abs(scipy.integrate.quad(lambda x: np.exp(2*potential_mf(x, j=j, bias=b)/noise**2),
+                                                  q_val, x_stable_2, epsabs=1e-10, epsrel=1e-10)[0] / n_cte))
+    # time_from_a_to_b = np.pi / np.sqrt(np.abs(v2_b)*v2_a)*np.exp((v2_b-v2_a)/noise)
+    fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(12, 9))
+    plt.subplots_adjust(top=0.95, bottom=0.05, left=0.075, right=0.98,
+                        hspace=0.3, wspace=0.5)
+    ax = ax.flatten()
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    pot = potential_mf(q, j, b)
+    ax[0].plot(q, pot-np.min(pot), color='k', linewidth=2.5)
+    ax[0].set_ylabel('Potential V(q)')
+    distro = np.exp(-2*pot/noise**2)
+    ax[1].plot(q, distro / np.sum(distro), color='k', linewidth=2.5)
+    val_unst = potential_mf(q_val_bckw, j, b)
+    ax[1].plot(q_val_bckw, np.exp(-2*val_unst/noise**2)/np.sum(distro),
+               marker='o', color='b', linestyle='', label=r'$q^*_{unstable}$',
+               markersize=8)
+    ax[1].axvline(x_stable_1, color='r', alpha=0.5)
+    ax[1].axvline(x_stable_2, color='g', alpha=0.5)
+    ax[1].set_ylabel(r'Stationary distribution $p_s(q)$')
+    ax[2].plot(q, time_from_a_to_b, color='k', linewidth=2.5, label='Exact')
+    ax[2].plot(q, time_from_a_to_b_approx, color='magenta', linewidth=2, linestyle='--',
+               label='Approximation')
+    ax[2].legend(frameon=False)
+    ax[2].set_ylabel(r'Time from $a$ to $q$, $T(a \rightarrow q)$')
+    ax[2].set_xlabel('Approximate posterior q')
+    pot_unst = potential_mf(q_val_bckw, j, b)-np.min(pot)
+    ax[0].axvline(x_stable_1, color='r', alpha=0.5, label=r'$a = q^*_{stable, L}$')
+    ax[0].plot(q_val_bckw, pot_unst, marker='o', color='b', linestyle='',
+               label=r'$b = q^*_{unstable}$', markersize=8)
+    ax[0].axvline(x_stable_2, color='g', alpha=0.5, label=r'$c = q^*_{stable, R}$')
+    ax[0].legend(frameon=False)
+    idx = np.where(np.round((q-q_val_bckw), 3) == 0)
+    ax[2].plot(q_val_bckw, time_from_a_to_b[idx[0][0]], marker='o',
+               linestyle='', color='b', markersize=8)
+    ax[2].axvline(x_stable_1, color='r', alpha=0.5)
+    ax[2].axvline(x_stable_2, color='g', alpha=0.5)
+    distro_split = np.array(splitting_prob_x_through_a)
+    ax[3].plot(q, distro_split, color='k', linewidth=2.5)
+    ax[3].plot(q_val_bckw, distro_split[idx[0][0]], marker='o',
+               linestyle='', color='b', markersize=8)
+    ax[3].axvline(x_stable_1, color='r', alpha=0.5)
+    ax[3].axvline(x_stable_2, color='g', alpha=0.5)
+    ax[3].set_xlabel('Approximate posterior q')
+    ax[3].set_ylabel(r'Splitting probability $\pi_{a}(x)$')
+    ax[3].set_ylim(-0.05, 1.05)
+    fig.tight_layout()
+
+
+def plot_2d_exit_time(var_change='noise', noise=0.1,
+                      j=0.4, b=0.01):
+    """
+    var_change can be:
+        - noise
+        - coupling
+        - sensory_ev
+    """
+    if var_change == 'noise':
+        var_list = np.logspace(-3, 0, 61)
+        varlabel = r'Noise, $\sigma$'
+    if var_change == 'coupling':
+        var_list = np.arange(1e-4, 1, 5e-3)
+        varlabel = r'Coupling, $J$'
+    if var_change == 'sensory_ev':
+        var_list = np.arange(-0.05, 0.05, 5e-3)
+        varlabel = r'Sensory evidence, $B$'
+    q = np.arange(0, 1, 5e-3)
+    potential_array = np.zeros((len(var_list), len(q)))
+    time_escape_array = np.zeros((len(var_list), len(q)))
+    for i_var, var in enumerate(var_list):
+        if var_change == 'noise':
+            noise = var
+        if var_change == 'coupling':
+            j = var
+        if var_change == 'sensory_ev':
+            b = var
+        q1 = lambda q: gn.sigmoid(6*j*(2*q-1)+ b*6) - q
+        flag = 0
+        x0 = 0
+        n_iters = 0
+        while flag != 1 or n_iters > 10:
+            sol_1, _, flag, _ =\
+                fsolve(q1, x0, full_output=True)
+            if flag == 1:
+                x_stable_1 = sol_1[0]
+            else:
+                x0 = np.random.uniform(0, 0.4)
+                n_iters += 1
+        x_stable_1 = sol_1[0]
+        q_val_bckw = 0.5
+        for i in range(50):
+            q_val_bckw = backwards(q_val_bckw, j, b)
+        time_from_a_to_b = []
+        for q_val in q:
+            time_from_a_to_b.append(np.abs(1/noise * scipy.integrate.quad(lambda x: np.exp(potential_mf(x, j=j, bias=b)/noise),
+                                                      q_val, x_stable_1)[0] *
+                                            scipy.integrate.quad(lambda x: np.exp(-potential_mf(x, j=j, bias=b)/noise),
+                                                                0, q_val_bckw)[0]))
+        pot = potential_mf(q, j, b)
+        potential_array[i_var, :] = (pot-np.min(pot))/(np.max(pot)-np.min(pot))
+        time_escape_array[i_var, :] = np.array(time_from_a_to_b) / np.sum(time_from_a_to_b)
+    fig, ax = plt.subplots(nrows=2, figsize=(7, 10))
+    ax[0].set_ylabel(varlabel)
+    ax[1].set_ylabel(varlabel)
+    ax[0].set_xticks([])
+    ax[1].set_xlabel('Approximate posterior q')
+    cmap_pot = 'Oranges_r'
+    im_pot = ax[0].imshow(np.flipud(potential_array), cmap=cmap_pot, aspect='auto',
+                          extent=[0, 1, np.min(var_list), np.max(var_list)])
+    if var_change == 'noise':
+        ax[0].set_yscale('log')
+        ax[1].set_yscale('log')
+    plt.colorbar(im_pot, ax=ax[0], label='Potential V(q)')
+    im_time = ax[1].imshow(np.flipud(time_escape_array), cmap='Blues', aspect='auto',
+                          extent=[0, 1, np.min(var_list), np.max(var_list)])
+                          # norm=mpl.colors.LogNorm())
+    plt.colorbar(im_time, ax=ax[1], label='Escape time T(q --> a)')
+
+
+
+def dummy_potential(noise=0.1):
+    fig, ax = plt.subplots(nrows=2, figsize=(6, 11))
+    q = np.arange(-10, 10, 1e-2)
+    pot = .01*q**4 - q**2
+    x_stable_1 = q[np.where(pot == np.min(pot))[0][0]]
+    pot2 = pot[100:-100]
+    q_val_bckw = q[100+np.where(pot2 == np.max(pot2))[0][0]]
+    time_from_a_to_b = []
+    for q_val in q:
+        time_from_a_to_b.append(np.abs(1/noise * scipy.integrate.quad(lambda x: np.exp(.01*x**4 - x**2/noise),
+                                                  q_val, x_stable_1)[0] *
+                                        scipy.integrate.quad(lambda x: np.exp(-.01*x**4 + x**2/noise),
+                                                            -.1, q_val_bckw)[0]))
+    ax[0].plot(q, pot)
+    ax[1].plot(q, time_from_a_to_b)
+
+
+def transition_probs_j_and_b(t_dur, noise,
+                             j_list=np.arange(0.001, 3.01, 0.005),
+                             b_list=[0], tol=1e-10):
+    mat_trans_prob_s1_to_s2 = np.zeros((len(j_list), len(b_list)))
+    mat_trans_prob_s2_to_s1 = np.zeros((len(j_list), len(b_list)))
+    mat_probs_well_s1 = np.zeros((len(j_list), len(b_list)))
+    mat_probs_well_s2 = np.zeros((len(j_list), len(b_list)))
+    for i_j, j in enumerate(j_list):
+        trans_prob_s2_to_s1 = []
+        trans_prob_s1_to_s2 = []
+        trans_prob_s2_to_s2 = []
+        trans_prob_s1_to_s1 = []
+        # trans_prob_i_to_j = []
+        # trans_prob_j_to_i = []
+        probs_well_s1 = []
+        probs_well_s2 = []
+        for i_b, b in enumerate(b_list):
+            diff_1 = 0
+            diff_2 = 0
+            init_cond_unst = 0.5
+            q1 = lambda q: gn.sigmoid(6*j*(2*q-1)+ b*6) - q
+            sol_1, _, flag, _ =\
+                fsolve(q1, 1, full_output=True)
+            if flag == 1:
+                x_stable_1 = sol_1[0]
+            else:
+                x_stable_1 = np.nan
+            sol_2, _, flag, _ =\
+                fsolve(q1, 0, full_output=True)
+            if flag == 1:
+                x_stable_2 = sol_2[0]
+            else:
+                x_stable_2 = np.nan
+            while np.abs(diff_1) <= tol or np.abs(diff_2) <= tol:
+                if np.abs(x_stable_1-x_stable_2) <= tol:
+                    x_unstable = np.nan
+                    break
+                sol_unstable, _, flag, _ =\
+                    fsolve(q1, init_cond_unst, full_output=True)
+                if flag == 1:
+                    x_unstable = sol_unstable[0]
+                else:
+                    x_unstable = np.nan
+                    break
+                diff_1 = x_unstable - x_stable_1
+                diff_2 = x_unstable - x_stable_2
+                init_cond_unst = np.random.rand()
+            k_x_s1_to_s2 = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+            k_x_s2_to_s1 = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
+            k = k_x_s1_to_s2 + k_x_s2_to_s1
+            p_is = k_i_to_j(j, x_stable_1, x_unstable, noise, b) / k
+            p_js = k_i_to_j(j, x_stable_2, x_unstable, noise, b) / k
+            # P_is is prob to stay in i at end of trial given by t_dur
+            # P_js is prob to stay in j at end of trial given by t_sdur
+            trans_prob_s1_to_s2.append(np.exp(-k_x_s1_to_s2*t_dur)) # prob of at some point going from s1 to s2
+            trans_prob_s2_to_s1.append(np.exp(-k_x_s2_to_s1*t_dur)) # prob of at some point going from s2 to s1
+            trans_prob_s2_to_s2.append(p_is)
+            trans_prob_s1_to_s1.append(p_js)
+            v_unst = potential_mf(x_unstable, j, b)
+            v_s1 = potential_mf(x_stable_1, j, b)
+            v_s2 = potential_mf(x_stable_2, j, b)
+            p_s1 = np.exp((v_unst-v_s1)/noise**2)
+            p_s2 = np.exp((v_unst-v_s2)/noise**2)
+            probs_well_s1.append(p_s1/(p_s1+p_s2))
+            probs_well_s2.append(p_s2/(p_s1+p_s2))
+            # trans_prob_i_to_j.append(1-np.exp(-(k_x_s_to_u_2+k_x_u_to_s_1)*t_dur))
+            # trans_prob_j_to_i.append(1-np.exp(-(k_x_s_to_u_1+k_x_u_to_s_2)*t_dur))
+            # 1 - np.exp(-k*t_dur) is prob to change from i->j and vice-versa
+        mat_trans_prob_s1_to_s2[i_j, :] = trans_prob_s1_to_s2
+        mat_trans_prob_s2_to_s1[i_j, :] = trans_prob_s1_to_s2
+        mat_probs_well_s1[i_j, :] = probs_well_s1
+        mat_probs_well_s2[i_j, :] = probs_well_s2
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud(mat_trans_prob_s1_to_s2), cmap='Oranges',
+                   extent=[min(b_list), max(b_list), min(j_list), max(j_list)],
+                   aspect='auto')
+    plt.colorbar(im, ax=ax, label='Transition probability from S1 to S2')
+    ax.set_ylabel('J')
+    ax.set_xlabel('B')
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud(mat_probs_well_s1), cmap='Oranges',
+                   extent=[min(b_list), max(b_list), min(j_list), max(j_list)],
+                   aspect='auto')
+    plt.colorbar(im, ax=ax, label=r'$p \propto e^{\Delta V / \sigma^2}$')
+    ax.set_ylabel('J')
+    ax.set_xlabel('B')
 
 
 def plot_3_examples_mf_evolution():
@@ -1377,11 +1693,19 @@ def slopes_high_j_lambert(j_list=np.arange(0.7, 2.01, 0.1),
 
 def plot_dominance_duration_mean_field(j, b, theta=theta, noise=0,
                                        tau=1, time_end=10, dt=1e-1):
-    time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
-                                      time_end=time_end, dt=dt)
+    time, vec = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                               time_end=time_end, dt=dt,
+                                               tau_n=tau)
+    plt.figure()
     mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
-    gn.plot_dominance_duration(j, b=0, n_nodes_th=6,
-                               gibbs=False, mean_states=mean_states)
+    plt.plot(mean_states)
+    plt.axhline(0.5, color='k')
+    plt.ylim(0, 1)
+    filt_post = scipy.signal.medfilt(mean_states, 1001)
+    plt.plot(filt_post)
+    gn.plot_dominance_duration(j, b=b, n_nodes_th=6,
+                                gibbs=False, mean_states=filt_post)
+
 
 def mean_field_stim_change(j, b_list,
                            val_init=None, theta=theta,
@@ -1404,37 +1728,168 @@ def mean_field_stim_change(j, b_list,
     return vec_time[burn_in:]
 
 
-def plot_posterior_vs_stim(j_list=[0.2, 0.4, 0.9],
-                           b_list=np.linspace(-0.5, 0.5, 1001),
+def plot_posterior_vs_stim(j_list=[0.01, 0.2, 0.41],
+                           b_list=np.linspace(0., 0.5, 1001),
                            theta=theta):
     plt.figure()
-    colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))[::-1]
-    for i_j, j in enumerate(j_list):
+    # colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))
+    colormap = ['navajowhite', 'orange', 'saddlebrown']
+    for i_j, j in enumerate(reversed(j_list)):
         vec_vals = []
         for b in b_list:
             vec = mean_field_stim(j, stim=b, num_iter=20, val_init=0.8,
                                   theta=theta, sigma=0)
-            vec_vals.append(vec[-1, 0])
+            vec_vals.append(np.nanmean(vec[-1]))
         plt.plot(b_list, vec_vals, color=colormap[i_j],
-                 label=np.round(j, 1))
-    plt.xlabel('Sensory evidence, B')
-    plt.ylabel('Approximate posterior q(x=1)')
+                 label=np.round(j, 1), linewidth=4)
+    plt.xlabel('Stimulus strength, B')
+    plt.ylabel('Confidence')
     plt.legend(title='J')
 
-def plot_mf_hysteresis(j_list=np.arange(0.1, .6, 0.1),
+
+def mean_nodes_simulation_comparison(b, j, theta=theta):
+    vec = mean_field_stim(j, stim=b, num_iter=10, val_init=0.9,
+                          theta=theta, sigma=0)
+    mean_vec_time = np.mean(vec, axis=1)
+    vec_hyp =\
+        mean_field_mean_neighs(j, num_iter=10, stim=b, theta=theta, val_init=0.9)
+    plt.figure()
+    plt.plot(mean_vec_time, label='<q>')
+    plt.plot(vec_hyp, label='f(<N>), approx')
+    plt.legend()
+    plt.figure()
+    plt.plot(np.abs(mean_vec_time-vec_hyp))
+
+
+def plot_mf_hysteresis(j_list=[0.01, 0.2, 0.41],
                        b_list=np.linspace(-0.5, 0.5, 1001),
                        theta=theta):
     b_list = np.concatenate((b_list[:-1], b_list[::-1]))
     plt.figure()
-    colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))
-    for i_j, j in enumerate(j_list):
+    colormap = ['navajowhite', 'orange', 'saddlebrown']
+    for i_j, j in enumerate(reversed(j_list)):
         vec = mean_field_stim_change(j, b_list,
                                      val_init=None, theta=theta)
         plt.plot(b_list, vec[:, 0], color=colormap[i_j],
-                 label=np.round(j, 1))
+                 label=np.round(j, 1), linewidth=4)
     plt.xlabel('Sensory evidence, B')
     plt.ylabel('Approximate posterior q(x=1)')
     plt.legend(title='J')
+
+
+def boltzmann_2d_change_j(noise=0.1, b=0):
+    # noise_vals = np.arange(0, 0.3, 0.001)
+    q = np.arange(0, 1, 1e-3)
+    j_vals = np.arange(0, 1, 1e-3)
+    x, y = np.meshgrid(j_vals, q)
+    pot = potential_mf(y, x, bias=b)
+    distro = np.exp(-2*pot/noise**2)
+    for i in range(len(distro)):
+        distro[:, i] = distro[:, i] / np.nansum(distro[:, i])
+        # distro[:, i] = (distro[:, i] - np.min(distro[:, i]))/(np.max(distro[:, i])- np.min(distro[:, i]))
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud(distro), cmap='Oranges', extent=[0, 1, 0, 1])
+    plt.colorbar(im, ax=ax, label='$p(q \; | \; J, B, \sigma)$')
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('Approximate posterior q(x=1)')
+
+
+def boltzmann_2d_change_sigma(j=0.3, b=0):
+    # noise_vals = np.arange(0, 0.3, 0.001)
+    q = np.arange(0, 1, 1e-3)
+    sigma_vals = np.arange(1e-2, 0.05, 1e-4)
+    x, y = np.meshgrid(sigma_vals, q)
+    pot = potential_mf(y, np.repeat(j, y.shape[0]*y.shape[1]).reshape(y.shape[0],
+                                                          y.shape[1]), bias=b)
+    distro = np.exp(-2*pot/x**2)
+    for i in range(y.shape[1]):
+        distro[:, i] = distro[:, i] / np.nansum(distro[:, i])
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud(distro), cmap='Oranges', aspect='auto', extent=[1e-2, 0.05, 0, 1])
+    plt.colorbar(im, ax=ax, label='p(q)')
+    ax.set_xlabel(r'$\sigma$')
+    ax.set_ylabel(r'$q(x=1)$')
+
+
+def boltzmann_2d_change_stim(j=0.3, noise=0.03):
+    # noise_vals = np.arange(0, 0.3, 0.001)
+    q = np.arange(0, 1, 1e-3)
+    b_vals = np.arange(-0.1, 0.1, 1e-3)
+    x, y = np.meshgrid(b_vals, q)
+    pot = potential_mf(y, j, bias=x)
+    distro = np.exp(-2*pot/noise**2)
+    for i in range(y.shape[1]):
+        distro[:, i] = distro[:, i] / np.nansum(distro[:, i])
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud(distro), cmap='Oranges', aspect='auto', extent=[-0.1, 0.1, 0, 1])
+    plt.colorbar(im, ax=ax, label='p(q)')
+    ax.set_xlabel(r'$b$')
+    ax.set_ylabel(r'$q(x=1)$')
+
+
+def plot_boltzmann_distro_pdf(j, noise, b=0, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(1)
+    q = np.arange(0, 1.001, 0.001)
+    pot = potential_mf(q, j, bias=b)
+    distro = np.exp(-2*pot/noise**2)
+    ax.plot(q, distro / np.sum(distro),
+            color='r', label='analytical')
+    ax.set_xlabel('Approximate posterior q(x=1)')
+    ax.set_ylabel('p(q(x=1))')
+
+
+def save_images_potential_hysteresis(j=0.39,
+                                     b_list=np.linspace(-0.2, 0.2, 501),
+                                     theta=theta,
+                                     save_folder=DATA_FOLDER):
+    b_list = np.concatenate((b_list[:-1], b_list[::-1]))
+    vec = mean_field_stim_change(j, b_list,
+                                 val_init=None, theta=theta)
+    q = np.arange(0, 1, 0.001)
+    for i in range(vec.shape[0]):
+        fig, ax = plt.subplots(nrows=2, figsize=(6, 10))
+        ax[0].plot(b_list[:i], vec[:i, 0], color='navajowhite',
+                   linewidth=4)
+        ax[0].set_ylabel('Approximate posterior, q(x=1)')
+        ax[0].set_xlabel('Stimulus strength, B')
+        ax[0].spines['right'].set_visible(False)
+        ax[0].spines['top'].set_visible(False)
+        ax[0].set_xlim(-0.21, 0.21)
+        ax[0].set_ylim(0, 1)
+        pot = potential_mf(q, j, b_list[i])
+        val_particle = potential_mf(vec[i, 0], j, b_list[i])
+        ax[1].plot(q, pot-np.nanmean(pot), color='purple',
+                   linewidth=4)
+        ax[1].plot(vec[i, 0], val_particle-np.nanmean(pot),
+                   marker='o', markersize=8, color='k')
+        ax[1].set_ylabel('Potential')
+        ax[1].set_xlabel('Approximate posterior, q(x=1)')
+        ax[1].spines['left'].set_visible(False)
+        ax[1].spines['right'].set_visible(False)
+        ax[1].spines['bottom'].set_visible(False)
+        ax[1].spines['top'].set_visible(False)
+        ax[1].set_yticks([])
+        ax[1].set_xticks([])
+        fig.savefig(save_folder + '/images_video_hyst/' + str(i) + '.png',
+                    dpi=100)
+        plt.close(fig)
+
+    
+def create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/'):
+    video_name = image_folder + 'hysteresis.mp4'
+    images = [img for img in os.listdir(image_folder) if img.endswith(".png")]
+    images = [images[i].replace('.png', '') for i in range(len(images))]
+    images.sort(key=float)
+    images = [images[i] + '.png' for i in range(len(images))]
+    frame = cv2.imread(os.path.join(image_folder, images[0]))
+    height, width, layers = frame.shape
+    video = cv2.VideoWriter(video_name, cv2.VideoWriter_fourcc(*'XVID'),
+                            50, (width,height))
+    for image in images:
+        video.write(cv2.imread(os.path.join(image_folder, image)))
+    cv2.destroyAllWindows()
+    video.release()
 
 
 if __name__ == '__main__':
@@ -1470,12 +1925,19 @@ if __name__ == '__main__':
     # plot_mf_sol_stim_bias(j_list=np.arange(0.00001, 1, 0.001), stim=-0.1,
     #                       num_iter=10)
     # transition_probs_j(t_dur=1, noise=0.3,
-    #                    j_list=np.arange(0.001, 3.01, 0.005),
-    #                    b=.1, tol=1e-10)
-    # plot_dominance_duration_mean_field(j=.9, b=0, theta=theta, noise=0.05,
-    #                                    tau=0.01, time_end=250, dt=1e-3)
+    #                     j_list=np.arange(0.001, 3.01, 0.005),
+    #                     b=.2, tol=1e-10)
+    # transition_probs_j_and_b(t_dur=1, noise=0.3,
+    #                          j_list=np.linspace(0.001, 2, 200),
+    #                          b_list=np.linspace(-0.2, 0.2, 100),
+    #                          tol=1e-10)
+    plot_dominance_duration_mean_field(j=.38, b=0, theta=theta, noise=0.09,
+                                       tau=0.01, time_end=6000, dt=1e-3)
     # plot_slope_wells_vs_B(j_list=np.arange(0.6, 1.01, 0.1),
     #                       b_list=np.arange(-.3, .3, 0.01))
-    plot_posterior_vs_stim(j_list=[0.2, 0.26, 0.41],
-                           b_list=np.linspace(-0.5, 0.5, 1001),
-                           theta=theta)
+    # plot_posterior_vs_stim(j_list=[0.05, 0.2, 0.41],
+    #                        b_list=np.linspace(0, 0.25, 101),
+    #                        theta=gn.return_theta(rows=10, columns=5,
+    #                                              layers=2, factor=1))
+    # boltzmann_2d_change_j(noise=0.1)
+    # boltzmann_2d_change_sigma(j=0.3, b=0)
