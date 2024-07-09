@@ -11,7 +11,7 @@ import itertools
 import os
 import gibbs_necker as gn
 import mean_field_necker as mfn
-from scipy.optimize import fsolve, bisect, root
+from scipy.optimize import fsolve, bisect, root, newton
 from scipy.integrate import solve_ivp
 import matplotlib as mpl
 from skimage.transform import resize
@@ -1366,17 +1366,17 @@ def plot_sols_FLBP(alpha, j_list=np.arange(0, 3, 0.001), theta=THETA,
     plt.axvline(np.log(n/(n-2))/(2*alpha), color='r', alpha=0.3)
 
 
-def plot_lbp_hysteresis(j_list=np.arange(0.3, .8, 0.1),
+def plot_lbp_hysteresis(j_list=[0.05, 0.4, 0.7],
                         b_list=np.linspace(-0.5, 0.5, 1001),
                         theta=THETA):
     b_list = np.concatenate((b_list[:-1], b_list[::-1]))
     plt.figure()
-    colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))
-    for i_j, j in enumerate(j_list):
+    colormap = ['navajowhite', 'orange', 'saddlebrown']
+    for i_j, j in enumerate(reversed(j_list)):
         vec = lbp_changing_stim(j, b_list,
                                 theta=theta)
         plt.plot(b_list, vec[:, 0], color=colormap[i_j],
-                 label=np.round(j, 1))
+                 label=np.round(j, 1), linewidth=4)
     plt.xlabel('Sensory evidence, B')
     plt.ylabel('Approximate posterior q(x=1)')
     plt.legend(title='J')
@@ -1425,6 +1425,47 @@ def lbp_changing_stim(j, b_list, theta=THETA,
     return q_y_1[burn_in:]
 
 
+def potential_LBP_v0(j, b, N, r=np.linspace(0, 10, 1000)):
+    return (np.exp(2*b)*r**(N+1)/(N+1) - np.exp(2*(j+b))*r**(N)/(N) + np.exp(2*j)*r**2/2-r)
+
+
+def plot_x_y_vector_field(j, b, n=3):
+    x = np.linspace(0, .6, 20)
+    y = np.linspace(0, .6, 20)
+    xx, yy = np.meshgrid(x, y)
+    uu = np.exp(j+b)*xx**(n-1)+np.exp(-j-b)*yy**(n-1)-xx
+    vv = np.exp(-j+b)*xx**(n-1)+np.exp(j-b)*yy**(n-1)-yy
+    fig, ax = plt.subplots(1)
+    ax.quiver(xx, yy, uu, vv)
+    ax.set_xlim(0, max(x))
+    ax.set_ylim(0, max(x))
+    x = np.linspace(0, max(x), 100)
+    y = x
+    ax.plot(y, ((x-np.exp(j+b)*x**2)*np.exp(j+b))**(1/(n-1)))
+    ax.plot(((x-np.exp(j-b)*x**2)*np.exp(j-b))**(1/(n-1)), x)
+
+
+def plot_posterior_vs_stim(j_list=[0.05, 0.4, 0.7],
+                           b_list=np.linspace(0, 0.25, 101),
+                           theta=THETA, thr=1e-8, num_iter=100):
+    plt.figure()
+    # colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(j_list)))
+    colormap = ['navajowhite', 'orange', 'saddlebrown']
+    for i_j, j in enumerate(reversed(j_list)):
+        vec_vals = []
+        for b in b_list:
+            pos, neg, n = Loopy_belief_propagation(theta=theta,
+                                                   num_iter=num_iter,
+                                                   j=j, thr=thr, stim=b)
+            val = np.max((pos[0], neg[0]))
+            vec_vals.append(val)
+        plt.plot(b_list, vec_vals, color=colormap[i_j],
+                 label=np.round(j, 1), linewidth=4)
+    plt.xlabel('Stimulus strength, B')
+    plt.ylabel('Confidence')
+    plt.legend(title='J')
+
+
 if __name__ == '__main__':
     # for stim in [-1]:
     #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
@@ -1432,10 +1473,10 @@ if __name__ == '__main__':
     #                           thr=1e-10, stim=stim)
     # plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
     #                             b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
-    all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
-                            b_list=np.arange(-.5, .5005, 0.005),
-                            data_folder=DATA_FOLDER,
-                            theta=THETA, dist_metric=None, nrows=2)
+    # all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
+    #                         b_list=np.arange(-.5, .5005, 0.005),
+    #                         data_folder=DATA_FOLDER,
+    #                         theta=THETA, dist_metric=None, nrows=2)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1001), j=0.1,
@@ -1453,5 +1494,5 @@ if __name__ == '__main__':
     #                  min_r=-15, max_r=15,
     #                  w_size=0.01, n_neigh=3,
     #                  color='r')
-    # plot_lbp_3_examples()
+    plot_lbp_3_examples()
     # plot_lbp_explanation()
