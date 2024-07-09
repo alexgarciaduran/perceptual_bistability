@@ -60,7 +60,7 @@ plt.rcParams['xtick.labelsize']= 12
 plt.rcParams['ytick.labelsize']= 12
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/gibbs_sampling_necker/data_folder/'  # Alex
 
@@ -1400,18 +1400,88 @@ def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
                     dpi=400, bbox_inches='tight')
         fig.savefig(DATA_FOLDER + 'necker_color_nodes.svg',
                     dpi=400, bbox_inches='tight')
-    
-    
+
+
+def dominance_duration_vs_stim(j=0.49, b_list=np.arange(0, 0.25, 0.01),
+                               theta=THETA, chain_length=int(1e4), n_nodes_th=75):
+    p_thr = n_nodes_th/100
+    list_time_q1 = []
+    list_time_q2 = []
+    list_predom_q1 = []
+    list_predom_q2 = []
+    alt_rate = []
+    alt_rate_both_eyes = []
+    for i_b, b in enumerate(b_list):
+        print(round(100*(i_b+1)/len(b_list), 2))
+        print('%')
+        init_state = np.random.choice([-1, 1], theta.shape[0])
+        burn_in = 500
+        states_mat =\
+            gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
+                              n_iter=chain_length+burn_in,
+                              j=j, stim=b, theta=theta)
+        # mu = get_mu_from_mat_v2(states_mat)
+        # mu_signed = np.sign(mu[mu != 0])
+        mean_states = np.mean((states_mat+1)/2, axis=1)
+        mean_states2 = np.copy(mean_states)
+        mean_states[mean_states > p_thr] = 1
+        mean_states[mean_states < (1-p_thr)] = -1
+        if n_nodes_th == 50:
+            mean_states = mean_states[mean_states != p_thr]
+        mean_states[(mean_states > (1-p_thr)) & (mean_states < p_thr)] = 0
+        orders = rle(mean_states)
+        time_q1 = orders[0][orders[2] == 1]
+        time_q2 = orders[0][orders[2] == -1]
+        mean_states2[mean_states2 > 0.5] = 1
+        mean_states2[mean_states2 < 0.5] = 0
+        mean_states2 = mean_states2[mean_states2 != 0.5]
+        list_predom_q1.append(np.mean(mean_states2))
+        list_predom_q2.append(1-np.mean(mean_states2))
+        list_time_q1.append(np.mean(time_q1))
+        list_time_q2.append(np.mean(time_q2))
+        alt_rate.append(np.sum(np.diff(mean_states2) != 0))
+    for i_b, b in enumerate(b_list[b_list >= 0]):
+        burn_in = 500
+        b_both_eyes = np.repeat(b, theta.shape[0])
+        b_both_eyes[theta.shape[0]//2:] = -b
+        states_mat =\
+            gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
+                              n_iter=int(2e5)+burn_in,
+                              j=j, stim=b_both_eyes, theta=theta)
+        mean_states = np.mean((states_mat+1)/2, axis=1)
+        mean_states2 = np.copy(mean_states)
+        alt_rate_both_eyes.append(np.sum(np.diff(mean_states2) != 0))
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(12, 10))
+    ax = ax.flatten()
+    ax[0].plot(b_list, list_predom_q1, label='q(x=1)', color='k', linewidth=2.5)
+    ax[0].plot(b_list, list_predom_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    ax[0].legend()
+    ax[0].set_xlabel('Sensory evidence, B')
+    ax[0].set_ylabel('Perceptual predominance (<q(x=i)>')
+    ax[1].plot(b_list, list_time_q1, label='q(x=1)', color='k', linewidth=2.5)
+    ax[1].plot(b_list, list_time_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    # ax[1].legend()
+    ax[1].set_xlabel('Sensory evidence, B')
+    ax[1].set_ylabel('Average perceptual dominance, T(q=q(x=i))')
+    ax[2].plot(b_list, alt_rate, color='k', linewidth=2.5)
+    ax[2].set_xlabel('Sensory evidence, B')
+    ax[2].set_ylabel('Alternation rate')
+    ax[3].plot(b_list[b_list >= 0], alt_rate_both_eyes, color='k',
+               linewidth=2.5)
+    ax[3].set_xlabel('Sensory evidence, B')
+    ax[3].set_ylabel('Alternation rate')
+
+
 def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7,
-                            gibbs=True, mean_states=[]):
+                            gibbs=True, mean_states=[], theta=THETA):
     p_thr = n_nodes_th/8
-    if gibbs:
-        init_state = np.random.choice([-1, 1], 8)
+    if gibbs and len(mean_states) == 0:
+        init_state = np.random.choice([-1, 1], theta.shape[0])
         burn_in = 100
         states_mat =\
             gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
                               n_iter=chain_length+burn_in,
-                              j=j, stim=b, theta=THETA)
+                              j=j, stim=b, theta=theta)
         # mu = get_mu_from_mat_v2(states_mat)
         # mu_signed = np.sign(mu[mu != 0])
         mean_states = np.mean((states_mat+1)/2, axis=1)
@@ -1423,7 +1493,10 @@ def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7,
 
     # plotting
     plt.figure()
-    hist_bins = np.arange(-2, max(time), 50)
+    if gibbs:
+        hist_bins = np.arange(-4, 200, 8)
+    else:
+        hist_bins = np.arange(-10, max(time)/2, 400)
     time = time[time <= max(hist_bins)]
     plt.hist(time, bins=hist_bins, label='Simulation', density=True)
     fit_alpha, fit_loc, fit_beta = stats.gamma.fit(time)
@@ -1506,7 +1579,6 @@ def gibbs_samp_necker_post(init_state, burn_in, n_iter, j, stim=0, theta=THETA):
     return mean_vector/theta.shape[0]/(n_iter-burn_in)
 
 
-
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
@@ -1526,8 +1598,8 @@ if __name__ == '__main__':
     #                      stim=0, n_iter=201000,
     #                      theta=return_theta(rows=10, columns=5, layers=2),
     #                      burn_in=1000)
-    video_create(image_folder=DATA_FOLDER + '/gibbs_video_0495_zoom/',
-                 fps=80, videoname='cylinder_0495.mp4')
+    # video_create(image_folder=DATA_FOLDER + '/gibbs_video_0495_zoom/',
+    #              fps=80, videoname='cylinder_0495.mp4')
     # t = transition_matrix(0.2, C)
     # prob_markov_chain_between_states(tau=100, iters_per_len=200,
     #                                  n_iter_list=np.logspace(0, 4, 5))
@@ -1537,7 +1609,11 @@ if __name__ == '__main__':
     #                       n_iter_list=np.logspace(2, 6, 5, dtype=int),
     #                       j=1, stim=0., n_repetitions=100, theta=THETA,
     #                       burn_in=0.1)
-    # plot_dominance_duration(j=.7, b=0, chain_length=int(1e3), n_nodes_th=7)
+    # plot_dominance_duration(j=.9, b=0, chain_length=int(1e6), n_nodes_th=5,
+    #                         theta=THETA)
+    dominance_duration_vs_stim(j=0.7, b_list=np.round(np.arange(-0.25, 0.3, 0.05), 4),
+                               theta=THETA,
+                               chain_length=int(5e5), n_nodes_th=50)
     # plot_posterior_vs_b_diff_js(j_list=[0.05, 0.21, 0.45],
     #                             b_list=np.linspace(0, 0.25, 11),
     #                             theta=return_theta(rows=10, columns=5, layers=2),
