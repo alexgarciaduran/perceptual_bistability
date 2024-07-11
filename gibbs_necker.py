@@ -1446,23 +1446,26 @@ def dominance_duration_vs_stim(j=0.49, b_list=np.arange(0, 0.25, 0.01),
         b_both_eyes[theta.shape[0]//2:] = -b
         states_mat =\
             gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
-                              n_iter=int(2e5)+burn_in,
+                              n_iter=chain_length+burn_in,
                               j=j, stim=b_both_eyes, theta=theta)
         mean_states = np.mean((states_mat+1)/2, axis=1)
         mean_states2 = np.copy(mean_states)
+        mean_states2[mean_states2 > 0.5] = 1
+        mean_states2[mean_states2 < 0.5] = 0
+        mean_states2 = mean_states2[mean_states2 != 0.5]
         alt_rate_both_eyes.append(np.sum(np.diff(mean_states2) != 0))
     fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(12, 10))
     ax = ax.flatten()
-    ax[0].plot(b_list, list_predom_q1, label='q(x=1)', color='k', linewidth=2.5)
+    ax[0].plot(b_list, list_predom_q1, label='q(x=1)', color='green', linewidth=2.5)
     ax[0].plot(b_list, list_predom_q2, label='q(x=-1)', color='r', linewidth=2.5)
     ax[0].legend()
     ax[0].set_xlabel('Sensory evidence, B')
     ax[0].set_ylabel('Perceptual predominance (<q(x=i)>')
-    ax[1].plot(b_list, list_time_q1, label='q(x=1)', color='k', linewidth=2.5)
+    ax[1].plot(b_list, list_time_q1, label='q(x=1)', color='green', linewidth=2.5)
     ax[1].plot(b_list, list_time_q2, label='q(x=-1)', color='r', linewidth=2.5)
     # ax[1].legend()
     ax[1].set_xlabel('Sensory evidence, B')
-    ax[1].set_ylabel('Average perceptual dominance, T(q=q(x=i))')
+    ax[1].set_ylabel('Average perceptual dominance, T(x=1)')
     ax[2].plot(b_list, alt_rate, color='k', linewidth=2.5)
     ax[2].set_xlabel('Sensory evidence, B')
     ax[2].set_ylabel('Alternation rate')
@@ -1470,6 +1473,49 @@ def dominance_duration_vs_stim(j=0.49, b_list=np.arange(0, 0.25, 0.01),
                linewidth=2.5)
     ax[3].set_xlabel('Sensory evidence, B')
     ax[3].set_ylabel('Alternation rate')
+    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(12, 10))
+    ax = ax.flatten()
+    ax[0].plot(b_list, list_predom_q1, label='q(x=1)', color='green', linewidth=2.5)
+    ax[0].plot(b_list, list_predom_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    ax[0].legend()
+    ax[0].set_xlabel('Sensory evidence, B')
+    ax[0].set_ylabel('Perceptual predominance (<q(x=i)>')
+    ax[1].plot(b_list, list_time_q1, label='q(x=1)', color='green', linewidth=2.5)
+    ax[1].plot(b_list, list_time_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    ax[1].set_yscale('log')
+    # ax[1].legend()
+    ax[1].set_xlabel('Sensory evidence, B')
+    ax[1].set_ylabel('Avg. perceptual dominance, T(x=1)')
+    ax[2].plot(list_predom_q1, alt_rate, color='k', linewidth=2.5)
+    axtwin = ax[2].twinx()
+    f = np.array(list_predom_q1)
+    # xf = np.arange(1e-6, 0.999, 1e-3)
+    entropy = -f*np.log(f) - (1-f)*np.log(1-f)
+    axtwin.plot(f, entropy, color='grey', linestyle='--')
+    axtwin.set_ylabel('Entropy')
+    ax[2].set_xlabel('Fraction of q(x=1)')
+    ax[2].set_ylabel('Alternation rate')
+    ax[3].plot(f[b_list >= 0], alt_rate_both_eyes, color='k',
+               linewidth=2.5)
+    ax[3].set_xlabel('Fraction of q(x=1)')
+    ax[3].set_ylabel('Alternation rate')
+    x_vals = np.arange(1, np.max((max(list_time_q2), max(list_time_q1))), 1)
+    linereg = scipy.stats.linregress(np.log(list_time_q1), np.log(list_time_q2))
+    y = np.log(x_vals)*linereg.slope + linereg.intercept
+    ax[4].plot(list_time_q2, list_time_q1, label='q(x=1)', color='k', linewidth=2.5,
+               marker='o')
+    ax[4].set_ylabel('T(x=1)')
+    ax[4].set_xlabel('T(x=-1)')
+    ax[5].plot(np.log(list_time_q2), np.log(list_time_q1),
+               color='k', linewidth=2.5,
+               marker='o', label='Simulation')
+    ax[5].plot(y, np.log(x_vals), color='b', linestyle='--', alpha=0.4,
+               label=f'y ~ log(x), slope={round(linereg.slope, 2)}')
+    ax[5].legend()
+    ax[5].set_ylabel('log T(x=1)')
+    ax[5].set_xlabel('log T(x=-1)')
+    # ax[5].set_yscale('log')
+    # ax[5].set_xscale('log')
 
 
 def plot_dominance_duration(j, b=0, chain_length=int(1e4), n_nodes_th=7,
@@ -1611,9 +1657,11 @@ if __name__ == '__main__':
     #                       burn_in=0.1)
     # plot_dominance_duration(j=.9, b=0, chain_length=int(1e6), n_nodes_th=5,
     #                         theta=THETA)
-    dominance_duration_vs_stim(j=0.7, b_list=np.round(np.arange(-0.25, 0.3, 0.05), 4),
-                               theta=THETA,
-                               chain_length=int(5e5), n_nodes_th=50)
+    dominance_duration_vs_stim(j=0.495,
+                               b_list=np.round(
+                                   np.arange(-0.02, 0.025, 0.005), 4),
+                               theta=return_theta(),
+                               chain_length=int(7e6), n_nodes_th=50)
     # plot_posterior_vs_b_diff_js(j_list=[0.05, 0.21, 0.45],
     #                             b_list=np.linspace(0, 0.25, 11),
     #                             theta=return_theta(rows=10, columns=5, layers=2),
