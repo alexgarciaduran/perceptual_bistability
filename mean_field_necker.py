@@ -30,7 +30,7 @@ plt.rcParams['ytick.labelsize']= 12
 
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/mean_field_necker/data_folder/'  # Alex
 
@@ -1056,8 +1056,9 @@ def solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau, time_end=50, dt=1e-2
     ou_vec[:] = np.nan
     ou_val = np.random.rand(theta.shape[0])
     ou_vec[0, :] = ou_val
+    n_neighs = np.matmul(theta, np.ones(theta.shape[0]))
     for t in range(1, time.shape[0]):
-        x_n = (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 6*b) - x)) / tau
+        x_n = (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-n_neighs) + n_neighs*2*b) - x)) / tau
         ou_val = dt*(-ou_val / tau_n) + (np.random.randn(theta.shape[0])*noise*np.sqrt(2*dt/tau_n))
         x = x + x_n + ou_val
         # x = np.clip(x, 0, 1)
@@ -1696,15 +1697,16 @@ def plot_dominance_duration_mean_field(j, b, theta=theta, noise=0,
     time, vec = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
                                                time_end=time_end, dt=dt,
                                                tau_n=tau)
-    plt.figure()
+    # plt.figure()
     mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
-    plt.plot(mean_states)
-    plt.axhline(0.5, color='k')
-    plt.ylim(0, 1)
+    # plt.plot(mean_states)
+    # plt.axhline(5/8, color='k')
+    # plt.axhline(1-5/8, color='k')
+    # plt.ylim(0, 1)
     filt_post = scipy.signal.medfilt(mean_states, 1001)
-    plt.plot(filt_post)
-    gn.plot_dominance_duration(j, b=b, n_nodes_th=6,
-                                gibbs=False, mean_states=filt_post)
+    # plt.plot(filt_post)
+    gn.plot_dominance_duration(j, b=b, n_nodes_th=5,
+                               gibbs=False, mean_states=filt_post)
 
 
 def mean_field_stim_change(j, b_list,
@@ -1892,6 +1894,119 @@ def create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/'):
     video.release()
 
 
+def dominance_duration_vs_stim(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
+                               theta=theta, time_end=10000, dt=1e-3, tau=0.008,
+                               n_nodes_th=75):
+    p_thr = n_nodes_th/100
+    list_time_q1 = []
+    list_time_q2 = []
+    list_predom_q1 = []
+    list_predom_q2 = []
+    alt_rate = []
+    alt_rate_both_eyes = []
+    for i_b, b in enumerate(b_list):
+        print(round(100*(i_b+1)/len(b_list), 2))
+        print('%')
+        init_state = np.random.choice([-1, 1], theta.shape[0])
+        time, vec = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                   time_end=time_end, dt=dt,
+                                                   tau_n=tau)
+        mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
+        mean_states2 = scipy.signal.medfilt(mean_states, 1001)
+        # mean_states2 = np.copy(mean_states)
+        mean_states[mean_states > p_thr] = 1
+        mean_states[mean_states < (1-p_thr)] = -1
+        if n_nodes_th == 50:
+            mean_states = mean_states[mean_states != p_thr]
+        mean_states[(mean_states > (1-p_thr)) & (mean_states < p_thr)] = 0
+        orders = gn.rle(mean_states)
+        time_q1 = orders[0][orders[2] == 1]
+        time_q2 = orders[0][orders[2] == -1]
+        mean_states2[mean_states2 > 0.5] = 1
+        mean_states2[mean_states2 < 0.5] = 0
+        mean_states2 = mean_states2[mean_states2 != 0.5]
+        list_predom_q1.append(np.mean(mean_states2))
+        list_predom_q2.append(1-np.mean(mean_states2))
+        list_time_q1.append(np.mean(time_q1))
+        list_time_q2.append(np.mean(time_q2))
+        alt_rate.append(np.sum(np.diff(mean_states2) != 0))
+    for i_b, b in enumerate(b_list[b_list >= 0]):
+        b_both_eyes = np.repeat(b, theta.shape[0])
+        b_both_eyes[theta.shape[0]//2:] = -b
+        init_state = np.random.choice([-1, 1], theta.shape[0])
+        time, vec = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                   time_end=time_end, dt=dt,
+                                                   tau_n=tau)
+        mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
+        mean_states2 = np.copy(mean_states)
+        mean_states2[mean_states2 > 0.5] = 1
+        mean_states2[mean_states2 < 0.5] = 0
+        mean_states2 = mean_states2[mean_states2 != 0.5]
+        alt_rate_both_eyes.append(np.sum(np.diff(mean_states2) != 0))
+    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(12, 10))
+    ax = ax.flatten()
+    ax[0].plot(b_list, list_predom_q1, label='q(x=1)', color='green', linewidth=2.5)
+    ax[0].plot(b_list, list_predom_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    ax[0].legend()
+    ax[0].set_xlabel('Sensory evidence, B')
+    ax[0].set_ylabel('Perceptual predominance (<q(x=i)>')
+    ax[1].plot(b_list, list_time_q1, label='q(x=1)', color='green', linewidth=2.5)
+    ax[1].plot(b_list, list_time_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    ax[1].set_yscale('log')
+    # ax[1].legend()
+    ax[1].set_xlabel('Sensory evidence, B')
+    ax[1].set_ylabel('Avg. perceptual dominance, T(x=1)')
+    ax[2].plot(list_predom_q1, alt_rate, color='k', linewidth=2.5)
+    axtwin = ax[2].twinx()
+    f = np.array(list_predom_q1)
+    xf = np.arange(1e-6, 0.999, 1e-3)
+    entropy = -xf*np.log(xf) - (1-xf)*np.log(1-xf)
+    axtwin.plot(xf, entropy, color='grey', linestyle='--')
+    axtwin.set_ylabel('Entropy')
+    ax[2].set_xlabel('Fraction of q(x=1)')
+    ax[2].set_ylabel('Alternation rate')
+    ax[3].plot(f[b_list >= 0], alt_rate_both_eyes, color='k',
+               linewidth=2.5)
+    ax[3].set_xlabel('Fraction of q(x=1)')
+    ax[3].set_ylabel('Alternation rate')
+    x_vals = np.arange(1, np.max((max(list_time_q2), max(list_time_q1))), 1)
+    linereg = scipy.stats.linregress(np.log(list_time_q1), np.log(list_time_q2))
+    y = np.log(x_vals)*linereg.slope + linereg.intercept
+    ax[4].plot(list_time_q2, list_time_q1, label='q(x=1)', color='k', linewidth=2.5,
+               marker='o')
+    ax[4].set_ylabel('T(x=1)')
+    ax[4].set_xlabel('T(x=-1)')
+    ax[5].plot(np.log(list_time_q2), np.log(list_time_q1),
+               color='k', linewidth=2.5,
+               marker='o', label='Simulation')
+    ax[5].plot(y, np.log(x_vals), color='b', linestyle='--', alpha=0.4,
+               label=f'y ~ log(x), slope={round(linereg.slope, 2)}')
+    ax[5].legend()
+    ax[5].set_ylabel('log T(x=1)')
+    ax[5].set_xlabel('log T(x=-1)')
+    # ax[5].set_yscale('log')
+    # ax[5].set_xscale('log')
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(12, 10))
+    ax = ax.flatten()
+    ax[0].plot(b_list, list_predom_q1, label='q(x=1)', color='k', linewidth=2.5)
+    ax[0].plot(b_list, list_predom_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    ax[0].legend()
+    ax[0].set_xlabel('Sensory evidence, B')
+    ax[0].set_ylabel('Perceptual predominance (<q(x=i)>')
+    ax[1].plot(b_list, list_time_q1, label='q(x=1)', color='k', linewidth=2.5)
+    ax[1].plot(b_list, list_time_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    # ax[1].legend()
+    ax[1].set_xlabel('Sensory evidence, B')
+    ax[1].set_ylabel('Average perceptual dominance, T(x=1)')
+    ax[2].plot(b_list, alt_rate, color='k', linewidth=2.5)
+    ax[2].set_xlabel('Sensory evidence, B')
+    ax[2].set_ylabel('Alternation rate')
+    ax[3].plot(b_list[b_list >= 0], alt_rate_both_eyes, color='k',
+               linewidth=2.5)
+    ax[3].set_xlabel('Sensory evidence, B')
+    ax[3].set_ylabel('Alternation rate')
+
+
 if __name__ == '__main__':
     # plot_potential_and_vector_field_2d(j=1, b=0, noise=0., tau=1,
     #                                     time_end=50, dt=5e-2)
@@ -1931,8 +2046,8 @@ if __name__ == '__main__':
     #                          j_list=np.linspace(0.001, 2, 200),
     #                          b_list=np.linspace(-0.2, 0.2, 100),
     #                          tol=1e-10)
-    plot_dominance_duration_mean_field(j=.38, b=0, theta=theta, noise=0.09,
-                                       tau=0.01, time_end=6000, dt=1e-3)
+    # plot_dominance_duration_mean_field(j=.39, b=0, theta=theta, noise=0.1,
+    #                                    tau=0.008, time_end=15000, dt=1e-3)
     # plot_slope_wells_vs_B(j_list=np.arange(0.6, 1.01, 0.1),
     #                       b_list=np.arange(-.3, .3, 0.01))
     # plot_posterior_vs_stim(j_list=[0.05, 0.2, 0.41],
@@ -1941,3 +2056,8 @@ if __name__ == '__main__':
     #                                              layers=2, factor=1))
     # boltzmann_2d_change_j(noise=0.1)
     # boltzmann_2d_change_sigma(j=0.3, b=0)
+    dominance_duration_vs_stim(noise=0.1, j=0.39,
+                               b_list=np.round(
+                                   np.arange(-0.01, 0.012, 0.0005), 4),
+                               theta=theta, time_end=12000, dt=1e-3, tau=0.008,
+                               n_nodes_th=50)
