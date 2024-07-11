@@ -1394,7 +1394,7 @@ def plot_2d_exit_time(var_change='noise', noise=0.1,
         var_list = np.arange(1e-4, 1, 5e-3)
         varlabel = r'Coupling, $J$'
     if var_change == 'sensory_ev':
-        var_list = np.arange(-0.05, 0.05, 5e-3)
+        var_list = np.arange(-0.08, 0, 1e-3)
         varlabel = r'Sensory evidence, $B$'
     q = np.arange(0, 1, 5e-3)
     potential_array = np.zeros((len(var_list), len(q)))
