@@ -30,7 +30,7 @@ plt.rcParams['ytick.labelsize']= 12
 
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/mean_field_necker/data_folder/'  # Alex
 
@@ -1063,8 +1063,8 @@ def solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau, time_end=50, dt=1e-2
         x = x + x_n + ou_val
         # x = np.clip(x, 0, 1)
         x_vec[t, :] = x  # np.clip(x, 0, 1)
-    return time, x_vec
-
+        ou_vec[t, :] = ou_val
+    return time, x_vec, ou_vec
 
 
 def solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
@@ -1694,9 +1694,9 @@ def slopes_high_j_lambert(j_list=np.arange(0.7, 2.01, 0.1),
 
 def plot_dominance_duration_mean_field(j, b, theta=theta, noise=0,
                                        tau=1, time_end=10, dt=1e-1):
-    time, vec = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
-                                               time_end=time_end, dt=dt,
-                                               tau_n=tau)
+    time, vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                       time_end=time_end, dt=dt,
+                                                       tau_n=tau)
     # plt.figure()
     mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
     # plt.plot(mean_states)
@@ -1707,6 +1707,70 @@ def plot_dominance_duration_mean_field(j, b, theta=theta, noise=0,
     # plt.plot(filt_post)
     gn.plot_dominance_duration(j, b=b, n_nodes_th=5,
                                gibbs=False, mean_states=filt_post)
+
+
+def plot_noise_before_switch(j, b, theta=theta, noise=0.1,
+                             tau=0.01, time_end=1000, dt=1e-3, p_thr=0.5,
+                             steps_back=2000, steps_front=500, gibbs=False):
+    fig, ax = plt.subplots(1)
+    ax.set_xlabel('Time to switch (s)')
+    if not gibbs:
+        if j is None:
+            j = 0.39
+        time, vec, ou_vals = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                            time_end=time_end, dt=dt,
+                                                            tau_n=tau)
+        mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
+        mean_ou = np.mean(ou_vals, axis=1)
+        conv_window = 50
+        mean_states = np.convolve(mean_states, np.ones(1000)/1000, mode='same')
+        ax.set_ylabel(r'Noise $n(t)$')
+    if gibbs:
+        if j is None:
+            j = 0.8
+        burn_in = 100
+        chain_length = int(time_end/dt)
+        init_state = np.random.choice([-1, 1], theta.shape[0])
+        states_mat =\
+            gn.gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
+                                 n_iter=chain_length+burn_in,
+                                 j=j, stim=b, theta=theta)
+        mean_states = np.mean((states_mat+1)/2, axis=1)
+        mean_ou = [gn.k_val(config, theta*j, stim=b) for config in states_mat]
+        # mean_ou = np.exp(-np.gradient(mean_ou))
+        conv_window = 1
+        # ax.set_ylabel(r'$e^{\Delta k(\vec{x})}$')
+        ax.set_ylabel(r'$k(\vec{x})$')
+        steps_back = steps_front =  100
+    mean_states[mean_states > p_thr] = 1
+    mean_states[mean_states < (1-p_thr)] = 0
+    mean_states = mean_states[mean_states != p_thr]
+    # mean_states[(mean_states > (1-p_thr)) & (mean_states < p_thr)] = 0
+    orders = gn.rle(mean_states)
+    idx_1 = orders[1][orders[2] == 1]
+    idx_1 = idx_1[(idx_1 > steps_back) & (idx_1 < (len(mean_ou))-steps_front)]
+    idx_0 = orders[1][orders[2] == 0]
+    idx_0 = idx_0[(idx_0 > steps_back) & (idx_0 < (len(mean_ou))-steps_front)]
+    ou_vals_1_array = np.empty((len(idx_1), steps_back+steps_front))
+    ou_vals_1_array[:] = np.nan
+    for i, idx in enumerate(idx_1):
+        ou_vals_1_array[i, :] = np.convolve(mean_ou[idx - steps_back:idx+steps_front],
+                                            np.ones(conv_window)/conv_window,
+                                            mode='same')
+    ou_vals_0_array = np.empty((len(idx_0), steps_back+steps_front))
+    ou_vals_0_array[:] = np.nan
+    for i, idx in enumerate(idx_0):
+        ou_vals_0_array[i, :] = np.convolve(mean_ou[idx - steps_back:idx+steps_front],
+                                            np.ones(conv_window)/conv_window,
+                                            mode='same')*((-1)**(~gibbs))
+    ou_vals_all = np.row_stack((ou_vals_1_array, ou_vals_0_array))
+    ou_vals_mean = np.nanmean(ou_vals_all, axis=0)
+    # ou_vals_std = np.nanstd(ou_vals_all, axis=0)
+    time = np.arange(-steps_back, steps_front)*dt
+    # ou_vals_mean_filt = np.convolve(ou_vals_mean, np.ones(50)/50, mode='same')
+    ax.plot(time, ou_vals_mean, color='k', linewidth=2.5)
+    # ax.fill_between(time, ou_vals_mean-ou_vals_std, ou_vals_mean+ou_vals_std,
+    #                 color='gray', alpha=0.3)
 
 
 def mean_field_stim_change(j, b_list,
