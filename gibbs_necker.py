@@ -60,7 +60,7 @@ plt.rcParams['xtick.labelsize']= 12
 plt.rcParams['ytick.labelsize']= 12
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/gibbs_sampling_necker/data_folder/'  # Alex
 
@@ -1402,6 +1402,23 @@ def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
                     dpi=400, bbox_inches='tight')
 
 
+def plot_k_vs_mu_cylinder_simulations(j, b, chain_length=int(1e6),
+                                      theta=return_theta()):
+    init_state = np.random.choice([-1, 1], theta.shape[0])
+    burn_in = 500
+    states_mat =\
+        gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
+                          n_iter=chain_length+burn_in,
+                          j=j, stim=b, theta=theta)
+    mu = get_mu_from_mat_v2(states_mat)
+    k_vals = [k_val(config, theta*j, stim=b) for config in states_mat]
+    plt.figure()
+    plt.plot(mu, k_vals, marker='o', linestyle='',
+             markersize=2, color='k')
+    plt.xlabel(r'$\mu$')
+    plt.ylabel(r'$k(\mu)$')
+
+
 def dominance_duration_vs_stim(j=0.49, b_list=np.arange(0, 0.25, 0.01),
                                theta=THETA, chain_length=int(1e4), n_nodes_th=75):
     p_thr = n_nodes_th/100
@@ -1657,11 +1674,13 @@ if __name__ == '__main__':
     #                       burn_in=0.1)
     # plot_dominance_duration(j=.9, b=0, chain_length=int(1e6), n_nodes_th=5,
     #                         theta=THETA)
-    dominance_duration_vs_stim(j=0.495,
-                               b_list=np.round(
-                                   np.arange(-0.02, 0.025, 0.005), 4),
-                               theta=return_theta(),
-                               chain_length=int(7e6), n_nodes_th=50)
+    # dominance_duration_vs_stim(j=0.495,
+    #                            b_list=np.round(
+    #                                np.arange(-0.02, 0.025, 0.005), 4),
+    #                            theta=return_theta(),
+    #                            chain_length=int(7e6), n_nodes_th=50)
+    plot_k_vs_mu_cylinder_simulations(j=0.1, b=0, chain_length=int(1e7),
+                                      theta=return_theta())
     # plot_posterior_vs_b_diff_js(j_list=[0.05, 0.21, 0.45],
     #                             b_list=np.linspace(0, 0.25, 11),
     #                             theta=return_theta(rows=10, columns=5, layers=2),
