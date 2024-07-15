@@ -700,14 +700,20 @@ def plot_bp_solution(ax, j_list, b, tol=1e-12, min_r=-20, max_r=20,
 
 
 def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2,
-                              ax=None, ylabel=True):
+                              ax=None, ylabel=True, plot=False, return_all=False):
     time = np.arange(0, t_end, dt)
     mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
     mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
     theta = theta*j
     q_y_1 = np.zeros((len(time), theta.shape[0]))
     q_y_neg1 = np.zeros((len(time), theta.shape[0]))
+    if return_all:
+        mu_y_1_all = np.zeros((len(time), theta.shape[0], theta.shape[1]))
+        mu_y_neg1_all = np.zeros((len(time), theta.shape[0], theta.shape[1]))
     for i_t, t in enumerate(time):
+        if return_all:
+            mu_y_1_all[i_t, :, :] = mu_y_1
+            mu_y_neg1_all[i_t, :, :] = mu_y_neg1
         for i in range(theta.shape[0]):
             q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(stim)
             qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-stim)
@@ -736,18 +742,22 @@ def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2,
                 m_y_1_memory = np.copy(mu_y_1[m, i])
                 mu_y_1[m, i] = mu_y_1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
                 mu_y_neg1[m, i] = mu_y_neg1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
-    if ax is None:
-        fig, ax = plt.subplots(1)
-    for q in q_y_1.T:
-        ax.plot(time, q, alpha=0.8)
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_title('J = ' + str(j) + ', B = ' + str(stim))
-    ax.set_xlabel('Time (s)')
-    if ylabel:
-        ax.set_ylabel(r'$q_i(x=1)$')
-    else:
-        ax.set_yticks([])
-    return q_y_1, q_y_neg1
+    if plot:
+        if ax is None:
+            fig, ax = plt.subplots(1)
+        for q in q_y_1.T:
+            ax.plot(time, q, alpha=0.8)
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_title('J = ' + str(j) + ', B = ' + str(stim))
+        ax.set_xlabel('Time (s)')
+        if ylabel:
+            ax.set_ylabel(r'$q_i(x=1)$')
+        else:
+            ax.set_yticks([])
+    if not return_all:    
+        return q_y_1, q_y_neg1
+    if return_all:
+        return q_y_1, q_y_neg1, mu_y_1_all, mu_y_neg1_all
 
 
 def sols(b, jp, N):
@@ -1272,12 +1282,13 @@ def plot_potential_lbp(q=np.arange(0.0001, 1, 0.0001),
         plt.plot(q, pot_min/val_norm, label=label)  # , color=colormap[i_j]
     plt.ylim(-.05, 1.1)
     plt.legend(title='Coupling J')
-    plt.xlabel('Approximate posterior q(x=-1)')
-    plt.ylabel('Normalized potential V(q(x=-1))')
+    plt.xlabel(r'$\nu=1/q(x=-1)-1$')
+    # plt.xlabel('Approximate posterior q(x=-1)')
+    plt.ylabel(r'Normalized potential $V(\nu)$')
     plt.title('B = ' + str(b))
 
 
-def pot_lbp(v, j, b, n, q=True):
+def pot_lbp(v, j, b, n, q=False):
     f = scipy.special.hyp2f1
     k = np.exp(2*j)
     c = np.exp(2*b/n)
@@ -1411,7 +1422,7 @@ def lbp_changing_stim(j, b_list, theta=THETA,
                     + np.exp(j*theta[i, t]-stim) *\
                     (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
                      mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
-    
+
                 m_y_1_memory = np.copy(mu_y_1[t, i])
                 mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
                 mu_y_neg1[t, i] = mu_y_neg1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
@@ -1429,20 +1440,50 @@ def potential_LBP_v0(j, b, N, r=np.linspace(0, 10, 1000)):
     return (np.exp(2*b)*r**(N+1)/(N+1) - np.exp(2*(j+b))*r**(N)/(N) + np.exp(2*j)*r**2/2-r)
 
 
-def plot_x_y_vector_field(j, b, n=3):
+def plot_m1_m2_vector_field(j, b, n=3):
     x = np.linspace(0, .6, 20)
     y = np.linspace(0, .6, 20)
     xx, yy = np.meshgrid(x, y)
-    uu = np.exp(j+b)*xx**(n-1)+np.exp(-j-b)*yy**(n-1)-xx
-    vv = np.exp(-j+b)*xx**(n-1)+np.exp(j-b)*yy**(n-1)-yy
-    fig, ax = plt.subplots(1)
-    ax.quiver(xx, yy, uu, vv)
-    ax.set_xlim(0, max(x))
-    ax.set_ylim(0, max(x))
-    x = np.linspace(0, max(x), 100)
+    uu = (np.exp(j+b)*xx**(n-1)+np.exp(-j-b)*yy**(n-1)-xx)
+    vv = (np.exp(-j+b)*xx**(n-1)+np.exp(j-b)*yy**(n-1)-yy)
+    fig, ax = plt.subplots(ncols=2, figsize=(12, 4))
+    ax[0].quiver(xx, yy, uu, vv)
+    ax[0].set_xlim(0, max(x))
+    ax[0].set_ylim(0, max(x))
+    x = np.linspace(0, max(x), 2000)
     y = x
-    ax.plot(y, ((x-np.exp(j+b)*x**2)*np.exp(j+b))**(1/(n-1)))
-    ax.plot(((x-np.exp(j-b)*x**2)*np.exp(j-b))**(1/(n-1)), x)
+    ax[0].plot(y, ((x-np.exp(j+b)*x**2)*np.exp(j+b))**(1/(n-1)))
+    ax[0].plot(((x-np.exp(j-b)*x**2)*np.exp(j-b))**(1/(n-1)), x)
+    ax[0].set_xlabel(r'$m(x=1)$')
+    ax[0].set_ylabel(r'$m(x=-1)$')
+    x = np.linspace(0, .6, 5000)
+    y = np.linspace(0, .6, 5000)
+    xx, yy = np.meshgrid(x, y)
+    uu = (np.exp(j+b)*xx**(n-1)+np.exp(-j-b)*yy**(n-1)-xx)
+    vv = (np.exp(-j+b)*xx**(n-1)+np.exp(j-b)*yy**(n-1)-yy)
+    modulo = np.sqrt(vv**2 + uu**2)
+    idx_m1 = np.where(modulo < 1e-4)[0]
+    idx_m2 = np.where(modulo < 1e-4)[1]
+    for i in range(len(idx_m1)):
+        ax[1].plot(x[idx_m2[i]], y[idx_m1[i]], color='r', marker='x',
+                   markersize=9)
+    image = ax[1].imshow(np.flipud(modulo), extent=[0, max(y), 0, max(x)],
+                         cmap='gist_gray', aspect='auto',
+                         norm=mpl.colors.SymLogNorm(linthresh=0.03, linscale=0.03,
+                                                    vmin=1e-8,
+                                                    vmax=np.nanmax(modulo), base=10))
+    ax[1].set_ylim(-0.01, 0.61)
+    ax[1].set_xlim(-0.01, 0.61)
+    plt.colorbar(image, label=r'speed, $||f(x_1, x_2)||$', ax=ax[1])
+    ax[1].set_xlabel(r'$m(x=1)$')
+    ax[1].set_ylabel(r'$m(x=-1)$')
+    ax3d = plt.figure().add_subplot(projection='3d')
+    ax3d.plot_surface(xx, yy, modulo, cmap='pink',
+                      norm=mpl.colors.LogNorm(vmin=1e-3,
+                                              vmax=np.nanmax(modulo)))
+    # pot = np.exp(j+b)*xx**(n)/n+np.exp(-j-b)*yy**(n)/n-xx**2 / 2 - \
+    #         (np.exp(-j+b)*xx**(n)/n+np.exp(j-b)*yy**(n)/n-yy ** 2 / 2)
+    # ax3d.plot_surface(xx, yy, pot, cmap='pink')
 
 
 def plot_posterior_vs_stim(j_list=[0.05, 0.4, 0.7],
@@ -1479,6 +1520,9 @@ if __name__ == '__main__':
     #                         theta=THETA, dist_metric=None, nrows=2)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
+    # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
+    #                    j_list=[0.1, 0.4, 0.5, np.log(3)/2, 0.57, 0.585, 0.6, .65],
+    #                    b=0, n=3)
     # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1001), j=0.1,
     #                             num_iter=40, thr=1e-8, theta=THETA)
     # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.005),
@@ -1494,5 +1538,6 @@ if __name__ == '__main__':
     #                  min_r=-15, max_r=15,
     #                  w_size=0.01, n_neigh=3,
     #                  color='r')
-    plot_lbp_3_examples()
+    # plot_lbp_3_examples()
     # plot_lbp_explanation()
+    plot_m1_m2_vector_field(j=.65, b=0., n=3)
