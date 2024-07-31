@@ -243,8 +243,8 @@ def recurrent_image(dataset_path, n_iter=50, steps=10):
 if __name__ == '__main__':
     # recurrent_image(dataset_path, n_iter=1000, steps=50)
     # lr was 1e-3
-    n_iter = 1000
-    steps = 100
+    n_iter = 2000
+    steps = 200
     model = VAE(dataset_path, batch_size=10, x_dim=5904, hidden_dim=1200,
                 latent_dim=12, lr=1e-4, epochs=40, plot=False)
     x_im = get_image(dataset_path)

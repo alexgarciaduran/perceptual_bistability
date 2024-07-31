@@ -1450,10 +1450,13 @@ def plot_m1_m2_vector_field(j, b, n=3):
     ax[0].quiver(xx, yy, uu, vv)
     ax[0].set_xlim(0, max(x))
     ax[0].set_ylim(0, max(x))
-    x = np.linspace(0, max(x), 2000)
+    x = np.linspace(0, max(x), 5000)
     y = x
-    ax[0].plot(y, ((x-np.exp(j+b)*x**2)*np.exp(j+b))**(1/(n-1)))
-    ax[0].plot(((x-np.exp(j-b)*x**2)*np.exp(j-b))**(1/(n-1)), x)
+    ax[0].plot(y, ((x-np.exp(j+b)*x**2)*np.exp(j+b))**(1/(n-1)),
+               color='k')
+    ax[0].plot(((x-np.exp(j-b)*x**2)*np.exp(j-b))**(1/(n-1)), x,
+               color='k', label='Nullclines')
+    ax[0].legend(frameon=False, bbox_to_anchor=(0.7, 1.1))
     ax[0].set_xlabel(r'$m(x=1)$')
     ax[0].set_ylabel(r'$m(x=-1)$')
     x = np.linspace(0, .6, 5000)
