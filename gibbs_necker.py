@@ -20,6 +20,10 @@ import matplotlib as mpl
 import cv2
 from matplotlib.lines import Line2D
 from joblib import Parallel, delayed
+from sbi.inference import SNLE
+from sbi.utils import MultipleIndependent
+import torch
+from torch.distributions import Beta, Binomial, Gamma, Uniform
 
 
 
@@ -97,6 +101,9 @@ def return_theta(rows=10, columns=5, layers=2, factor=1):
     # graph = nx.from_numpy_matrix(graph_array)
     return graph_array
 
+
+def lattice_1d(columns=5, rows=5, layers=1):
+    return nx.to_numpy_array(nx.grid_graph(dim=(columns, rows, layers)))
 
 def get_theta_signed(j, theta):
     th = np.copy(theta)
@@ -1403,18 +1410,24 @@ def plot_necker_cubes(ax, mu, bot=True, offset=0.6, factor=1.5, msize=4):
 
 
 def plot_k_vs_mu_cylinder_simulations(j, b, chain_length=int(1e6),
-                                      theta=return_theta()):
-    init_state = np.random.choice([-1, 1], theta.shape[0])
-    burn_in = 500
-    states_mat =\
-        gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
-                          n_iter=chain_length+burn_in,
-                          j=j, stim=b, theta=theta)
+                                      theta=return_theta(), data_folder=DATA_FOLDER):
+    path = data_folder + 'simulation_15e6.npy'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path):
+        states_mat = np.load(path, allow_pickle=True)
+    else:
+        init_state = np.random.choice([-1, 1], theta.shape[0])
+        burn_in = 500
+        states_mat =\
+            gibbs_samp_necker(init_state=init_state, burn_in=burn_in,
+                              n_iter=chain_length+burn_in,
+                              j=j, stim=b, theta=theta)
+        np.save(path, states_mat)
     mu = get_mu_from_mat_v2(states_mat)
     k_vals = [k_val(config, theta*j, stim=b) for config in states_mat]
     plt.figure()
     plt.plot(mu, k_vals, marker='o', linestyle='',
-             markersize=2, color='k')
+              markersize=2, color='k')
     plt.xlabel(r'$\mu$')
     plt.ylabel(r'$k(\mu)$')
 
@@ -1642,6 +1655,101 @@ def gibbs_samp_necker_post(init_state, burn_in, n_iter, j, stim=0, theta=THETA):
     return mean_vector/theta.shape[0]/(n_iter-burn_in)
 
 
+def get_b_mat(coh=0, b=0.2, rows=5, columns=5):
+    perc = (coh + 1)/2
+    b_mat = np.random.choice([b, -b], p=[perc, 1-perc],
+                             size=[columns, rows])
+    return b_mat.flatten()
+
+
+def simulate_2d_lattice(b_mat=get_b_mat(coh=0, b=0.1, rows=5, columns=5),
+                        j=0.1, theta=lattice_1d(columns=5, rows=5, layers=1),
+                        n_iter=1000):
+    init_state = np.random.choice([-1, 1], theta.shape[0])
+    burn_in = 100
+    states_mat = gibbs_samp_necker(init_state=init_state,
+                                   burn_in=burn_in, n_iter=n_iter, j=j,
+                                   stim=b_mat, theta=theta)
+    mean_states = np.nanmean(states_mat, axis=1)
+    # plt.figure()
+    # plt.plot(mean_states)
+    # print(np.mean(mean_states))
+    fig, ax = plt.subplots(ncols=3, figsize=(10, 6))
+    ax[0].imshow(np.flipud(b_mat.reshape(7, 7)), cmap='bwr')
+    ax[0].set_title('Stimulus')
+    mean_states = np.nanmean(states_mat, axis=0)
+    ax[1].imshow(np.flipud(mean_states.reshape(7, 7)), cmap='bwr',
+                 vmin=-1, vmax=1)
+    ax[1].set_title(r'$<x_i>_t$')
+    mean_states = np.nanmean((states_mat+1)/2, axis=0)
+    # gauss = gkern(nsig=1.35)  #  + 0.5
+    # gauss /= np.max(gauss)
+    filtered = mean_states.reshape(7, 7)  # *gauss
+    im = ax[2].imshow(np.flipud(filtered), cmap='PuOr',
+                      vmin=0, vmax=1)
+    ax[2].set_title(r'$q(x_i=1)$')
+    plt.colorbar(im, fraction=0.05)
+
+
+def plot_2d_lattice_conf_vs_coh(coh_list=np.arange(-0.5, 0.5, 0.01),
+                        j_list=np.arange(0.01, 0.42, 0.2),
+                        theta=lattice_1d(columns=5, rows=5, layers=1),
+                        n_iter=1000):
+    fig, ax = plt.subplots(1)
+    colors = ['navajowhite', 'orange', 'saddlebrown']
+    for i_j, j in enumerate(j_list):
+        mean_st_list = []
+        for coh in coh_list:
+            b_mat=get_b_mat(coh=coh, b=0.1, rows=5, columns=5)
+            init_state = np.random.choice([-1, 1], theta.shape[0])
+            burn_in = 100
+            states_mat = gibbs_samp_necker(init_state=init_state,
+                                           burn_in=burn_in, n_iter=n_iter, j=j,
+                                           stim=b_mat, theta=theta)
+            mean_states = np.mean(np.nanmean((states_mat+1)/2, axis=1))
+            mean_st_list.append(mean_states)
+        ax.plot(coh_list, mean_st_list, color=colors[i_j],
+                label=str(round(j, 1)))
+    ax.set_xlabel('coherence')
+    ax.set_ylabel('confidence')
+    ax.legend(title='J')
+
+
+def gkern(kernlen=20, nsig=3):
+    """Returns a 2D Gaussian kernel."""
+
+    x = np.linspace(-nsig, nsig, kernlen+1)
+    kern1d = np.diff(scipy.stats.norm.cdf(x))
+    kern2d = np.outer(kern1d, kern1d)
+    return kern2d/kern2d.sum()
+
+
+def create_priors_j_b(jmin=0, jmax=2,
+                      bmin=-5, bmax=5,
+                      num_simulations=int(15e6)):
+    prior =\
+        MultipleIndependent([
+            Uniform(torch.tensor([jmin]),
+                    torch.tensor([jmax])),  # j
+            Uniform(torch.tensor([bmin]),
+                    torch.tensor([bmax]))])  # b
+    return prior, prior.sample((num_simulations,))
+
+
+def mnle_cylinder(path):
+    x = np.load(path, allow_pickle=True)
+    x = torch.tensor(x).to(torch.float32)
+    prior, theta_all_inp = create_priors_j_b(
+        jmin=0, jmax=2, bmin=-5, bmax=5,
+        num_simulations=int(15e6))
+    trainer = SNLE(prior=prior)
+    print('Starting network training')
+    # network training
+    trainer = trainer.append_simulations(theta_all_inp, x)
+    estimator = trainer.train(show_train_summary=True)
+    
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
@@ -1679,8 +1787,17 @@ if __name__ == '__main__':
     #                                np.arange(-0.02, 0.025, 0.005), 4),
     #                            theta=return_theta(),
     #                            chain_length=int(7e6), n_nodes_th=50)
-    plot_k_vs_mu_cylinder_simulations(j=0.1, b=0, chain_length=int(1e7),
-                                      theta=return_theta())
+    # plot_k_vs_mu_cylinder_simulations(j=0.495, b=0, chain_length=int(1.5e7),
+    #                                   theta=return_theta())
+    # b_mat = get_b_mat(coh=0.2, b=.2, rows=7, columns=7)
+    # for j in [0.01, 0.1, 0.2, 0.3]:
+    #     simulate_2d_lattice(b_mat=b_mat,
+    #                         j=j, theta=lattice_1d(columns=7, rows=7, layers=1),
+    #                         n_iter=20000)
+    plot_2d_lattice_conf_vs_coh(coh_list=np.arange(-1, 1, 0.1),
+                            j_list=np.arange(0.1, 0.31, 0.1),
+                            theta=lattice_1d(columns=5, rows=5, layers=1),
+                            n_iter=200000)
     # plot_posterior_vs_b_diff_js(j_list=[0.05, 0.21, 0.45],
     #                             b_list=np.linspace(0, 0.25, 11),
     #                             theta=return_theta(rows=10, columns=5, layers=2),
