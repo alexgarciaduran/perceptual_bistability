@@ -79,6 +79,24 @@ def mean_field_stim(J, num_iter, stim, sigma=1, theta=theta, val_init=None):
     return vec_time
 
 
+def mean_field_neg_stim_back(j, num_iter, stim, theta=theta, val_init=None):
+    #initialize random state of the cube
+    if val_init is None:
+        vec = np.random.rand(theta.shape[0])
+    else:
+        vec = np.repeat(val_init, theta.shape[0])
+    vec_time = np.empty((num_iter, theta.shape[0]))
+    vec_time[:] = np.nan
+    vec_time[0, :] = vec
+    for i in range(1, num_iter):
+        for q in range(theta.shape[0]):
+            neighbours = theta[q].astype(dtype=bool)
+            # th_vals = theta[q][theta[q] != 0]
+            vec[q] = gn.sigmoid(2*(sum(j*(2*vec[neighbours]-1)+stim*(-1)**(q > (theta.shape[0]//2-1))))) 
+        vec_time[i, :] = vec
+    return vec_time
+
+
 def mean_field_mean_neighs(J, num_iter, stim, theta=theta, val_init=None):
     #initialize random state of the cube
     if val_init is None:
@@ -94,6 +112,47 @@ def mean_field_mean_neighs(J, num_iter, stim, theta=theta, val_init=None):
         vec_time[i] = vec
     return vec_time
 
+
+def plot_mean_field_neg_stim_fixed_points(j_list, b=0, theta=theta, num_iter=100):
+    sol_final = np.empty((theta.shape[0], len(j_list)))
+    sol_final_09 = np.empty((theta.shape[0], len(j_list)))
+    for i_j, j in enumerate(j_list):
+        vec = mean_field_neg_stim_back(j=j, num_iter=num_iter, stim=b, theta=theta, val_init=0.05)
+        vec_final = vec[-1, :]
+        # vec_final = [np.max((vec_final[i], 1-vec_final[i])) for i in range(theta.shape[0])]
+        sol_final[:, i_j] = vec_final
+        vec = mean_field_neg_stim_back(j=j, num_iter=num_iter, stim=b, theta=theta, val_init=0.95)
+        vec_final = vec[-1, :]
+        # vec_final = [np.max((vec_final[i], 1-vec_final[i])) for i in range(theta.shape[0])]
+        sol_final_09[:, i_j] = vec_final
+    fig, ax = plt.subplots(ncols=2, figsize=(10, 5))
+    diff_sols_01 = sol_final[:4] - sol_final[4:]
+    diff_sols_01 = (np.mean(sol_final[:4], axis=0) + np.mean(sol_final[4:], axis=0))/2
+    diff_sols_09 = (np.mean(sol_final_09[:4], axis=0) + np.mean(sol_final_09[4:], axis=0))/2
+    # diff_sols_09 = sol_final_09[:4] - sol_final_09[4:] 
+    for i in range(8):
+        if i > 3:
+            color = 'r'
+            label = '- B'
+        if i <= 3:
+            color = 'k'
+            label = '+ B'
+        if i == 0 or i == 4:
+            ax[0].plot(j_list, sol_final[i, :], color=color,
+                       label=label)
+        else:
+            ax[0].plot(j_list, sol_final[i, :], color=color)
+        ax[0].plot(j_list, sol_final_09[i, :], color=color)
+    ax[1].plot(j_list, diff_sols_01, color='k')
+    ax[1].plot(j_list, diff_sols_09, color='k')
+        # ax[1].plot(j_list, diff_sols_09[i, :], color='r')
+    ax[1].set_xlabel('Coupling, J')
+    ax[1].set_ylabel('Mean of solutions')
+    ax[0].set_xlabel('Coupling, J')
+    ax[0].set_ylabel('Approximate posterior, q')
+    ax[0].legend()
+    
+    
 
 
 def mean_field_fixed_points(j_list, stim, num_iter=100):
@@ -1696,7 +1755,7 @@ def plot_dominance_duration_mean_field(j, b, theta=theta, noise=0,
                                        tau=1, time_end=10, dt=1e-1):
     time, vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
                                                        time_end=time_end, dt=dt,
-                                                       tau_n=tau)
+                                                       tau_n=tau*100)
     # plt.figure()
     mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
     # plt.plot(mean_states)
@@ -2069,6 +2128,12 @@ def dominance_duration_vs_stim(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01
                linewidth=2.5)
     ax[3].set_xlabel('Sensory evidence, B')
     ax[3].set_ylabel('Alternation rate')
+    fig3, ax3 = plt.subplots(1)
+    ax3.plot(list_predom_q1, list_time_q1, label='q(x=1)', color='green', linewidth=2.5)
+    ax3.plot(list_predom_q2, list_time_q2, label='q(x=-1)', color='r', linewidth=2.5)
+    ax.legend()
+    ax3.set_xlabel('Perceptual predominance (<q(x=i)>')
+    ax3.set_ylabel('Avg. perceptual dominance, T(x=1)')
 
 
 if __name__ == '__main__':
@@ -2111,7 +2176,7 @@ if __name__ == '__main__':
     #                          b_list=np.linspace(-0.2, 0.2, 100),
     #                          tol=1e-10)
     # plot_dominance_duration_mean_field(j=.39, b=0, theta=theta, noise=0.1,
-    #                                    tau=0.008, time_end=15000, dt=1e-3)
+    #                                     tau=0.008, time_end=15000, dt=1e-3)
     # plot_slope_wells_vs_B(j_list=np.arange(0.6, 1.01, 0.1),
     #                       b_list=np.arange(-.3, .3, 0.01))
     # plot_posterior_vs_stim(j_list=[0.05, 0.2, 0.41],
@@ -2121,7 +2186,10 @@ if __name__ == '__main__':
     # boltzmann_2d_change_j(noise=0.1)
     # boltzmann_2d_change_sigma(j=0.3, b=0)
     dominance_duration_vs_stim(noise=0.1, j=0.39,
-                               b_list=np.round(
-                                   np.arange(-0.01, 0.012, 0.0005), 4),
-                               theta=theta, time_end=12000, dt=1e-3, tau=0.008,
-                               n_nodes_th=50)
+                                b_list=np.round(
+                                    np.arange(-0.01, 0.012, 0.0005), 4),
+                                theta=theta, time_end=12000, dt=1e-3, tau=0.008,
+                                n_nodes_th=50)
+    # for b in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]:
+    #     plot_mean_field_neg_stim_fixed_points(j_list=np.arange(0, 1, 0.005),
+    #                                           b=b, theta=theta, num_iter=20)
