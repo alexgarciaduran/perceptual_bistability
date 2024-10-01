@@ -20,9 +20,10 @@ import matplotlib as mpl
 import cv2
 from matplotlib.lines import Line2D
 from joblib import Parallel, delayed
-from sbi.inference import SNLE
+from sbi.inference import MNLE
 from sbi.utils import MultipleIndependent
 import torch
+import pickle
 from torch.distributions import Beta, Binomial, Gamma, Uniform
 
 
@@ -79,6 +80,14 @@ THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [0, 0, 1, 0, 1, 0, 0, 1], [0, 0, 0, 1, 0, 1, 1, 0]])
 
 
+def theta_circle(j_star=1):
+    return np.array([[0 ,1 ,0 ,0 ,j_star ,0 ,0 ,1], [1, 0, 1, 0, 0, j_star, 0, 0],
+                    [0, 1, 0, 1, 0, 0, j_star, 0], [0, 0, 1, 0, 1, 0, 0, j_star],
+                    [j_star, 0, 0, 1, 0, 1, 0, 0], [0, j_star, 0, 0, 1, 0, 1, 0],
+                    [0, 0, j_star, 0, 0, 1, 0, 1], [1, 0, 0, j_star, 0, 0, 1, 0]])
+    
+
+
 def return_theta(rows=10, columns=5, layers=2, factor=1):
     graph = nx.grid_graph(dim=(columns, rows, layers))
     graph_array = nx.to_numpy_array(graph)
@@ -104,6 +113,7 @@ def return_theta(rows=10, columns=5, layers=2, factor=1):
 
 def lattice_1d(columns=5, rows=5, layers=1):
     return nx.to_numpy_array(nx.grid_graph(dim=(columns, rows, layers)))
+
 
 def get_theta_signed(j, theta):
     th = np.copy(theta)
@@ -1277,34 +1287,37 @@ def plot_occ_probs_gibbs(data_folder,
 
 
 def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False,
-                           index=0, color='grey'):
-    fig, ax = plt.subplots(1, figsize=(4, 3.5))
-    ax.plot([0, 1], [0, 0], color='k', zorder=1)
-    ax.plot([0, 0], [0, 1], color='k', zorder=1)
-    ax.plot([0, 1], [1, 1], color='k', zorder=1)
-    ax.plot([0, offset], [1, 1+offset], color='k', zorder=1)
-    ax.plot([1, 1+offset], [0+offset, 0+offset], color='k', zorder=1)
-    ax.plot([offset, 1+offset], [1+offset, 1+offset], color='k', zorder=1)
-    ax.plot([1+offset, 1+offset], [0+offset, 1+offset], color='k', zorder=1)
-    ax.plot([1, 1+offset], [1, 1+offset], color='k', zorder=1)
-    ax.plot([offset, 1+offset], [offset, offset], color='k', zorder=1)
-    ax.plot([0, offset], [0, offset], color='k', zorder=1)
-    ax.plot([1, 1+offset], [0, offset], color='k', zorder=1)
+                           index=0, color='grey', eps=1e-2):
+    fig, ax = plt.subplots(1, figsize=(2.6, 2.6), dpi=100)
+    ax.plot([0, 1], [0, 0], color='k', zorder=1, linewidth=2)
+    ax.plot([0, 0], [0, 1], color='k', zorder=1, linewidth=2)
+    ax.plot([0, 1], [1, 1], color='k', zorder=1, linewidth=2)
+    ax.plot([0, offset], [1, 1+offset], color='k', zorder=1, linewidth=2)
+    ax.plot([1, 1+offset], [0+offset, 0+offset], color='k', zorder=1, linewidth=2)
+    ax.plot([offset, 1+offset], [1+offset, 1+offset], color='k', zorder=1, linewidth=2)
+    ax.plot([1+offset, 1+offset], [0+offset, 1+offset], color='k', zorder=1, linewidth=2)
+    ax.plot([1, 1+offset], [1, 1+offset], color='k', zorder=1, linewidth=2)
+    ax.plot([offset, 1+offset], [offset, offset], color='k', zorder=1, linewidth=2)
+    ax.plot([0, offset], [0, offset], color='k', zorder=1, linewidth=2)
+    ax.plot([1, 1+offset], [0, offset], color='k', zorder=1, linewidth=2)
     if not whole:
         if interp_sfa:
-            ax.fill_between([0, 1], [1, 1], color=color, alpha=1, zorder=2)
-            ax.plot([1, 1], [0, 1], color='k', zorder=1)
+            ax.fill_between([0+eps, 1-eps], [1-eps, 1-eps], [eps, eps], color=color, alpha=1, zorder=2)
+            ax.plot([1, 1], [0, 1], color='k', zorder=1, linewidth=2)
         if not interp_sfa:
-            ax.fill_between([offset, 1+offset],
-                            [1+offset, 1+offset], [offset, offset],
+            ax.fill_between([offset+eps, 1+offset-eps],
+                            [1+offset-eps, 1+offset-eps], [offset+eps, offset+eps],
                             color=color, alpha=1, zorder=2)
-            ax.plot([offset, offset], [offset, 1+offset], color='k', zorder=1)
+            ax.plot([offset, offset], [offset, 1+offset], color='k', zorder=1, linewidth=2)
     else:
-        ax.plot([offset, offset], [offset, 1+offset], color='k', zorder=1)
-        ax.plot([1, 1], [0, 1], color='k', zorder=1)
+        ax.plot([offset, offset], [offset, 1+offset], color='k', zorder=1, linewidth=2)
+        ax.plot([1, 1], [0, 1], color='k', zorder=1, linewidth=2)
     plt.axis('off')
-    img_path = DATA_FOLDER + '/necker_images/fig_' + str(index) + '.png'
-    fig.savefig(img_path, dpi=25, bbox_inches='tight')
+    if not whole:
+        img_path = DATA_FOLDER + '/necker_images_white/fig_' + str(index) + '.png'
+    if whole:
+        img_path = DATA_FOLDER + '/necker_images_ambiguous/fig_' + str(index) + '.png'
+    fig.savefig(img_path, dpi=100, bbox_inches='tight')
     # img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
     # imgrot = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE) / 255
     # img_path = DATA_FOLDER + '/necker_images/fig_rot_' + str(index) + '.png'
@@ -1314,7 +1327,7 @@ def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False,
 def save_necker_cubes(offset=np.arange(0.1, 0.45, 0.01)):
     index = 0
     conds = np.array(list(itertools.product([True, False], repeat=2)))
-    color = 'silver'
+    color = 'white'
     for of in offset:
         for arr in conds:
             sfa, whole = arr
@@ -1687,7 +1700,7 @@ def simulate_2d_lattice(b_mat=get_b_mat(coh=0, b=0.1, rows=5, columns=5),
     filtered = mean_states.reshape(7, 7)  # *gauss
     im = ax[2].imshow(np.flipud(filtered), cmap='PuOr',
                       vmin=0, vmax=1)
-    ax[2].set_title(r'$q(x_i=1)$')
+    ax[2].set_title(r'$q(x_i=1), \hat{q} = $, ' + str(round(np.mean(filtered), 3)))
     plt.colorbar(im, fraction=0.05)
 
 
@@ -1697,11 +1710,11 @@ def plot_2d_lattice_conf_vs_coh(coh_list=np.arange(-0.5, 0.5, 0.01),
                         n_iter=1000):
     fig, ax = plt.subplots(1)
     colors = ['navajowhite', 'orange', 'saddlebrown']
+    init_state = np.random.choice([-1, 1], theta.shape[0])
     for i_j, j in enumerate(j_list):
         mean_st_list = []
         for coh in coh_list:
             b_mat=get_b_mat(coh=coh, b=0.1, rows=5, columns=5)
-            init_state = np.random.choice([-1, 1], theta.shape[0])
             burn_in = 100
             states_mat = gibbs_samp_necker(init_state=init_state,
                                            burn_in=burn_in, n_iter=n_iter, j=j,
@@ -1724,30 +1737,49 @@ def gkern(kernlen=20, nsig=3):
     return kern2d/kern2d.sum()
 
 
-def create_priors_j_b(jmin=0, jmax=2,
-                      bmin=-5, bmax=5,
+def create_priors_j_b(jmin=0., jmax=2.,
+                      bmin=-5., bmax=5.,
                       num_simulations=int(15e6)):
     prior =\
         MultipleIndependent([
             Uniform(torch.tensor([jmin]),
                     torch.tensor([jmax])),  # j
             Uniform(torch.tensor([bmin]),
-                    torch.tensor([bmax]))])  # b
+                    torch.tensor([bmax]))],
+            validate_args=False)  # b
     return prior, prior.sample((num_simulations,))
 
 
-def mnle_cylinder(path):
+def mnle_cylinder(data_folder=DATA_FOLDER, theta=return_theta(),
+                  j=0.495, b=0, num_simulations=int(1e6)):
+    print('Load data')
+    path = data_folder + 'simulation_2e6.npy'
     x = np.load(path, allow_pickle=True)
-    x = torch.tensor(x).to(torch.float32)
+    x = x[:num_simulations, :]
+    mu = np.sum(x, axis=1)
+    choice = np.sign(mu)+1
+    mu = torch.tensor(mu).to(torch.float32)
     prior, theta_all_inp = create_priors_j_b(
-        jmin=0, jmax=2, bmin=-5, bmax=5,
-        num_simulations=int(15e6))
-    trainer = SNLE(prior=prior)
+        jmin=0., jmax=2., bmin=-5., bmax=5.,
+        num_simulations=num_simulations)
+    print('Compute k(x) with J, B sampled from prior')
+    k_vals = [k_val(config, theta*theta_all_inp[i_con, 0].detach().numpy(),
+                    stim=theta_all_inp[i_con, 1].detach().numpy()) for i_con, config in enumerate(x)]
+    k_vals = torch.tensor(k_vals).to(torch.float32)
+    choice = torch.tensor(choice).to(torch.float32)
+    x_net = torch.column_stack((k_vals, mu, choice))
+    trainer = MNLE(prior=prior)
     print('Starting network training')
     # network training
-    trainer = trainer.append_simulations(theta_all_inp, x)
+    print('Append simulations to network')
+    trainer = trainer.append_simulations(theta_all_inp, x_net)
+    print('Train network')
     estimator = trainer.train(show_train_summary=True)
-    
+    num_simulations = theta_all_inp.shape[0]
+    with open(data_folder + f"/mnle_n{num_simulations}.p",
+              "wb") as fh:
+        pickle.dump(dict(estimator=estimator,
+                         num_simulations=num_simulations), fh)
 
 
 if __name__ == '__main__':
@@ -1789,16 +1821,18 @@ if __name__ == '__main__':
     #                            chain_length=int(7e6), n_nodes_th=50)
     # plot_k_vs_mu_cylinder_simulations(j=0.495, b=0, chain_length=int(1.5e7),
     #                                   theta=return_theta())
-    # b_mat = get_b_mat(coh=0.2, b=.2, rows=7, columns=7)
-    # for j in [0.01, 0.1, 0.2, 0.3]:
-    #     simulate_2d_lattice(b_mat=b_mat,
-    #                         j=j, theta=lattice_1d(columns=7, rows=7, layers=1),
-    #                         n_iter=20000)
+    b_mat = get_b_mat(coh=0.2, b=.2, rows=7, columns=7)
+    for j in [0.01, 0.1, 0.2, 0.3]:
+        simulate_2d_lattice(b_mat=b_mat,
+                            j=j, theta=lattice_1d(columns=7, rows=7, layers=1),
+                            n_iter=20000)
     plot_2d_lattice_conf_vs_coh(coh_list=np.arange(-1, 1, 0.1),
                             j_list=np.arange(0.1, 0.31, 0.1),
                             theta=lattice_1d(columns=5, rows=5, layers=1),
-                            n_iter=200000)
+                            n_iter=20000)
     # plot_posterior_vs_b_diff_js(j_list=[0.05, 0.21, 0.45],
     #                             b_list=np.linspace(0, 0.25, 11),
     #                             theta=return_theta(rows=10, columns=5, layers=2),
     #                             burn_in=100, n_iter=int(1e3))
+    # mnle_cylinder(data_folder=DATA_FOLDER, theta=return_theta(),
+    #                   j=0.495, b=0, num_simulations=int(1e4))
