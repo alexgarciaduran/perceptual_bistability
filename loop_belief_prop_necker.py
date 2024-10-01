@@ -50,6 +50,64 @@ def jneigbours(j,i, theta=THETA):
 
 def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5, stim=0):
     """
+    Computes the approximate probability of having x=1 or x=-1
+    (e.g. depth), for any configuration given by the matrix of connections theta.
+    
+    Input:
+    - theta {matrix}: matrix that defines any nodes combination (connectivity)
+    - j {double}: coupling strenght
+    - num_iter {integer}: number of iterations for the algorithm to run
+    - thr {double}: threshold to stop iterating, i.e. convergence
+    - stim {double}: sensory evidence
+    
+    Output:
+    - returns approximate posterior of x=1 and x=-1, and number of iterations needed
+    """
+    # multiply arrays element wise
+    mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    mat_memory_1 = np.copy(mu_y_1)
+    mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    mat_memory_neg1 = np.copy(mu_y_neg1)
+    for n in range(num_iter):
+        mat_memory_1 = np.copy(mu_y_1)
+        mat_memory_neg1 = np.copy(mu_y_neg1)
+        # for all the nodes that i is connected
+        for i in range(theta.shape[0]):
+            for t in np.where(theta[i, :] != 0)[0]:
+                # positive y_i
+                mu_y_1[t, i] = np.exp(j*theta[i, t]+stim) *\
+                        np.prod(mu_y_1[jneigbours(t, i, theta=theta), t]) \
+                        + np.exp(-j*theta[i, t]-stim) *\
+                        np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])
+                # mu_y_1 += np.random.rand(8, 8)*1e-3
+                # negative y_i
+                mu_y_neg1[t, i] = np.exp(-j*theta[i, t]+stim) *\
+                    np.prod(mu_y_1[jneigbours(t, i, theta=theta), t])\
+                    + np.exp(j*theta[i, t]-stim) *\
+                    np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])
+
+                m_y_1_memory = np.copy(mu_y_1[t, i])
+                mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                # mu_y_neg1 += np.random.rand(8, 8)*1e-3
+        if np.sqrt(np.sum(mat_memory_1 - mu_y_1)**2) and\
+            np.sqrt(np.sum(mat_memory_neg1 - mu_y_neg1)**2) <= thr:
+            break
+    q_y_1 = np.zeros(theta.shape[0])
+    q_y_neg1 = np.zeros(theta.shape[0])
+    for i in range(theta.shape[0]):
+        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(stim)
+        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-stim)
+        q_y_1[i] = q1/(q1+qn1)
+        q_y_neg1[i] = qn1/(q1+qn1)
+    # gn.plot_cylinder(q=q_y_1.reshape(5, 10, 2),
+    #                  columns=5, rows=10, layers=2, offset=0.4, minmax_norm=True)
+    return q_y_1, q_y_neg1, n+1
+
+
+
+def Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, stim=0):
+    """
     Computes the exact approximate probability of having a front perception for
     the depth of the 8 nodes.
     Input:
@@ -71,20 +129,24 @@ def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5, stim=0):
         for i in range(theta.shape[0]):
             for t in np.where(theta[i, :] != 0)[0]:
                 # positive y_i
-                mu_y_1[t, i] = np.exp(j*theta[i, t]+stim) *\
+                mu_y_1[t, i] = np.exp(j*theta[i, t]+stim)**(alpha) *\
                         (mu_y_1[jneigbours(t, i, theta=theta)[0], t]*
-                         mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
-                        + np.exp(-j*theta[i, t]-stim) *\
+                         mu_y_1[jneigbours(t, i, theta=theta)[1], t]) *\
+                        mu_y_1[i, t]**(1-alpha) + \
+                        + np.exp(-j*theta[i, t]-stim)**(alpha) *\
                         (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
-                         mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
+                         mu_y_neg1[jneigbours(t, i, theta=theta)[1], t]) *\
+                        mu_y_neg1[i, t]**(1-alpha)
                 # mu_y_1 += np.random.rand(8, 8)*1e-3
                 # negative y_i
-                mu_y_neg1[t, i] = np.exp(-j*theta[i, t]+stim) *\
+                mu_y_neg1[t, i] = np.exp(-j*theta[i, t]+stim)**(alpha) *\
                     (mu_y_1[jneigbours(t, i, theta=theta)[0], t] *\
-                     mu_y_1[jneigbours(t, i, theta=theta)[1], t])\
-                    + np.exp(j*theta[i, t]-stim) *\
+                     mu_y_1[jneigbours(t, i, theta=theta)[1], t])*\
+                    mu_y_1[i, t]**(1-alpha) + \
+                    + np.exp(j*theta[i, t]-stim)**(alpha) *\
                     (mu_y_neg1[jneigbours(t, i, theta=theta)[0], t] *
-                     mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])
+                     mu_y_neg1[jneigbours(t, i, theta=theta)[1], t])*\
+                    mu_y_neg1[i, t]**(1-alpha)
 
                 m_y_1_memory = np.copy(mu_y_1[t, i])
                 mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
@@ -96,8 +158,8 @@ def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5, stim=0):
     q_y_1 = np.zeros(theta.shape[0])
     q_y_neg1 = np.zeros(theta.shape[0])
     for i in range(theta.shape[0]):
-        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(stim)
-        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-stim)
+        q1 = np.prod((mu_y_1[np.where(theta[:, i] != 0), i])) * np.exp(stim)
+        qn1 = np.prod((mu_y_neg1[np.where(theta[:, i] != 0), i])) * np.exp(-stim)
         q_y_1[i] = q1/(q1+qn1)
         q_y_neg1[i] = qn1/(q1+qn1)
     # gn.plot_cylinder(q=q_y_1.reshape(5, 10, 2),
@@ -105,7 +167,8 @@ def Loopy_belief_propagation(theta, num_iter, j, thr=1e-5, stim=0):
     return q_y_1, q_y_neg1, n+1
 
 
-def Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, stim=0):
+
+def Frac_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, stim=0):
     """
     Computes the exact approximate probability of having a front perception for
     the depth of the 8 nodes.
@@ -178,7 +241,7 @@ def posterior_vs_b(stim_list=np.linspace(-2, 2, 10001),
     init_conds_bp = [10, 5, 20, 1, 0]
     n_its = len(init_conds_bp)
     for stim in stim_list:
-        q1 = lambda q: gn.sigmoid(2*N*j*(2*q-1) + stim*2*N) - q
+        q1 = lambda q: gn.sigmoid(2*N*j*(2*q-1) + stim*2) - q
         sol, _, flag, _ =\
             fsolve(q1, init_cond, full_output=True)
         if stim >= 0:
@@ -384,6 +447,7 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.001),
     ax.set_ylabel('q')
     # plt.plot([np.log(3)/2, 1], [0.5, 0.5], color='grey', alpha=1, linestyle='--',
     #          label='Unstable FP')
+    legendelements = []
     legendelements = [Line2D([0], [0], color='k', lw=2, label='3'),
                       Line2D([0], [0], color='r', lw=2, label='4')]
     # legendelements = [Line2D([0], [0], color='k', lw=2, label='Stable FP'),
@@ -723,20 +787,16 @@ def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2,
             for m in np.where(theta[i, :] != 0)[0]:
                 # positive y_i
                 mu_y_1[m, i] += (np.exp(theta[i, m]+stim) *\
-                        (mu_y_1[jneigbours(m, i, theta=theta)[0], m]*
-                         mu_y_1[jneigbours(m, i, theta=theta)[1], m])\
+                        np.prod(mu_y_1[jneigbours(t, i, theta=theta), t])\
                         + np.exp(-theta[i, m]+stim) *\
-                        (mu_y_neg1[jneigbours(m, i, theta=theta)[0], m] *
-                         mu_y_neg1[jneigbours(m, i, theta=theta)[1], m]) -
+                        np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t]) -
                         mu_y_1[m, i])*dt +\
                     np.sqrt(dt)*noise*np.random.randn()
                 # negative y_i
                 mu_y_neg1[m, i] += (np.exp(-theta[i, m]-stim) *\
-                    (mu_y_1[jneigbours(m, i, theta=theta)[0], m] *\
-                     mu_y_1[jneigbours(m, i, theta=theta)[1], m])\
+                    np.prod(mu_y_1[jneigbours(t, i, theta=theta), t])\
                     + np.exp(theta[i, m]-stim) *\
-                    (mu_y_neg1[jneigbours(m, i, theta=theta)[0], m] *
-                     mu_y_neg1[jneigbours(m, i, theta=theta)[1], m]) -
+                    np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])-
                     mu_y_neg1[m, i])*dt +\
                 np.sqrt(dt)*noise*np.random.randn()
                 m_y_1_memory = np.copy(mu_y_1[m, i])
@@ -1359,22 +1419,31 @@ def plot_potentials_lbp(j_list, b=0, neighs=3, q1=True):
     fig.savefig(DATA_FOLDER + 'potentials_vs_q.svg', dpi=400, bbox_inches='tight')
 
 
-def plot_sols_FLBP(alpha, j_list=np.arange(0, 3, 0.001), theta=THETA,
-                   num_iter=100):
-    sols_pos = []
-    sols_neg = []
-    for j in j_list:
-        pos, neg, n = Fractional_loopy_belief_propagation(theta, num_iter, j, alpha, thr=1e-5, stim=0)
-        sols_pos.append(np.max((pos[0], neg[0])))
-        sols_neg.append(np.min((pos[0], neg[0])))
+def plot_sols_FLBP(alphalist=np.linspace(0, 1, 10),
+                   j_list=np.arange(0, 3, 0.001), theta=THETA,
+                   num_iter=100, stim=0):
     plt.figure()
-    plt.plot(j_list, sols_pos, color='k')
-    plt.plot(j_list, sols_neg, color='k')
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(alphalist)))
+    for ia, alpha in enumerate(alphalist):
+        sols_pos = []
+        sols_neg = []
+        for j in j_list:
+            pos, neg = discrete_DBN(j, b=stim, theta=THETA, num_iter=100, thr=1e-10,
+                                    alpha=alpha)
+            sols_pos.append(np.max((pos[0], neg[0])))
+            sols_neg.append(np.min((pos[0], neg[0])))
+        n = 3
+        plt.axvline(np.log(n/(n-2*alpha))/(2*alpha), color=colormap[ia],
+                    alpha=0.3, linestyle='--')
+        plt.plot(j_list, sols_pos, color=colormap[ia], label=alpha)
+        plt.plot(j_list, sols_neg, color=colormap[ia])
     plt.xlabel('Coupling J')
+    plt.legend()
     plt.ylabel('Approximated posterior q')
+    # n = 3
+    # plt.axvline(np.log(n/(n-2))/(2), color='r', alpha=0.3)
     plt.ylim(-0.05, 1.05)
-    n = 3
-    plt.axvline(np.log(n/(n-2))/(2*alpha), color='r', alpha=0.3)
+    plt.xlim(-0.05, j_list[-1]+5e-2)
 
 
 def plot_lbp_hysteresis(j_list=[0.05, 0.4, 0.7],
@@ -1510,17 +1579,396 @@ def plot_posterior_vs_stim(j_list=[0.05, 0.4, 0.7],
     plt.legend(title='J')
 
 
+def plot_loopy_b_prop_sol_j_ast_circle(j_star_list, num_iter, j_list=np.arange(0, 1, 0.001),
+                                       thr=1e-15, stim=0.):
+    
+    vals_bif = []
+    fig, ax = plt.subplots(1)
+    for j_star in j_star_list:
+        theta = gn.theta_circle(j_star=j_star)
+        vals_all = np.empty((theta.shape[0], len(j_list)))
+        vals_all[:] = np.nan
+        for i_j, j in enumerate(j_list):
+            pos, neg, n = Loopy_belief_propagation(theta=theta,
+                                                   num_iter=num_iter,
+                                                   j=j, thr=thr,
+                                                   stim=stim)
+            vals_all[:, i_j] = [np.max((p, n)) for p, n in zip(pos, neg)]
+        vals_mean = np.round(np.mean(vals_all, axis=0), 3)
+        idx_05 = np.where(vals_mean == 0.5)[0][-1]
+        vals_bif.append(j_list[idx_05])
+    ax.plot(j_star_list, vals_bif, color='k')
+    ax.set_xlabel('Proportion (pJ) of J, J* = J*pJ')
+    ax.set_ylabel('Critical coupling')
+
+
+def plot_loopy_b_prop_circle_kernel(num_iter, j_list=np.arange(0, 1, 0.001),
+                                    thr=1e-15, stim=0.):
+    
+    fig, ax = plt.subplots(1)
+    x = np.arange(8)
+    kernel = cos_kernel(x)
+    vals_all = []
+    for i_j, j in enumerate(j_list):
+        theta = scipy.linalg.circulant(kernel).T*j
+        pos, neg, n = Loopy_belief_propagation(theta=theta,
+                                               num_iter=num_iter,
+                                               j=j, thr=thr,
+                                               stim=stim)
+        vals_all.append(np.max((pos[0], neg[0])))
+    vals_all = np.array(vals_all)
+    ax.plot(j_list, vals_all, color='k')
+    ax.plot(j_list, 1-vals_all, color='k')
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('Approximate posterior')
+
+
+def cos_kernel(x, plot=False):
+    kernel = (np.cos((x-4)*(len(x)-1)/np.pi)+1)/2
+    kernel[0] = 0
+    if plot:
+        plt.figure()
+        plt.plot(x+1, kernel)
+        plt.xlabel('Node index')
+        plt.ylabel(r'Kernel, $k(x) = (\cos((x-4)/(7*\pi))+1)/2$')
+    return kernel
+
+
+def f_j(xj, b):
+    return np.exp(xj*b)
+
+
+def f_ij(xi, xj, j):
+    return np.exp(xi*xj*j)
+
+
+def discrete_DBN(j, b, theta=THETA, num_iter=100, thr=1e-10,
+                 alpha=1):
+    # multiply arrays element wise
+    mat_1 = np.random.rand(theta.shape[0], theta.shape[1])
+    mat_neg1 = np.random.rand(theta.shape[0], theta.shape[1])
+    mu_y_1 = np.multiply(theta, mat_1)
+    mat_memory_1 = np.copy(mu_y_1)
+    mu_y_neg1 = np.multiply(theta, mat_neg1)
+    mat_memory_neg1 = np.copy(mu_y_neg1)
+    for n in range(num_iter):
+        mat_memory_1 = np.copy(mu_y_1)
+        mat_memory_neg1 = np.copy(mu_y_neg1)
+        # for all the nodes that i is connected
+        for i in range(theta.shape[0]):
+            for t in np.where(theta[i, :] != 0)[0]:
+                # positive y_i
+                mu_y_1[t, i] = (np.exp(j*alpha+b) *\
+                        np.prod(mu_y_1[jneigbours(t, i, theta=theta), t]) *\
+                            mu_y_1[i, t]**(1-alpha) \
+                        + np.exp(-j*alpha-b) *\
+                        np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])*\
+                            mu_y_neg1[i, t]**(1-alpha))**(1/alpha)
+                # mu_y_1 += np.random.rand(8, 8)*1e-3
+                # negative y_i
+                mu_y_neg1[t, i] = (np.exp(-j*alpha+b) *\
+                    np.prod(mu_y_1[jneigbours(t, i, theta=theta), t])*\
+                    mu_y_1[i, t]**(1-alpha)
+                    + np.exp(j*alpha-b) *\
+                    np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])*\
+                    mu_y_neg1[i, t]**(1-alpha))**(1/alpha)
+
+                m_y_1_memory = np.copy(mu_y_1[t, i])
+                mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                # mu_y_neg1 += np.random.rand(8, 8)*1e-3
+        if np.sqrt(np.sum(mat_memory_1 - mu_y_1)**2) and\
+            np.sqrt(np.sum(mat_memory_neg1 - mu_y_neg1)**2) <= thr:
+            break
+    q_y_1 = np.zeros(theta.shape[0])
+    q_y_neg1 = np.zeros(theta.shape[0])
+    for i in range(theta.shape[0]):
+        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(b)
+        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-b)
+        q_y_1[i] = q1/(q1+qn1)
+        q_y_neg1[i] = qn1/(q1+qn1)
+    # gn.plot_cylinder(q=q_y_1.reshape(5, 10, 2),
+    #                  columns=5, rows=10, layers=2, offset=0.4, minmax_norm=True)
+    return q_y_1, q_y_neg1
+
+
+def General_belief_propagation(j, b, theta=THETA, num_iter=100, thr=1e-10,
+                               counting_numbers=[1, 1, 1, 1]):
+    alpha, beta, kappa, gamma = counting_numbers
+    # multiply arrays element wise
+    mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    mat_memory_1 = np.copy(mu_y_1)
+    mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
+    mat_memory_neg1 = np.copy(mu_y_neg1)
+    for n in range(num_iter):
+        mat_memory_1 = np.copy(mu_y_1)
+        mat_memory_neg1 = np.copy(mu_y_neg1)
+        # for all the nodes that i is connected
+        for i in range(theta.shape[0]):
+            for t in np.where(theta[i, :] != 0)[0]:
+                # positive y_i
+                mu_y_1[t, i] = (np.exp(j*alpha*beta+b*gamma*kappa) *\
+                       (np.prod(mu_y_1[jneigbours(t, i, theta=theta), t]) *\
+                            mu_y_1[i, t]**(1-alpha/kappa))**kappa \
+                        + np.exp(-j*alpha*beta-b*gamma*kappa) *\
+                        (np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])*\
+                            mu_y_neg1[i, t]**(1-alpha/kappa))**kappa)**(1/alpha)
+                # mu_y_1 += np.random.rand(8, 8)*1e-3
+                # negative y_i
+                mu_y_neg1[t, i] = (np.exp(-j*alpha*beta+b*gamma*kappa) *\
+                       (np.prod(mu_y_1[jneigbours(t, i, theta=theta), t]) *\
+                            mu_y_1[i, t]**(1-alpha/kappa))**kappa \
+                        + np.exp(j*alpha*beta-b*gamma*kappa) *\
+                        (np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])*\
+                            mu_y_neg1[i, t]**(1-alpha/kappa))**kappa)**(1/alpha)
+
+                m_y_1_memory = np.copy(mu_y_1[t, i])
+                mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                # mu_y_neg1 += np.random.rand(8, 8)*1e-3
+        if np.sqrt(np.sum(mat_memory_1 - mu_y_1)**2) and\
+            np.sqrt(np.sum(mat_memory_neg1 - mu_y_neg1)**2) <= thr:
+            break
+    q_y_1 = np.zeros(theta.shape[0])
+    q_y_neg1 = np.zeros(theta.shape[0])
+    for i in range(theta.shape[0]):
+        q1 = (np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(b*gamma))**kappa
+        qn1 = (np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-b*gamma))**kappa
+        q_y_1[i] = q1/(q1+qn1)
+        q_y_neg1[i] = qn1/(q1+qn1)
+    # gn.plot_cylinder(q=q_y_1.reshape(5, 10, 2),
+    #                  columns=5, rows=10, layers=2, offset=0.4, minmax_norm=True)
+    return q_y_1, q_y_neg1    
+
+
+def potential_2d_changing_j(b, alpha=1, n=3, noise=0.2):
+    max_val = 1.25
+    min_val = -1.25
+    min_val_integ = -2
+    epsilon = 5e-3
+    vals = np.arange(min_val, max_val, epsilon)
+    j_list = np.arange(0, 1, 5e-3)
+    boltzmann_distro = np.empty((len(vals), len(j_list)))
+    boltzmann_distro[:] = np.nan
+    for i_j, j in enumerate(j_list):
+        pot_0 = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+        potential = []
+        for i in range(len(vals)):
+            potential.append(-scipy.integrate.quad(pot_0, min_val_integ, vals[i])[0])
+        pot = np.array(potential)
+        distro = np.exp(-2*pot/noise**2)
+        distro = distro / np.nansum(distro)
+        boltzmann_distro[:, i_j] = distro
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud(boltzmann_distro), cmap='Oranges',
+                   extent=[0, 1, -1.25, 1.25], aspect='auto')
+    plt.colorbar(im, ax=ax, label='Boltzmann distribution')
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('Log-message ratio')
+
+
+def log_potential(b, j_list=None, alpha=1, n=3,
+                  ax=None, labels=True, norm=True, transform=True):
+    max_val = 1.25
+    min_val = -1.25
+    min_val_integ = -10
+    epsilon = 1e-3
+    vals = np.arange(min_val, max_val, epsilon)
+    if j_list is None:
+        j_crit = np.log(n / (n-2*alpha)) / (2*alpha)
+        j_list = [round(j_crit-0.2, 2), round(j_crit-0.1, 2), j_crit, round(j_crit+0.1, 2), round(j_crit+0.2, 1)]
+    if ax is None:
+        fig, ax = plt.subplots(1)
+        colormap = pl.cm.Purples(np.linspace(0.2, 1, len(j_list)))
+    else:
+        colormap = ['k']
+    for i_j, j in enumerate(j_list):
+        pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+        potential = []
+        for i in range(len(vals)):
+            potential.append(-scipy.integrate.quad(pot, min_val_integ, vals[i])[0])
+        potential = np.array(potential)
+        if norm:
+            norm_pot = (potential - np.min(potential))/ (np.max(potential) - np.min(potential))
+        else:
+            norm_pot = potential
+        color = colormap[i_j] if i_j != 2 else 'red'
+        label = str(j)  if i_j != 2 else r'$J^* = \frac{1}{2\alpha}\log{\frac{N}{N-2\alpha}}$'
+        if transform:
+            ax.plot(sigmoid(vals*n+b), norm_pot,
+                    label=label, color=color)
+        else:
+            ax.plot(vals, norm_pot,
+                    label=label, color=color)
+    if labels:
+        plt.legend(title='Coupling, J')
+        if not transform:
+            plt.xlabel(r'Log-message ratio, $M_{i\rightarrow j} = \frac{1}{2} \log \left[ \frac{m_{i\rightarrow j (+1)}}{m_{i\rightarrow j (+1)}}\right]$',
+                       fontsize=12)
+        if transform:
+            plt.xlabel(r'Approximate posterior, $q_i(x=1)$',
+                       fontsize=12)
+        plt.ylabel(r'Potential on log-message ratio, $V(M_{i\rightarrow j})$')
+        plt.ylim(-0.015, 0.15)
+
+
+def dyn_sys_fbp(logmess, j, b, alpha=1, n=3, dt=1e-1, noise=0.1):
+    logmess = logmess + dt*(1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(logmess*(n-alpha)+b)) - logmess) +\
+        np.sqrt(dt)*noise*np.random.randn()
+    return logmess
+
+
+def plot_derivative_dyn_sys():
+    plt.figure()
+    jl = np.arange(0, 1, 1e-3)
+    plt.axhline(0, color='k')
+    for al in [0.1, 0.5, 1, 1.4]:
+        plt.plot(jl, ((3-al)*np.tanh(jl*al)/al-1),
+        color='r', alpha=al/1.8+0.1, label=al)
+        plt.axvline(np.log(3/(3-al*2))/(2*al),
+                    color='r', alpha=al/1.8+0.1)
+    plt.xlabel('coupling J')
+    plt.legend()
+    plt.ylabel("g'(x=0)")
+
+
+def plot_pot_evolution_FBP(j=0.75, b=0, alpha=1, n=3, num_iter=10):
+    fig, ax = plt.subplots(ncols=5, nrows=3, figsize=(16, 10))
+    plt.subplots_adjust(top=0.95, bottom=0.05, left=0.075, right=0.98,
+                        hspace=0.3, wspace=0.5)
+    ax = ax.flatten()
+    logmessages = []
+    logmess = np.random.randn()/10
+    pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    potential_vals = []
+    for i in range(num_iter):
+        logmess = dyn_sys_fbp(logmess, j, b, alpha=1, n=3, dt=1e-1, noise=1)
+        logmessages.append(logmess)
+        val_pot = -scipy.integrate.quad(pot, -1.25, logmess)[0]
+        potential_vals.append(val_pot)
+    for i_a, a in enumerate(ax):
+        log_potential(b, j_list=[j], alpha=1, n=3, ax=a, labels=False,
+                      norm=False)
+        a.plot(logmessages[i_a], potential_vals[i_a], marker='o', color='r')
+
+
+def dyn_sys_ql(ql, ra, rb, j, b, dt=1e-2, n=3, alpha=1, noise=0.1,
+               ipta=0, iptb=0, tau=0.08):
+    qlt = ql + dt*(n/alpha * np.arctanh(np.tanh(j*alpha)*np.tanh((ql*(n-alpha) + b*alpha)/n))-ql + np.random.randn()*noise)/tau
+    rat = ra + dt*(10*sigmoid(qlt + ipta+ np.random.randn()*noise) -ra)/tau
+    rbt = rb + dt*(10*sigmoid(-qlt + iptb+ np.random.randn()*noise) - rb)/tau
+    return qlt, rat, rbt
+
+
+def plot_log_ratio(j, b, n=3, alpha=1):
+    pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    pot_taylor = lambda x: 1/alpha * (np.arctanh(np.tanh(j*alpha)*np.tanh(b))+
+                                      np.tanh(j*alpha)*(1-np.tanh(b)**2)*x*(n-alpha)
+                                      - np.tanh(j*alpha)/3 * (1-np.tanh(b)**2)**2 * (x**3)*(n-alpha)**3)-x
+    x = np.arange(-1.5, 1.5, 1e-3)
+    plt.figure()
+    plt.plot(x, pot(x), color='k', label='True')
+    plt.plot(x, pot_taylor(x), color='r', label='Approx.')
+    plt.legend()
+
+
+def plot_rates_neurons(j, b, alpha=1, n=3, dt=1e-3, noise=5,
+                       t_end=1):
+    ql = np.random.randn()
+    ra = np.abs(np.random.randn()*5)
+    rb = np.abs(np.random.randn()*5)
+    qlt, rat, rbt = [], [], []
+    time = np.arange(0, t_end, dt)
+    for i in range(len(time)):
+        ql, ra, rb = dyn_sys_ql(ql, ra, rb, j, b, dt=dt, n=n, tau=0.05,
+                                alpha=alpha, noise=noise, ipta=0, iptb=0)
+        qlt.append(ql)
+        rat.append(ra)
+        rbt.append(rb)
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(12, 10))
+    ax = ax.flatten()
+    ax[0].plot(time, qlt)
+    ax[0].set_ylabel('Log-ratio of beliefs')
+    ax[0].set_xlabel('Time (s)')
+    ax[1].plot(time, rat, label=r'$r_A$', color='r')
+    ax[1].plot(time, rbt, label=r'$r_B$', color='b')
+    ax[1].legend()
+    ax[1].set_xlabel('Time (s)')
+    ax[1].set_ylabel('Firing rate (Hz)')
+    gamma = np.array(rat)-np.array(rbt)
+    ax[2].plot(time, gamma, label=r'$\Delta r$',
+               color='k')
+    ax[2].axhline(0, color='g', linestyle='--')
+    ax[2].set_xlabel('Time (s)')
+    ax[2].legend()
+    ax[3].plot(rbt, rat, color='k', alpha=0.5)
+    ax[3].plot([3, 8], [3, 8], color='gray', linestyle='--')
+    ax[3].set_xlabel(r'Firing rate (Hz) $r_B$')
+    ax[3].set_ylabel(r'Firing rate (Hz) $r_A$')
+    fig.tight_layout()
+    plt.figure()
+    plt.plot([-2, 2], [-7, 7], color='r')
+    plt.plot(qlt, gamma, color='k', marker='o', linestyle='',
+             markersize=1, alpha=0.5)
+    plt.xlabel('Log-ratio of beliefs')
+    plt.ylabel(r'$\Delta r$')
+
+
+def plot_L_different_init(j, b, alpha=1, n=3, dt=1e-3, t_end=2, noise=0):
+    ql = np.random.randn()
+    ra = np.abs(np.random.randn()*5)
+    rb = np.abs(np.random.randn()*5)
+    time = np.arange(0, t_end, dt)
+    qlt = np.empty((len(time), 4, 6))
+    count = 0
+    for j in [0.3, 0.7]:
+        for b in [0, 0.2]:
+            for i_q, ql in enumerate([-2, -1, -0.5, 0.5, 1, 2]):
+                for i in range(len(time)):
+                    ql, _, _ = dyn_sys_ql(ql, ra, rb, j, b, dt=dt, n=n, tau=0.05,
+                                          alpha=alpha, noise=noise, ipta=0, iptb=0)
+                    qlt[i, count, i_q] = ql
+            count += 1
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(12, 10))
+    ax = ax.flatten()
+    for i_a, a in enumerate(ax):
+        a.axhline(0, color='r', alpha=0.6, linestyle='--')
+        [a.plot(time, qlt[:, i_a, t], color='k') for t in range(6)]
+        if i_a > 1:
+            a.set_xlabel('Time (s)')
+        else:    
+            a.set_xticks([])
+        if i_a % 2 == 0:
+            a.set_ylabel('Log-ratio belief, B')
+        if (i_a-1) % 2 == 0:
+            a.set_yticks([])
+    
+
+def sigmoid(x):
+    return 1/(1+np.exp(-x))
+
+
 if __name__ == '__main__':
-    # for stim in [-1]:
+    # for stim in [0]:
     #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
-    #                           j_list=np.arange(0.00001, 1, 0.001),
+    #                           j_list=np.arange(0.00001, 1, 0.01),
     #                           thr=1e-10, stim=stim)
+    # plot_loopy_b_prop_sol_j_ast_circle(j_star_list=np.arange(0, 1.1, 0.05),
+    #                                    num_iter=400,
+    #                                    j_list=np.arange(0, 1, 0.005),
+    #                                    thr=1e-10, stim=0.)
+    plot_sols_FLBP(alphalist=[0.1, 0.3, 0.6, 1, 1.2, 1.4],
+                    j_list=np.arange(0, 2, 0.01), theta=THETA,
+                    num_iter=200, stim=0.)
+    # plot_sols_FLBP(alphalist=[1.8],
+    #                j_list=np.arange(0, 20, .1), theta=THETA,
+    #                num_iter=1000, stim=0.)
     # plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
     #                             b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
-    # all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
-    #                         b_list=np.arange(-.5, .5005, 0.005),
-    #                         data_folder=DATA_FOLDER,
-    #                         theta=THETA, dist_metric=None, nrows=2)
+    all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
+                            b_list=np.arange(-.5, .5005, 0.005),
+                            data_folder=DATA_FOLDER,
+                            theta=THETA, dist_metric=None, nrows=2)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
@@ -1543,4 +1991,4 @@ if __name__ == '__main__':
     #                  color='r')
     # plot_lbp_3_examples()
     # plot_lbp_explanation()
-    plot_m1_m2_vector_field(j=.65, b=0., n=3)
+    # plot_m1_m2_vector_field(j=.65, b=0., n=3)
