@@ -121,7 +121,7 @@ class Model(nn.Module):
     def forward(self, x):
         mean, log_var = self.Encoder(x)
         z = self.reparameterization(mean, torch.exp(0.5 * log_var)) # takes exponential function (log var -> var)
-        x_hat            = self.Decoder(z)
+        x_hat = self.Decoder(z)
         
         return x_hat, mean, log_var, z
 
