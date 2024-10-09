@@ -392,9 +392,9 @@ def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
     # ax.set_title('J = '+str(j))
     ax.legend()
     fig.tight_layout()
-    fig.savefig(data_folder + 'mf_BP_necker_posterior_comparison.png',
+    fig.savefig(data_folder + 'mf_BP_necker_posterior_comparison_last.png',
                 dpi=400, bbox_inches='tight')
-    fig.savefig(data_folder + 'mf_BP_necker_posterior_comparison.svg',
+    fig.savefig(data_folder + 'mf_BP_necker_posterior_comparison_last.svg',
                 dpi=400, bbox_inches='tight')
 
 
@@ -1579,6 +1579,50 @@ def plot_posterior_vs_stim(j_list=[0.05, 0.4, 0.7],
     plt.legend(title='J')
 
 
+def plot_posterior_vs_stim_all3(j_list=[0.05, 0.4, 0.64],
+                                b_list=np.linspace(0, 0.25, 51),
+                                theta=THETA, thr=1e-8, num_iter=200,
+                                data_folder=DATA_FOLDER):
+    fig, ax = plt.subplots(ncols = 3, figsize=(12, 4))
+    colormap = ['navajowhite', 'orange', 'saddlebrown']
+    j_list_mf = [0.05, 0.24, 0.37][::-1]
+    for i_j, j in enumerate(reversed(j_list)):
+        vec_vals_lbp = []
+        vec_vals_mf = []
+        vec_vals_gibbs = []
+        for b in b_list:
+            pos, neg, n = Loopy_belief_propagation(theta=theta,
+                                                   num_iter=num_iter,
+                                                   j=j, thr=thr, stim=b)
+            val = np.max((pos[0], neg[0]))
+            vec_vals_lbp.append(val)
+            init_state = np.random.choice([-1, 1], theta.shape[0])
+            val = gn.gibbs_samp_necker_post(init_state, burn_in=100, n_iter=int(1e5),
+                                            j=j, stim=b, theta=theta)
+            val = np.max((val, 1-val))
+            vec_vals_gibbs.append(val)
+            vec = mfn.mean_field_stim(j_list_mf[i_j], stim=b, num_iter=50, val_init=0.9,
+                                      theta=theta, sigma=0)
+            vec_vals_mf.append(np.nanmean(vec[-1]))
+        ax[2].plot(b_list, vec_vals_lbp, color=colormap[i_j],
+                   label=np.round(j, 1), linewidth=4)
+        ax[1].plot(b_list, vec_vals_mf, color=colormap[i_j],
+                   label=np.round(j, 1), linewidth=4)
+        ax[0].plot(b_list, vec_vals_gibbs, color=colormap[i_j],
+                   label=np.round(j, 1), linewidth=4)
+    titles = ['Gibbs sampling', 'Mean-field', 'Loopy belief propagation']
+    for i_a, a in enumerate(ax):
+        a.set_xlabel('Stimulus strength, B')
+        a.set_title(titles[i_a])
+        a.set_ylim(0.45, 1.02)
+    ax[0].set_ylabel('Confidence')
+    ax[0].legend(title='J')
+    fig.tight_layout()
+    fig.savefig(data_folder + 'post_cyl.png')
+    fig.savefig(data_folder + 'post_cyl.svg')
+
+
+
 def plot_loopy_b_prop_sol_j_ast_circle(j_star_list, num_iter, j_list=np.arange(0, 1, 0.001),
                                        thr=1e-15, stim=0.):
     
@@ -1624,7 +1668,8 @@ def plot_loopy_b_prop_circle_kernel(num_iter, j_list=np.arange(0, 1, 0.001),
 
 
 def cos_kernel(x, plot=False):
-    kernel = (np.cos((x-4)*(len(x)-1)/np.pi)+1)/2
+    # kernel = (np.cos((x)*(len(x)-1)/np.pi)+1)/2
+    kernel = np.concatenate((np.exp(-(x-1)[:3]), np.exp(-x[:3])[::-1]))
     kernel[0] = 0
     if plot:
         plt.figure()
@@ -1948,6 +1993,73 @@ def sigmoid(x):
     return 1/(1+np.exp(-x))
 
 
+def pot_expr(q, j, b, n=3, a=1):
+    return -q*np.arctanh(np.tanh(a*j)*np.tanh(q*(n-1))+b)/a - np.sinh(a*j)/(a*4*(n-1)) + 0.5*q**2
+
+
+def pot_potential_taylor(q, j, b, n=3, a=1):
+    a1 = -np.arctanh(np.tanh(b)*np.tanh(a*j))*q 
+    a2 = - 0.5*q**2 * (n-a) * np.sinh(2*a*j) / (np.cosh(2*b)+np.cosh(2*a*j)) + 0.5*q**2
+    a3 = 1/3 * q**3 * (np.sinh(2*b)*(n-a)**2 * np.sinh(2*a*j)) / (np.cosh(2*b)+np.cosh(2*a*j))**2
+    a4 = - 1/4 * q**4 * (np.sinh(2*j*a)*(a-n)**3 * (np.cosh(2*(b-a*j)) + np.cosh(2*(b+a*j)) - np.cosh(4*b)+3) ) / (3*(np.cosh(2*b)+np.cosh(2*a*j))**3)
+    a5 = + (1/5*q**5 * np.sinh(2 * b) * (a - n)**4 * np.sinh(2 * a*j) * (-2 * (2 * np.cosh(2 * (b - a*j)) + 2 * np.cosh(2 * (b + a*j)) + 5) + np.cosh(4 * b) + np.cosh(4 * a*j))) / (6 * (np.cosh(2 * b) + np.cosh(2 * a*j))**4)
+    return a1 + a2 + a3 + a4 + a5
+
+
+def crit_j_frac(n_list=np.arange(3, 10, 1e-3), alpha_list=np.arange(0.1, 1.5, 0.15)):
+    fig, ax = plt.subplots(1)
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(alpha_list)))[::-1]
+    ax.plot(n_list, 0.5*np.log(n_list/(n_list-2)), color='k')
+    for i_a, a in enumerate(reversed(alpha_list)):
+        if round(a, 2) != 1:
+            color = colormap[i_a]
+            if i_a == 0 or round(a, 2) == 0.55 or round(a, 2) == 0.1:
+                label = round(a, 2)
+            else:
+                label = ' '
+            lw = 1
+        else:
+            color = 'orange'
+            label = r'BP, $\alpha = 1$'
+            lw = 3.5
+        ax.plot(n_list, 0.5*np.log(n_list/(n_list-2*a))/a, color=color, label=label,
+                linewidth=lw)
+    ax.plot(n_list, 1/n_list, color='r', linestyle='--', label=r'MF, $\alpha \to 0$', linewidth=3)
+    ax.legend(title=r'$\alpha$')
+    ax.set_xlabel('# neighbors, N')
+    ax.set_ylabel(r'Critical coupling, $J^{\ast}$')
+
+
+def performance_vs_alpha(j=0.5, alpha_list=np.arange(0.1, 1.45, 0.3),
+                         b_list=np.round(np.arange(-.25, .2525, 0.05), 5),
+                         num_reps=500):
+    fig, ax = plt.subplots(1)
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(alpha_list)))
+    for ia, alpha in enumerate(alpha_list):
+        accuracy = np.empty((len(b_list), num_reps))
+        accuracy[:] = np.nan
+        alpha = np.round(alpha, 4)
+        for i_b, stim in enumerate(b_list):
+            acclist = []
+            for n in range(num_reps):
+                pos, _ = discrete_DBN(j, b=stim, theta=THETA, num_iter=50,
+                                      thr=1e-8, alpha=alpha)
+                choice = np.sign(pos[0]-0.5)
+                if stim == 0:
+                    stim2 = np.random.randn()*1e-4
+                else:
+                    stim2 = stim
+                acclist.append(choice == np.sign(stim2))
+            accuracy[i_b, :] = acclist
+        # err_alpha.append(np.nanstd(accuracy, axis=1))
+        ax.plot(b_list, np.nanmean(accuracy, axis=1), color=colormap[ia],
+                label=alpha)
+        plt.pause(0.02)
+    ax.legend(title='Alpha')
+    ax.set_ylabel('Accuracy')
+    ax.set_xlabel('Sensory evidence, B')
+
+    
 if __name__ == '__main__':
     # for stim in [0]:
     #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
@@ -1957,24 +2069,31 @@ if __name__ == '__main__':
     #                                    num_iter=400,
     #                                    j_list=np.arange(0, 1, 0.005),
     #                                    thr=1e-10, stim=0.)
-    plot_sols_FLBP(alphalist=[0.1, 0.3, 0.6, 1, 1.2, 1.4],
-                    j_list=np.arange(0, 2, 0.01), theta=THETA,
-                    num_iter=200, stim=0.)
+    # plot_posterior_vs_stim_all3(j_list=[0.05, 0.4, 0.64],
+    #                             b_list=np.linspace(0, 0.25, 21),
+    #                             theta=gn.return_theta(),
+    #                             thr=1e-8, num_iter=200)
+    # plot_sols_FLBP(alphalist=[0.1, 0.3, 0.6, 1, 1.2, 1.4],
+    #                 j_list=np.arange(0, 2, 0.01), theta=THETA,
+    #                 num_iter=200, stim=0.)
     # plot_sols_FLBP(alphalist=[1.8],
     #                j_list=np.arange(0, 20, .1), theta=THETA,
     #                num_iter=1000, stim=0.)
     # plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
     #                             b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
-    all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
-                            b_list=np.arange(-.5, .5005, 0.005),
-                            data_folder=DATA_FOLDER,
-                            theta=THETA, dist_metric=None, nrows=2)
+    # all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
+    #                         b_list=np.arange(-.5, .5005, 0.005),
+    #                         data_folder=DATA_FOLDER,
+    #                         theta=THETA, dist_metric=None, nrows=2)
+    performance_vs_alpha(j=0.7, alpha_list=np.arange(0.1, 1.45, 0.3),
+                         b_list=np.round(np.arange(-.075, .08, 0.005), 5),
+                         num_reps=4000)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
     #                    j_list=[0.1, 0.4, 0.5, np.log(3)/2, 0.57, 0.585, 0.6, .65],
     #                    b=0, n=3)
-    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1001), j=0.1,
+    # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1001), j=0.28,
     #                             num_iter=40, thr=1e-8, theta=THETA)
     # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.005),
     #                       b_list=np.arange(-0.5, 0.5, 0.01),
