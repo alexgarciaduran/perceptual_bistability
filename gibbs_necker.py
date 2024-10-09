@@ -453,8 +453,8 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False, plot_cubes=False
     # plt.annotate(text='', xy=(0, 0.5), xytext=(0, 3.5),
     #              arrowprops=dict(arrowstyle='<->'))
     # plt.text(-1, 1.5, r'$\Delta k_u$')
-    plt.ylabel(r'$k=\frac{J}{2} \, \vec{y}^{\, T} \, \mathcal{V}_{ij} \, \vec{y} + B \mu$', fontsize=12)
-    plt.xlabel(r'$\mu$', fontsize=12)
+    plt.ylabel(r'$k(\vec{y})=\frac{J}{2} \, \vec{y}^{\, T} \, \mathcal{V} \, \vec{y} + B \mu$', fontsize=12)
+    plt.xlabel(r'$\mu \left(\vec{y}\right)$', fontsize=12)
     # plt.title('B = {}'.format(stim))
     if plot_cubes:
         plot_necker_cubes(ax=ax, mu=-8)
@@ -478,8 +478,8 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False, plot_cubes=False
         plt.xticks([-8, -4, 0, 4, 8])
     else:
         plt.xticks([-8, -4, 0, 4, 8])
-    fig.savefig(DATA_FOLDER + 'k_vs_mu.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'k_vs_mu.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'k_vs_mu_raw.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'k_vs_mu_raw.svg', dpi=400, bbox_inches='tight')
     
 
 def compute_C(data_folder):
@@ -1792,7 +1792,7 @@ if __name__ == '__main__':
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # save_necker_cubes(offset=np.arange(0.1, 0.55, 0.01))
-    # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=True, plot_cubes=False)
+    plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=False, plot_cubes=True)
     # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
     #                       n_iter=200000, wsize=1, stim=0, j_ex=0.495, f_all=False,
@@ -1821,15 +1821,15 @@ if __name__ == '__main__':
     #                            chain_length=int(7e6), n_nodes_th=50)
     # plot_k_vs_mu_cylinder_simulations(j=0.495, b=0, chain_length=int(1.5e7),
     #                                   theta=return_theta())
-    b_mat = get_b_mat(coh=0.2, b=.2, rows=7, columns=7)
-    for j in [0.01, 0.1, 0.2, 0.3]:
-        simulate_2d_lattice(b_mat=b_mat,
-                            j=j, theta=lattice_1d(columns=7, rows=7, layers=1),
-                            n_iter=20000)
-    plot_2d_lattice_conf_vs_coh(coh_list=np.arange(-1, 1, 0.1),
-                            j_list=np.arange(0.1, 0.31, 0.1),
-                            theta=lattice_1d(columns=5, rows=5, layers=1),
-                            n_iter=20000)
+    # b_mat = get_b_mat(coh=0.2, b=.2, rows=7, columns=7)
+    # for j in [0.01, 0.1, 0.2, 0.3]:
+    #     simulate_2d_lattice(b_mat=b_mat,
+    #                         j=j, theta=lattice_1d(columns=7, rows=7, layers=1),
+    #                         n_iter=20000)
+    # plot_2d_lattice_conf_vs_coh(coh_list=np.arange(-1, 1, 0.1),
+    #                         j_list=np.arange(0.1, 0.31, 0.1),
+    #                         theta=lattice_1d(columns=5, rows=5, layers=1),
+    #                         n_iter=20000)
     # plot_posterior_vs_b_diff_js(j_list=[0.05, 0.21, 0.45],
     #                             b_list=np.linspace(0, 0.25, 11),
     #                             theta=return_theta(rows=10, columns=5, layers=2),
