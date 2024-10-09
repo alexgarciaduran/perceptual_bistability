@@ -78,7 +78,7 @@ def mean_field_stim(J, num_iter, stim, sigma=1, theta=theta, val_init=None):
                 b = stim[q]
             else:
                 b = stim
-            vec[q] = gn.sigmoid(2*(sum(J*(2*vec[neighbours]-1))+b)+np.random.randn()*sigma) 
+            vec[q] = gn.sigmoid(2*(sum(J*(2*vec[neighbours]-1))+b))+np.random.randn()*sigma
         vec_time[i, :] = vec
     return vec_time
 
@@ -1896,6 +1896,50 @@ def plot_dominance_duration_mean_field(j, b, theta=theta, noise=0,
                                gibbs=False, mean_states=filt_post)
 
 
+def plot_peak_noise_vs_j(j_list=np.arange(0.34, 0.45, 5e-3),
+                         b=0, theta=theta, noise=0.1,
+                         tau=0.01, time_end=1000, dt=1e-3, p_thr=0.5,
+                         steps_back=2000, steps_front=500):
+    fig, ax = plt.subplots(1)
+    peaklist = []
+    for i_j, j in enumerate(j_list):
+        time, vec, ou_vals = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                            time_end=time_end, dt=dt,
+                                                            tau_n=tau)
+        mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
+        mean_ou = np.mean(ou_vals, axis=1)
+        conv_window = 50
+        mean_states = np.convolve(mean_states, np.ones(1000)/1000, mode='same')
+        mean_states[mean_states > p_thr] = 1
+        mean_states[mean_states < (1-p_thr)] = 0
+        mean_states = mean_states[mean_states != p_thr]
+        # mean_states[(mean_states > (1-p_thr)) & (mean_states < p_thr)] = 0
+        orders = gn.rle(mean_states)
+        idx_1 = orders[1][orders[2] == 1]
+        idx_1 = idx_1[(idx_1 > steps_back) & (idx_1 < (len(mean_ou))-steps_front)]
+        idx_0 = orders[1][orders[2] == 0]
+        idx_0 = idx_0[(idx_0 > steps_back) & (idx_0 < (len(mean_ou))-steps_front)]
+        ou_vals_1_array = np.empty((len(idx_1), steps_back+steps_front))
+        ou_vals_1_array[:] = np.nan
+        for i, idx in enumerate(idx_1):
+            ou_vals_1_array[i, :] = np.convolve(mean_ou[idx - steps_back:idx+steps_front],
+                                                np.ones(conv_window)/conv_window,
+                                                mode='same')
+        ou_vals_0_array = np.empty((len(idx_0), steps_back+steps_front))
+        ou_vals_0_array[:] = np.nan
+        for i, idx in enumerate(idx_0):
+            ou_vals_0_array[i, :] = np.convolve(mean_ou[idx - steps_back:idx+steps_front],
+                                                np.ones(conv_window)/conv_window,
+                                                mode='same')*(-1)
+        ou_vals_all = np.row_stack((ou_vals_1_array, ou_vals_0_array))
+        ou_vals_mean = np.nanmean(ou_vals_all, axis=0)
+        peaklist.append(np.nanmax(ou_vals_mean))
+    ax.set_ylabel(r'Peak noise')
+    ax.set_xlabel('Coupling, J')
+    ax.plot(j_list, peaklist, color='k', linewidth=2.5)
+
+
+
 def plot_noise_before_switch(j, b, theta=theta, noise=0.1,
                              tau=0.01, time_end=1000, dt=1e-3, p_thr=0.5,
                              steps_back=2000, steps_front=500, gibbs=False):
@@ -2289,6 +2333,48 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
     ax3.set_ylabel('Avg. perceptual dominance, T(x=1)')
 
 
+def mf_dyn_sys_circle(j, n_iters=40, b=.5):
+    kernel = exp_kernel()
+    theta = scipy.linalg.circulant(kernel).T
+    stim = np.zeros((n_iters, theta.shape[0]))
+    stim[n_iters//2-n_iters//4:n_iters//2-n_iters//4+n_iters//8, ::2] = b
+    stim[n_iters//2-+n_iters//4+n_iters//8+1:1+n_iters//2-n_iters//4+2*n_iters//8, 1::2] = -b
+    vec_time = mean_field_stim_change_node(j, stim,
+                                           val_init=0.8, theta=theta)
+    fig, ax = plt.subplots(nrows=2, figsize=(10, 7))
+    for i in range(theta.shape[0]):
+        ax[0].plot(vec_time[:, i])
+        ax[1].plot(stim[:, i])
+    ax[0].set_ylabel('Approx. posterior')
+    ax[1].set_ylabel('Bias')
+    ax[1].set_xlabel('Timestep')
+        
+
+def mean_field_stim_change_node(j, b_list,
+                                val_init=None, theta=theta):
+    num_iter = b_list.shape[0]
+    if val_init is None:
+        vec = np.random.rand(theta.shape[0])
+    else:
+        vec = np.repeat(val_init, theta.shape[0])
+    vec_time = np.empty((num_iter, theta.shape[0]))
+    vec_time[:] = np.nan
+    for i in range(num_iter):
+        for q in range(theta.shape[0]):
+            neighbours = theta[q].astype(dtype=bool)
+            vec[q] = gn.sigmoid(2*(np.sum(j*theta[q, neighbours]*(2*vec[neighbours]-1))+b_list[i, q]))
+        vec_time[i, :] = vec
+    return vec_time
+
+
+
+def exp_kernel(x=np.arange(6)):
+    kernel = np.concatenate((np.exp(-(x-1)[:3]), np.exp(-x[:3])[::-1]))
+    kernel[0] = 0
+    return kernel
+
+
+
 if __name__ == '__main__':
     # plot_potential_and_vector_field_2d(j=1, b=0, noise=0., tau=1,
     #                                     time_end=50, dt=5e-2)
@@ -2310,10 +2396,18 @@ if __name__ == '__main__':
     #                       plot_approx=False)
     # plot_3_examples_mf_evolution()
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0.01, 1, 0.001),
-    #                         num_iter=200,
-    #                         beta_list=np.arange(-0.5, 0.5, 0.001),
-    #                         neigh_list=np.arange(3, 12),
-    #                         dim3=False)
+    #                        num_iter=200,
+    #                        beta_list=np.arange(-0.5, 0.5, 0.001),
+    #                        neigh_list=np.arange(3, 12),
+    #                        dim3=False)
+    # plot_noise_before_switch(j=0.395, b=0, theta=theta, noise=0.1,
+    #                          tau=0.1, time_end=10000, dt=5e-3, p_thr=0.5,
+    #                          steps_back=2000, steps_front=500, gibbs=False)
+    # plt.title('J=0.395')
+    plot_peak_noise_vs_j(j_list=np.arange(0.34, 0.55, 5e-3),
+                         b=0, theta=theta, noise=0.12,
+                         tau=0.1, time_end=50000, dt=5e-3, p_thr=0.5,
+                         steps_back=2000, steps_front=500)
     # plot_q_bifurcation_vs_JB(j_list=np.arange(1/3, 1, 0.0001),
     #                          stim_list=np.arange(-0.1, 0.1, 0.001))
     # plot_potentials_mf(j_list=[0, 0.1, 0.2, 1/3, 0.4, 0.5,
@@ -2321,10 +2415,10 @@ if __name__ == '__main__':
     #                     bias=0, neighs=3)
     # plot_mf_sol_stim_bias(j_list=np.arange(0.00001, 1, 0.001), stim=-0.1,
     #                       num_iter=10)
-    transition_probs_j(t_dur=1, noise=0.3,
-                       j_list=np.arange(0.001, 3.01, 0.005),
-                       b=.2, tol=1e-10)
-    plot_exit_time(j=0.5, b=0, noise=0.1)
+    # transition_probs_j(t_dur=1, noise=0.3,
+    #                    j_list=np.arange(0.001, 3.01, 0.005),
+    #                    b=.2, tol=1e-10)
+    # plot_exit_time(j=0.5, b=0, noise=0.1)
     # transition_probs_j_and_b(t_dur=1, noise=0.3,
     #                          j_list=np.linspace(0.001, 2, 200),
     #                          b_list=np.linspace(-0.2, 0.2, 100),
