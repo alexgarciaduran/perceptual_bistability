@@ -2229,9 +2229,9 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
         print(round(100*(i_b+1)/len(b_list), 2))
         print('%')
         init_state = np.random.choice([-1, 1], theta.shape[0])
-        time, vec = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
-                                                   time_end=time_end, dt=dt,
-                                                   tau_n=tau)
+        time, vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                      time_end=time_end, dt=dt,
+                                                      tau_n=tau)
         mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
         mean_states2 = scipy.signal.medfilt(mean_states, 1001)
         # mean_states2 = np.copy(mean_states)
@@ -2254,9 +2254,9 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
     for i_b, b in enumerate(b_list[b_list >= 0]):
         b_both_eyes = np.repeat(b, theta.shape[0])
         b_both_eyes[theta.shape[0]//2:] = -b
-        time, vec = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
-                                                   time_end=time_end, dt=dt,
-                                                   tau_n=tau)
+        time, vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                      time_end=time_end, dt=dt,
+                                                      tau_n=tau)
         mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
         mean_states2 = np.copy(mean_states)
         mean_states2[mean_states2 > 0.5] = 1
