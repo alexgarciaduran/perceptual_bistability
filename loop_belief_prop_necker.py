@@ -21,11 +21,11 @@ import matplotlib.pylab as pl
 THETA = gn.THETA
 
 
-mpl.rcParams['font.size'] = 14
-plt.rcParams['legend.title_fontsize'] = 14
-plt.rcParams['legend.fontsize'] = 13
-plt.rcParams['xtick.labelsize']= 12
-plt.rcParams['ytick.labelsize']= 12
+mpl.rcParams['font.size'] = 18
+plt.rcParams['legend.title_fontsize'] = 16
+plt.rcParams['legend.fontsize'] = 14
+plt.rcParams['xtick.labelsize']= 16
+plt.rcParams['ytick.labelsize']= 16
 
 
 pc_name = 'alex'
@@ -1036,14 +1036,14 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
             dist = kl
             label_0 = ', KL = '
     if nrows == 2:
-        figsize = (8, 5)
+        figsize = (6.5, 4.5)
         ncols = 3
     else:
         figsize = (12, 2)
         ncols = 6
     fig, ax = plt.subplots(ncols=ncols, nrows=nrows, figsize=figsize)
     fig.tight_layout()
-    plt.subplots_adjust(hspace=0.35)
+    plt.subplots_adjust(hspace=0.5, wspace=0.2)
     ax = ax.flatten()
     # true posterior
     matrix_true_file = data_folder + 'true_vs_JB_05.npy'
@@ -1062,11 +1062,11 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
             mat_true[i_j, :] = true_posterior
         np.save(matrix_true_file, mat_true)
     ax[0].imshow(np.flipud(mat_true), aspect='auto', interpolation=None,
-                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
-    ax[0].set_title('True posterior')
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm_r', vmin=0, vmax=1)
+    ax[0].set_title('True posterior', fontsize=14)
     # Mean-field
     matrix_mf_file = data_folder + 'mf_posterior_vs_JB_sim_05.npy'
-    jcrit_mf_file = data_folder + 'mf_jcrit_vs_b_n3.npy'
+    jcrit_mf_file = data_folder + 'mf_jcrit_vs_b_n3_v2.npy'
     jcrit_mf = np.load(jcrit_mf_file, allow_pickle=True)
     os.makedirs(os.path.dirname(matrix_mf_file), exist_ok=True)
     print('MF')
@@ -1092,8 +1092,8 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
                 
             mat_mf[:, i_b] = l
         np.save(matrix_mf_file, mat_mf)
-    ax[1].imshow(np.flipud(mat_mf), aspect='auto', interpolation=None,
-                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
+    ax[1].imshow(np.flipud(mat_mf), aspect='auto', interpolation='none',
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm_r', vmin=0, vmax=1)
     first_j = jcrit_mf
     b_list_1 = np.arange(-1, 1, 0.01)
     ax[1].plot(b_list_1, first_j, color='k')
@@ -1102,7 +1102,7 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
         label = label_0 + str(dist(mat_true, mat_mf))
     else:
         label = ''
-    ax[1].set_title('Mean-field'+ label)
+    ax[1].set_title('Mean-field'+ label, fontsize=14)
     # belief propagation
     matrix_bp_file = data_folder + 'lbp_posterior_vs_JB_05.npy'
     jcrit_bp_file = data_folder + 'jcrit_vs_b_n3.npy'
@@ -1123,16 +1123,16 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
                 l.append(pos[0])
             mat_lbp[:, i_b] = l
         np.save(matrix_bp_file, mat_lbp)
-    ax[2].imshow(np.flipud(mat_lbp), aspect='auto',
-                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
+    ax[2].imshow(np.flipud(mat_lbp), aspect='auto', interpolation='none',
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm_r', vmin=0, vmax=1)
     if dist_metric is not None:
         label = label_0 + str(dist(mat_true, mat_lbp))
     else:
         label = ''
-    ax[2].set_title('Loopy\nbelief propagation' + label)
+    ax[2].set_title('Loopy\nbelief propagation' + label, fontsize=14)
     ax[2].plot(b_list_1, jcrit_bp, color='k', label=r'$J^{\ast}$')
     ax[2].set_xlim(-0.5, 0.5)
-    ax[2].legend(bbox_to_anchor=(0, 1.2), frameon=False)
+    ax[2].legend(bbox_to_anchor=(0, 1.47), frameon=False)
     
     # Gibbs for 3 different T
     # T=100
@@ -1162,8 +1162,8 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
     else:
         label = ''
     ax[3].imshow(np.flipud(mat_gn), aspect='auto',
-                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
-    ax[3].set_title('Gibbs sampling\nT=1e2' + label)
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm_r', vmin=0, vmax=1)
+    ax[3].set_title('Gibbs sampling\nT=1e2' + label, fontsize=14)
     # ax[3].plot(b_list, (np.log(100)+8*b_list*np.sign(b_list))/10, color='k')
     # T=10000
     matrix_gn_file = data_folder + '1000_gibbs_posterior_vs_JB_05.npy'
@@ -1192,8 +1192,8 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
     else:
         label = ''
     ax[4].imshow(np.flipud(mat_gn), aspect='auto',
-                 extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1)
-    ax[4].set_title('Gibbs sampling\nT=1e3' + label)
+                 extent=[-.5, .5, 0, 1], cmap='coolwarm_r', vmin=0, vmax=1)
+    ax[4].set_title('Gibbs sampling\nT=1e3' + label, fontsize=14)
     # ax[4].plot(b_list, (np.log(1000)+8*b_list*np.sign(b_list))/10, color='k')
     ax[4].set_ylim(0, 1)
     # T=100000
@@ -1224,16 +1224,16 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
     else:
         label = ''
     im = ax[5].imshow(np.flipud(mat_gn), aspect='auto',
-                      extent=[-.5, .5, 0, 1], cmap='coolwarm', vmin=0, vmax=1,
+                      extent=[-.5, .5, 0, 1], cmap='coolwarm_r', vmin=0, vmax=1,
                       interpolation=None)
-    ax[5].set_title('Gibbs sampling\nT=1e4' + label)
+    ax[5].set_title('Gibbs sampling\nT=1e4' + label, fontsize=14)
     # ax[5].plot(b_list, (np.log(10000)+8*b_list*np.sign(b_list))/10, color='k')
     ax[5].set_ylim(0, 1)
     ax_pos = ax[5].get_position()
     ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
                             ax_pos.width*0.06, ax_pos.height*0.7])
     plt.colorbar(im, cax=ax_cbar, orientation='vertical', label='Posterior')
-    ax[0].set_ylabel(r'Coupling $J$')
+    # ax[0].set_ylabel(r'Coupling $J$')
     if nrows != 2:
         for i in range(1, 6):
             ax[i].set_yticks([])
@@ -1247,12 +1247,15 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
         ax[2].set_xticks([])
         ax[4].set_yticks([])
         ax[5].set_yticks([])
-        ax[3].set_ylabel(r'Coupling $J$')
-        ax[3].set_xlabel(r'Stimulus $B$')
-        ax[4].set_xlabel(r'Stimulus $B$')
-        ax[5].set_xlabel(r'Stimulus $B$')
-    fig.savefig(data_folder+'/comparison_all.png', dpi=400, bbox_inches='tight')
-    fig.savefig(data_folder+'/comparison_all.svg', dpi=400, bbox_inches='tight')
+        for a in [ax[3], ax[4], ax[5]]:
+            a.set_xticks([-0.5, 0, 0.5])
+            a.tick_params(axis='x', labelrotation=45)
+        ax[3].set_ylabel(r'                                  Coupling $J$')
+        # ax[3].set_xlabel(r'Stimulus $B$')
+        ax[4].set_xlabel(r'Sensory evidence, $B$')
+        # ax[5].set_xlabel(r'Stimulus $B$')
+    fig.savefig(data_folder+'/comparison_all_v1.png', dpi=400, bbox_inches='tight')
+    fig.savefig(data_folder+'/comparison_all_v1.svg', dpi=400, bbox_inches='tight')
 
 
 def kl(p, q, eps=1e-10):
@@ -1579,13 +1582,43 @@ def plot_posterior_vs_stim(j_list=[0.05, 0.4, 0.7],
     plt.legend(title='J')
 
 
+def plot_posterior_vs_stim_cylinder(j_list=[0.05, 0.4, 0.64],
+                                    b_list=np.linspace(0, 0.25, 51),
+                                    theta=THETA, thr=1e-8, num_iter=200,
+                                    data_folder=DATA_FOLDER):
+    fig, ax = plt.subplots(ncols=1, figsize=(4.8, 3.7))
+    colormap = ['navajowhite', 'orange', 'saddlebrown'][::-1]
+    for i_j, j in enumerate(j_list):
+        vec_vals_lbp = []
+        for b in b_list:
+            pos, neg, n = Loopy_belief_propagation(theta=theta,
+                                                   num_iter=num_iter,
+                                                   j=j, thr=thr, stim=b)
+            val = np.max((pos[0], neg[0]))
+            vec_vals_lbp.append(val)
+        ax.plot(b_list, vec_vals_lbp, color=colormap[i_j],
+                label=np.round(j, 1), linewidth=4)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.set_xlabel('Stimulus strength, B')
+    ax.set_ylim(0.45, 1.02)
+    ax.set_yticks([0.6, 0.8, 1])
+    ax.set_xticks([0., 0.1, 0.2])
+    ax.set_ylabel('Confidence')
+    fig.tight_layout()
+    ax.legend(loc=0, title='Coupling, J', labelspacing=0.1, frameon=False,
+              bbox_to_anchor=(0.9, 1.2), ncol=3)
+    fig.savefig(data_folder + 'post_cyl_lbp.png', bbox_inches='tight')
+    fig.savefig(data_folder + 'post_cyl_lbp.svg', bbox_inches='tight')
+
+
 def plot_posterior_vs_stim_all3(j_list=[0.05, 0.4, 0.64],
                                 b_list=np.linspace(0, 0.25, 51),
                                 theta=THETA, thr=1e-8, num_iter=200,
                                 data_folder=DATA_FOLDER):
     fig, ax = plt.subplots(ncols = 3, figsize=(12, 4))
     colormap = ['navajowhite', 'orange', 'saddlebrown']
-    j_list_mf = [0.05, 0.24, 0.37][::-1]
+    j_list_mf = [0.05, 0.3, 0.35][::-1]
     for i_j, j in enumerate(reversed(j_list)):
         vec_vals_lbp = []
         vec_vals_mf = []
@@ -1620,7 +1653,6 @@ def plot_posterior_vs_stim_all3(j_list=[0.05, 0.4, 0.64],
     fig.tight_layout()
     fig.savefig(data_folder + 'post_cyl.png')
     fig.savefig(data_folder + 'post_cyl.svg')
-
 
 
 def plot_loopy_b_prop_sol_j_ast_circle(j_star_list, num_iter, j_list=np.arange(0, 1, 0.001),
@@ -1818,7 +1850,7 @@ def log_potential(b, j_list=None, alpha=1, n=3,
     min_val = -1.25
     min_val_integ = -10
     epsilon = 1e-3
-    vals = np.arange(min_val, max_val, epsilon)
+    vals = np.arange(min_val+epsilon, max_val, epsilon)
     if j_list is None:
         j_crit = np.log(n / (n-2*alpha)) / (2*alpha)
         j_list = [round(j_crit-0.2, 2), round(j_crit-0.1, 2), j_crit, round(j_crit+0.1, 2), round(j_crit+0.2, 1)]
@@ -1831,7 +1863,7 @@ def log_potential(b, j_list=None, alpha=1, n=3,
         pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
         potential = []
         for i in range(len(vals)):
-            potential.append(-scipy.integrate.quad(pot, min_val_integ, vals[i])[0])
+            potential.append(-scipy.integrate.quad(pot, min_val, vals[i])[0])
         potential = np.array(potential)
         if norm:
             norm_pot = (potential - np.min(potential))/ (np.max(potential) - np.min(potential))
@@ -1854,7 +1886,8 @@ def log_potential(b, j_list=None, alpha=1, n=3,
             plt.xlabel(r'Approximate posterior, $q_i(x=1)$',
                        fontsize=12)
         plt.ylabel(r'Potential on log-message ratio, $V(M_{i\rightarrow j})$')
-        plt.ylim(-0.015, 0.15)
+        if norm:
+            plt.ylim(-0.015, 0.15)
 
 
 def dyn_sys_fbp(logmess, j, b, alpha=1, n=3, dt=1e-1, noise=0.1):
@@ -1875,6 +1908,20 @@ def plot_derivative_dyn_sys():
     plt.xlabel('coupling J')
     plt.legend()
     plt.ylabel("g'(x=0)")
+
+
+def plot_fbp_dynamics(j, b, alpha=1):
+    fig, ax = plt.subplots(ncols=2, nrows=1, figsize=(6, 4))
+    plt.subplots_adjust(top=0.95, bottom=0.05, left=0.075, right=0.98,
+                        hspace=0.3, wspace=0.5)
+    ax = ax.flatten()
+    logmessages = []
+    logmess = np.random.randn()/10
+    potential_vals = []
+    for i in range(200):
+        logmess = dyn_sys_fbp(logmess, j, b, alpha=1, n=3, dt=1e-1, noise=.3)
+        logmessages.append(logmess)
+    ax[0].plot(logmessages)
 
 
 def plot_pot_evolution_FBP(j=0.75, b=0, alpha=1, n=3, num_iter=10):
@@ -1959,7 +2006,7 @@ def plot_rates_neurons(j, b, alpha=1, n=3, dt=1e-3, noise=5,
     plt.ylabel(r'$\Delta r$')
 
 
-def plot_L_different_init(j, b, alpha=1, n=3, dt=1e-3, t_end=2, noise=0):
+def plot_L_different_init(alpha=1, n=3, dt=1e-3, t_end=2, noise=0):
     ql = np.random.randn()
     ra = np.abs(np.random.randn()*5)
     rb = np.abs(np.random.randn()*5)
@@ -1974,19 +2021,35 @@ def plot_L_different_init(j, b, alpha=1, n=3, dt=1e-3, t_end=2, noise=0):
                                           alpha=alpha, noise=noise, ipta=0, iptb=0)
                     qlt[i, count, i_q] = ql
             count += 1
-    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(12, 10))
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(5, 4))
     ax = ax.flatten()
     for i_a, a in enumerate(ax):
-        a.axhline(0, color='r', alpha=0.6, linestyle='--')
-        [a.plot(time, qlt[:, i_a, t], color='k') for t in range(6)]
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.axhline(0.5, color='r', alpha=0.6, linestyle='--')
+        [a.plot(time, gn.sigmoid(2*qlt[:, i_a, t]), color='k') for t in range(6)]
         if i_a > 1:
             a.set_xlabel('Time (s)')
         else:    
             a.set_xticks([])
-        if i_a % 2 == 0:
-            a.set_ylabel('Log-ratio belief, B')
         if (i_a-1) % 2 == 0:
             a.set_yticks([])
+    ax[2].set_ylabel('                          Approx. posterior q(x=1)')
+    ax[0].set_title('B = 0')
+    ax[1].set_title('B > 0')
+    axtwin2 = ax[1].twinx()
+    axtwin2.set_ylabel('J < J*')
+    axtwin2.spines['right'].set_visible(False)
+    axtwin2.spines['top'].set_visible(False)
+    axtwin2.set_yticks([])
+    axtwin2 = ax[3].twinx()
+    axtwin2.set_ylabel('J > J*')
+    axtwin2.spines['right'].set_visible(False)
+    axtwin2.spines['top'].set_visible(False)
+    axtwin2.set_yticks([])
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'examples_nonoise.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'examples_nonoise.svg', dpi=400)
     
 
 def sigmoid(x):
@@ -2033,33 +2096,107 @@ def crit_j_frac(n_list=np.arange(3, 10, 1e-3), alpha_list=np.arange(0.1, 1.5, 0.
 def performance_vs_alpha(j=0.5, alpha_list=np.arange(0.1, 1.45, 0.3),
                          b_list=np.round(np.arange(-.25, .2525, 0.05), 5),
                          num_reps=500):
-    fig, ax = plt.subplots(1)
-    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(alpha_list)))
+    fig, ax = plt.subplots(1, figsize=(4	, 3.2))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    mat_acc = np.empty((len(alpha_list), len(b_list)))
+    matrix_true_file = DATA_FOLDER + 'accuracy_alpha_b.npy'
+    os.makedirs(os.path.dirname(matrix_true_file), exist_ok=True)
+    if os.path.exists(matrix_true_file):
+        mat_acc = np.load(matrix_true_file, allow_pickle=True)
+    else:
+        for ia, alpha in enumerate(alpha_list):
+            accuracy = np.empty((len(b_list), num_reps))
+            accuracy[:] = np.nan
+            alpha = np.round(alpha, 4)
+            for i_b, stim in enumerate(b_list):
+                acclist = []
+                for n in range(num_reps):
+                    pos, _ = discrete_DBN(j, b=stim, theta=THETA, num_iter=50,
+                                          thr=1e-8, alpha=alpha)
+                    choice = np.sign(pos[0]-0.5)
+                    if stim == 0:
+                        stim2 = np.random.randn()*1e-4
+                    else:
+                        stim2 = stim
+                    acclist.append(choice == np.sign(stim2))
+                accuracy[i_b, :] = acclist
+            # err_alpha.append(np.nanstd(accuracy, axis=1))
+            vals = np.nanmean(accuracy, axis=1)
+            mat_acc[ia, :] = vals
+        np.save(matrix_true_file, mat_acc)
+    accuracy = np.empty((len(b_list), num_reps))
+    accuracy[:] = np.nan
+    for i_b, stim in enumerate(b_list):
+        acclist = []
+        for n in range(num_reps):
+            pos = mfn.mean_field_stim(j, num_iter=20, stim=stim, sigma=0)
+            pos = pos[-1]
+            choice = np.sign(pos[0]-0.5)
+            if stim == 0:
+                stim2 = np.random.randn()*1e-4
+            else:
+                stim2 = stim
+            acclist.append(choice == np.sign(stim2))
+        accuracy[i_b, :] = acclist
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(alpha_list)+1))
+    vals_mf = np.nanmean(accuracy, axis=1)
+    ax.plot(b_list, vals_mf, color=colormap[0], label='0, MF', linewidth=2.5)
     for ia, alpha in enumerate(alpha_list):
-        accuracy = np.empty((len(b_list), num_reps))
-        accuracy[:] = np.nan
-        alpha = np.round(alpha, 4)
-        for i_b, stim in enumerate(b_list):
-            acclist = []
-            for n in range(num_reps):
-                pos, _ = discrete_DBN(j, b=stim, theta=THETA, num_iter=50,
-                                      thr=1e-8, alpha=alpha)
-                choice = np.sign(pos[0]-0.5)
-                if stim == 0:
-                    stim2 = np.random.randn()*1e-4
-                else:
-                    stim2 = stim
-                acclist.append(choice == np.sign(stim2))
-            accuracy[i_b, :] = acclist
-        # err_alpha.append(np.nanstd(accuracy, axis=1))
-        ax.plot(b_list, np.nanmean(accuracy, axis=1), color=colormap[ia],
-                label=alpha)
-        plt.pause(0.02)
-    ax.legend(title='Alpha')
+        vals = mat_acc[ia, :]
+        if alpha == 1:
+            color = colormap[ia+1]
+            label = '1, LBP'
+        else:
+            color = colormap[ia+1]
+            label = alpha
+        ax.plot(b_list, vals, color=color,
+                label=label, linewidth=2.5)
     ax.set_ylabel('Accuracy')
     ax.set_xlabel('Sensory evidence, B')
+    fig.tight_layout()
+    ax.legend(loc=0, title=r'$\alpha$', frameon=False,
+              bbox_to_anchor=(0.95, 1.2), labelspacing=0.15)
+    fig.savefig(DATA_FOLDER + 'performance_vs_alpha_j08_v2.png',
+                dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'performance_vs_alpha_j08_v2.svg',
+                dpi=400, bbox_inches='tight')
 
+
+def f_q_vs_alpha(j=0.5, alpha_list=np.arange(0.1, 2, 0.1), b=0,
+                 n=3):
+    fig, ax = plt.subplots(1)
+    colormap = pl.cm.Blues(np.linspace(0.1, 1, len(alpha_list)))
+    q = np.arange(0, 1, 1e-4)
+    q_log = 0.5*np.log(q/(1-q))
+    m_log = q_log/3
+    vals_mf = np.tanh(n*m_log+b)*j-m_log
+    ax.plot(m_log, vals_mf, color='red', label=r'MF, $\alpha \to 0$',
+            linewidth=3)
+    for ia, alpha in enumerate(alpha_list):
+        fun = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b))-x
+        alpha = np.round(alpha, 4)
+        vals = fun(m_log)
+        if round(alpha, 2) != 1 and round(alpha, 2) != 1.5:
+            color = colormap[ia]
+            label = alpha
+            lw = 1
+        if round(alpha, 2) == 1.5:
+            color = 'green'
+            label = r'No bistab., $\alpha = N/2$'
+            lw = 3.5
+        if round(alpha, 2) == 1:
+            color = 'orange'
+            label = r'BP, $\alpha = 1$'
+            lw = 3.5
+        ax.plot(m_log, vals, color=color, label=label, linewidth=lw)
+    ax.legend()
+    ax.axhline(0, color='k', linestyle='--', alpha=0.5)
+    ax.set_ylabel('f(M)-M')
+    ax.set_xlabel('M')
     
+
+
 if __name__ == '__main__':
     # for stim in [0]:
     #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
@@ -2073,6 +2210,10 @@ if __name__ == '__main__':
     #                             b_list=np.linspace(0, 0.25, 21),
     #                             theta=gn.return_theta(),
     #                             thr=1e-8, num_iter=200)
+    # plot_posterior_vs_stim_cylinder(j_list=[0.05, 0.4, 0.6],
+    #                                 b_list=np.linspace(0, 0.25, 21),
+    #                                 theta=gn.return_theta(),
+    #                                 thr=1e-8, num_iter=300)
     # plot_sols_FLBP(alphalist=[0.1, 0.3, 0.6, 1, 1.2, 1.4],
     #                 j_list=np.arange(0, 2, 0.01), theta=THETA,
     #                 num_iter=200, stim=0.)
@@ -2085,9 +2226,12 @@ if __name__ == '__main__':
     #                         b_list=np.arange(-.5, .5005, 0.005),
     #                         data_folder=DATA_FOLDER,
     #                         theta=THETA, dist_metric=None, nrows=2)
-    performance_vs_alpha(j=0.7, alpha_list=np.arange(0.1, 1.45, 0.3),
-                         b_list=np.round(np.arange(-.075, .08, 0.005), 5),
-                         num_reps=4000)
+    # performance_vs_alpha(j=0.8, alpha_list=[0.1, 0.4, 0.7, 1. , 1.1],
+    #                       b_list=np.round(np.arange(0, .08, 0.005), 5),
+    #                       num_reps=4000)
+    # plot_L_different_init(alpha=1, n=3, dt=1e-3, t_end=2, noise=0)
+    log_potential(b=0, j_list=None, alpha=1, n=3,
+                  ax=None, labels=True, norm=False, transform=False)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
