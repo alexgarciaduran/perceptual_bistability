@@ -58,11 +58,11 @@ Connections:
 """
 
 
-mpl.rcParams['font.size'] = 14
-plt.rcParams['legend.title_fontsize'] = 14
-plt.rcParams['legend.fontsize'] = 13
-plt.rcParams['xtick.labelsize']= 12
-plt.rcParams['ytick.labelsize']= 12
+mpl.rcParams['font.size'] = 20
+plt.rcParams['legend.title_fontsize'] = 15
+plt.rcParams['legend.fontsize'] = 17
+plt.rcParams['xtick.labelsize']= 18
+plt.rcParams['ytick.labelsize']= 18
 
 # ---GLOBAL VARIABLES
 pc_name = 'alex'
@@ -86,6 +86,18 @@ def theta_circle(j_star=1):
                     [j_star, 0, 0, 1, 0, 1, 0, 0], [0, j_star, 0, 0, 1, 0, 1, 0],
                     [0, 0, j_star, 0, 0, 1, 0, 1], [1, 0, 0, j_star, 0, 0, 1, 0]])
     
+
+def theta_rubin():
+    graph_array = lattice_1d(columns=3, rows=3, layers=1)
+    for i in range(graph_array.shape[0]):
+        if i == 1 or i == 4 or i == 7:
+            continue
+        else:
+            if i == 0 or i == 3 or i == 6:
+                graph_array[i, i+2] = 1
+            else:
+                graph_array[i, i-2] = 1
+    return graph_array
 
 
 def return_theta(rows=10, columns=5, layers=2, factor=1):
@@ -223,48 +235,49 @@ def mean_prob_gibbs(j, ax=None, burn_in = 1000, n_iter = 10000, wsize=100,
 
 def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=10000,
                          wsize=1, stim=0, node=None, j_ex=0.8, f_all=False,
-                         theta=THETA):
-    fig, ax1 = plt.subplots(ncols=2, figsize=(11, 3))
-    init_state = np.random.choice([-1, 1], theta.shape[0])
-    states_mat = gibbs_samp_necker(init_state=init_state,
-                                   burn_in=burn_in, n_iter=n_iter, j=j_ex,
-                                   stim=stim, theta=theta)
-    mean_states = np.nanmean(states_mat, axis=1)
-    # states_mat = np.column_stack((mean_states, states_mat))
-    # states_mat = (states_mat+1)/2
-    # ticks_labels = [str(i) if i > 0 else r'$<\vec{x}^{\,t}>$' for i in range(9)]
-    for i_ax, ax in enumerate(ax1):
-        ax_pos = ax.get_position()
-        if i_ax == 0:
-            ax.set_position([ax_pos.x0, ax_pos.y0-ax_pos.height*0.12,
-                             ax_pos.width, ax_pos.height])
-            ax_new = fig.add_axes([ax_pos.x0, ax_pos.y0+ax_pos.height*0.92,
-                                   ax_pos.width, ax_pos.height/7.5])
-        else:
-            ax.set_position([ax_pos.x0, ax_pos.y0-ax_pos.height*0.12,
-                             ax_pos.width/2, ax_pos.height])
-            ax_new = fig.add_axes([ax_pos.x0, ax_pos.y0+ax_pos.height*0.92,
-                                   ax_pos.width/2, ax_pos.height/7.5])
-        ax_new.plot(mean_states, color='k')
-        ax_new.set_xlim(-1, len(mean_states)+1)
-        ax_new.set_ylabel(r'$<\vec{x}^{\,t}>$')
-        ax_new.set_xticks([])
-        ax.imshow(states_mat.T, aspect='auto', cmap='seismic',  # PuOr
-                  interpolation='none')
-        ax.set_ylabel(r'Node $i$')
-        ax.set_xlabel('Sample')
-        if theta.shape[0] == 8:
-            ax.set_yticks(np.arange(theta.shape[0]), np.arange(theta.shape[0])+1)
-        else:
-            ax.set_yticks(np.arange(10, theta.shape[0], 10))
-    legendelements = [Line2D([0], [0], color='b', lw=2, label=r'$x_i=-1$'),
-                      Line2D([0], [0], color='firebrick', lw=2, label=r'$x_i=1$')]
-    ax1[0].legend(bbox_to_anchor=(1, 1.25), handles=legendelements,
-                  frameon=False)
-    fig.savefig(DATA_FOLDER + 'gibbs_simulation_fixed_j_all_nodes' + '.png',
-                dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'gibbs_simulation_fixed_j_all_nodes' + '.svg',
-                dpi=400, bbox_inches='tight')
+                         theta=THETA, extralab='', f_single=False):
+    if f_single:
+        fig, ax1 = plt.subplots(ncols=2, figsize=(11, 3))
+        init_state = np.random.choice([-1, 1], theta.shape[0])
+        states_mat = gibbs_samp_necker(init_state=init_state,
+                                        burn_in=burn_in, n_iter=n_iter, j=j_ex,
+                                        stim=stim, theta=theta)
+        mean_states = np.nanmean(states_mat, axis=1)
+        # states_mat = np.column_stack((mean_states, states_mat))
+        # states_mat = (states_mat+1)/2
+        # ticks_labels = [str(i) if i > 0 else r'$<\vec{x}^{\,t}>$' for i in range(9)]
+        for i_ax, ax in enumerate(ax1):
+            ax_pos = ax.get_position()
+            if i_ax == 0:
+                ax.set_position([ax_pos.x0, ax_pos.y0-ax_pos.height*0.12,
+                                  ax_pos.width, ax_pos.height])
+                ax_new = fig.add_axes([ax_pos.x0, ax_pos.y0+ax_pos.height*0.92,
+                                        ax_pos.width, ax_pos.height/7.5])
+            else:
+                ax.set_position([ax_pos.x0, ax_pos.y0-ax_pos.height*0.12,
+                                  ax_pos.width/2, ax_pos.height])
+                ax_new = fig.add_axes([ax_pos.x0, ax_pos.y0+ax_pos.height*0.92,
+                                        ax_pos.width/2, ax_pos.height/7.5])
+            ax_new.plot(mean_states, color='k')
+            ax_new.set_xlim(-1, len(mean_states)+1)
+            ax_new.set_ylabel(r'$<\vec{x}^{\,t}>$')
+            ax_new.set_xticks([])
+            ax.imshow(states_mat.T, aspect='auto', cmap='seismic',  # PuOr
+                      interpolation='none')
+            ax.set_ylabel(r'Node $i$')
+            ax.set_xlabel('Sample')
+            if theta.shape[0] == 8:
+                ax.set_yticks(np.arange(theta.shape[0]), np.arange(theta.shape[0])+1)
+            else:
+                ax.set_yticks(np.arange(10, theta.shape[0], 10))
+        legendelements = [Line2D([0], [0], color='b', lw=2, label=r'$x_i=-1$'),
+                          Line2D([0], [0], color='firebrick', lw=2, label=r'$x_i=1$')]
+        ax1[0].legend(bbox_to_anchor=(1, 1.25), handles=legendelements,
+                      frameon=False)
+        fig.savefig(DATA_FOLDER + 'gibbs_simulation_fixed_j_all_nodes' + extralab + '.png',
+                    dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'gibbs_simulation_fixed_j_all_nodes' + extralab + '.svg',
+                    dpi=400, bbox_inches='tight')
     if f_all:
         fig, ax = plt.subplots(ncols=1, figsize=(5.5, 3))
         mean_nod = np.empty((len(j_list), n_iter-burn_in))
@@ -274,7 +287,7 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
             mean_nod[ind_j, :] = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
                                                  wsize=wsize, node=node, stim=stim)
             allmeans[ind_j] = np.nanmean(np.abs(mean_nod[ind_j, :]*2-1))
-        im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic',
+        im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic_r',
                        interpolation='none')
         ax.set_yticks(np.arange(0, len(j_list), len(j_list)//2),
                       j_list[np.arange(0, len(j_list), len(j_list)//2)][::-1])
@@ -282,17 +295,17 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
         ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
                                 ax_pos.width*0.06, ax_pos.height*0.7])
         # ax_cbar.set_title(r'  $\frac{1}{8}\sum_i^8 {x_i}$')
-        ax_cbar.set_title(r'  $<\vec{x}^{\,t}>$')
-        plt.colorbar(im, cax=ax_cbar, orientation='vertical')
+        plt.colorbar(im, cax=ax_cbar, orientation='vertical').set_label(r'    $<\mathbf{x}^{*}>$', size=16,
+                                                                        labelpad=0.04)
         ax.set_ylabel(r'Coupling $J$')
         ax.set_xlabel('Sample')
         # ax.plot(j_list, allmeans, color='k')  # np.abs(allmeans*2-1)
         # # ax.plot(j_list, 1-allmeans, color='r')
         # ax.set_xlabel('J')
         # ax.set_ylabel(r'$<P(state \in \{-1, 1\})>_t$', fontsize=10)
-        fig.savefig(DATA_FOLDER + 'gibbs_simulation_all' + '.png',
+        fig.savefig(DATA_FOLDER + 'gibbs_simulation_all_v2' + extralab + '.png',
                     dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'gibbs_simulation_all' + '.svg',
+        fig.savefig(DATA_FOLDER + 'gibbs_simulation_all_v2' + extralab + '.svg',
                     dpi=400, bbox_inches='tight')
 
 
@@ -929,10 +942,10 @@ def plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4
     if states:
         colormap_back = pl.cm.bwr(colormap_array_0)
         colormap_front = pl.cm.bwr(colormap_array_1)
-    x_nodes_front = nodes[:, :, 0] + np.arange(columns)
-    y_nodes_front = (nodes[:, :, 0].T + np.arange(rows)).T
-    x_nodes_back = nodes[:, :, 1] + np.arange(columns) + offset
-    y_nodes_back = (nodes[:, :, 1].T + np.arange(rows)).T + offset
+    x_nodes_front = nodes[:, :, 0] + np.arange(columns) - offset*np.sin(np.arange(columns)*np.pi/4)
+    y_nodes_front = (nodes[:, :, 0].T + np.arange(rows)).T - offset*np.sin(np.arange(columns)*np.pi/4)
+    x_nodes_back = nodes[:, :, 1] + np.arange(columns) + offset*(np.sin(np.arange(columns)*np.pi/4)+1)
+    y_nodes_back = (nodes[:, :, 1].T + np.arange(rows)).T + offset*(np.sin(np.arange(columns)*np.pi/4)+1)
     for i in range(rows):
         for j in range(columns):
             if j % columns == 0 or j == (columns-1):
@@ -1286,8 +1299,73 @@ def plot_occ_probs_gibbs(data_folder,
                 dpi=400, bbox_inches='tight')
 
 
+def plot_occ_probs_gibbs_all(data_folder,
+                             n_iter_list=np.logspace(2, 5, 4, dtype=int),
+                             n_repetitions=100, theta=THETA,
+                             burn_in=0.1):
+    burn_in = int(burn_in*n_iter_list[0])
+    colormap = pl.cm.Greens(np.linspace(0.5, 1, len(n_iter_list)))
+    fig, ax = plt.subplots(nrows=2, figsize=(3.5, 5.5))
+    j = 1
+    n_it = np.logspace(2, 6, 5, dtype=int)
+    idxs = [n in n_iter_list for n in n_it]
+    for i_s, stim in enumerate([0, 0.1]):
+        probs_data = data_folder + 'mu_mat_stim_' + str(stim) + '_j_' + str(j) + '_n_reps_' + str(n_repetitions) + '.npy'
+        mu_vals_all = np.load(probs_data, allow_pickle=True)
+        mu_vals_all = mu_vals_all[idxs]
+        for i_mu, mu_list in enumerate(mu_vals_all):
+            sns.kdeplot(mu_list, color=colormap[i_mu], label=n_iter_list[i_mu],
+                        bw_adjust=0.1, cumulative=True, ax=ax[i_s])
+        k_1 = 12*j + 8*stim
+        k_u = 2*j + 2*stim
+        k_2 = 12*j - 8*stim
+        rho = np.exp(-(k_1-k_2)/2)
+        alpha = np.exp(-(k_1+k_2 - k_u*2)/2)
+        for i_t, t in enumerate(n_iter_list):
+            x = np.arange(0, t+1, 1)
+            vals = occ_function_markov_ch_var(rho, alpha, t, x)
+            cumsum = np.nancumsum(vals)
+            ax[i_s].plot(x/t, cumsum / np.nanmax(cumsum),
+                         label='analytical' + str(t), color=colormap[i_t],
+                         linestyle='--')
+        # plt.hist(mu_list, bins=40, color=colormap[i_n], label=n_iter)
+    # plt.legend(title='N')
+    ax[1].set_ylabel(r'                              CDF of $p(q)$')
+    # ax[1].set_yticks([])
+    # ax[1].set_ylabel('')
+    for a in ax:
+        a.set_xlim(-0.05, 1.05)
+        a.set_ylim(-0.05, 1.05)
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    ax[0].set_ylabel('')
+    ax[0].set_xticks([])
+    ax[1].set_xlabel(r'Approx. posterior $q$')
+    fig.tight_layout()
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='Simulation'),
+                      Line2D([0], [0], color='k', lw=2, linestyle='--',
+                             label='Analytical'),
+                      # Line2D([0], [0], color=colormap[0], lw=2, label='T=1e2'),
+                      # Line2D([0], [0], color=colormap[0], lw=2, label='T=1e3'),
+                      # Line2D([0], [0], color=colormap[2], lw=2, label='T=1e4'),
+                      # Line2D([0], [0], color=colormap[1], lw=2, label='T=1e5'),
+                      # Line2D([0], [0], color=colormap[2], lw=2, label='T=1e6'),
+                      ]
+    ax[0].legend(loc=0, bbox_to_anchor=(0.8, 1.5), handles=legendelements, frameon=False,
+                 fontsize=16)
+    ax[0].text(0.05, 0.64, 'T=1e3', color=colormap[0], fontsize=14)
+    ax[0].text(0.08, 0.1, 'T=1e5', color=colormap[1], fontsize=14, rotation=50)
+    ax[0].text(0.64, 1.03, 'T=1e6', color=colormap[2], fontsize=14)
+    plt.subplots_adjust(hspace=0.2)
+    # plt.title('B = ' + str(stim))
+    fig.savefig(DATA_FOLDER + 'CDF_gibbs_stim_together.png',
+                dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'CDF_gibbs_stim_together.svg',
+                dpi=400, bbox_inches='tight')
+
+
 def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False,
-                           index=0, color='grey', eps=1e-2):
+                           index=0, color='grey', eps=1e-2, savefig=False):
     fig, ax = plt.subplots(1, figsize=(2.6, 2.6), dpi=100)
     ax.plot([0, 1], [0, 0], color='k', zorder=1, linewidth=2)
     ax.plot([0, 0], [0, 1], color='k', zorder=1, linewidth=2)
@@ -1313,11 +1391,12 @@ def plot_necker_cube_faces(interp_sfa=True, offset=0.25, whole=False,
         ax.plot([offset, offset], [offset, 1+offset], color='k', zorder=1, linewidth=2)
         ax.plot([1, 1], [0, 1], color='k', zorder=1, linewidth=2)
     plt.axis('off')
-    if not whole:
-        img_path = DATA_FOLDER + '/necker_images_white/fig_' + str(index) + '.png'
-    if whole:
-        img_path = DATA_FOLDER + '/necker_images_ambiguous/fig_' + str(index) + '.png'
-    fig.savefig(img_path, dpi=100, bbox_inches='tight')
+    if savefig:
+        if not whole:
+            img_path = DATA_FOLDER + '/necker_images_white/fig_' + str(index) + '.png'
+        if whole:
+            img_path = DATA_FOLDER + '/necker_images_ambiguous/fig_' + str(index) + '.png'
+        fig.savefig(img_path, dpi=100, bbox_inches='tight')
     # img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
     # imgrot = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE) / 255
     # img_path = DATA_FOLDER + '/necker_images/fig_rot_' + str(index) + '.png'
@@ -1782,21 +1861,79 @@ def mnle_cylinder(data_folder=DATA_FOLDER, theta=return_theta(),
                          num_simulations=num_simulations), fh)
 
 
+def make_cylinder(radius, length, nlength, alpha, nalpha, center, orientation):
+
+    #Create the length array
+    I = np.linspace(0, length, nlength)
+
+    #Create alpha array avoid duplication of endpoints
+    #Conditional should be changed to meet your requirements
+    if int(alpha) == 360:
+        A = np.linspace(0, alpha, num=nalpha, endpoint=False)/180*np.pi
+    else:
+        A = np.linspace(0, alpha, num=nalpha)/180*np.pi
+
+    #Calculate X and Y
+    X = radius * np.cos(A)
+    Y = radius * np.sin(A)
+
+    #Tile/repeat indices so all unique pairs are present
+    pz = np.tile(I, nalpha)
+    px = np.repeat(X, nlength)
+    py = np.repeat(Y, nlength)
+
+    points = np.vstack(( pz, px, py )).T
+
+    #Shift to center
+    shift = np.array(center) - np.mean(points, axis=0)
+    points += shift
+
+    #Orient tube to new vector
+
+    #Grabbed from an old unutbu answer
+    def rotation_matrix(axis,theta):
+        a = np.cos(theta/2)
+        b,c,d = -axis*np.sin(theta/2)
+        return np.array([[a*a+b*b-c*c-d*d, 2*(b*c-a*d), 2*(b*d+a*c)],
+                         [2*(b*c+a*d), a*a+c*c-b*b-d*d, 2*(c*d-a*b)],
+                         [2*(b*d-a*c), 2*(c*d+a*b), a*a+d*d-b*b-c*c]])
+
+    ovec = orientation / np.linalg.norm(orientation)
+    cylvec = np.array([1,0,0])
+
+    if np.allclose(cylvec, ovec):
+        return points
+
+    #Get orthogonal axis and rotation
+    oaxis = np.cross(ovec, cylvec)
+    rot = np.arccos(np.dot(ovec, cylvec))
+
+    R = rotation_matrix(oaxis, rot)
+    return points.dot(R)
+
+
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
     C = np.load(c_data, allow_pickle=True)
+    # plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False,
+    #               save_fig=False, n_fig=0)
     # hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
     #                       j_list=[0.1, 0.5, 0.8], burn_in=0,
     #                       n_iter=300, n_sims=300)
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # save_necker_cubes(offset=np.arange(0.1, 0.55, 0.01))
-    plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=False, plot_cubes=True)
+    # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=False, plot_cubes=True)
     # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
     #                       n_iter=200000, wsize=1, stim=0, j_ex=0.495, f_all=False,
     #                       theta=return_theta(rows=10, columns=5, layers=2))
+    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
+                          n_iter=10000, wsize=1, stim=0, j_ex=1, f_single=True,
+                          theta=return_theta(), extralab='cyl')
     # plot_states_cylinder(j_ex=0.495,
     #                      stim=0, n_iter=201000,
     #                      theta=return_theta(rows=10, columns=5, layers=2),
@@ -1807,10 +1944,9 @@ if __name__ == '__main__':
     # prob_markov_chain_between_states(tau=100, iters_per_len=200,
     #                                  n_iter_list=np.logspace(0, 4, 5))
     # plot_cylinder_true_posterior(j=0.2, stim=0.05, theta=THETA)
-
-    # plot_occ_probs_gibbs(data_folder=DATA_FOLDER,
-    #                       n_iter_list=np.logspace(2, 6, 5, dtype=int),
-    #                       j=1, stim=0., n_repetitions=100, theta=THETA,
+    # plot_occ_probs_gibbs_all(data_folder=DATA_FOLDER,
+    #                       n_iter_list=[int(1e3), int(1e5), int(1e6)],
+    #                       n_repetitions=100, theta=THETA,
     #                       burn_in=0.1)
     # plot_dominance_duration(j=.9, b=0, chain_length=int(1e6), n_nodes_th=5,
     #                         theta=THETA)
