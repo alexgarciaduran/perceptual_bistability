@@ -1912,6 +1912,24 @@ def make_cylinder(radius, length, nlength, alpha, nalpha, center, orientation):
     return points.dot(R)
 
 
+def expectation_z(p, beta, j, b):
+    return j*(2*p-1)*beta+b
+
+
+def variance_z(p, beta, j, b):
+    return (j*beta)**2*4*p*(1-p)
+
+
+def prob_samples_normal(j, b, kernel, nsamps=100):
+    beta = np.sum(kernel)
+    p = np.random.uniform(0, 1)
+    pvals = []
+    for _ in range(nsamps):
+        pvals.append(p)
+        p1 = np.random.randn()*variance_z(p, beta, j, b)+expectation_z(p, beta, j, b)
+        p = 1/(1+np.exp(-p1))
+    plt.figure()
+    plt.plot(pvals)
 
 
 if __name__ == '__main__':
