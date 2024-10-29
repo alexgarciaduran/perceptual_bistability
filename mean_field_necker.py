@@ -2629,6 +2629,36 @@ def plot_max_eigval():
     plt.axhline(39, color='k', linestyle='--')
 
 
+def analytical_eigval_circulant(taulist=np.logspace(-5, 5, 100)):
+    max_eigvals = []
+    # for circulant matrix, eigvals are Discrete Fourier Transform of the kernel!!
+    for tau in taulist:
+        ker = exp_kernel(tau=tau)
+        n = len(ker)
+        # eigvals = []
+        # for k in range(n):
+        #     sumker = 2*np.sum([ker[j]*np.cos(-2*np.pi*k*j/n) for j in range(1, n//2)])
+        #     eigval = ker[n // 2]*np.cos(k*np.pi) +  sumker
+        #     eigvals.append(eigval)
+        # max_eigvals.append(np.max(eigvals))
+        # argmax.append(np.argmax(eigvals))
+        maxeigval = np.exp(-(n/2-1)/tau) + 2*np.sum([np.exp(-(j-1)/tau) for j in range(1, n//2)])
+        max_eigvals.append(maxeigval)
+    fig, ax = plt.subplots(ncols=2)
+    for a in ax:
+        a.set_xscale('log')
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    ax[0].plot(taulist, max_eigvals)
+    ax[1].plot(taulist, 1/np.array(max_eigvals))
+    ax[0].set_xlabel('Tau of the kernel')
+    ax[1].set_xlabel('Tau of the kernel')
+    ax[0].set_ylabel('Max. eigenvalue')
+    ax[1].set_ylabel('Critical coupling J*')
+    ax[0].axhline(39, color='k', linestyle='--')
+    ax[1].axhline(1/39, color='k', linestyle='--')
+
+
 def mean_field_stim_change_node(j, b_list,
                                 val_init=None, theta=theta):
     num_iter = b_list.shape[0]
@@ -2648,6 +2678,12 @@ def mean_field_stim_change_node(j, b_list,
 
 def exp_kernel(x=np.arange(40), tau=4):
     kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
+    kernel[0] = 0
+    return kernel
+
+
+def gauss_kernel(x=np.arange(40), sigma=1):
+    kernel = np.roll(np.exp(-((x-len(x)//2)**2)/sigma), 20)
     kernel[0] = 0
     return kernel
 
