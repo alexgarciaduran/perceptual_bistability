@@ -18,6 +18,7 @@ import seaborn as sns
 from pybads import BADS
 from scipy.optimize import Bounds
 import glob
+import os
 
 
 THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
@@ -192,9 +193,9 @@ class optimization:
             idx = (np.array(combs) == (j[i], b[i])).all(axis=1)
             norm_cte.append(norm_cte_combs[idx][0])
         boltzman_fbp = bmann_distro(potential_fbp)
-        nlh_fbp = -np.nansum(boltzman_fbp - np.log(norm_cte))
-        # distro = np.exp(boltzman_fbp)/norm_cte
-        # nlh_fbp = -np.nansum(np.log(distro*(1-eps)+conts*eps))
+        # nlh_fbp = -np.nansum(boltzman_fbp - np.log(norm_cte))
+        distro = np.exp(boltzman_fbp)/norm_cte
+        nlh_fbp = -np.nansum(np.log(distro*(1-eps)+conts*eps))
         # iexp = 90
         # print(-(boltzman_fbp - np.log(norm_cte))[iexp])
         # qv = np.arange(-2, 2, 1e-2)
@@ -383,9 +384,9 @@ def load_data(data_folder, n_participants=1):
         return df_0
 
 
-def transform(x, minval=0.5, maxval=0.9999):
-    maxarray = np.max(x)
-    minarray = np.min(x)
+def transform(x, minval=0.4, maxval=0.9999):
+    maxarray = np.nanmax(x)
+    minarray = np.nanmin(x)
     return (maxval-minval)/(maxarray-minarray)*(x-minarray) + minval
 
 
@@ -494,42 +495,51 @@ def return_and_plot_simul_data(data, params, optimizer, plot=True, model='MF'):
 
 def simulate_FBP(pars, n_iters, theta,
                  stimulus, coupling, sv_folder=SV_FOLDER,
-                 n_iter=0):
+                 n_iter=0, model='FBP'):
     vals_conf = []
     jpar, b1par, biaspar, noise, alpha = pars
+    if model in ['LBP', 'MF']:
+        alpha = 1
     b = stimulus*b1par + biaspar
     j = coupling*jpar
-    for i in range(len(stimulus)):
-        # pos, neg = discrete_DBN(j[i], b=b[i], theta=theta, num_iter=n_iters,
-        #                         thr=1e-6, alpha=alpha)
-        logmess = np.random.randn()/10
-        # lm = []
-        for _ in range(n_iters):
-            logmess = dyn_sys_fbp(logmess, j[i], b[i], alpha=alpha, n=3, dt=1e-2, noise=noise)
-            # lm.append(logmess)
-        posterior_fbp = sigmoid(2*(3*logmess+b[i]))
-        # posterior_fbp = np.max((posterior_fbp, 1-posterior_fbp))
-        vals_conf.append(posterior_fbp)
-    data = pd.DataFrame({'stim_str': stimulus, 'coupling': coupling,
-                         'confidence': vals_conf})
-    data.to_csv(sv_folder + 'param_recovery/df_simul' + str(n_iter) + '.csv')
+    pathdata = sv_folder + 'param_recovery/df_simul' + str(n_iter) + model + '.csv'
+    os.makedirs(os.path.dirname(pathdata), exist_ok=True)
+    if os.path.exists(pathdata):
+        data = pd.read_csv(pathdata)
+    else:
+        for i in range(len(stimulus)):
+            # pos, neg = discrete_DBN(j[i], b=b[i], theta=theta, num_iter=n_iters,
+            #                         thr=1e-6, alpha=alpha)
+            logmess = np.random.randn()/10
+            # lm = []
+            for _ in range(n_iters):
+                logmess = dyn_sys_fbp(logmess, j[i], b[i], alpha=alpha, n=3, dt=1e-2, noise=noise)
+                # lm.append(logmess)
+            posterior_fbp = sigmoid(2*(3*logmess+b[i]))
+            # posterior_fbp = np.max((posterior_fbp, 1-posterior_fbp))
+            vals_conf.append(posterior_fbp)
+        data = pd.DataFrame({'stim_str': stimulus, 'coupling': coupling,
+                             'confidence': vals_conf})
+        data.to_csv(sv_folder + 'param_recovery/df_simul' + str(n_iter) + model + '.csv')
     return data
 
 
-def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER):
-    for i in range(n_pars):
+def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER,
+                         i_ini=0):
+    for i in range(i_ini, n_pars):
         j0 = np.random.uniform(0.3, 1.6)
         b10 = np.random.uniform(0.05, 0.3)
         bias0 = np.random.uniform(0.05, 0.3)
-        noise0 = np.random.uniform(0.08, 0.2)
-        alpha0 = np.random.uniform(0.1, 1.4)
+        noise0 = np.random.uniform(0.1, 0.2)
+        alpha0 = np.random.uniform(0.3, 1.4)
         params = [j0, b10, bias0, noise0, alpha0]
         np.save(sv_folder + 'param_recovery/pars_prt' + str(i) + '.npy',
                 np.array(params))
 
 
 def parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
-                       theta=THETA, n_iters=2000, n_trials=5000):
+                       theta=THETA, n_iters=2000, n_trials=5000,
+                       i_ini=0, model='FBP', method='BADS'):
     # coupling = np.repeat(coupling.values, 3)
     # np.random.shuffle(coupling)
     # stimulus = np.repeat(stimulus.values, 3)
@@ -537,32 +547,56 @@ def parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
     stimulus_values = [-1, -0.8, -0.4, 0., 0.4, 0.8, 1]
     coupling = np.random.choice(coupling_values, n_trials)
     stimulus = np.random.choice(stimulus_values, n_trials)
-    for i in range(n_pars):
+    for i in range(i_ini, n_pars):
         pars = np.load(sv_folder + 'param_recovery/pars_prt' + str(i) + '.npy')
         print(pars)
         df = simulate_FBP(pars, n_iters, theta,
-                          stimulus, coupling, sv_folder=SV_FOLDER, n_iter=i)
+                          stimulus, coupling, sv_folder=SV_FOLDER, n_iter=i,
+                          model=model)
         optimizer = optimization(data=df, n_iters=50, theta=theta)
-        pars_array = fit_data(optimizer, model='FBP', n_iters=1, method='BADS',
+        pars_array = fit_data(optimizer, model=model, n_iters=1, method=method,
                               plot=False)[0]
         print(pars_array)
-        np.save(sv_folder + 'param_recovery/pars_prt_recovered' + str(i) + '.npy',
+        if method == 'BADS':
+            method1 = ''
+        else:
+            method1 = method
+        np.save(sv_folder + 'param_recovery/pars_prt_recovered' + str(i) + model + method1 + '.npy',
                 np.array(pars_array))
 
 
-def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50):
-    orig_params = np.zeros((n_pars, 5))
-    recovered_params = np.zeros((n_pars, 5))
+def data_augmentation(df, times_augm=10, sigma=0.05, minval=0.4, maxval=0.9999):
+    df_copy = df.copy()
+    confidence = np.repeat(df_copy.confidence.values, times_augm+1)
+    confidence[len(df_copy):] += np.random.randn(len(df_copy)*times_augm)*sigma
+    confidence = np.clip(confidence, minval, maxval)
+    coupling = np.repeat(df_copy.coupling.values, times_augm+1)
+    stim_str = np.repeat(df_copy.stim_str.values, times_augm+1)
+    data = pd.DataFrame({'stim_str': stim_str, 'coupling': coupling,
+                         'confidence': confidence})
+    return data
+
+
+def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS'):
+    if model == 'LBP':
+        numpars = 4
+    else:
+        numpars = 5
+    if method == 'BADS':
+        method = ''
+    orig_params = np.zeros((n_pars, numpars))
+    recovered_params = np.zeros((n_pars, numpars))
     for i in range(n_pars):
-        params_recovered = np.load(sv_folder + 'param_recovery/pars_prt_recovered' + str(i) + '.npy')
+        params_recovered = np.load(sv_folder + 'param_recovery/pars_prt_recovered' + str(i) + model + method + '.npy')
         params_original = np.load(sv_folder + 'param_recovery/pars_prt' + str(i) + '.npy')
-        orig_params[i] = params_original
+        orig_params[i] = params_original[:numpars]
         recovered_params[i] = params_recovered
     fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(15, 9))
     ax = ax.flatten()
-    labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha']
+    labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha'][:numpars]
     xylims = [[0, 3], [0, 0.5], [0, 0.5], [0, 0.3], [0, 2]]
-    for i_a, a in enumerate(ax[:-1]):
+    for i_a in range(numpars):
+        a = ax[i_a]
         a.plot(orig_params[:, i_a], recovered_params[:, i_a], color='k', marker='o',
                markersize=5, linestyle='')
         a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
@@ -572,42 +606,49 @@ def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50):
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
     ax[-1].axis('off')
+    if model == 'LBP':
+        ax[-2].axis('off')
     fig.tight_layout()
     fig2, ax2 = plt.subplots(ncols=2)
     ax2, ax = ax2
     # define correlation matrix
-    corr_mat = np.empty((len(labels), len(labels)))
+    corr_mat = np.empty((numpars, numpars))
     corr_mat[:] = np.nan
-    for i in range(len(labels)):
-        for j in range(len(labels)):
+    for i in range(numpars):
+        for j in range(numpars):
             # compute cross-correlation matrix
             corr_mat[i, j] = np.corrcoef(orig_params[:, i], recovered_params[:, j])[1][0]
     # plot cross-correlation matrix
     im = ax.imshow(corr_mat.T, cmap='bwr', vmin=-1, vmax=1)
     # tune panels
     plt.colorbar(im, ax=ax, label='Correlation')
-    labels_reduced = ['J', 'B1', 'B0', r'$\sigma$', r'$\alpha$']
-    ax.set_xticks(np.arange(5), labels, rotation='270', fontsize=12)
-    ax.set_yticks(np.arange(5), labels_reduced, fontsize=12)
+    labels_reduced = ['J', 'B1', 'B0', r'$\sigma$', r'$\alpha$'][:numpars]
+    ax.set_xticks(np.arange(numpars), labels, rotation='270', fontsize=12)
+    ax.set_yticks(np.arange(numpars), labels_reduced, fontsize=12)
     ax.set_xlabel('Original parameters', fontsize=14)
     # compute correlation matrix
     mat_corr = np.corrcoef(recovered_params.T, rowvar=True)
     mat_corr *= np.tri(*mat_corr.shape, k=-1)
     # plot correlation matrix
     im = ax2.imshow(mat_corr, cmap='bwr', vmin=-1, vmax=1)
-    ax2.step(np.arange(0, 5)-0.5, np.arange(0, 5)-0.5, color='k',
+    ax2.step(np.arange(0, numpars)-0.5, np.arange(0, numpars)-0.5, color='k',
              linewidth=.7)
-    ax2.set_xticks(np.arange(5), labels, rotation='270', fontsize=12)
-    ax2.set_yticks(np.arange(5), labels, fontsize=12)
+    ax2.set_xticks(np.arange(numpars), labels, rotation='270', fontsize=12)
+    ax2.set_yticks(np.arange(numpars), labels, fontsize=12)
     ax2.set_xlabel('Inferred parameters', fontsize=14)
     ax2.set_ylabel('Inferred parameters', fontsize=14)
 
 
-def fit_subjects(method='BADS', model='FBP'):
+def fit_subjects(method='BADS', model='FBP', subjects='separated',
+                 data_augmen=False):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    if subjects == 'together':
+        all_df['subject'] = 'all'
+        all_df = all_df.reset_index()
     subjects = all_df.subject.unique()
     accuracies = []
     for sub in subjects:
+        print(sub)
         dataframe = all_df.copy().loc[all_df['subject'] == sub]
         accuracies.append(sum(dataframe.response == dataframe.side)/len(dataframe.response))
         # for sub in dataframe.subject.unique():
@@ -618,9 +659,12 @@ def fit_subjects(method='BADS', model='FBP'):
         dataframe['confidence'] = transform(np.abs(dataframe.confidence.values))
         dataframe['stim_str'] = np.abs(dataframe.evidence)
         data = dataframe[['coupling', 'confidence', 'stim_str']]
+        if data_augmen:
+            data = data_augmentation(data, sigma=0.03, times_augm=20)
+        print(len(data))
         # fig, ax = plt.subplots(ncols=2)
-        # sns.lineplot(df, x='coupling', y='confidence', hue='stim_str', ax=ax[0])
-        # sns.lineplot(df, x='stim_str', y='confidence', hue='coupling', ax=ax[1])
+        # sns.lineplot(data, x='coupling', y='confidence', hue='stim_str', ax=ax[0])
+        # sns.lineplot(data, x='stim_str', y='confidence', hue='coupling', ax=ax[1])
         # [a.set_ylim(0.4, 1.05) for a in ax]
         optimizer = optimization(data=data, n_iters=50, theta=return_theta())
         pars_array = fit_data(optimizer, model=model, n_iters=1, method=method,
@@ -635,33 +679,64 @@ def fit_subjects(method='BADS', model='FBP'):
         np.save(SV_FOLDER + 'parameters_' + model + appendix + sub + '.npy', params)
 
 
-def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS'):
-    parmat = np.zeros((15, 4))
+def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
+                       subjects='separated'):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    if subjects == 'together':
+        all_df['subject'] = 'all'
     subjects = all_df.subject.unique()
+    if model == 'LBP':
+        numpars = 4
+    else:
+        numpars = 5
     if method == 'BADS':
         appendix = '_BADS'
     else:
         appendix = ''
+    accuracies = []
+    pright = []
+    nsubs = len(subjects)
+    parmat = np.zeros((nsubs, numpars))
     for i_s, sub in enumerate(subjects):
         params = np.load(SV_FOLDER + 'parameters_' + model + appendix + sub + '.npy')
         parmat[i_s, :] = params
-    fig, ax = plt.subplots(ncols=4, figsize=(15,5))
-    for i in range(4):
+        dataframe = all_df.copy().loc[all_df['subject'] == sub]
+        accuracies.append(sum(dataframe.response == dataframe.side)/len(dataframe.response))
+        pright.append(np.mean((dataframe.response+1)/2))
+    fig, ax = plt.subplots(ncols=numpars, figsize=(15,5))
+    for i in range(numpars):
         ax[i].spines['top'].set_visible(False)
         ax[i].spines['right'].set_visible(False)
         ax[i].spines['bottom'].set_visible(False)
         sns.violinplot(parmat[:, i], color='lightblue', alpha=0.3, ax=ax[i])
-        ax[i].plot(np.random.randn(15)*0.05, parmat[:, i], marker='o', color='k', linestyle='', markersize=4)
+        ax[i].plot(np.random.randn(nsubs)*0.05, parmat[:, i], marker='o', color='k', linestyle='', markersize=4)
         ax[i].set_xticks([])
+    fig2, ax2 = plt.subplots(ncols=numpars, nrows=2, figsize=(16, 10))
+    ax2 = ax2.flatten()
+    labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha'][:numpars]
+    for i_a, a in enumerate(ax2):
+        if i_a < numpars:
+            var = pright
+            lab = 'p(right)'
+        else:
+            var = accuracies
+            lab = 'p(correct)'
+        a.plot(var, parmat[:, i_a % numpars], color='k', marker='o', linestyle='')
+        a.set_xlabel(lab)
+        a.set_ylabel(labels[i_a % numpars])
+    fig2.tight_layout()
 
 
 if __name__ == '__main__':
-    fit_subjects(method='BADS', model='LBP')
+    plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='Powell')
+    # fit_subjects(method='BADS', model='FBP')
     # parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
-    #                    theta=THETA, n_iters=2500)
+    #                     theta=THETA, n_iters=2500, n_trials=10000,
+    #                     model='FBP', method='Powell', i_ini=14)
+    # parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
+    #                     theta=THETA, n_iters=2500, n_trials=10000,
+    #                     model='LBP', method='BADS', i_ini=49)
     # optimizer.mse_minimization()  # optimize via MSE
-
     # combinations = optimizer.combinations
     # mse_list_mf = optimizer.mse_list_mf
     # mse_list_fbp = optimizer.mse_list_fbp
