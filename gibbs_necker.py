@@ -1916,20 +1916,24 @@ def expectation_z(p, beta, j, b):
     return j*(2*p-1)*beta+b
 
 
-def variance_z(p, beta, j, b):
-    return (j*beta)**2*4*p*(1-p)
+def variance_z(p, beta2, j, b):
+    return (j)**2*4*p*(1-p)*beta2
 
 
 def prob_samples_normal(j, b, kernel, nsamps=100):
     beta = np.sum(kernel)
+    beta2 = np.sum(kernel**2)
     p = np.random.uniform(0, 1)
     pvals = []
     for _ in range(nsamps):
         pvals.append(p)
-        p1 = np.random.randn()*variance_z(p, beta, j, b)+expectation_z(p, beta, j, b)
+        p1 = np.random.randn()*variance_z(p, beta2, j, b)+expectation_z(p, beta, j, b)
         p = 1/(1+np.exp(-p1))
     plt.figure()
     plt.plot(pvals)
+    plt.xlabel('Sample')
+    plt.ylabel('p=p(x=1)')
+    plt.ylim(-0.05, 1.05)
 
 
 if __name__ == '__main__':
@@ -1949,9 +1953,14 @@ if __name__ == '__main__':
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
     #                       n_iter=200000, wsize=1, stim=0, j_ex=0.495, f_all=False,
     #                       theta=return_theta(rows=10, columns=5, layers=2))
-    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
-                          n_iter=10000, wsize=1, stim=0, j_ex=1, f_single=True,
-                          theta=return_theta(), extralab='cyl')
+    # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
+    #                       n_iter=10000, wsize=1, stim=0, j_ex=1, f_single=True,
+    #                       theta=return_theta(), extralab='cyl')
+    x = np.arange(40)
+    sigma = 10
+    kernel = np.roll(np.exp(-((x-len(x)//2)**2)/sigma), 20)
+    kernel[0] = 0
+    prob_samples_normal(j=0.65, b=0., kernel=kernel, nsamps=10000)
     # plot_states_cylinder(j_ex=0.495,
     #                      stim=0, n_iter=201000,
     #                      theta=return_theta(rows=10, columns=5, layers=2),
