@@ -542,8 +542,8 @@ def plot_solution_BP(j_list, stim):
     # plt.plot(j_list, 1 / (1+eq3**3), color='b')
 
 
-def r_stim(x, j_e, b_e, n_neigh=3):
-    return b_e*x**n_neigh - j_e * b_e * x**(n_neigh-1) + j_e * x - 1
+def r_stim(x, j_e, b_e, n_neigh=3, alpha=1):
+    return b_e*x**(n_neigh) - (j_e**alpha) * b_e * x**(n_neigh-alpha) + (j_e**alpha)* x**alpha - 1
 
 
 def r_stim_prime(x, j_e, b_e):
@@ -560,7 +560,7 @@ def cubic(a,b,c,d):
 
 
 def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
-                     tol=1e-2, n_neigh=3):
+                     tol=1e-2, n_neigh=3, alpha=1):
     """
     Searches for roots using bisection method in a interval of r, given by
     [min_r, max_r], using a sliding window of of size w_size.
@@ -573,12 +573,12 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
     while (min_r + (count+1) * w_size) <= max_r:
         a = min_r+count*w_size
         b = min_r+(count+1)*w_size
-        if np.sign(r_stim(a, j_e, b_e, n_neigh=n_neigh)*
-                   r_stim(b, j_e, b_e, n_neigh=n_neigh)) > 0:
+        if np.sign(r_stim(a, j_e, b_e, n_neigh=n_neigh, alpha=alpha)*
+                   r_stim(b, j_e, b_e, n_neigh=n_neigh, alpha=alpha)) > 0:
             count += 1
         else:
             solution_bisection = bisect(r_stim, a=a, b=b,
-                                        args=(j_e, b_e, n_neigh),
+                                        args=(j_e, b_e, n_neigh, alpha),
                                         xtol=1e-12)
             if len(sols) > 0:
                 if (np.abs(np.array(sols) - solution_bisection).any()> tol):
@@ -1934,8 +1934,8 @@ def plot_pot_evolution_FBP(j=0.75, b=0, alpha=1, n=3, num_iter=10):
     pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
     potential_vals = []
     for i in range(num_iter):
-        logmess = dyn_sys_fbp(logmess, j, b, alpha=1, n=3, dt=1e-1, noise=1)
-        logmessages.append(logmess)
+        logmess = dyn_sys_fbp(logmess, j, b, alpha=alpha, n=3, dt=1, noise=0.2)
+        logmessages.append(gn.sigmoid(logmess*n+b))
         val_pot = -scipy.integrate.quad(pot, -1.25, logmess)[0]
         potential_vals.append(val_pot)
     for i_a, a in enumerate(ax):
@@ -2196,6 +2196,122 @@ def f_q_vs_alpha(j=0.5, alpha_list=np.arange(0.1, 2, 0.1), b=0,
     ax.set_xlabel('M')
     
 
+def second_derivative_potential(x, j, b, alpha, n=3):
+    dertanh = 1/(1-(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b))**2)
+    return -np.tanh(alpha*j)*(n-alpha)*dertanh/alpha/(np.cosh(x*(n-alpha)+b))**2+1
+
+
+def k_i_to_j(j, xi, xj, noise, b=0, alpha=1, n=3):
+    v_2_xi = second_derivative_potential(xi, j, b=b, alpha=alpha)
+    v_2_xj = second_derivative_potential(xj, j, b=b, alpha=alpha)
+    negpotder = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    v_xi = -scipy.integrate.quad(negpotder, 0, xi)[0]
+    v_xj = -scipy.integrate.quad(negpotder, 0, xj)[0]
+    # k_IJ = sqrt(|V''(xi)*V''(xj|)*exp{2*(V(x_i)-V(x_j))/sigma^2}/(2*pi)
+    return np.sqrt(np.abs(v_2_xi*v_2_xj))*np.exp(2*(v_xi - v_xj)/noise**2) / (2*np.pi)
+
+
+def get_unst_and_stab_fp(j, b, alpha=1, n=3, tol=1e-4):
+    diff_1 = 0
+    diff_2 = 0
+    init_cond_unst = 0.
+    q1 = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    sol_1, _, flag, _ =\
+        fsolve(q1, 5., full_output=True)
+    x_stable_1 = sol_1[0]
+    sol_2, _, flag, _ =\
+        fsolve(q1, -5., full_output=True)
+    x_stable_2 = sol_2[0]
+    while np.abs(diff_1) <= tol or np.abs(diff_2) <= tol:
+        if np.abs(x_stable_1-x_stable_2) <= tol:
+            x_unstable = np.nan
+            break
+        sol_unstable, _, flag, _ =\
+            fsolve(q1, init_cond_unst, full_output=True)
+        if flag == 1:
+            x_unstable = sol_unstable[0]
+        else:
+            x_unstable = np.nan
+            break
+        diff_1 = np.abs(x_unstable - x_stable_1)
+        diff_2 = np.abs(x_unstable - x_stable_2)
+        init_cond_unst = np.random.rand()*np.sign(-b)
+    return x_stable_1, x_stable_2, x_unstable
+
+
+def psychometric_fbp_analytical(t_dur, noiselist=[0.05, 0.1, 0.2, 0.3],
+                                j_list=np.arange(0., 1.1, 0.2),
+                                b_list=np.arange(0, 0.2, 1e-2),
+                                alphalist=[0.1, 0.5, 1, 1.4], n=3,
+                                tol=1e-8, varchange='alpha'):
+    if varchange == 'alpha':
+        noise = 0.3
+        varlist = alphalist
+        title = r'Alpha, $\alpha$ = '
+    else:
+        alpha = 1
+        varlist = noiselist
+        title = r'Noise, $\sigma$ = '
+    init_cond = 0.
+    accuracy = np.zeros((len(j_list), len(b_list), len(varlist)))
+    for i_n, var in enumerate(varlist):
+        if varchange == 'alpha':
+            alpha = var
+        else:
+            noise = var
+        for ib, b in enumerate(b_list):  # for each b, compute P(C) = P_{C,0}*P_{C,C} + (1-P_{C,0})*P_{C,E}
+        # prob of correct is prob of correct at beginning times prob of staying at correct atractor
+        # plus prob of incorrect at beginning times prob of going from incorrect to correct
+            for ij, j in enumerate(j_list):
+                # x_stable_1 = "correct" attractor (with sign of B)
+                # x_stable_2 = "incorrect" attractor (with sign of B)
+                x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j=j, b=b, alpha=alpha, n=n,
+                                                                          tol=tol)
+                if b < 0:  # change which attractor is the correct one depending on b
+                    x_stable_2, x_stable_1 = x_stable_1, x_stable_2
+                if np.abs(x_stable_1 - x_stable_2) <= tol:
+                    accuracy[ij, ib, i_n] = 1
+                    continue
+                # q1(x) = grad(V(x))
+                q1 = lambda x: -1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) + x
+                # potential = V(x)-V(0) = int_[0, x] q1(x*) dx*
+                potential = lambda x: scipy.integrate.quad(q1, 0., x)[0]
+                # P_{C, 0} = int_{x_E, x_0} exp(2V(x)/sigma^2) dx /
+                #            int_{x_E, x_C} exp(2V(x)/sigma^2) dx
+                pc0_numerator = scipy.integrate.quad(lambda x: np.exp(2*potential(x)/noise**2),
+                                                     x_stable_2, init_cond)[0]
+                pc0_denom = scipy.integrate.quad(lambda x: np.exp(2*potential(x)/noise**2),
+                                                 x_stable_2, x_stable_1)[0]
+                pc0 = pc0_numerator/pc0_denom
+                # compute error transition rates k_CE, K_EC
+                k_EC = k_i_to_j(j, x_stable_1, x_unstable, noise, b, alpha, n=n)
+                k_CE = k_i_to_j(j, x_stable_2, x_unstable, noise, b, alpha, n=n)
+                k = k_EC+k_CE
+                pCS = k_CE/k  # stationary correct
+                # error to correct transition
+                pCE = pCS*(1-np.exp(-k*t_dur))
+                # correct to correct
+                pCC = pCS*(1-np.exp(-k*t_dur))+np.exp(-k*t_dur)
+                # probability of correct
+                # P(C) = P_{C,0}*P_{C,C} + (1-P_{C,0})*P_{C,E}
+                pC = pc0*pCC + (1-pc0)*pCE
+                accuracy[ij, ib, i_n] = pC  # np.max((pC, 1-pC))
+    fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(12, 8))
+    axes = axes.flatten()
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(j_list)))
+    for iax, ax in enumerate(axes):
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        for ij in range(len(j_list)):
+            ax.plot(b_list, accuracy[ij, :, iax], color=colormap[ij],
+                    label=round(j_list[ij], 2))
+        ax.set_xlabel('Sensory evidence, B')
+        ax.set_ylabel('Accuracy')
+        ax.set_title(title + str(varlist[iax]))
+        ax.set_ylim(0.45, 1.05)
+    axes[0].legend(title='Coupling, J')
+    fig.tight_layout()
+
 
 if __name__ == '__main__':
     # for stim in [0]:
@@ -2230,8 +2346,13 @@ if __name__ == '__main__':
     #                       b_list=np.round(np.arange(0, .08, 0.005), 5),
     #                       num_reps=4000)
     # plot_L_different_init(alpha=1, n=3, dt=1e-3, t_end=2, noise=0)
-    log_potential(b=0, j_list=None, alpha=1, n=3,
-                  ax=None, labels=True, norm=False, transform=False)
+    # log_potential(b=0, j_list=None, alpha=1, n=3,
+    #               ax=None, labels=True, norm=False, transform=False)
+    psychometric_fbp_analytical(t_dur=1, noiselist=[0.1, 0.2, 0.3, 0.4],
+                                j_list=np.arange(0.6, 2.3, 0.2),
+                                b_list=np.arange(0, 0.2, 1e-2),
+                                alphalist=[0.01, 0.1, 0.5, 1], n=5,
+                                tol=1e-5, varchange='noise')
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
