@@ -1418,16 +1418,96 @@ def plot_boltzmann_distro(j, noise, b=0, ax=None):
 
 
 def second_derivative_potential(q, j, b=0):
-    expo = 6*(j*(2*q-1)+b)
+    expo = 6*(j*(2*q-1))+2*b
     return 1 - 12*j*gn.sigmoid(expo)*(1-gn.sigmoid(expo))
 
 
 def k_i_to_j(j, xi, xj, noise, b=0):
-    v_2_xi = second_derivative_potential(xi, j, b=0)
-    v_2_xj = second_derivative_potential(xj, j, b=0)
+    v_2_xi = second_derivative_potential(xi, j, b=b)
+    v_2_xj = second_derivative_potential(xj, j, b=b)
     v_xi = potential_mf(xi, j, b)
     v_xj = potential_mf(xj, j, b)
-    return np.sqrt(np.abs(v_2_xi*v_2_xj))*np.exp(-2*(v_xi - v_xj)/noise**2) / (2*np.pi)
+    return np.sqrt(np.abs(v_2_xi*v_2_xj))*np.exp(2*(v_xi - v_xj)/noise**2) / (2*np.pi)
+
+
+def get_unst_and_stab_fp(j, b, tol=1e-10):
+    diff_1 = 0
+    diff_2 = 0
+    init_cond_unst = 0.5
+    q1 = lambda q: gn.sigmoid(6*j*(2*q-1)+ b*2) - q
+    sol_1, _, flag, _ =\
+        fsolve(q1, 1, full_output=True)
+    x_stable_1 = sol_1[0]
+    sol_2, _, flag, _ =\
+        fsolve(q1, 0, full_output=True)
+    x_stable_2 = sol_2[0]
+    while np.abs(diff_1) <= tol or np.abs(diff_2) <= tol:
+        if np.abs(x_stable_1-x_stable_2) <= tol:
+            x_unstable = np.nan
+            break
+        sol_unstable, _, flag, _ =\
+            fsolve(q1, init_cond_unst, full_output=True)
+        if flag == 1:
+            x_unstable = sol_unstable[0]
+        else:
+            x_unstable = np.nan
+            break
+        diff_1 = np.abs(x_unstable - x_stable_1)
+        diff_2 = np.abs(x_unstable - x_stable_2)
+        init_cond_unst = np.random.rand()
+    return x_stable_1, x_stable_2, x_unstable
+
+
+def psychometric_mf_analytical(t_dur, noiselist=[0.05, 0.1, 0.2, 0.3],
+                               j_list=np.arange(0., 1.1, 0.2),
+                               b_list=np.arange(0, 0.2, 1e-2),
+                               tol=1e-8):
+    init_cond = 0.5
+    accuracy = np.zeros((len(j_list), len(b_list), len(noiselist)))
+    for i_n, noise in enumerate(noiselist):
+        for ib, b in enumerate(b_list):  # for each b, compute P(C) = P_{C,0}*P_{C,C} + (1-P_{C,0})*P_{C,E}
+        # prob of correct is prob of correct at beginning times prob of staying at correct atractor
+        # plus prob of incorrect at beginning times prob of going from incorrect to correct
+            for ij, j in enumerate(j_list):
+                x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+                if b < 0:
+                    x_stable_2, x_stable_1 = x_stable_1, x_stable_2
+                if np.abs(x_stable_1 - x_stable_2) <= tol:
+                    continue
+                # P_{C, 0} = int_{x_E, x_0} exp(2V(x)/sigma^2) dx /
+                #            int_{x_E, x_C} exp(2V(x)/sigma^2) dx
+                pc0_numerator = scipy.integrate.quad(lambda q: np.exp(2*potential_mf(q, j, b)/noise**2),
+                                                     x_stable_2, init_cond)[0]
+                pc0_denom = scipy.integrate.quad(lambda q: np.exp(2*potential_mf(q, j, b)/noise**2),
+                                                 x_stable_2, x_stable_1)[0]
+                pc0 = pc0_numerator/pc0_denom
+                # compute error transition rates k_CE, K_EC
+                k_EC = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+                k_CE = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
+                k = k_EC+k_CE
+                pCS = k_CE/k  # stationary correct
+                # error to correct transition
+                pCE = pCS*(1-np.exp(-k*t_dur))
+                # correct to correct
+                pCC = pCS*(1-np.exp(-k*t_dur))+np.exp(-k*t_dur)
+                # probability of correct
+                pC = pc0*pCC + (1-pc0)*pCE
+                accuracy[ij, ib, i_n] = pC  # np.max((pC, 1-pC))
+    fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(12, 8))
+    axes = axes.flatten()
+    for iax, ax in enumerate(axes):
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(j_list)))
+        for ij in range(len(j_list)):
+            ax.plot(b_list, accuracy[ij, :, iax], color=colormap[ij],
+                    label=round(j_list[ij], 2))
+        ax.set_xlabel('Sensory evidence, B')
+        ax.set_ylabel('Accuracy')
+        ax.set_title(r'Noise, $\sigma$ = ' + str(noiselist[iax]))
+        ax.set_ylim(0.45, 1.05)
+    axes[0].legend(title='Coupling, J')
+    fig.tight_layout()
 
 
 def transition_probs_j(t_dur, noise,
@@ -2258,6 +2338,7 @@ def mean_field_simul_discrete(j_list, b, theta, num_iter=200):
         vals_mean.append(np.max((vec, 1-vec)))
     vals_mean = np.array(vals_mean)
     mean_neighs = (1/3+1/4)/2
+    mean_neighs = 1/np.max(np.linalg.eigvals(theta))
     for i in range(theta.shape[0]):
         if np.sum(theta[i]) == 3:
             color = 'r'
@@ -2643,6 +2724,7 @@ def analytical_eigval_circulant(taulist=np.logspace(-5, 5, 100)):
         # max_eigvals.append(np.max(eigvals))
         # argmax.append(np.argmax(eigvals))
         maxeigval = np.exp(-(n/2-1)/tau) + 2*np.sum([np.exp(-(j-1)/tau) for j in range(1, n//2)])
+        # maxeigval = np.sum(ker)
         max_eigvals.append(maxeigval)
     fig, ax = plt.subplots(ncols=2)
     for a in ax:
@@ -2838,8 +2920,11 @@ if __name__ == '__main__':
     #                        theta=gn.return_theta(rows=10, columns=5,
     #                                              layers=2, factor=1))
     # boltzmann_2d_change_j(noise=0.1)
-    mean_field_simul_discrete(j_list=np.arange(0, 1, 1e-3), b=0, theta=gn.theta_rubin(),
-                              num_iter=400)
+    # mean_field_simul_discrete(j_list=np.arange(0, 1, 1e-3), b=0, theta=gn.theta_rubin(),
+    #                           num_iter=400)
+    psychometric_mf_analytical(t_dur=1, noiselist=[0.05, 0.08, 0.1, 0.15],
+                               j_list=np.arange(0.6, 1.3, 0.1),
+                               b_list=np.arange(-0.2, 0.2, 5e-3))
     # boltzmann_2d_change_sigma(j=0.5, b=0)
     # levelts_laws(noise=0.1, j=0.39,
     #              b_list=np.round(np.arange(-0.01, 0.012, 0.0005), 4),
