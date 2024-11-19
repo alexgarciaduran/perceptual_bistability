@@ -17,6 +17,8 @@ import matplotlib as mpl
 from skimage.transform import resize
 from matplotlib.lines import Line2D
 import matplotlib.pylab as pl
+# from numba import jit, prange
+# from concurrent.futures import ProcessPoolExecutor
 
 THETA = gn.THETA
 
@@ -1425,7 +1427,9 @@ def plot_potentials_lbp(j_list, b=0, neighs=3, q1=True):
 def plot_sols_FLBP(alphalist=np.linspace(0, 1, 10),
                    j_list=np.arange(0, 3, 0.001), theta=THETA,
                    num_iter=100, stim=0):
-    plt.figure()
+    fig, ax = plt.subplots(1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     colormap = pl.cm.Blues(np.linspace(0.2, 1, len(alphalist)))
     for ia, alpha in enumerate(alphalist):
         sols_pos = []
@@ -1436,12 +1440,28 @@ def plot_sols_FLBP(alphalist=np.linspace(0, 1, 10),
             sols_pos.append(np.max((pos[0], neg[0])))
             sols_neg.append(np.min((pos[0], neg[0])))
         n = 3
-        plt.axvline(np.log(n/(n-2*alpha))/(2*alpha), color=colormap[ia],
-                    alpha=0.3, linestyle='--')
-        plt.plot(j_list, sols_pos, color=colormap[ia], label=alpha)
-        plt.plot(j_list, sols_neg, color=colormap[ia])
+        # plt.axvline(np.log(n/(n-2*alpha))/(2*alpha), color=colormap[ia],
+        #             alpha=0.3, linestyle='--')
+        if alpha == 1:
+            color = 'orange'
+            label = r'BP, $\alpha = 1$'
+            lw = 3.5
+        if ia == 0:
+            color = 'red'
+            label = r'MF, $\alpha \to 0$'
+            lw = 3.5
+        if ia > 0 and alpha != 1:
+            if alpha == 0.5:
+                label = alpha
+            else:
+                label = ''
+            color = colormap[ia]
+            lw = 2
+        plt.plot(j_list, sols_pos, color=color, label=label,
+                 linewidth=lw)
+        plt.plot(j_list, sols_neg, color=color, linewidth=lw)
     plt.xlabel('Coupling J')
-    plt.legend()
+    plt.legend(frameon=False, title=r'$\alpha$')
     plt.ylabel('Approximated posterior q')
     # n = 3
     # plt.axvline(np.log(n/(n-2))/(2), color='r', alpha=0.3)
@@ -1844,6 +1864,199 @@ def potential_2d_changing_j(b, alpha=1, n=3, noise=0.2):
     ax.set_ylabel('Log-message ratio')
 
 
+def plot_optimal_alpha_vs_j_b(j_list=np.arange(0.1, 2, 0.1), 
+                              b_list=np.arange(0, 0.1, 1e-2), noise=0.2,
+                              n=3):
+    max_val = 2.5
+    min_val = -2.5
+    epsilon = 5e-3
+    vals = np.arange(min_val+epsilon, max_val, epsilon)
+    alpha_list_all = np.arange(0.0001, 1.49, 2e-2)
+    alpha_optimal = np.zeros((len(j_list), len(b_list)))
+    numits = len(j_list)*len(b_list)
+    it = 0
+    for i_b, b in enumerate(b_list):
+        for i_j, j in enumerate(j_list):
+            prob_correct = []
+            for i_a, alpha in enumerate(alpha_list_all):
+                pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+                potential = []
+                # norm_cte = []
+                for i in range(len(vals)):
+                    potential.append(-scipy.integrate.quad(pot, min_val, vals[i])[0])
+                    # norm_cte.append(np.exp(scipy.integrate.quad(lambda x: pot(x), min_val, vals[i])[0]*2/noise**2))
+                potential = np.array(potential)
+                # norm_cte = np.sum(norm_cte)
+                boltzmann_distro = np.exp(-potential*2/noise**2)
+                correct_area = np.sum(boltzmann_distro[vals >= 0]) / (np.sum(boltzmann_distro))
+                prob_correct.append(correct_area)
+                if i_a > 10 and np.nansum(np.sign(np.diff(prob_correct))) < len(prob_correct)-1:
+                    break
+            if it % 100 == 0:
+                print(str(round(it / numits * 100, 2)) + ' %')
+            it += 1
+            maxind = np.argmax(prob_correct)
+            alpha_optimal[i_j, i_b] = alpha_list_all[maxind]
+    np.save(DATA_FOLDER + 'optimal_alpha_noise_03_coupling_0301_002_stim_0_015_00001.npy', alpha_optimal)
+    fig, ax = plt.subplots(ncols=1)
+    im = ax.imshow(np.flipud(alpha_optimal), cmap='Blues', aspect='auto',
+                   extent=[np.min(b_list), np.max(b_list),
+                           np.min(j_list), np.max(j_list)])  #, interpolation='bicubic')
+    ax.set_ylabel('Coupling, J')
+    ax.set_xlabel('Sensory evidence, B')
+    plt.colorbar(im, label=r'Optimal alpha, $\hat{\alpha}$')
+    fig.savefig(DATA_FOLDER + 'optimal_alpha_jb_noise03.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'optimal_alpha_jb_noise03.svg', dpi=400)
+
+
+def plot_optimal_alpha_numerical(j_list=np.arange(0.1, 2, 0.1), 
+                                 b_list=np.arange(0, 0.1, 1e-2), noise=0.2):
+    alpha_optimal = np.empty((len(j_list), len(b_list)))
+    for i_b, b in enumerate(b_list):
+        for i_j, j in enumerate(j_list):
+            alpha_optimal[i_j, i_b] = numerical_optimal_alpha(j, b, noise=noise)
+    fig, ax = plt.subplots(ncols=1)
+    im = ax.imshow(np.flipud(alpha_optimal), cmap='Blues', aspect='auto',
+                   extent=[0., 0.1, 0.1, 2])
+    ax.set_ylabel('Coupling, J')
+    ax.set_xlabel('Sensory evidence, B')
+    plt.colorbar(im, label=r'Optimal alpha, $\hat{\alpha}$')
+
+
+def dv_dalpha(x, alpha, j, b, n=3):
+    tanhproduct = lambda x: np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)
+    fun = lambda x: -np.arctanh(tanhproduct(x))/alpha**2
+    first_comp = np.vectorize(lambda x: scipy.integrate.quad(fun, 1, x)[0])
+    fun_2 = lambda x: 1/alpha / (1-tanhproduct(x)**2)
+    fun_3 = lambda x: j*np.tanh(x*(n-alpha)+b)/(np.cosh(j*alpha)**2)
+    fun_4 = lambda x: -x*np.tanh(j*alpha)/(np.cosh(x*(n-alpha)+b)**2)
+    funtotal = lambda x: fun_2(x)*(fun_3(x)+fun_4(x))
+    second_comp = np.vectorize(lambda x: scipy.integrate.quad(funtotal, 1, x)[0])
+    return first_comp(x)+second_comp(x)
+
+
+def dpc_dalpha(alpha, j, b, noise=0.2, n=3):
+    pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    potential = np.vectorize(lambda x: -scipy.integrate.quad(pot, 1, x)[0])
+    der_integrand = np.vectorize(lambda x: dv_dalpha(x, alpha, j, b, n=3)*np.exp(-2*potential(x)/noise**2))
+    integrand = np.vectorize(lambda x: np.exp(-2*potential(x)/noise**2))
+    integral_numerator = scipy.integrate.quad(integrand , 0, 3)[0]
+    integral_denominator = scipy.integrate.quad(integrand , -3, 3)[0]
+    der_integral_numerator = scipy.integrate.quad(der_integrand , 0, 3)[0]
+    der_integral_denominator = scipy.integrate.quad(der_integrand , -3, 3)[0]
+    return (integral_denominator*der_integral_numerator - integral_numerator*der_integral_denominator)  # /integral_denominator**2
+
+
+def numerical_optimal_alpha(j, b, noise=0.2):
+    # gradient descent
+    # learning_rate=1e-2
+    # n_iters=200
+    # alist = [alpha]
+    # for _ in range(n_iters):
+    #     alpha = alpha - dpc_dalpha(alpha, j, b, noise=0.2, n=3)*learning_rate
+    #     print(alpha)
+    #     if alpha < 0 or alpha > 2 or np.isnan(alpha):
+    #         break
+    #     alist.append(alpha)
+    alpha_list = np.arange(0.01, 1.5, 1e-1)
+    dpcda = [dpc_dalpha(a, 0.5, 0.02, noise=noise, n=3) for a in alpha_list]
+    alpha_init = alpha_list[np.argmin(np.abs(dpcda))]
+    sol, _, flag, _ = fsolve(dpc_dalpha, alpha_init,
+                             full_output=True, args=(j, b, noise))
+    return sol[0] if flag ==1 else alpha_init
+
+
+def plot_pot_boltzmann(j=0.8, b_list=[0.04], noise=0.1, alpha_list=[0.1, 1, 1.4], n=3):
+    max_val = 3
+    min_val = -3
+    epsilon = 1e-3
+    vals = np.arange(min_val+epsilon, max_val, epsilon)
+    fig, ax = plt.subplots(ncols=len(alpha_list), nrows=1, figsize=(7, 3.3))
+    # ax = ax.flatten()
+    for i_a, a in enumerate(ax.flatten()):
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_yticks([])
+        a.spines['left'].set_visible(False)
+    ax[1].set_xlabel('Log-message ratio')
+    for i_b, b in enumerate(b_list):
+        for i_a, alpha in enumerate(alpha_list):
+            pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+            potential = []
+            norm_cte = []
+            for i in range(len(vals)):
+                potential.append(-scipy.integrate.quad(pot, min_val, vals[i])[0])
+                norm_cte.append(np.exp(scipy.integrate.quad(lambda x: pot(x), min_val, vals[i])[0]*2/noise**2))
+            potential = np.array(potential)
+            norm_cte = np.sum(norm_cte)
+            boltzmann_distro = np.exp(-potential*2/noise**2)/norm_cte
+            ax[i_a].plot(vals, boltzmann_distro, color='k', linewidth=2)
+            ax[i_a].fill_between(vals[vals >= 0], boltzmann_distro[vals >= 0], 0,
+                                 color='g', alpha=0.3)
+            ax[i_a].fill_between(vals[vals < 0], boltzmann_distro[vals < 0], 0,
+                                 color='r', alpha=0.3)
+            correct_area = np.sum(boltzmann_distro[vals >= 0]) / (np.sum(boltzmann_distro[vals >= 0]) +
+                                                                  np.sum(boltzmann_distro[vals < 0]))
+            correct_area = np.round(correct_area, 4)
+            ax[i_a].set_title(r'$\alpha$ = ' + str(alpha_list[i_a]) + '\n p(correct) = ' + str(correct_area),
+                              fontsize=15)
+    ax[0].set_ylabel('Boltzmann distribution')
+    fig.tight_layout()
+    # ax[0].text()
+    fig2, ax2 = plt.subplots(1)
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
+    alpha_list_all = np.arange(0.0001, 1.4, 2e-2)
+    max_val = 2
+    min_val = -2
+    epsilon = 1e-2
+    vals = np.arange(min_val+epsilon, max_val, epsilon)
+    for noise in np.round(np.linspace(0.15, 0.4, 6), 3):
+        prob_correct = []
+        for i_a, alpha in enumerate(alpha_list_all):
+            pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+            potential = []
+            norm_cte = []
+            for i in range(len(vals)):
+                potential.append(-scipy.integrate.quad(pot, min_val, vals[i])[0])
+                norm_cte.append(np.exp(scipy.integrate.quad(lambda x: pot(x), min_val, vals[i])[0]*2/noise**2))
+            potential = np.array(potential)
+            norm_cte = np.sum(norm_cte)
+            boltzmann_distro = np.exp(-potential*2/noise**2)/norm_cte
+            correct_area = np.sum(boltzmann_distro[vals >= 0]) / (np.sum(boltzmann_distro[vals >= 0]) +
+                                                                  np.sum(boltzmann_distro[vals < 0]))
+            prob_correct.append(correct_area)
+        ax2.plot(alpha_list_all, prob_correct, linewidth=2, label=noise)
+        maxind = np.argmax(prob_correct)
+        ax2.scatter(alpha_list_all[maxind], prob_correct[maxind])
+    ax2.set_ylabel('Probability of correct')
+    ax2.set_xlabel(r'Alpha, $\alpha$')
+    ax2.legend(title=r'Noise, $\sigma$')
+
+
+def plot_pot_boltzmann(j, b=0.05, noise=0.1, alpha=1, n=3):
+    max_val = 1.25
+    min_val = -1.25
+    epsilon = 1e-3
+    vals = np.arange(min_val+epsilon, max_val, epsilon)
+    pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    potential = []
+    for i in range(len(vals)):
+        potential.append(-scipy.integrate.quad(pot, min_val, vals[i])[0])
+    potential = np.array(potential)
+    norm_cte = []
+    for i in range(len(vals)):
+        norm_cte.append(scipy.integrate.quad(lambda x: np.exp(-2*pot(x)/noise**2), min_val, vals[i])[0])
+    norm_cte = np.sum(norm_cte)
+    plottable = [potential, np.exp(-potential*2/noise**2)/norm_cte]
+    fig, ax = plt.subplots(ncols=2, figsize=(6, 4))
+    for i_a, a in enumerate(ax):
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.plot(vals, plottable[i_a], color='k')
+    fig.tight_layout()
+
+
 def log_potential(b, j_list=None, alpha=1, n=3,
                   ax=None, labels=True, norm=True, transform=True):
     max_val = 1.25
@@ -1953,15 +2166,20 @@ def dyn_sys_ql(ql, ra, rb, j, b, dt=1e-2, n=3, alpha=1, noise=0.1,
 
 
 def plot_log_ratio(j, b, n=3, alpha=1):
-    pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    # pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
     pot_taylor = lambda x: 1/alpha * (np.arctanh(np.tanh(j*alpha)*np.tanh(b))+
                                       np.tanh(j*alpha)*(1-np.tanh(b)**2)*x*(n-alpha)
                                       - np.tanh(j*alpha)/3 * (1-np.tanh(b)**2)**2 * (x**3)*(n-alpha)**3)-x
-    x = np.arange(-1.5, 1.5, 1e-3)
+    j = np.arange(0, 1.5, 1e-3)
+    solspos = np.sqrt(3*(np.tanh(j*alpha)*(n-alpha)-1) / (np.tanh(j*alpha) * (n-alpha)**3))
+    solsneg = -np.sqrt(3*(np.tanh(j*alpha)*(n-alpha)-1) / (np.tanh(j*alpha) * (n-alpha)**3))
+    # plt.figure()
+    # plt.plot(x, pot(x), color='k', label='True')
+    # plt.plot(x, pot_taylor(x), color='r', label='Approx.')
+    # plt.legend()
     plt.figure()
-    plt.plot(x, pot(x), color='k', label='True')
-    plt.plot(x, pot_taylor(x), color='r', label='Approx.')
-    plt.legend()
+    plt.plot(j, solspos, color='k')
+    plt.plot(j, solsneg, color='k')
 
 
 def plot_rates_neurons(j, b, alpha=1, n=3, dt=1e-3, noise=5,
@@ -2067,6 +2285,23 @@ def pot_potential_taylor(q, j, b, n=3, a=1):
     a4 = - 1/4 * q**4 * (np.sinh(2*j*a)*(a-n)**3 * (np.cosh(2*(b-a*j)) + np.cosh(2*(b+a*j)) - np.cosh(4*b)+3) ) / (3*(np.cosh(2*b)+np.cosh(2*a*j))**3)
     a5 = + (1/5*q**5 * np.sinh(2 * b) * (a - n)**4 * np.sinh(2 * a*j) * (-2 * (2 * np.cosh(2 * (b - a*j)) + 2 * np.cosh(2 * (b + a*j)) + 5) + np.cosh(4 * b) + np.cosh(4 * a*j))) / (6 * (np.cosh(2 * b) + np.cosh(2 * a*j))**4)
     return a1 + a2 + a3 + a4 + a5
+
+
+def plot_crit_j_alpha(n=3, alpha_list=np.arange(0, 1.5, 1e-3)):
+    fig, ax = plt.subplots(1, figsize=(4.3, 3.4))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    vals = 0.5*np.log(n/(n-2*alpha_list))/alpha_list
+    ax.plot(alpha_list, vals, color='k', linewidth=3)
+    ax.plot(0, 1/n, color='r', marker='o', label=r'MF, $\alpha \to 0$', markersize=10,
+            linestyle='')
+    ax.plot(1, np.log(n/(n-2))/2, color='orange', marker='o', label=r'LBP, $\alpha = 1$', 
+            markersize=10, linestyle='')
+    ax.legend()
+    ax.set_xlabel(r'$\alpha$')
+    ax.set_ylabel(r'Critical coupling, $J^{\ast}$')
+    ax.set_ylim(0, np.nanmax(vals)+1e-1)
+    fig.tight_layout()
 
 
 def crit_j_frac(n_list=np.arange(3, 10, 1e-3), alpha_list=np.arange(0.1, 1.5, 0.15)):
@@ -2330,9 +2565,9 @@ if __name__ == '__main__':
     #                                 b_list=np.linspace(0, 0.25, 21),
     #                                 theta=gn.return_theta(),
     #                                 thr=1e-8, num_iter=300)
-    # plot_sols_FLBP(alphalist=[0.1, 0.3, 0.6, 1, 1.2, 1.4],
-    #                 j_list=np.arange(0, 2, 0.01), theta=THETA,
-    #                 num_iter=200, stim=0.)
+    plot_sols_FLBP(alphalist=[0.01, 0.25, 0.5, 0.75, 1, 1.25],
+                   j_list=np.arange(0.01, 2, 0.05), theta=THETA,
+                   num_iter=100, stim=0.)
     # plot_sols_FLBP(alphalist=[1.8],
     #                j_list=np.arange(0, 20, .1), theta=THETA,
     #                num_iter=1000, stim=0.)
@@ -2348,11 +2583,13 @@ if __name__ == '__main__':
     # plot_L_different_init(alpha=1, n=3, dt=1e-3, t_end=2, noise=0)
     # log_potential(b=0, j_list=None, alpha=1, n=3,
     #               ax=None, labels=True, norm=False, transform=False)
-    psychometric_fbp_analytical(t_dur=1, noiselist=[0.1, 0.2, 0.3, 0.4],
-                                j_list=np.arange(0.6, 2.3, 0.2),
-                                b_list=np.arange(0, 0.2, 1e-2),
-                                alphalist=[0.01, 0.1, 0.5, 1], n=5,
-                                tol=1e-5, varchange='noise')
+    # psychometric_fbp_analytical(t_dur=1, noiselist=[0.1, 0.2, 0.3, 0.4],
+    #                             j_list=np.arange(0.6, 2.3, 0.2),
+    #                             b_list=np.arange(0, 0.2, 1e-2),
+    #                             alphalist=[0.01, 0.1, 0.5, 1], n=5,
+    #                             tol=1e-5, varchange='noise')
+    plot_optimal_alpha_vs_j_b(j_list=np.arange(0.01, 3.01, 0.05), 
+                              b_list=np.arange(0, 0.15, 3e-3), noise=0.3)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
