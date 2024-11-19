@@ -587,8 +587,8 @@ def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method=
     orig_params = np.zeros((n_pars, numpars))
     recovered_params = np.zeros((n_pars, numpars))
     for i in range(n_pars):
-        params_recovered = np.load(sv_folder + 'param_recovery/pars_prt_recovered' + str(i) + model + method + '.npy')
-        params_original = np.load(sv_folder + 'param_recovery/pars_prt' + str(i) + '.npy')
+        params_recovered = np.load(sv_folder + 'param_recovery/version_2/version_2_10000/pars_prt_recovered' + str(i) + model + method + '.npy')
+        params_original = np.load(sv_folder + 'param_recovery/version_2/version_2_10000/pars_prt' + str(i) + '.npy')
         orig_params[i] = params_original[:numpars]
         recovered_params[i] = params_recovered
     fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(15, 9))
@@ -728,14 +728,14 @@ def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
 
 
 if __name__ == '__main__':
-    plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='Powell')
+    plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
     # fit_subjects(method='BADS', model='FBP')
     # parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
-    #                     theta=THETA, n_iters=2500, n_trials=10000,
-    #                     model='FBP', method='Powell', i_ini=14)
+    #                    theta=THETA, n_iters=2500, n_trials=500,
+    #                    model='FBP', method='BADS')
     # parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
-    #                     theta=THETA, n_iters=2500, n_trials=10000,
-    #                     model='LBP', method='BADS', i_ini=49)
+    #                     theta=THETA, n_iters=2500, n_trials=500,
+    #                     model='LBP', method='BADS')
     # optimizer.mse_minimization()  # optimize via MSE
     # combinations = optimizer.combinations
     # mse_list_mf = optimizer.mse_list_mf
