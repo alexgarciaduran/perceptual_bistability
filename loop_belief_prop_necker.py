@@ -766,7 +766,8 @@ def plot_bp_solution(ax, j_list, b, tol=1e-12, min_r=-20, max_r=20,
 
 
 def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2,
-                              ax=None, ylabel=True, plot=False, return_all=False):
+                              ax=None, ylabel=True, plot=False, return_all=False,
+                              tau=1):
     time = np.arange(0, t_end, dt)
     mu_y_1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
     mu_y_neg1 = np.multiply(theta, np.random.rand(theta.shape[0], theta.shape[1]))
@@ -789,18 +790,18 @@ def dynamical_system_BP_euler(j, stim, theta=THETA, noise=0, t_end=10, dt=1e-2,
             for m in np.where(theta[i, :] != 0)[0]:
                 # positive y_i
                 mu_y_1[m, i] += (np.exp(theta[i, m]+stim) *\
-                        np.prod(mu_y_1[jneigbours(t, i, theta=theta), t])\
+                        np.prod(mu_y_1[jneigbours(m, i, theta=theta), m])\
                         + np.exp(-theta[i, m]+stim) *\
-                        np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t]) -
-                        mu_y_1[m, i])*dt +\
-                    np.sqrt(dt)*noise*np.random.randn()
+                        np.prod(mu_y_neg1[jneigbours(m, i, theta=theta), m]) -
+                        mu_y_1[m, i])*dt/tau +\
+                    np.sqrt(dt/tau)*noise*np.random.randn()
                 # negative y_i
                 mu_y_neg1[m, i] += (np.exp(-theta[i, m]-stim) *\
-                    np.prod(mu_y_1[jneigbours(t, i, theta=theta), t])\
+                    np.prod(mu_y_1[jneigbours(m, i, theta=theta), m])\
                     + np.exp(theta[i, m]-stim) *\
-                    np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])-
-                    mu_y_neg1[m, i])*dt +\
-                np.sqrt(dt)*noise*np.random.randn()
+                    np.prod(mu_y_neg1[jneigbours(m, i, theta=theta), m])-
+                    mu_y_neg1[m, i])*dt/tau +\
+                np.sqrt(dt/tau)*noise*np.random.randn()
                 m_y_1_memory = np.copy(mu_y_1[m, i])
                 mu_y_1[m, i] = mu_y_1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
                 mu_y_neg1[m, i] = mu_y_neg1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
@@ -998,10 +999,36 @@ def plot_lbp_3_examples():
     for j, b, dt, t_end in zip(j_list, b_list, dtlist, time_end):
         dynamical_system_BP_euler(j=j, stim=b, theta=THETA, noise=0.08,
                                   t_end=t_end, dt=dt, ax=ax[i],
-                                  ylabel=i==0)
+                                  ylabel=i==0, plot=True)
         i += 1
     fig.tight_layout()
     plt.subplots_adjust(wspace=0.2, bottom=0.16, top=0.88)
+
+
+def cyl_simulation(j_list=[0.1, 0.4, 0.8], b_list=np.arange(-1, 1.2, 2e-1),
+                   t_end=20, dt=1e-2, n_reps=1000):
+    confidence_array = np.zeros((len(j_list), len(b_list)))
+    hit_array = np.zeros((len(j_list), len(b_list)))
+    for i_j, j in enumerate(j_list):
+        for i_b, b in enumerate(b_list):
+            print('J = ' + str(j) + ', B = ' + str(b))
+            choicelist = []
+            meanconf = []
+            hitlist = []
+            for n in n_reps:
+                q_y_1, q_y_neg1 = dynamical_system_BP_euler(j=j, stim=b, theta=gn.return_theta(), noise=0.08,
+                                                            t_end=t_end, dt=dt, plot=False, tau=0.1)
+                conf_right = np.mean(q_y_1[-1])
+                conf_left = np.mean(q_y_neg1[-1])
+                choice = np.sign(conf_right-0.5)
+                conf_overall = conf_right if (choice+1)/2 else conf_left
+                choicelist.append(choice)
+                meanconf.append(conf_overall)
+                hitlist.append(np.sign(choice) == np.sign(b+np.random.randn()*1e-7))
+            confidence_array[i_j, i_b] = np.mean(meanconf)
+            hit_array[i_j, i_b] = np.mean(hitlist)
+    
+    fig, ax = plt.subplots(1)
 
 
 def plot_lbp_explanation(eps=2e-1):
@@ -2565,9 +2592,9 @@ if __name__ == '__main__':
     #                                 b_list=np.linspace(0, 0.25, 21),
     #                                 theta=gn.return_theta(),
     #                                 thr=1e-8, num_iter=300)
-    plot_sols_FLBP(alphalist=[0.01, 0.25, 0.5, 0.75, 1, 1.25],
-                   j_list=np.arange(0.01, 2, 0.05), theta=THETA,
-                   num_iter=100, stim=0.)
+    # plot_sols_FLBP(alphalist=[0.01, 0.25, 0.5, 0.75, 1, 1.25],
+    #                 j_list=np.arange(0.01, 2, 0.05), theta=THETA,
+    #                 num_iter=100, stim=0.)
     # plot_sols_FLBP(alphalist=[1.8],
     #                j_list=np.arange(0, 20, .1), theta=THETA,
     #                num_iter=1000, stim=0.)
@@ -2588,8 +2615,10 @@ if __name__ == '__main__':
     #                             b_list=np.arange(0, 0.2, 1e-2),
     #                             alphalist=[0.01, 0.1, 0.5, 1], n=5,
     #                             tol=1e-5, varchange='noise')
-    plot_optimal_alpha_vs_j_b(j_list=np.arange(0.01, 3.01, 0.05), 
-                              b_list=np.arange(0, 0.15, 3e-3), noise=0.3)
+    cyl_simulation(j_list=[0.1, 0.4, 0.8], b_list=np.arange(-1, 1.2, 2e-1),
+                   t_end=100, dt=1e-3)
+    # plot_optimal_alpha_vs_j_b(j_list=np.arange(0.01, 3.01, 0.05), 
+    #                           b_list=np.arange(0, 0.15, 3e-3), noise=0.3)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),

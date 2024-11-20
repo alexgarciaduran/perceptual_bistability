@@ -1235,7 +1235,6 @@ def mf_sdo_2_faces(t, x, j, b, noise, tau):
     return np.array((xi1, xj1)) / tau
 
 
-
 def solution_mf_sdo(j, b, theta, noise, tau):
     init_cond = np.random.rand(8)
     t_eval = np.arange(0, 200, 1)
