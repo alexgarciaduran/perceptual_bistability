@@ -398,16 +398,26 @@ def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
                 dpi=400, bbox_inches='tight')
 
 
-def plot_loopy_b_prop_sol_difference(theta, num_iter, j_list=np.arange(0, 1, 0.1),
-                                     thr=1e-15):
-    diff = []
-    plt.figure()
-    for j in j_list:
-        pos, neg, n = Loopy_belief_propagation(theta=theta,
-                                               num_iter=num_iter,
-                                               j=j, thr=thr)
-        diff.append(pos[0]-neg[0])
-    plt.plot(j_list, diff, color='k')
+def plot_FP_vs_alpha(theta, num_iter, a_list=np.arange(0, 2, 0.01),
+                     thr=1e-15, stim=0.0, j=0.5):
+    lp = []
+    ln = []
+    fig, ax = plt.subplots(1)
+    vals_all = np.empty((theta.shape[0], len(a_list)))
+    vals_all[:] = np.nan
+    for i_a, alpha in enumerate(a_list):
+        pos, neg = discrete_DBN(theta=theta,
+                                num_iter=num_iter,
+                                j=j, thr=thr,
+                                b=stim, alpha=alpha)
+        lp.append(np.max((pos[0], neg[0])))
+        ln.append(np.min((pos[0], neg[0])))
+        # to get upper attractor:
+    ax.plot(a_list, lp, color='k')
+    ax.plot(a_list, ln, color='k')
+    ax.axhline(0.5, color='k', linestyle='--', alpha=0.2)
+    ax.set_xlabel('alpha')
+    ax.set_ylabel('Approximate posterior q(x=1)')
 
 
 def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.001),
@@ -2584,8 +2594,6 @@ def psychometric_fbp_analytical(t_dur, noiselist=[0.05, 0.1, 0.2, 0.3],
     fig.tight_layout()
 
 
-
-
 def kl_divergence_vs_alpha_j(alpha_list=np.arange(0.01, 2, 0.01),
                              b_list=np.arange(-.5, 0.5005, 0.005),
                              j_list=np.arange(0., 1.005, 0.005),
@@ -2730,13 +2738,71 @@ def kl_divergence_vs_alpha(alpha_list=np.arange(0.01, 2, 0.05),
     # ax.set_ylabel(r'KL divergence, $D_{KL}(q || p)$')
     # ax.legend(title='Coupling J', frameon=False, labelspacing=0.05,
     #           bbox_to_anchor=(0.8, 1.15))
-    
+
+
+def kl_qp_binary(q, p):
+    # returns KL divergence in binary system
+    return q*np.log(q/p) + (1-q)*np.log((1-q)/(1-p))
+
+
+def d_kl_d_q(q, p):
+    # returns derivative of KL divergence in binary system
+    return np.log(q/p) - np.log((1-q)/(1-p))
+
+
+def optimal_alpha_infer_grad_descent(j, b, n, lr=1e-2, n_iter=1000, a0=1,
+                                     data_folder=DATA_FOLDER,
+                                     tol=1e-12, eps=1e-3):
+    a = np.copy(a0)
+    # get true posterior
+    p = gn.true_posterior(j=j, stim=b)
+    alpha_vals = [a]
+    for i in range(n_iter):
+        # find r(alpha)
+        sol_a = np.max(find_solution_bp(j, b, min_r=0.6, max_r=10, w_size=0.1,
+                                        tol=1e-2, n_neigh=n, alpha=a))
+        # find r(alpha+epsilon)
+        sol_a_eps = np.max(find_solution_bp(j, b, min_r=0.6, max_r=10, w_size=0.1,
+                                            tol=1e-2, n_neigh=n, alpha=a+eps))
+        # compute q(alpha)
+        q_a = np.exp(b)*sol_a**3 / (np.exp(-b)+np.exp(b)*sol_a**3)
+        # compute q(alpha+epsilon)
+        q_a_eps = np.exp(b)*sol_a_eps**3 / (np.exp(-b)+np.exp(b)*sol_a_eps**3)
+        # compute as d q/d alpha = (q(alpha+epsilon)-q(alpha))/epsilon
+        d_q_d_a = (q_a_eps-q_a)/eps
+        # compute dKL/dalpha = dKL/dq * dq/dalpha
+        d_kl_da = d_kl_d_q(q_a, p)*d_q_d_a
+        a = a - lr*d_kl_da
+        alpha_vals.append(a)
+        if np.abs(alpha_vals[i] - alpha_vals[i-1]) <= tol:
+            break
+    return a
+
+
+def plot_optimal_inference_alpha_vs_j_b(j_list=np.round(np.arange(0., 1, 1e-2), 4),
+                                        b_list=np.round(np.arange(0., 0.4, 5e-3), 4)):
+    opt_alpha_array = np.zeros((len(j_list), len(b_list)))
+    # for eacj (j, b) pair
+    for i_j, j in enumerate(j_list):
+        for i_b, b in enumerate(b_list):
+            # compute optimal alpha
+            opt_alpha_array[i_j, i_b] =  optimal_alpha_infer_grad_descent(j, b, n=3, lr=1e-2,
+                                                                          tol=1e-7)
+    # plot
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud(opt_alpha_array), cmap='Blues',
+                   aspect='auto', extent=[np.min(b_list), np.max(b_list),
+                                          np.min(j_list), np.max(j_list)])
+    plt.colorbar(im, ax=ax, label=r'$\hat{\alpha}$')
+    ax.set_ylabel(r'Coupling, $J$')
+    ax.set_xlabel(r'Sensory evidence, $B$')
+
 
 if __name__ == '__main__':
-    for stim in [0]:
-        plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=200,
-                              j_list=np.arange(0.00001, 1, 0.01),
-                              thr=1e-10, stim=stim)
+    # for stim in [0]:
+    #     plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=200,
+    #                           j_list=np.arange(0.00001, 1, 0.01),
+    #                           thr=1e-10, stim=stim)
     # plot_loopy_b_prop_sol_j_ast_circle(j_star_list=np.arange(0, 1.1, 0.05),
     #                                    num_iter=400,
     #                                    j_list=np.arange(0, 1, 0.005),
@@ -2798,4 +2864,6 @@ if __name__ == '__main__':
     #                  color='r')
     # plot_lbp_3_examples()
     # plot_lbp_explanation()
-    plot_m1_m2_vector_field(j=.65, b=0., n=3)
+    # plot_m1_m2_vector_field(j=.65, b=0., n=3)
+    plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
+                     thr=1e-15, stim=0.0, j=0.5*np.log(3))
