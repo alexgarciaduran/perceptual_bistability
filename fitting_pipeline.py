@@ -260,7 +260,7 @@ class optimization:
             alpha = np.exp(-(k_1+k_2 - k_u*2)/2)
             val = occ_function_markov_ch_var(rho, alpha, time, confidence[i]*time)
             time_vals = np.arange(0, time+1, 1)
-            norm_cte = np.sum(occ_function_markov_ch_var(rho, alpha, time, time_vals))
+            norm_cte = np.nansum(occ_function_markov_ch_var(rho, alpha, time, time_vals))
             likelihood.append(val / norm_cte)
         likelihood = np.array(likelihood)
         return -np.nansum(np.log(likelihood*(1-eps) + eps*conts_distro))
