@@ -17,8 +17,6 @@ import matplotlib as mpl
 from skimage.transform import resize
 from matplotlib.lines import Line2D
 import matplotlib.pylab as pl
-# from numba import jit, prange
-# from concurrent.futures import ProcessPoolExecutor
 
 THETA = gn.THETA
 
@@ -430,7 +428,7 @@ def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.001),
         lp.append(pos[0])
         ln.append(neg[0])
         # to get upper attractor:
-        vals_all[:, i_j] = [np.max((p, n)) for p, n in zip(pos, neg)]
+        vals_all[:, i_j] = [np.nanmax((p, n)) for p, n in zip(pos, neg)]
         nlist.append(n)
     # ax.plot(j_list, lp, color='k')
     neighs = np.sum(theta, axis=1, dtype=int)
@@ -1891,6 +1889,40 @@ def potential_2d_changing_j(b, alpha=1, n=3, noise=0.2):
     ax.set_ylabel('Log-message ratio')
 
 
+def plot_optimal_alpha_correct_vs_inference():
+    alpha_opt_correct = np.load(DATA_FOLDER + 'optimal_alpha_noise_03_coupling_0301_002_stim_0_015_00001.npy')
+    kl_div_array = np.load(DATA_FOLDER + 'KL_div_vs_alpha_array_2x2.npy')
+    alpha_list = np.arange(0.01, 2, 0.01)
+    stimvals = np.round(np.arange(0, 0.45, 0.01), 4)
+    jvals = [0.1, 0.3, 0.6, 1]
+    j_list = np.arange(0.01, 3.01, 0.05)
+    b_list = np.arange(0, 0.15, 3e-3)
+    optimal_alpha_correct = []
+    optimal_alpha_inference = []
+    fig, ax = plt.subplots(1)
+    colors = ['k', 'b', 'r', 'g']
+    for i_j_inf, j in enumerate(jvals):
+        i_j_opt = np.abs(j_list - j).argmin()
+        for i_b_inf, b in enumerate(stimvals):
+            i_b_opt = np.abs(b_list - b).argmin()
+            if b > np.max(b_list):
+                break
+            optimal_alpha_correct.append(alpha_opt_correct[i_j_opt, i_b_opt])
+            optimal_alpha_inference.append(
+                alpha_list[np.argmin(kl_div_array[i_j_inf, i_b_inf])])
+            ax.plot(alpha_opt_correct[i_j_opt, i_b_opt],
+                    alpha_list[np.argmin(kl_div_array[i_j_inf, i_b_inf])], color=colors[i_j_inf],
+                    marker='o')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    # ax.plot(optimal_alpha_correct, optimal_alpha_inference, color='k', linestyle='',
+    #         marker='o')
+    ax.set_xlabel('Optimal alpha from p(correct)')
+    ax.set_ylabel('Optimal alpha from D_KL')
+    ax.plot([0, 1.5], [0, 1.5], color='k', alpha=0.4)
+            
+
+
 def plot_optimal_alpha_vs_j_b(j_list=np.arange(0.1, 2, 0.1), 
                               b_list=np.arange(0, 0.1, 1e-2), noise=0.2,
                               n=3):
@@ -2059,29 +2091,6 @@ def plot_pot_boltzmann(j=0.8, b_list=[0.04], noise=0.1, alpha_list=[0.1, 1, 1.4]
     ax2.set_ylabel('Probability of correct')
     ax2.set_xlabel(r'Alpha, $\alpha$')
     ax2.legend(title=r'Noise, $\sigma$')
-
-
-def plot_pot_boltzmann(j, b=0.05, noise=0.1, alpha=1, n=3):
-    max_val = 1.25
-    min_val = -1.25
-    epsilon = 1e-3
-    vals = np.arange(min_val+epsilon, max_val, epsilon)
-    pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
-    potential = []
-    for i in range(len(vals)):
-        potential.append(-scipy.integrate.quad(pot, min_val, vals[i])[0])
-    potential = np.array(potential)
-    norm_cte = []
-    for i in range(len(vals)):
-        norm_cte.append(scipy.integrate.quad(lambda x: np.exp(-2*pot(x)/noise**2), min_val, vals[i])[0])
-    norm_cte = np.sum(norm_cte)
-    plottable = [potential, np.exp(-potential*2/noise**2)/norm_cte]
-    fig, ax = plt.subplots(ncols=2, figsize=(6, 4))
-    for i_a, a in enumerate(ax):
-        a.spines['top'].set_visible(False)
-        a.spines['right'].set_visible(False)
-        a.plot(vals, plottable[i_a], color='k')
-    fig.tight_layout()
 
 
 def log_potential(b, j_list=None, alpha=1, n=3,
@@ -2575,11 +2584,159 @@ def psychometric_fbp_analytical(t_dur, noiselist=[0.05, 0.1, 0.2, 0.3],
     fig.tight_layout()
 
 
+
+
+def kl_divergence_vs_alpha_j(alpha_list=np.arange(0.01, 2, 0.01),
+                             b_list=np.arange(-.5, 0.5005, 0.005),
+                             j_list=np.arange(0., 1.005, 0.005),
+                             data_folder=DATA_FOLDER,
+                             theta=THETA):
+    """
+    Plots KL divergence D_KL(q||p) for some configurations of B/J, 
+    depending on alpha.
+    """
+    matrix_true_file = data_folder + 'true_vs_JB_05.npy'
+    mat_true = np.load(matrix_true_file, allow_pickle=True)
+    # configs = [[0.1, 0.4], [0.1, 0.9], [0.05, 0.5], [-0.1, 1]]
+    stimvals = np.round(np.arange(0, 0.45, 0.01), 4)
+    jvals = [0.1, 0.3, 0.6, 1]
+    configs = list(itertools.product(stimvals, jvals))
+    kl_div_array = np.empty((len(jvals), len(stimvals), len(alpha_list)))
+    n = 0
+    jvals_confs = [conf[1] for conf in configs]
+    bvals_confs = [conf[0] for conf in configs]
+    for b, j in configs:
+        idx_b = np.where(np.round(b_list, 4) == b)[0][0]
+        idx_j = np.where(np.round(j_list, 4) == j)[0][0]
+        # get true posterior
+        p_pos = mat_true[idx_j, idx_b]
+        p_neg = 1-p_pos
+        for i_a, alpha in enumerate(alpha_list):
+            # simulate FBP
+            pos, neg = discrete_DBN(j, b, theta=theta, num_iter=300, thr=1e-20,
+                                    alpha=alpha)
+            # best possible scenario, particle falls in correct potential well
+            if b < 0:
+                q_pos = np.min((pos[0], neg[0]))
+            else:
+                q_pos = np.max((pos[0], neg[0]))
+            q_neg = 1-q_pos
+            # compute KLDIV
+            kl_div = q_pos*np.log(q_pos/p_pos) + q_neg*np.log(q_neg/p_neg)
+            i_j = np.where(np.unique(jvals_confs) == configs[n][1])[0][0]
+            i_b = np.where(np.unique(bvals_confs) == configs[n][0])[0][0]
+            kl_div_array[i_j, i_b, i_a] = kl_div
+        n += 1
+    np.save(DATA_FOLDER + 'KL_div_vs_alpha_array_2x2.npy', kl_div_array)
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(11, 9))
+    ax = ax.flatten()
+    for i_a, a in enumerate(ax):
+        im = a.imshow(np.flipud(kl_div_array[i_a, :, :]), cmap='Blues',
+                      aspect='auto', extent=[np.min(alpha_list), np.max(alpha_list), 
+                                             np.min(stimvals), np.max(stimvals)])
+        plt.colorbar(im, ax=a, label=r'$D_{KL}(q||p)$')
+        a.set_xlabel(r'alpha, $\alpha$')
+        a.set_ylabel(r'sensory evidence, $B$')
+        a.set_title('Coupling, J = ' + str(round(jvals[i_a], 4)))
+    fig.tight_layout()
+
+
+def kl_divergence_vs_alpha(alpha_list=np.arange(0.01, 2, 0.05),
+                           b_list=np.arange(-.5, 0.5005, 0.005),
+                           j_list=np.arange(0., 1.005, 0.005),
+                           data_folder=DATA_FOLDER,
+                           theta=THETA):
+    """
+    Plots KL divergence D_KL(q||p) for some configurations of B/J, 
+    depending on alpha.
+    """
+    matrix_true_file = data_folder + 'true_vs_JB_05.npy'
+    mat_true = np.load(matrix_true_file, allow_pickle=True)
+    # configs = [[0.1, 0.4], [0.1, 0.9], [0.05, 0.5], [-0.1, 1]]
+    stimvals = np.round(np.arange(0, 0.45, 0.1), 4)
+    jvals = np.round(np.arange(0.1, 1, 0.2), 4)
+    configs = list(itertools.product(stimvals, jvals))
+    kl_div_array = np.empty((len(configs), len(alpha_list)))
+    n = 0
+    for b, j in configs:
+        idx_b = np.where(np.round(b_list, 4) == b)[0][0]
+        idx_j = np.where(np.round(j_list, 4) == j)[0][0]
+        # get true posterior
+        p_pos = mat_true[idx_j, idx_b]
+        p_neg = 1-p_pos
+        kldivlist=[]
+        for i_a, alpha in enumerate(alpha_list):
+            # simulate FBP
+            pos, neg = discrete_DBN(j, b, theta=theta, num_iter=300, thr=1e-20,
+                                    alpha=alpha)
+            # best possible scenario, particle falls in correct potential well
+            if b < 0:
+                q_pos = np.min((pos[0], neg[0]))
+            else:
+                q_pos = np.max((pos[0], neg[0]))
+            q_neg = 1-q_pos
+            # compute KLDIV
+            kl_div = q_pos*np.log(q_pos/p_pos) + q_neg*np.log(q_neg/p_neg)
+            kldivlist.append(kl_div)
+            kl_div_array[n, i_a] = kl_div
+        n += 1
+    np.save(DATA_FOLDER + 'KL_div_vs_alpha_array_v2.npy', kl_div_array)
+    fig, ax = plt.subplots(ncols=2, figsize=(8, 4))
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    jvals_confs = [conf[1] for conf in configs]
+    colors = ['r', 'k', 'royalblue', 'forestgreen', 'purple']
+    bvals_confs = [conf[0] for conf in configs]
+    minpoint = []
+    for i_conf, kldiv_vals in enumerate(kl_div_array):
+        # (kldiv_vals-np.mean(kldiv_vals)) / np.std(kldiv_vals)
+        idx_color = np.where(np.unique(jvals_confs) == configs[i_conf][1])[0][0]
+        ax[0].plot(alpha_list, (kldiv_vals-np.mean(kldiv_vals)) / np.std(kldiv_vals), linewidth=2,
+                   color=colors[idx_color])
+        minpoint.append(alpha_list[np.argmin((kldiv_vals-np.mean(kldiv_vals)) / np.std(kldiv_vals))])
+        idx_color = np.where(np.unique(bvals_confs) == configs[i_conf][0])[0][0]
+        ax[1].plot(alpha_list, (kldiv_vals-np.mean(kldiv_vals)) / np.std(kldiv_vals), linewidth=2,
+                   color=colors[idx_color])
+    # ax.plot(alpha_list, np.mean(kl_div_array, axis=0), linewidth=3, color='k')
+    legendelements = [Line2D([0], [0], color=colors[i], lw=2, label=np.unique(jvals_confs)[i]) for 
+                      i in range(5)]
+    ax[0].legend(title='J', handles=legendelements)
+    legendelements = [Line2D([0], [0], color=colors[i], lw=2, label=np.unique(bvals_confs)[i]) for 
+                      i in range(5)]
+    ax[1].legend(title='B', handles=legendelements)
+    ax[0].set_xlabel(r'alpha, $\alpha$')
+    ax[1].set_xlabel(r'alpha, $\alpha$')
+    ax[0].set_ylabel(r'z-scored KL divergence, $D_{KL}(q || p)$')
+    fig.tight_layout()
+    fig, ax = plt.subplots(1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.plot(alpha_list, np.mean(kl_div_array, axis=0), linewidth=3, color='k')
+    ax.set_xlabel(r'alpha, $\alpha$')
+    ax.set_ylabel(r'KL divergence, $D_{KL}(q || p)$')
+    fig.tight_layout()
+    # fig, ax = plt.subplots(1)
+    # ax.spines['top'].set_visible(False)
+    # ax.spines['right'].set_visible(False)
+    # colormap = pl.cm.Blues(np.linspace(0.2, 1, len(jvals)))
+    # for i_conf, kldiv_vals in enumerate(kl_div_array):
+    #     if i_conf % 6 == 0:
+    #         label = jvals[i_conf]
+    #     else:
+    #         label = ' '
+    #     ax.plot(alpha_list, kldiv_vals, linewidth=2, color=colormap[i_conf], label=label)
+    # ax.set_xlabel(r'alpha, $\alpha$')
+    # ax.set_ylabel(r'KL divergence, $D_{KL}(q || p)$')
+    # ax.legend(title='Coupling J', frameon=False, labelspacing=0.05,
+    #           bbox_to_anchor=(0.8, 1.15))
+    
+
 if __name__ == '__main__':
-    # for stim in [0]:
-    #     plot_loopy_b_prop_sol(theta=THETA, num_iter=200,
-    #                           j_list=np.arange(0.00001, 1, 0.01),
-    #                           thr=1e-10, stim=stim)
+    for stim in [0]:
+        plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=200,
+                              j_list=np.arange(0.00001, 1, 0.01),
+                              thr=1e-10, stim=stim)
     # plot_loopy_b_prop_sol_j_ast_circle(j_star_list=np.arange(0, 1.1, 0.05),
     #                                    num_iter=400,
     #                                    j_list=np.arange(0, 1, 0.005),
@@ -2615,8 +2772,8 @@ if __name__ == '__main__':
     #                             b_list=np.arange(0, 0.2, 1e-2),
     #                             alphalist=[0.01, 0.1, 0.5, 1], n=5,
     #                             tol=1e-5, varchange='noise')
-    cyl_simulation(j_list=[0.1, 0.4, 0.8], b_list=np.arange(-1, 1.2, 2e-1),
-                   t_end=100, dt=1e-3)
+    # cyl_simulation(j_list=[0.1, 0.4, 0.8], b_list=np.arange(-1, 1.2, 2e-1),
+    #                t_end=100, dt=1e-3)
     # plot_optimal_alpha_vs_j_b(j_list=np.arange(0.01, 3.01, 0.05), 
     #                           b_list=np.arange(0, 0.15, 3e-3), noise=0.3)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
@@ -2641,4 +2798,4 @@ if __name__ == '__main__':
     #                  color='r')
     # plot_lbp_3_examples()
     # plot_lbp_explanation()
-    # plot_m1_m2_vector_field(j=.65, b=0., n=3)
+    plot_m1_m2_vector_field(j=.65, b=0., n=3)
