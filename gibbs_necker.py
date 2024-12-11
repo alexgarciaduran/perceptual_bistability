@@ -19,7 +19,6 @@ import networkx as nx
 import matplotlib as mpl
 import cv2
 from matplotlib.lines import Line2D
-from joblib import Parallel, delayed
 from sbi.inference import MNLE
 from sbi.utils import MultipleIndependent
 import torch
@@ -87,7 +86,7 @@ def theta_circle(j_star=1):
                     [0, 0, j_star, 0, 0, 1, 0, 1], [1, 0, 0, j_star, 0, 0, 1, 0]])
     
 
-def theta_rubin():
+def theta_rubin_small():
     graph_array = lattice_1d(columns=3, rows=3, layers=1)
     for i in range(graph_array.shape[0]):
         if i == 1 or i == 4 or i == 7:
@@ -97,6 +96,11 @@ def theta_rubin():
                 graph_array[i, i+2] = 1
             else:
                 graph_array[i, i-2] = 1
+    return graph_array
+
+
+def theta_rubin(columns=8, rows=8):
+    graph_array = lattice_1d(columns=columns, rows=rows, layers=1)
     return graph_array
 
 
@@ -309,6 +313,68 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
                     dpi=400, bbox_inches='tight')
 
 
+def gibbs_sampling_adaptation(init_state, burn_in, n_iter, j, stim=0, theta=THETA,
+                              gamma_adapt=0.1, save_step=1):
+    x_vect = init_state
+    states_mat = np.empty((n_iter-burn_in, theta.shape[0]))
+    states_mat[:] = np.nan
+    for i in range(n_iter):
+        node = np.random.choice(np.arange(1, theta.shape[0]+1),
+                                p=np.repeat(1/theta.shape[0], theta.shape[0]))
+        x_vect1 = np.copy(x_vect)
+        x_vect1[node-1] = -x_vect1[node-1]
+        prob = change_prob_adapt(x_vect, x_vect1, j, stim=stim, theta=theta,
+                                 gamma_adapt=gamma_adapt)
+        # val_bool = np.random.choice([False, True], p=[1-prob, prob])
+        val_bool = np.random.binomial(1, prob, size=None)
+        if val_bool:
+            x_vect[node-1] = -x_vect[node-1]
+        if i >= burn_in:
+            states_mat[i-burn_in, :] = x_vect
+    return states_mat
+
+
+def change_prob_adapt(x_vect, x_vect1, j, stim=0, theta=THETA, gamma_adapt=0.):
+    penalty_xvec = np.sum(x_vect)**2*gamma_adapt
+    penalty_xvect1 = np.sum(x_vect1)**2*gamma_adapt
+    return sigmoid((-k_val(x_vect, j*theta, stim=stim) +
+                    k_val(x_vect1, j*theta, stim=stim)) - penalty_xvect1 + penalty_xvec)
+
+
+def change_prob_temperature(x_vect, x_vect1, j, stim=0, theta=THETA, gamma_adapt=0.):
+    beta = 1 if np.abs(np.sum(x_vect) < 5) else 1/np.sum(x_vect)**2*gamma_adapt
+    return sigmoid(beta*(-k_val(x_vect, j*theta, stim=stim) +
+                    k_val(x_vect1, j*theta, stim=stim)))
+
+
+def plot_duration_dominance_gamma_fit_adaptation(j, burn_in=1000, n_iter=100000, gamma_adapt=0.1):
+    init_state = np.random.choice([-1, 1], 8)
+    states_mat = gibbs_sampling_adaptation(init_state, burn_in, n_iter, j, stim=0, theta=THETA,
+                                           gamma_adapt=gamma_adapt, save_step=1)
+    vals_gibbs = (np.nanmean(states_mat, axis=1)+1)/2
+    vals_gibbs[vals_gibbs > 0.5] = 1
+    vals_gibbs[vals_gibbs < 0.5] = 0
+    vals_gibbs = vals_gibbs[vals_gibbs != 0.5]
+    orders = rle(vals_gibbs)
+    time = orders[0]
+    plt.figure()
+    sns.histplot(time, kde=True, label='Simulations', stat='density', fill=False,
+                 color='k', bins=np.arange(1, max(time)+10, 2))
+    fit_alpha, fit_loc, fit_beta = stats.gamma.fit(time)
+    fix_loc_exp, fit_lmb = stats.expon.fit(time)
+    x = np.linspace(min(time), max(time), 1000)
+    y = stats.gamma.pdf(x, a=fit_alpha, scale=fit_beta, loc=1)
+    y_exp = stats.expon.pdf(x, loc=fix_loc_exp, scale=fit_lmb)
+    plt.text(75, 0.02, r'$\alpha = ${}'.format(np.round(fit_alpha, 2)) 
+             + '\n'+ r'$\beta = ${}'.format(np.round(fit_beta, 2)),
+             fontsize=11)
+    plt.plot(x, y, label='Gamma distro. fit', color='k', linestyle='--')
+    plt.plot(x, y_exp, label='Expo. distro. fit', color='r', linestyle='--')
+    plt.xlabel('Dominance duration')
+    # plt.xlim(-5, 105)
+    plt.legend()
+
+
 def plot_duration_dominance_gamma_fit(j, burn_in=1000, n_iter=100000):
     plt.figure()
     vals_gibbs = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
@@ -450,6 +516,8 @@ def plot_k_vs_mu_analytical(stim=0, eps=6e-2, plot_arist=False, plot_cubes=False
         if len(class_count) == 22:
             break            
     fig, ax = plt.subplots(1, figsize=(5, 4))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
     if plot_arist:
         for ic, cl in enumerate(class_count):
             for ic2, cl2 in enumerate(class_count):
@@ -1936,6 +2004,18 @@ def prob_samples_normal(j, b, kernel, nsamps=100):
     plt.ylim(-0.05, 1.05)
 
 
+def plot_circle_motion(rad=10):
+    fig, ax = plt.subplots(1, figsize=(5, 4.85))
+    ax.axis('off')
+    for i in range(8):
+        plt.plot(np.cos(i*np.pi/8*2), np.sin(i*np.pi/8*2), color='k',
+                 marker='o', markersize=10)
+    # x = np.arange(0, np.pi*2, 1e-2)
+    fig.savefig(DATA_FOLDER + 'ring_model.svg', dpi=400)
+    fig.savefig(DATA_FOLDER + 'ring_model.png', dpi=400)
+    # plt.plot(np.cos(x), np.sin(x), color='k')
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
@@ -1948,7 +2028,8 @@ if __name__ == '__main__':
     # plot_probs_gibbs(data_folder=DATA_FOLDER)
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # save_necker_cubes(offset=np.arange(0.1, 0.55, 0.01))
-    # plot_k_vs_mu_analytical(eps=0, stim=0., plot_arist=False, plot_cubes=True)
+    # plot_k_vs_mu_analytical(eps=0, stim=0.25, plot_arist=False, plot_cubes=False)
+    plot_duration_dominance_gamma_fit_adaptation(j=0.7, burn_in=1000, n_iter=200000, gamma_adapt=0.1)
     # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
     #                       n_iter=200000, wsize=1, stim=0, j_ex=0.495, f_all=False,
@@ -1956,11 +2037,11 @@ if __name__ == '__main__':
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
     #                       n_iter=10000, wsize=1, stim=0, j_ex=1, f_single=True,
     #                       theta=return_theta(), extralab='cyl')
-    x = np.arange(40)
-    sigma = 10
-    kernel = np.roll(np.exp(-((x-len(x)//2)**2)/sigma), 20)
-    kernel[0] = 0
-    prob_samples_normal(j=0.65, b=0., kernel=kernel, nsamps=10000)
+    # x = np.arange(40)
+    # sigma = 10
+    # kernel = np.roll(np.exp(-((x-len(x)//2)**2)/sigma), 20)
+    # kernel[0] = 0
+    # prob_samples_normal(j=0.65, b=0., kernel=kernel, nsamps=10000)
     # plot_states_cylinder(j_ex=0.495,
     #                      stim=0, n_iter=201000,
     #                      theta=return_theta(rows=10, columns=5, layers=2),
