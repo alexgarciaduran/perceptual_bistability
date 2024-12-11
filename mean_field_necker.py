@@ -20,8 +20,10 @@ import sympy
 from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 import seaborn as sns
+import pandas as pd
 import cv2
 import torch
+# import fastkde
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -574,20 +576,20 @@ def plot_sols_mf_bias_stim_changing_beta(
 
 def sol_bias_stim(j, beta):
     k = 6*j
-    beta = 6*beta
+    beta = 2*beta
     return (-beta+k+np.log(k-np.sqrt(k*(k-2))-1))/(2*k),\
         (-beta+k+np.log(k+np.sqrt(k*(k-2))-1))/(2*k)
 
 
 def sol_mf_stim_taylor(j, beta):
     k = 6*j
-    b = 6*beta
+    b = 2*beta
     return (1+np.exp(b)-np.exp(-b)*k)/(np.cosh(b)*2-2*k+2)
 
 
 def sol_taylor_beta(j, beta):
     k = 6*j
-    beta = 6*beta
+    beta = 2*beta
     return (((np.exp(beta)+1)**2)/(np.exp(-beta)+1)-np.exp(beta)*k)/\
         ((np.exp(beta)+1)**2 -2*np.exp(beta)*k)
 
@@ -633,7 +635,7 @@ def plot_solution_mf_numeric_solver(j_list=np.arange(0.001, 1, 0.001),
 
 def solution_for_sigmoid_taylor_order2(j, beta):
     k = 6*j
-    b = 6*beta
+    b = 2*beta
     numerator = (((2 * np.exp(b) * k**2) / (np.exp(b) + 1)**3) 
                  - ((2 * np.exp(2 * b) * k**2) / (np.exp(b) + 1)**3) 
                  - np.sqrt(((4 * np.exp(b) * k**2) / (np.exp(b) + 1)**3) 
@@ -647,7 +649,7 @@ def solution_for_sigmoid_taylor_order2(j, beta):
 
 
 def dyn_sys_mf(q, dt, j, sigma=1, bias=0):
-    return np.clip(q + dt*(gn.sigmoid(6*j*(2*q-1)+6*bias)-q)+
+    return np.clip(q + dt*(gn.sigmoid(6*j*(2*q-1)+2*bias)-q)+
         np.random.randn()*np.sqrt(dt)*sigma, 0, 1)
 
 
@@ -762,7 +764,7 @@ def crit_val_J(b, N):
 def f_expansion_any_order_any_point(q, j, b, order, point):
     x = sympy.symbols('x')
     b = sympy.symbols('b')
-    alpha = 6*j*(2*x-1) + 6*b
+    alpha = 6*j*(2*x-1) + 2*b
     func_0 = -x + 1/(1+sympy.exp(-alpha))
     funcs_diffs = [func_0]
     for i in range(order):
@@ -944,14 +946,24 @@ def a_ij(xi, xj, j=1, b=0):
     return 2*(j*(4*xi+2*xj-3)+b)
 
 
-def f_i(xi, xj, j=1, b=0):
-    return gn.sigmoid(a_ij(xi, xj, j=j, b=b)) - xi
+# def f_i(xi, xj, j=1, b=0):
+#     return gn.sigmoid(a_ij(xi, xj, j=j, b=b)) - xi
 
 
-def f_i_both(x, j=1, b=0):
-    xi, xj = x
-    return [gn.sigmoid(a_ij(xi, xj, j=j, b=b)) - xi,
-            gn.sigmoid(a_ij(xj, xi, j=j, b=b)) - xj]
+# def f_i_both(x, j=1, b=0):
+#     xi, xj = x
+#     return [gn.sigmoid(a_ij(xi, xj, j=j, b=b)) - xi,
+#             gn.sigmoid(a_ij(xj, xi, j=j, b=b)) - xj]
+
+
+def f_i(x1, x2, j, b):
+    return gn.sigmoid(2*j*3*(2*x2-1) + 2*b)-x1
+
+
+def f_i_both(x, j, b=0):
+    x1, x2 = x
+    return [gn.sigmoid(2*j*3*(2*x2-1) + 2*b)-x1,
+            gn.sigmoid(2*j*3*(2*x1-1) + 2*b)-x2]
 
 
 def f_i_diagonal(x, j=1, b=0):
@@ -965,34 +977,117 @@ def f_i_diagonal_neg(x, j=1, b=0):
             gn.sigmoid(2*(j*(-2*y+1)+b)) + y - 1]
 
 
-def plot_potential_and_vector_field_2d(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2):
+def plot_transition_time(j_list=[0.1, 0.5, 1, 2], b=0, noise=0.1, tau=1, time_end=10000, dt=1e-2):
+    transition_rate = []
+    transition_rate_analytical = []
+    for j in j_list:
+        x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+        transition_rate_analytical.append(k_i_to_j(j, x_unstable, x_stable_1, noise, b))
+        init_cond = np.random.rand(2)
+        m_solution = solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
+                                                   time_end=time_end, dt=dt)
+        x, y = m_solution.y[0], m_solution.y[1]
+        states = [0]
+        for i in range(len(x)):
+            if x[i] > 1-y[i] and x[i] > 0.75 and y[i] > 0.75:
+                states.append(1)
+            elif x[i] < 1-y[i] and x[i] < 0.25 and y[i] < 0.25:
+                states.append(-1)
+            else:
+                states.append(states[i-1])
+            if j > 1:
+                if x[i] < y[i] and x[i] > 0.55 and y[i] < 0.55:
+                    states.append(-2)
+                if x[i] > y[i] and x[i] < 0.55 and y[i] > 0.55:
+                    states.append(2)
+        orders = gn.rle(states)
+        time_transition = orders[0]
+        time_transition = time_transition[time_transition > 1]*dt
+        # plt.plot(x, y)
+        # plt.plot([0, 1], [0, 1], color='r')
+        # plt.plot([0, 1], [1, 0], color='r')
+        transition_rate.append(1/np.mean(time_transition))
+    plt.figure()
+    plt.plot(j_list, transition_rate)
+    plt.plot(j_list, transition_rate_analytical)
+    plt.yscale('log')
+    plt.ylabel('Transition rate')
+    plt.xlabel('Coupling, J')
+
+
+def plot_density_map_2d_mf(j=1, b=0, noise=0.15, tau=1, time_end=10000, dt=1e-2):
+    def f_i(x1, x2, j, b):
+        return gn.sigmoid(2*j*3*(2*x2-1) + 2*b)-x1
+    init_cond = np.random.rand(2)
+    m_solution = solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
+                                               time_end=time_end, dt=dt)
+    fig, ax = plt.subplots(1)
+    # df_sol = pd.DataFrame({"q_1": m_solution.y[0], "q_2": m_solution.y[1]})
+    # sns.kdeplot(df_sol, x="q_1", y="q_2", common_norm=False, cmap='Blues',
+    #             fill=True)
+    # Peform the kernel density estimate
+    xx, yy = np.mgrid[-0.2:1.2:100j, -0.2:1.2:100j]
+    positions = np.vstack([xx.ravel(), yy.ravel()])
+    values = np.vstack([m_solution.y[0], m_solution.y[1]])
+    kernel = scipy.stats.gaussian_kde(values)
+    f = np.reshape(kernel(positions).T, xx.shape)
+    cmap = mpl.colors.LinearSegmentedColormap.from_list('white_blue', ['white', 'royalblue'])
+    # Contourf plot
+    cfset = ax.contourf(xx, yy, f, cmap=cmap)  # , norm=mpl.colors.LogNorm()
+    plt.colorbar(cfset, ax=ax, label='Density')
+    ax.set_xlim(-0.2, 1.2)
+    ax.set_ylim(-0.2, 1.2)
+    ax.set_xlabel(r'$q_1$')
+    ax.set_ylabel(r'$q_2$')
+    fig.savefig(DATA_FOLDER + '2d_density_map.png', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + '2d_density_map.svg', dpi=300, bbox_inches='tight')
+    fig2, ax2 = plt.subplots(1)
+    x1 = np.arange(-0.2, 1.2, 5e-2)
+    x2 = np.arange(-0.2, 1.2, 5e-2)
+    x, y = np.meshgrid(x1, x2)
+    u1 = f_i(x, y, j=j, b=b)
+    u2 = f_i(y, x, j=j, b=b)
+    cfset = ax2.contourf(xx, yy, f, cmap=cmap)  # , norm=mpl.colors.LogNorm()
+    plt.colorbar(cfset, ax=ax2, label='Density')
+    ax.set_xlim(-0.2, 1.2)
+    ax.set_ylim(-0.2, 1.2)
+    ax2.set_ylabel(r'$q_1$')
+    ax2.set_xlabel(r'$q_2$')
+    ax2.quiver(x, y, u1, u2)
+    fig2.savefig(DATA_FOLDER + '2d_density_map_vector.png', dpi=300, bbox_inches='tight')
+    fig2.savefig(DATA_FOLDER + '2d_density_map_vector.svg', dpi=300, bbox_inches='tight')
+
+
+def plot_potential_and_vector_field_2d(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2,
+                                       plot_simulation=False):
     ax = plt.figure().add_subplot(projection='3d')
     x1 = np.arange(0, 1, 1e-3)
     x2 = np.arange(0, 1, 1e-3)
     x, y = np.meshgrid(x1, x2)
     V_x = potential_2d_faces(x, y, j=j, b=b)
     ax.plot_surface(x, y, V_x, alpha=0.4)
-    ax.set_xlabel(r'$x_1$')
-    ax.set_ylabel(r'$x_2$')
+    ax.set_xlabel(r'$q_1$')
+    ax.set_ylabel(r'$q_2$')
     ax.set_zlabel(r'Potential, $V(\vec{x})$')
-    init_cond = [0.1, 0.9]
-    # init_cond = np.random.rand(2)
-    m_solution = solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
-                                               time_end=time_end, dt=dt)
-    ax.plot3D(m_solution.y[0], m_solution.y[1],
-              potential_2d_faces(m_solution.y[0], m_solution.y[1], j=j, b=b),
-              color='r')
-    ax.plot3D(init_cond[0], init_cond[1],
-              potential_2d_faces(init_cond[0], init_cond[1], j=j, b=b),
-              marker='o', color='r')
-    ax.plot3D(m_solution.y[0][-1], m_solution.y[1][-1],
-              potential_2d_faces(m_solution.y[0][-1], m_solution.y[1][-1], j=j, b=b),
-              marker='x', color='b')
-    fig2, ax_2 = plt.subplots(ncols=1, figsize=(5, 4))
-    im = ax_2.imshow(np.flipud(V_x), cmap='jet', extent=[np.min(x1), np.max(x1),
-                                                         np.min(x2), np.max(x2)])
-    plt.colorbar(im)
-    fig2, ax_2 = plt.subplots(ncols=2, figsize=(9, 4))
+    # init_cond = [0.1, 0.9]
+    if plot_simulation:
+        init_cond = np.random.rand(2)
+        m_solution = solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
+                                                   time_end=time_end, dt=dt)
+        ax.plot3D(m_solution.y[0], m_solution.y[1],
+                  potential_2d_faces(m_solution.y[0], m_solution.y[1], j=j, b=b),
+                  color='r')
+        ax.plot3D(init_cond[0], init_cond[1],
+                  potential_2d_faces(init_cond[0], init_cond[1], j=j, b=b),
+                  marker='o', color='r')
+        ax.plot3D(m_solution.y[0][-1], m_solution.y[1][-1],
+                  potential_2d_faces(m_solution.y[0][-1], m_solution.y[1][-1], j=j, b=b),
+                  marker='x', color='b')
+    # fig2, ax_2 = plt.subplots(ncols=1, figsize=(5, 4))
+    # im = ax_2.imshow(np.flipud(V_x), cmap='jet', extent=[np.min(x1), np.max(x1),
+    #                                                      np.min(x2), np.max(x2)])
+    # plt.colorbar(im)
+    fig2, ax_2 = plt.subplots(ncols=2, figsize=(8, 4))
     ax2, ax3 = ax_2
     x1 = np.arange(-0.2, 1.2, 5e-2)
     x2 = np.arange(-0.2, 1.2, 5e-2)
@@ -1002,24 +1097,21 @@ def plot_potential_and_vector_field_2d(j=1, b=0, noise=0, tau=1, time_end=50, dt
     ax2.quiver(x, y, u1, u2)
     x1 = np.arange(-0.2, 1.2, 1e-3)
     x2 = np.arange(-0.2, 1.2, 1e-3)
-    # lam1 = get_eigen_1(j, x1, b=b)
-    # idx_0_lam1 = np.argsort(np.abs(lam1))[:2]
-    lam2 = get_eigen_2(j, x1, b=b)
-    idx_0_lam2 = np.argsort(np.abs(lam2))[:2]
-    # lamneg1 = get_eigen_1_neg(j, x1, b=b)
-    # idx_0_lamneg1 = np.argsort(np.abs(lamneg1))[:2]
-    lamneg2 = get_eigen_2_neg(j, x1, b=b)
-    idx_0_lamneg2 = np.argsort(np.abs(lamneg2))[:2]
-    for i in range(2):
-        ax2.plot(x1[idx_0_lam2[i]], x1[idx_0_lam2[i]], marker='o',
-                 color='b', markersize=8)
-        ax2.plot(x1[idx_0_lamneg2[i]], 1-x1[idx_0_lamneg2[i]], marker='o',
-                 color='b', markersize=8)
-    ax2.set_xlabel(r'$x_1$')
-    ax2.set_ylabel(r'$x_2$')
-    ax2.plot(m_solution.y[0], m_solution.y[1], color='r')
-    ax2.plot(init_cond[0], init_cond[1], marker='o', color='r')
-    ax2.plot(m_solution.y[0][-1], m_solution.y[1][-1], marker='x', color='b')
+    # lam2 = get_eigen_2(j, x1, b=b)
+    # idx_0_lam2 = np.argsort(np.abs(lam2))[:2]
+    # lamneg2 = get_eigen_2_neg(j, x1, b=b)
+    # idx_0_lamneg2 = np.argsort(np.abs(lamneg2))[:2]
+    # for i in range(2):
+    #     ax2.plot(x1[idx_0_lam2[i]], x1[idx_0_lam2[i]], marker='o',
+    #              color='b', markersize=8)
+    #     ax2.plot(x1[idx_0_lamneg2[i]], 1-x1[idx_0_lamneg2[i]], marker='o',
+    #              color='b', markersize=8)
+    ax2.set_xlabel(r'$q_1$')
+    ax2.set_ylabel(r'$q_2$')
+    if plot_simulation:
+        ax2.plot(m_solution.y[0], m_solution.y[1], color='r')
+        ax2.plot(init_cond[0], init_cond[1], marker='o', color='r')
+        ax2.plot(m_solution.y[0][-1], m_solution.y[1][-1], marker='x', color='b')
     # modulo = np.sqrt(u1**2 + u2**2)
     ax2.set_ylim(-0.1, 1.1)
     ax2.set_xlim(-0.1, 1.1)
@@ -1030,9 +1122,14 @@ def plot_potential_and_vector_field_2d(j=1, b=0, noise=0, tau=1, time_end=50, dt
     image = ax3.imshow(np.flipud(modulo), extent=[np.min(x1), np.max(x1),
                                                   np.min(x2), np.max(x2)],
                        cmap='gist_gray')
-    plt.colorbar(image, label=r'speed, $||f(x_1, x_2)||$')
-    ax3.set_xlabel(r'$x_1$')
-    ax3.set_ylabel(r'$x_2$')
+    fig2.tight_layout()
+    plt.subplots_adjust(wspace=0.35)
+    ax_pos = ax3.get_position()
+    ax_cbar = fig2.add_axes([ax_pos.x0+ax_pos.width*1.13, ax_pos.y0+ax_pos.height*0.2,
+                             ax_pos.width*0.05, ax_pos.height*0.7])
+    plt.colorbar(image, label=r'speed, $||f(q_1, q_2)||$', cax=ax_cbar)
+    ax3.set_xlabel(r'$q_1$')
+    ax3.set_ylabel(r'$q_2$')
 
 
 def plot_eigenvalues_at_diagonals(j, b):
@@ -1184,11 +1281,11 @@ def plot_eigenvals_and_behavior_MF_2_faces(b=0, diag_neg=True):
     
 
 def get_eigen_1(j, x, b=0):
-    return gn.sigmoid(6*j*(2*x-1)+6*b)*(1-gn.sigmoid(6*j*(2*x-1)+6*b))*12*j-1
+    return gn.sigmoid(6*j*(2*x-1)+2*b)*(1-gn.sigmoid(6*j*(2*x-1)+2*b))*12*j-1
 
 
 def get_eigen_2(j, x, b=0):
-    return gn.sigmoid(6*j*(2*x-1)+6*b)*(1-gn.sigmoid(6*j*(2*x-1)+6*b))*4*j-1
+    return gn.sigmoid(6*j*(2*x-1)+2*b)*(1-gn.sigmoid(6*j*(2*x-1)+2*b))*4*j-1
 
 
 def k_1(x, j, b=0):
@@ -1252,7 +1349,7 @@ def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2):
     x_vec[:] = np.nan
     x_vec[0, :] = x
     for t in range(1, time.shape[0]):
-        x = x + (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 6*b) - x)/ tau +\
+        x = x + (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-3) + 3*b) - x)/ tau +\
             np.random.randn(theta.shape[0])*noise*np.sqrt(dt/tau)) 
         # x = np.clip(x, 0, 1)
         x_vec[t, :] = x  # np.clip(x, 0, 1)
@@ -1376,6 +1473,8 @@ def plot_adaptation_1d(j, b, noise, tau, gamma_adapt=0.1,
 
 def solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
                                   time_end=50, dt=1e-2):
+    def f_i(x1, x2, j, b):
+        return gn.sigmoid(2*j*3*(2*x2-1) + 2*b)-x1
     time = np.arange(0, time_end+dt, dt)
     x1 = init_cond[0]  # initial_cond for q1
     x2 = init_cond[1]  # initial_cond for q2
@@ -1392,8 +1491,8 @@ def solution_mf_sdo_2_faces_euler(j, b, theta, noise, tau, init_cond,
             np.sqrt(dt)*noise*np.random.randn()) / tau
         x2_temp = x2 + (dt*(f_i(x2, x1, j=j, b=b)) +\
             np.sqrt(dt)*noise*np.random.randn()) / tau
-        x1_temp = np.clip(x1_temp, 0, 1)
-        x2_temp = np.clip(x2_temp, 0, 1)
+        # x1_temp = np.clip(x1_temp, 0, 1)
+        # x2_temp = np.clip(x2_temp, 0, 1)
         x_vec1[t] = x1_temp
         x_vec2[t] = x2_temp
         
@@ -1428,6 +1527,43 @@ def plot_occupancy_distro(j, noise=0.3, tau=1, dt=1e-1, theta=theta, b=0,
     ax.set_title('J =' + str(j) + ', B =' + str(b) + r', $\sigma$=' + str(noise))
 
 
+def transition_rate_analysis(j_list=np.arange(0.35, 2, 2e-1),
+                             b=0, theta=theta, noise=0.1, tau=0.1, dt=1e-2, t_end=30000):
+    transition_rate = []
+    transition_rate_analytical_list = []
+    for i_j, j in enumerate(j_list):
+        x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+        transition_rate_analytical = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+        transition_rate_analytical_list.append(transition_rate_analytical)
+        print('J = ' + str(j))
+        t, vec = solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=t_end, dt=dt)
+        mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
+        # mean_states = np.convolve(mean_states, np.ones(1000)/1000, mode='valid')
+        p_thr = 0.5
+        mean_states[mean_states > p_thr] = 1
+        mean_states[mean_states < (1-p_thr)] = 0
+        mean_states = mean_states[mean_states != p_thr]
+        orders = gn.rle(mean_states)
+        transition_time = orders[0]
+        transition_rate.append(1/np.mean(transition_time))
+    plt.figure()
+    plt.plot(j_list[:len(transition_rate_analytical_list)], transition_rate_analytical_list, label='1D analytical',
+             color='k', linewidth=2.5)
+    plt.plot(j_list[:len(transition_rate_analytical_list)], np.array(transition_rate), label='Simulation', color='r', linewidth=2.5)
+    plt.legend()
+    plt.xlabel('Coupling, J')
+    plt.ylabel('Jumps')
+    plt.yscale('log')
+
+
+def escape_time(j, xi, xj, noise, b=0):
+    v_2_xi = second_derivative_potential(xi, j, b=b)
+    v_2_xj = second_derivative_potential(xj, j, b=b)
+    v_xi = potential_mf(xi, j, b)
+    v_xj = potential_mf(xj, j, b)
+    return 1/np.sqrt(np.abs(v_2_xi*v_2_xj))*np.exp(2*(v_xi - v_xj)/noise**2) * np.pi
+
+
 def analyze_jump_dynamics(j, b, theta, noise=0.35, tau=0.1, dt=1e-3, t_end=1000,
                           steps_back=250, steps_front=250):
     idx_0 = []
@@ -1447,8 +1583,10 @@ def analyze_jump_dynamics(j, b, theta, noise=0.35, tau=0.1, dt=1e-3, t_end=1000,
     idx_1 = idx_1[(idx_1 > steps_back) & (idx_1 < (len(mean_states))-steps_front)]
     idx_0 = orders[1][orders[2] == 0]
     idx_0 = idx_0[(idx_0 > steps_back) & (idx_0 < (len(mean_states))-steps_front)]
+    # order depending on jump
     mean_vals_1_array = np.empty((theta.shape[0], len(idx_1), steps_back+steps_front))
     mean_vals_1_array[:] = np.nan
+    # original order
     mean_vals_nor_array = np.empty((theta.shape[0], len(idx_1), steps_back+steps_front))
     mean_vals_nor_array[:] = np.nan
     conv_window = 5
@@ -2809,24 +2947,49 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
     ax3.set_ylabel('Avg. perceptual dominance, T(x=1)')
 
 
-def mf_dyn_sys_circle(j, n_iters=100, b=0.):
-    kernel = exp_kernel(tau=4)
-    theta = scipy.linalg.circulant(kernel).T
-    # stim = np.zeros((n_iters, theta.shape[0]))
-    # stim[n_iters//2-n_iters//4:n_iters//2-n_iters//4+n_iters//8, ::2] = b
-    # stim[n_iters//2-+n_iters//4+n_iters//8+1:1+n_iters//2-n_iters//4+2*n_iters//8, 1::2] = -b
-    jlist = np.linspace(0.01, 0.06, 500)
+def mean_field_kernel(J, num_iter, stim, sigma=1, theta=theta, val_init=None, sxo=0.):
+    #initialize random state of the cube
+    if val_init is None:
+        vec = np.random.rand(theta.shape[0])
+    else:
+        vec = np.repeat(val_init, theta.shape[0]) + np.random.randn()*sxo
+    vec_time = np.empty((num_iter, theta.shape[0]))
+    vec_time[:] = np.nan
+    vec_time[0, :] = vec
+    for i in range(1, num_iter):
+        for q in range(theta.shape[0]):
+            if isinstance(stim, np.ndarray):
+                b = stim[q]
+            else:
+                b = stim
+            vec[q] = gn.sigmoid(2*(np.sum(J*theta[q]*(2*vec-1))+b))+np.random.randn()*sigma
+        vec_time[i, :] = vec
+    return vec_time
+
+
+def mf_dyn_sys_circle(n_iters=200, b=0.):
+    colors = ['k', 'b', 'r']
+    taulist = [0.1, 1, 2]
     fig, ax = plt.subplots(1, figsize=(6, 5))
-    vecarr = np.empty((len(jlist), theta.shape[0]))
-    for t in range(len(jlist)):
-        vec_time = mean_field_stim(jlist[t], n_iters, b, val_init=None, theta=theta, sigma=0)
-        vecarr[t] = np.max((vec_time[-1], 1-vec_time[-1]), axis=0)
-    for i in range(theta.shape[0]):
-        ax.plot(jlist, vecarr[:, i], color='k')
-        ax.plot(jlist, 1-vecarr[:, i], color='k')
+    for i_tau, tau in enumerate(taulist):
+        kernel = exp_kernel(tau=tau, x=np.arange(10))
+        theta = scipy.linalg.circulant(kernel).T
+        # stim = np.zeros((n_iters, theta.shape[0]))
+        # stim[n_iters//2-n_iters//4:n_iters//2-n_iters//4+n_iters//8, ::2] = b
+        # stim[n_iters//2-+n_iters//4+n_iters//8+1:1+n_iters//2-n_iters//4+2*n_iters//8, 1::2] = -b
+        jlist = np.linspace(0.01, 1, 1000)
+        vecarr = np.empty((len(jlist), theta.shape[0]))
+        for t in range(len(jlist)):
+            vec_time = mean_field_kernel(jlist[t], n_iters, b, val_init=None, theta=theta, sigma=0)
+            vecarr[t] = np.max((vec_time[-1], 1-vec_time[-1]), axis=0)
+        for i in range(theta.shape[0]):
+            ax.plot(jlist, vecarr[:, i], color=colors[i_tau], label=tau)
+            ax.plot(jlist, 1-vecarr[:, i], color=colors[i_tau])
     ax.set_ylim(-0.05, 1.05)
+    # ax.legend()
     ax.set_xlabel('Coupling, J')
     ax.set_ylabel('Approximate posterior (q(x=1))')
+    # plt.axvline(1/np.sum(kernel))
         # ax[1].plot(stim[:, i])
     # ax[0].set_ylabel('Approx. posterior')
     # ax[1].set_ylabel('Bias')
@@ -2861,7 +3024,7 @@ def analytical_eigval_circulant(taulist=np.logspace(-5, 5, 100)):
         # max_eigvals.append(np.max(eigvals))
         # argmax.append(np.argmax(eigvals))
         maxeigval = np.exp(-(n/2-1)/tau) + 2*np.sum([np.exp(-(j-1)/tau) for j in range(1, n//2)])
-        # maxeigval = np.sum(ker)
+        maxeigval = np.sum(ker)
         max_eigvals.append(maxeigval)
     fig, ax = plt.subplots(ncols=2)
     for a in ax:
@@ -3039,9 +3202,9 @@ def get_path_between(x, j, b, noise, theta, steps=1000, step_size=1e-1, dt=1,
         if i in stash_on:
             xs.append(x.clone().detach().numpy())
         if i > 0 and np.abs(lag.item() - action_vals[-1]) <= tol_stop:
-            print(tol_stop)
-            print(lag.item())
-            print(action_vals[-1])
+            print('Reached stop tolerance ' + str(tol_stop))
+            print('Minimum action: ' + str(lag.item()))
+            # print(action_vals[-1])
             break
         action_vals.append(lag.item())
     return t, x, np.stack(xs), action_vals
@@ -3079,10 +3242,40 @@ def minimum_action_path(j, b, noise, theta, numiters=100, dt=1e-2, steps=1000,
     return t, x, xs, x_unstable, action_vals
 
 
+def reduced_symmetric_2d_system(j, b, t_end=10, dt=5e-3, noise=0.1,
+                                tau=0.1):
+    x = 0.1
+    y = 0.1
+    # x, y = np.random.rand(2)
+    x_l = [x]
+    y_l = [y]
+    time = np.arange(0, t_end+dt, dt)
+    for t in time[:-1]:
+        x_n = gn.sigmoid(2*3*j*(2*y-1)+2*b)-x
+        y_n = gn.sigmoid(2*3*j*(2*x-1)+2*b)-y
+        x = x + x_n*dt/tau + noise*np.sqrt(dt/tau)*np.random.randn()
+        y = y + y_n*dt/tau + noise*np.sqrt(dt/tau)*np.random.randn()
+        x_l.append(x)
+        y_l.append(y)
+    fig, ax = plt.subplots(ncols=2)
+    ax[0].plot(time, x_l, color='r')
+    ax[0].plot(time, y_l, color='k')
+    ax[1].plot(x_l, y_l, color='k')
+    fig, ax = plt.subplots(1)
+    xv = np.arange(0, 1.1, 5e-2)
+    yv = np.arange(0, 1.1, 5e-2)
+    xx, yy = np.meshgrid(xv, yv)
+    uu = gn.sigmoid(2*3*j*(2*yy-1)+2*b)-xx
+    vv = gn.sigmoid(2*3*j*(2*xx-1)+2*b)-yy
+    ax.quiver(xx, yy, uu, vv)
+    ax.plot(x_l, y_l, color='r')
+
+
 def calc_min_action_path_and_plot(j=0.5, b=0, noise=0.1, theta=theta, steps=20000,
                                   tol_stop=1e-2, numiters=500, dt=5e-3):
     t, x, xs, x_unstable, action_vals = minimum_action_path(j, b, noise, theta=theta, numiters=numiters, dt=dt,
                                                             steps=steps, tol_stop=tol_stop)
+    J = j
     plt.figure()
     plt.title('J = ' + str(j) + ', B = ' + str(b))
     plt.plot(action_vals)
@@ -3106,24 +3299,89 @@ def calc_min_action_path_and_plot(j=0.5, b=0, noise=0.1, theta=theta, steps=2000
     plt.xlabel('Time (s)')
     plt.ylabel('Approximate posterior MAP')
     plt.ylim(-0.02, 1.02)
-    plt.figure()
     ax = plt.figure().add_subplot(projection='3d')
-    ax.plot(x[:, 0].detach().numpy(), x[:, 2].detach().numpy(), x[:, 4].detach().numpy())
-    ax.set_xlabel('q_0')
-    ax.set_ylabel('q_2')
-    ax.set_zlabel('q_4')
-    ax = plt.figure().add_subplot(projection='3d')
-    ax.plot(x[:, 0].detach().numpy(), x[:, 1].detach().numpy(), x[:, 3].detach().numpy())
-    ax.set_xlabel('q_0')
-    ax.set_ylabel('q_1')
-    ax.set_zlabel('q_3')
+    for j in range(2, 8):
+        ax.plot(x[:, 0].detach().numpy(), x[:, 1].detach().numpy(), x[:, j].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, 0].detach().numpy(), x[:, j].detach().numpy(), x[:, 2].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, j].detach().numpy(), x[:, 1].detach().numpy(), x[:, 2].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, 5].detach().numpy(), x[:, 6].detach().numpy(), x[:, j].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, 5].detach().numpy(), x[:, j].detach().numpy(), x[:, 7].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, j].detach().numpy(), x[:, 6].detach().numpy(), x[:, 7].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, 3].detach().numpy(), x[:, 4].detach().numpy(), x[:, j].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, 3].detach().numpy(), x[:, j].detach().numpy(), x[:, 5].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, j].detach().numpy(), x[:, 4].detach().numpy(), x[:, 5].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, 7].detach().numpy(), x[:, 0].detach().numpy(), x[:, j].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, 7].detach().numpy(), x[:, j].detach().numpy(), x[:, 3].detach().numpy(),
+                color='k')
+    for j in range(2, 8):
+        ax.plot(x[:, j].detach().numpy(), x[:, 0].detach().numpy(), x[:, 3].detach().numpy(),
+                color='k')
+    ax.set_xlabel(r'$q_i$')
+    ax.set_ylabel(r'$q_j$')
+    ax.set_zlabel(r'$q_k$')
+    # ax.plot(x[:, 0].detach().numpy(), x[:, 1].detach().numpy(), x[:, 3].detach().numpy())
+    # ax.plot(x[:, 0].detach().numpy(), x[:, 5].detach().numpy(), x[:, 4].detach().numpy())
+    # ax.plot(x[:, 4].detach().numpy(), x[:, 6].detach().numpy(), x[:, 2].detach().numpy())
+    # ax.plot(x[:, 5].detach().numpy(), x[:, 6].detach().numpy(), x[:, 7].detach().numpy())
+    fig, ax = plt.subplots(ncols=7, nrows=4, figsize=(15, 10))
+    fig2, ax2 = plt.subplots(1)
+    ax = ax.flatten()
+    combs = list(itertools.combinations(np.arange(8), 2))
+    n = 0
+    colors = ['k', 'r']  # non-neighbor, neighbor,
+    mat_diagonal_inside_cube = np.flipud(np.identity(theta.shape[0], dtype=int))
+    fig3, ax3 = plt.subplots(1)
+    xv = np.arange(0, 1.1, 5e-2)
+    yv = np.arange(0, 1.1, 5e-2)
+    xx, yy = np.meshgrid(xv, yv)
+    uu = gn.sigmoid(2*3*J*(2*yy-1)+2*b)-xx
+    vv = gn.sigmoid(2*3*J*(2*xx-1)+2*b)-yy
+    ax3.quiver(xx, yy, uu, vv)
+    for i, j in combs:
+        color = colors[theta[i, j]]
+        if mat_diagonal_inside_cube[i, j]:
+            color = 'g'
+        ax[n].plot(x[:, i].detach().numpy(), x[:, j].detach().numpy(), color=color)
+        ax[n].set_xlabel('q_'+ str(i))
+        ax[n].set_ylabel('q_'+str(j))
+        n += 1
+        ax2.plot(x[:, i].detach().numpy(), x[:, j].detach().numpy(), color='k')
+        if theta[i, j]:
+            ax3.plot(x[:, i].detach().numpy(), x[:, j].detach().numpy(), color='k')
+    ax2.set_xlabel('q_i')
+    ax2.set_ylabel('q_j')
+    ax3.set_xlabel('q_1')
+    ax3.set_ylabel('q_3')
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='diagonal same face'),
+                      Line2D([0], [0], color='g', lw=2, label='diagonal cube'),
+                      Line2D([0], [0], color='r', lw=2, label='neighbors')]
+    ax[0].legend(handles=legendelements, frameon=False)
+    fig.tight_layout()
 
 
 def calc_potential_diff(j=0.5, b=0, noise=0.1, theta=theta, steps=20000,
                         tol_stop=1e-2, numiters=500, dt=5e-3):
     theta = np.array(((4, 2), (2, 4)))
-    eigval_fun_1 = get_eigen_1
-    eigval_fun_2 = get_eigen_2
     f_i_fun = f_i_diagonal
     ini_conds = [0.1, 0.9, 0.48]
     x_stable_1 = fsolve(f_i_fun, ini_conds[0], args=(j, b))
@@ -3162,12 +3420,12 @@ def pot_mf_illustration(j_list=[0.2, 0.4, 0.6], b_list=[-0.05, 0., 0.05]):
     colormap = pl.cm.Oranges(np.linspace(0.4, 1, len(b_list)))
     for i_b, b in enumerate(b_list):
         pot = potential_mf(q, 0.5, bias=b)
-        ax[1].plot(q, pot-np.mean(pot), color=colormap[i_b], label=b)
+        ax[1].plot(q, pot, color=colormap[i_b], label=b)
     ax[1].legend(title='Stim., B', frameon=False, labelspacing=0.1)
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'mf_potentials.png', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'mf_potentials.svg', dpi=400, bbox_inches='tight')
-    
+
 
 def potential_approx_2d(j, minval=-0.25, maxval=0.25):
     p1 = np.arange(minval, maxval, 1e-3)
@@ -3180,11 +3438,130 @@ def potential_approx_2d(j, minval=-0.25, maxval=0.25):
     ax.set_ylabel(r'$x_2$')
     ax.set_zlabel(r'Potential, $V(\vec{x})$')
     return potential
-        
+
+
+def plot_2d_mean_passage_time(J=2, B=0, sigma=0.1):
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spla
+    import matplotlib.pyplot as plt
+    
+    domain = [-0.5, 1.5, -0.5, 1.5]  # [x_min, x_max, y_min, y_max]
+    nx, ny = 200, 200          # Number of grid points in x and y
+    dx = (domain[1] - domain[0]) / (nx - 1)
+    dy = (domain[3] - domain[2]) / (ny - 1)
+    
+    x_vals = np.linspace(domain[0], domain[1], nx)
+    y_vals = np.linspace(domain[2], domain[3], ny)
+    X, Y = np.meshgrid(x_vals, y_vals)
+    
+    # Define F1(x, y) and F2(x, y)
+    sigmoid = lambda x: 1 / (1+np.exp(-x))
+    # def F1(x, y):
+    #     return sigmoid(2 * J * (4 * x + 2 * y - 3) + 2 * B) - x
+    
+    # def F2(x, y):
+    #     return F1(y, x)
+    def F1(x, y):
+        return sigmoid(2 * J * (6 * y - 3) + 2 * B) - x
+    
+    def F2(x, y):
+        return F1(y, x)
+    
+    F1_grid = F1(X, Y)
+    F2_grid = F2(X, Y)
+    
+    # Sparse matrix setup for the backward Kolmogorov equation
+    n_points = nx * ny
+    A = sp.lil_matrix((n_points, n_points))
+    b = -np.ones(n_points)
+    
+    # Helper function to get the linear index of grid (i, j)
+    def idx(i, j):
+        return i * ny + j
+    
+    # Construct the finite-difference scheme
+    for i in range(1, nx-1):
+        for j in range(1, ny-1):
+            k = idx(i, j)
+            # Central differences for spatial derivatives
+            A[k, k] += -2 * (sigma**2 / dx**2 + sigma**2 / dy**2)
+            A[k, idx(i+1, j)] += sigma**2 / dx**2 + F1_grid[i, j] / (2 * dx)
+            A[k, idx(i-1, j)] += sigma**2 / dx**2 - F1_grid[i, j] / (2 * dx)
+            A[k, idx(i, j+1)] += sigma**2 / dy**2 + F2_grid[i, j] / (2 * dy)
+            A[k, idx(i, j-1)] += sigma**2 / dy**2 - F2_grid[i, j] / (2 * dy)
+    
+    # vals_tr = np.round(fsolve(f_i_both, [1, 1], args=(J, B)), 4)
+    # vals_lr = np.round(fsolve(f_i_both, [1, 0], args=(J, B)), 4)
+    # vals_tl = np.round(fsolve(f_i_both, [0, 1], args=(J, B)), 4)
+    # vals_ll = np.round(fsolve(f_i_both, [0, 0], args=(J, B)), 4)
+    # # Map attractors to the nearest grid points
+    # attractors = [vals_tr, vals_lr, vals_tl, vals_ll]
+    # attractor_indices = []
+    # for x_a, y_a in attractors:
+    #     i_a = np.argmin(np.abs(x_vals - x_a))
+    #     j_a = np.argmin(np.abs(y_vals - y_a))
+    #     # A[idx(i_a, j_a), idx(i_a, j_a)] = 1
+    #     # b[idx(i_a, j_a)] = 0
+    #     attractor_indices.append((i_a, j_a))
+    
+    # Apply boundary conditions (absorbing boundaries)
+    for i in range(nx):
+        for j in [0, ny-1]:  # Bottom and top
+            A[idx(i, j), idx(i, j)] = 1.0
+            b[idx(i, j)] = 0.0
+    for j in range(ny):
+        for i in [0, nx-1]:  # Left and right
+            A[idx(i, j), idx(i, j)] = 1.0
+            b[idx(i, j)] = 0.0
+    
+    
+    # Convert to CSR format for efficient solving
+    A = A.tocsr()
+    
+    # Solve the linear system
+    T = spla.spsolve(A, b)
+    
+    # Reshape the solution to the grid
+    T_grid = T.reshape((nx, ny))
+    
+    # Plot the results
+    plt.figure(figsize=(8, 6))
+    plt.contourf(X, Y, T_grid, cmap='Blues')
+    vals = fsolve(f_i_both, [1, 1], args=(J, B))
+    plt.plot(vals[0], vals[1], marker='o', color='r')
+    vals = fsolve(f_i_both, [0, 0], args=(J, B))
+    plt.plot(vals[0], vals[1], marker='o', color='r')
+    vals = fsolve(f_i_both, [1, 0], args=(J, B))
+    plt.plot(vals[0], vals[1], marker='o', color='r')
+    vals = fsolve(f_i_both, [0, 1], args=(J, B))
+    plt.plot(vals[0], vals[1], marker='o', color='r')
+    plt.colorbar(label="Mean First Passage Time (T)")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.title("Mean First Passage Time for 2D Stochastic System")
+    plt.show()
+    # Plot the results
+    plt.figure(figsize=(8, 6))
+    plt.contourf(X, Y, T_grid, cmap='Blues')
+    plt.colorbar(label="Mean First Passage Time (T)")
+    x1 = np.arange(-0.5, 1.6, 1e-1)
+    x2 = np.arange(-0.5, 1.6, 1e-1)
+    x, y = np.meshgrid(x1, x2)
+    u1 = f_i(x, y, j=J, b=B)
+    u2 = f_i(y, x, j=J, b=B)
+    plt.quiver(x, y, u1, u2)
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.title("Mean First Passage Time")
+    plt.show()
+
 
 if __name__ == '__main__':
-    # plot_potential_and_vector_field_2d(j=2, b=0, noise=0., tau=1,
-    #                                     time_end=50, dt=5e-2)
+    # mf_dyn_sys_circle(n_iters=100, b=0.)
+    plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
+    plot_density_map_2d_mf(j=5, b=0, noise=0.1, tau=0.02, time_end=3000, dt=5e-3)
+    # plot_potential_and_vector_field_2d(j=2, b=0, noise=0.1, tau=0.1,
+    #                                    time_end=1, dt=1e-3)
     # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.15)
     # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
     # plot_occupancy_distro(j=0.36, noise=0.08, tau=1, dt=5e-1, theta=theta, b=0,
@@ -3246,8 +3623,10 @@ if __name__ == '__main__':
     # psychometric_mf_analytical(t_dur=1000000, noiselist=[0.05, 0.08, 0.1, 0.15],
     #                            j_list=np.arange(0.6, 1.3, 0.1),
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
-    # calc_min_action_path_and_plot(j=1.5, b=0, noise=0.1, theta=theta, steps=400000,
-    #                               tol_stop=-1)
+    calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
+                                  tol_stop=1e-30)
+    calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
+                                  tol_stop=1e-30)
     # boltzmann_2d_change_sigma(j=0.5, b=0)
     # levelts_laws(noise=0.1, j=0.39,
     #              b_list=np.round(np.arange(-0.01, 0.012, 0.0005), 4),
@@ -3258,8 +3637,8 @@ if __name__ == '__main__':
     #                             num_iter=200, tol=1e-3, dim3d=False)
     # plot_adaptation_mf(j=0.4, b=0., theta=theta, noise=0.0, gamma_adapt=1,
     #                    tau=1, time_end=100, dt=1e-3)
-    plot_adaptation_1d(j=0.5, b=0., noise=0.0, gamma_adapt=0.1,
-                       tau=1, time_end=100, dt=1e-3)
+    # plot_adaptation_1d(j=0.5, b=0., noise=0.0, gamma_adapt=0.1,
+    #                    tau=1, time_end=100, dt=1e-3)
     # for b in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]:
     #     plot_mean_field_neg_stim_fixed_points(j_list=np.arange(0, 1, 0.005),
     #                                           b=b, theta=theta, num_iter=20)
