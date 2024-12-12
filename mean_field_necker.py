@@ -3558,8 +3558,8 @@ def plot_2d_mean_passage_time(J=2, B=0, sigma=0.1):
 
 if __name__ == '__main__':
     # mf_dyn_sys_circle(n_iters=100, b=0.)
-    plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
-    plot_density_map_2d_mf(j=5, b=0, noise=0.1, tau=0.02, time_end=3000, dt=5e-3)
+    # plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
+    # plot_density_map_2d_mf(j=5, b=0, noise=0.1, tau=0.02, time_end=3000, dt=5e-3)
     # plot_potential_and_vector_field_2d(j=2, b=0, noise=0.1, tau=0.1,
     #                                    time_end=1, dt=1e-3)
     # plot_potentials_mf(j_list=np.arange(0.001, 1.01, 0.1), bias=0.15)
@@ -3625,8 +3625,8 @@ if __name__ == '__main__':
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
     calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
                                   tol_stop=1e-30)
-    calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
-                                  tol_stop=1e-30)
+    # calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
+    #                               tol_stop=1e-30)
     # boltzmann_2d_change_sigma(j=0.5, b=0)
     # levelts_laws(noise=0.1, j=0.39,
     #              b_list=np.round(np.arange(-0.01, 0.012, 0.0005), 4),
