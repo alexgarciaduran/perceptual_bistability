@@ -241,7 +241,7 @@ def posterior_vs_b(stim_list=np.linspace(-2, 2, 10001),
     init_conds_bp = [10, 5, 20, 1, 0]
     n_its = len(init_conds_bp)
     for stim in stim_list:
-        q1 = lambda q: gn.sigmoid(2*N*j*(2*q-1) + stim*2) - q
+        q1 = lambda q: sigmoid(2*N*j*(2*q-1) + stim*2) - q
         sol, _, flag, _ =\
             fsolve(q1, init_cond, full_output=True)
         if stim >= 0:
@@ -573,7 +573,7 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
                      tol=1e-2, n_neigh=3, alpha=1):
     """
     Searches for roots using bisection method in a interval of r, given by
-    [min_r, max_r], using a sliding window of of size w_size.
+    [min_r, max_r], using a sliding window of size w_size.
     
     """
     j_e = np.exp(2*j)
@@ -599,12 +599,6 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
                 count += 1000
                 break
             count += 1
-        
-    # solution = fsolve(r_stim, fprime=r_stim_prime,
-    #                   args=(j_e, b_e), x0=x0, xtol=1e-16,
-    #                   maxfev=1000)
-    # solution = root(r_stim, args=(j_e, b_e), x0=x0, tol=1e-12,
-    #                 method='broyden2').x
     return sols
 
 
@@ -1116,7 +1110,7 @@ def all_comparison_together(j_list=np.arange(0., 1.005, 0.01),
         for i_b, b in enumerate(b_list):
             l = []
             for j in j_list:
-                # q1 = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ b*2*N) - q 
+                # q1 = lambda q: sigmoid(2*N*j*(2*q-1)+ b*2*N) - q 
                 # sol_1, _, flag1, _ =\
                 #     fsolve(q1, 1, full_output=True)
                 # if flag1 != 1:
@@ -1901,27 +1895,31 @@ def potential_2d_changing_j(b, alpha=1, n=3, noise=0.2):
 
 def plot_optimal_alpha_correct_vs_inference():
     alpha_opt_correct = np.load(DATA_FOLDER + 'optimal_alpha_noise_03_coupling_0301_002_stim_0_015_00001.npy')
-    kl_div_array = np.load(DATA_FOLDER + 'KL_div_vs_alpha_array_2x2.npy')
-    alpha_list = np.arange(0.01, 2, 0.01)
-    stimvals = np.round(np.arange(0, 0.45, 0.01), 4)
-    jvals = [0.1, 0.3, 0.6, 1]
+    alpha_opt_inference = np.load(DATA_FOLDER + 'optimal_alpha_inference_grad_descent_vfinal.npy')
+    stimvals = np.round(np.arange(0., 0.501, 1e-2), 4)
+    jvals = np.round(np.arange(0., 2.01, 1e-2), 4)
     j_list = np.arange(0.01, 3.01, 0.05)
     b_list = np.arange(0, 0.15, 3e-3)
     optimal_alpha_correct = []
     optimal_alpha_inference = []
     fig, ax = plt.subplots(1)
-    colors = ['k', 'b', 'r', 'g']
-    for i_j_inf, j in enumerate(jvals):
-        i_j_opt = np.abs(j_list - j).argmin()
-        for i_b_inf, b in enumerate(stimvals):
-            i_b_opt = np.abs(b_list - b).argmin()
+    for i_j_inf, j in enumerate(jvals[jvals > 0]):
+        if np.abs(j_list - j).min() < 1e-4:
+            i_j_opt = np.abs(j_list - j).argmin()
+        else:
+            continue
+        for i_b_inf, b in enumerate(stimvals[stimvals > 0]):
+            if np.abs(b_list - b).min() < 1e-4:
+                i_b_opt = np.abs(b_list - b).argmin()
+            else:
+                continue
             if b > np.max(b_list):
                 break
             optimal_alpha_correct.append(alpha_opt_correct[i_j_opt, i_b_opt])
             optimal_alpha_inference.append(
-                alpha_list[np.argmin(kl_div_array[i_j_inf, i_b_inf])])
+                alpha_opt_inference[i_j_inf, i_b_inf])
             ax.plot(alpha_opt_correct[i_j_opt, i_b_opt],
-                    alpha_list[np.argmin(kl_div_array[i_j_inf, i_b_inf])], color=colors[i_j_inf],
+                    alpha_opt_inference[i_j_inf, i_b_inf], color='k',
                     marker='o')
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -2013,7 +2011,16 @@ def dpc_dalpha(alpha, j, b, noise=0.2, n=3):
     integral_denominator = scipy.integrate.quad(integrand , -3, 3)[0]
     der_integral_numerator = scipy.integrate.quad(der_integrand , 0, 3)[0]
     der_integral_denominator = scipy.integrate.quad(der_integrand , -3, 3)[0]
-    return (integral_denominator*der_integral_numerator - integral_numerator*der_integral_denominator)  # /integral_denominator**2
+    return (integral_denominator*der_integral_numerator - integral_numerator*der_integral_denominator)/integral_denominator**2
+
+
+def p_alpha_correct(alpha, j, b, n=3, noise=0.2):
+    pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    potential = np.vectorize(lambda x: -scipy.integrate.quad(pot, 1, x)[0])
+    integrand = np.vectorize(lambda x: np.exp(-2*potential(x)/noise**2))
+    integral_numerator = scipy.integrate.quad(integrand , 0, 3)[0]
+    integral_denominator = scipy.integrate.quad(integrand , -3, 3)[0]
+    return integral_numerator/integral_denominator
 
 
 def numerical_optimal_alpha(j, b, noise=0.2):
@@ -2105,8 +2112,8 @@ def plot_pot_boltzmann(j=0.8, b_list=[0.04], noise=0.1, alpha_list=[0.1, 1, 1.4]
 
 def log_potential(b, j_list=None, alpha=1, n=3,
                   ax=None, labels=True, norm=True, transform=True):
-    max_val = 1.25
-    min_val = -1.25
+    max_val = 3
+    min_val = -3
     min_val_integ = -10
     epsilon = 1e-3
     vals = np.arange(min_val+epsilon, max_val, epsilon)
@@ -2194,7 +2201,7 @@ def plot_pot_evolution_FBP(j=0.75, b=0, alpha=1, n=3, num_iter=10):
     potential_vals = []
     for i in range(num_iter):
         logmess = dyn_sys_fbp(logmess, j, b, alpha=alpha, n=3, dt=1, noise=0.2)
-        logmessages.append(gn.sigmoid(logmess*n+b))
+        logmessages.append(sigmoid(logmess*n+b))
         val_pot = -scipy.integrate.quad(pot, -1.25, logmess)[0]
         potential_vals.append(val_pot)
     for i_a, a in enumerate(ax):
@@ -2211,12 +2218,15 @@ def dyn_sys_ql(ql, ra, rb, j, b, dt=1e-2, n=3, alpha=1, noise=0.1,
     return qlt, rat, rbt
 
 
-def plot_log_ratio(j, b, n=3, alpha=1):
+def plot_log_ratio(n=3, alpha=1, b=0):
+    """
+    Plots the solutions from the Taylor expansion (O^3) of M = \phi(M)-M.
+    """
     # pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    j = np.arange(0, 1.5, 1e-4)
     pot_taylor = lambda x: 1/alpha * (np.arctanh(np.tanh(j*alpha)*np.tanh(b))+
                                       np.tanh(j*alpha)*(1-np.tanh(b)**2)*x*(n-alpha)
                                       - np.tanh(j*alpha)/3 * (1-np.tanh(b)**2)**2 * (x**3)*(n-alpha)**3)-x
-    j = np.arange(0, 1.5, 1e-3)
     solspos = np.sqrt(3*(np.tanh(j*alpha)*(n-alpha)-1) / (np.tanh(j*alpha) * (n-alpha)**3))
     solsneg = -np.sqrt(3*(np.tanh(j*alpha)*(n-alpha)-1) / (np.tanh(j*alpha) * (n-alpha)**3))
     # plt.figure()
@@ -2226,6 +2236,9 @@ def plot_log_ratio(j, b, n=3, alpha=1):
     plt.figure()
     plt.plot(j, solspos, color='k')
     plt.plot(j, solsneg, color='k')
+    plt.plot([0, np.log(n/(n-2*alpha))/2/alpha], [0, 0], color='k')
+    plt.plot([np.log(n/(n-2*alpha))/2/alpha, np.max(j)], [0, 0], color='k',
+             linestyle='--')
 
 
 def plot_rates_neurons(j, b, alpha=1, n=3, dt=1e-3, noise=5,
@@ -2271,6 +2284,9 @@ def plot_rates_neurons(j, b, alpha=1, n=3, dt=1e-3, noise=5,
 
 
 def plot_L_different_init(alpha=1, n=3, dt=1e-3, t_end=2, noise=0):
+    """
+    Plots dynamics of FBP (Leptourgos et al. 2020 style)
+    """
     ql = np.random.randn()
     ra = np.abs(np.random.randn()*5)
     rb = np.abs(np.random.randn()*5)
@@ -2291,7 +2307,7 @@ def plot_L_different_init(alpha=1, n=3, dt=1e-3, t_end=2, noise=0):
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
         a.axhline(0.5, color='r', alpha=0.6, linestyle='--')
-        [a.plot(time, gn.sigmoid(2*qlt[:, i_a, t]), color='k') for t in range(6)]
+        [a.plot(time, sigmoid(2*qlt[:, i_a, t]), color='k') for t in range(6)]
         if i_a > 1:
             a.set_xlabel('Time (s)')
         else:    
@@ -2334,6 +2350,9 @@ def pot_potential_taylor(q, j, b, n=3, a=1):
 
 
 def plot_crit_j_alpha(n=3, alpha_list=np.arange(0, 1.5, 1e-3)):
+    """
+    Plots J^* vs alpha, highlighting MF (alpha \to 0) and LBP (\alpha = 1)
+    """
     fig, ax = plt.subplots(1, figsize=(4.3, 3.4))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
@@ -2446,6 +2465,9 @@ def performance_vs_alpha(j=0.5, alpha_list=np.arange(0.1, 1.45, 0.3),
 
 def f_q_vs_alpha(j=0.5, alpha_list=np.arange(0.1, 2, 0.1), b=0,
                  n=3):
+    """
+    Plots \psi(M)/alpha - M for different values of alpha
+    """
     fig, ax = plt.subplots(1)
     colormap = pl.cm.Blues(np.linspace(0.1, 1, len(alpha_list)))
     q = np.arange(0, 1, 1e-4)
@@ -2598,50 +2620,61 @@ def kl_divergence_vs_alpha_j(alpha_list=np.arange(0.01, 2, 0.01),
                              b_list=np.arange(-.5, 0.5005, 0.005),
                              j_list=np.arange(0., 1.005, 0.005),
                              data_folder=DATA_FOLDER,
-                             theta=THETA):
+                             theta=THETA, load_data=True,
+                             logscale=True):
     """
     Plots KL divergence D_KL(q||p) for some configurations of B/J, 
     depending on alpha.
     """
     matrix_true_file = data_folder + 'true_vs_JB_05.npy'
     mat_true = np.load(matrix_true_file, allow_pickle=True)
-    # configs = [[0.1, 0.4], [0.1, 0.9], [0.05, 0.5], [-0.1, 1]]
     stimvals = np.round(np.arange(0, 0.45, 0.01), 4)
     jvals = [0.1, 0.3, 0.6, 1]
     configs = list(itertools.product(stimvals, jvals))
-    kl_div_array = np.empty((len(jvals), len(stimvals), len(alpha_list)))
-    n = 0
-    jvals_confs = [conf[1] for conf in configs]
-    bvals_confs = [conf[0] for conf in configs]
-    for b, j in configs:
-        idx_b = np.where(np.round(b_list, 4) == b)[0][0]
-        idx_j = np.where(np.round(j_list, 4) == j)[0][0]
-        # get true posterior
-        p_pos = mat_true[idx_j, idx_b]
-        p_neg = 1-p_pos
-        for i_a, alpha in enumerate(alpha_list):
-            # simulate FBP
-            pos, neg = discrete_DBN(j, b, theta=theta, num_iter=300, thr=1e-20,
-                                    alpha=alpha)
-            # best possible scenario, particle falls in correct potential well
-            if b < 0:
-                q_pos = np.min((pos[0], neg[0]))
-            else:
-                q_pos = np.max((pos[0], neg[0]))
-            q_neg = 1-q_pos
-            # compute KLDIV
-            kl_div = q_pos*np.log(q_pos/p_pos) + q_neg*np.log(q_neg/p_neg)
-            i_j = np.where(np.unique(jvals_confs) == configs[n][1])[0][0]
-            i_b = np.where(np.unique(bvals_confs) == configs[n][0])[0][0]
-            kl_div_array[i_j, i_b, i_a] = kl_div
-        n += 1
-    np.save(DATA_FOLDER + 'KL_div_vs_alpha_array_2x2.npy', kl_div_array)
+    if load_data:
+        kl_div_array = np.load(DATA_FOLDER + 'KL_div_vs_alpha_array_2x2.npy')
+    else:
+        # configs = [[0.1, 0.4], [0.1, 0.9], [0.05, 0.5], [-0.1, 1]]
+        kl_div_array = np.empty((len(jvals), len(stimvals), len(alpha_list)))
+        n = 0
+        jvals_confs = [conf[1] for conf in configs]
+        bvals_confs = [conf[0] for conf in configs]
+        for b, j in configs:
+            idx_b = np.where(np.round(b_list, 4) == b)[0][0]
+            idx_j = np.where(np.round(j_list, 4) == j)[0][0]
+            # get true posterior
+            p_pos = mat_true[idx_j, idx_b]
+            p_neg = 1-p_pos
+            for i_a, alpha in enumerate(alpha_list):
+                # simulate FBP
+                pos, neg = discrete_DBN(j, b, theta=theta, num_iter=300, thr=1e-20,
+                                        alpha=alpha)
+                # best possible scenario, particle falls in correct potential well
+                if b < 0:
+                    q_pos = np.min((pos[0], neg[0]))
+                else:
+                    q_pos = np.max((pos[0], neg[0]))
+                q_neg = 1-q_pos
+                # compute KLDIV
+                kl_div = q_pos*np.log(q_pos/p_pos) + q_neg*np.log(q_neg/p_neg)
+                i_j = np.where(np.unique(jvals_confs) == configs[n][1])[0][0]
+                i_b = np.where(np.unique(bvals_confs) == configs[n][0])[0][0]
+                kl_div_array[i_j, i_b, i_a] = kl_div
+            n += 1
+        np.save(DATA_FOLDER + 'KL_div_vs_alpha_array_2x2.npy', kl_div_array)
     fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(11, 9))
     ax = ax.flatten()
     for i_a, a in enumerate(ax):
-        im = a.imshow(np.flipud(kl_div_array[i_a, :, :]), cmap='Blues',
-                      aspect='auto', extent=[np.min(alpha_list), np.max(alpha_list), 
-                                             np.min(stimvals), np.max(stimvals)])
+        if logscale:
+            im = a.imshow(np.flipud(kl_div_array[i_a, :, :]), cmap='Blues',
+                          aspect='auto', extent=[np.min(alpha_list), np.max(alpha_list), 
+                                                 np.min(stimvals), np.max(stimvals)],
+                          norm=mpl.colors.LogNorm())
+        else:
+            if logscale:
+                im = a.imshow(np.flipud(kl_div_array[i_a, :, :]), cmap='Blues',
+                              aspect='auto', extent=[np.min(alpha_list), np.max(alpha_list), 
+                                                     np.min(stimvals), np.max(stimvals)])
         plt.colorbar(im, ax=a, label=r'$D_{KL}(q||p)$')
         a.set_xlabel(r'alpha, $\alpha$')
         a.set_ylabel(r'sensory evidence, $B$')
@@ -2653,7 +2686,7 @@ def kl_divergence_vs_alpha(alpha_list=np.arange(0.01, 2, 0.05),
                            b_list=np.arange(-.5, 0.5005, 0.005),
                            j_list=np.arange(0., 1.005, 0.005),
                            data_folder=DATA_FOLDER,
-                           theta=THETA):
+                           theta=THETA, load_data=True):
     """
     Plots KL divergence D_KL(q||p) for some configurations of B/J, 
     depending on alpha.
@@ -2664,31 +2697,34 @@ def kl_divergence_vs_alpha(alpha_list=np.arange(0.01, 2, 0.05),
     stimvals = np.round(np.arange(0, 0.45, 0.1), 4)
     jvals = np.round(np.arange(0.1, 1, 0.2), 4)
     configs = list(itertools.product(stimvals, jvals))
-    kl_div_array = np.empty((len(configs), len(alpha_list)))
-    n = 0
-    for b, j in configs:
-        idx_b = np.where(np.round(b_list, 4) == b)[0][0]
-        idx_j = np.where(np.round(j_list, 4) == j)[0][0]
-        # get true posterior
-        p_pos = mat_true[idx_j, idx_b]
-        p_neg = 1-p_pos
-        kldivlist=[]
-        for i_a, alpha in enumerate(alpha_list):
-            # simulate FBP
-            pos, neg = discrete_DBN(j, b, theta=theta, num_iter=300, thr=1e-20,
-                                    alpha=alpha)
-            # best possible scenario, particle falls in correct potential well
-            if b < 0:
-                q_pos = np.min((pos[0], neg[0]))
-            else:
-                q_pos = np.max((pos[0], neg[0]))
-            q_neg = 1-q_pos
-            # compute KLDIV
-            kl_div = q_pos*np.log(q_pos/p_pos) + q_neg*np.log(q_neg/p_neg)
-            kldivlist.append(kl_div)
-            kl_div_array[n, i_a] = kl_div
-        n += 1
-    np.save(DATA_FOLDER + 'KL_div_vs_alpha_array_v2.npy', kl_div_array)
+    if load_data:
+        kl_div_array= np.load(DATA_FOLDER + 'KL_div_vs_alpha_array_v2.npy')
+    else:
+        kl_div_array = np.empty((len(configs), len(alpha_list)))
+        n = 0
+        for b, j in configs:
+            idx_b = np.where(np.round(b_list, 4) == b)[0][0]
+            idx_j = np.where(np.round(j_list, 4) == j)[0][0]
+            # get true posterior
+            p_pos = mat_true[idx_j, idx_b]
+            p_neg = 1-p_pos
+            kldivlist=[]
+            for i_a, alpha in enumerate(alpha_list):
+                # simulate FBP
+                pos, neg = discrete_DBN(j, b, theta=theta, num_iter=300, thr=1e-20,
+                                        alpha=alpha)
+                # best possible scenario, particle falls in correct potential well
+                if b < 0:
+                    q_pos = np.min((pos[0], neg[0]))
+                else:
+                    q_pos = np.max((pos[0], neg[0]))
+                q_neg = 1-q_pos
+                # compute KLDIV
+                kl_div = q_pos*np.log(q_pos/p_pos) + q_neg*np.log(q_neg/p_neg)
+                kldivlist.append(kl_div)
+                kl_div_array[n, i_a] = kl_div
+            n += 1
+        np.save(DATA_FOLDER + 'KL_div_vs_alpha_array_v2.npy', kl_div_array)
     fig, ax = plt.subplots(ncols=2, figsize=(8, 4))
     for a in ax:
         a.spines['top'].set_visible(False)
@@ -2750,50 +2786,74 @@ def d_kl_d_q(q, p):
     return np.log(q/p) - np.log((1-q)/(1-p))
 
 
-def optimal_alpha_infer_grad_descent(j, b, n, lr=1e-2, n_iter=1000, a0=1,
-                                     data_folder=DATA_FOLDER,
-                                     tol=1e-12, eps=1e-3):
+def optimal_alpha_grad_descent(j, b, n, lr=1e-2, n_iter=5000, a0=2,
+                               tol=1e-12, eps=1e-3,
+                               mode='inference', noise=0.2, epsgrad=1e-10):
+    
     a = np.copy(a0)
     # get true posterior
     p = gn.true_posterior(j=j, stim=b)
     alpha_vals = [a]
+    der_memory = [0]
+    grad_memory = 0
     for i in range(n_iter):
-        # find r(alpha)
-        sol_a = np.max(find_solution_bp(j, b, min_r=0.6, max_r=10, w_size=0.1,
-                                        tol=1e-2, n_neigh=n, alpha=a))
-        # find r(alpha+epsilon)
-        sol_a_eps = np.max(find_solution_bp(j, b, min_r=0.6, max_r=10, w_size=0.1,
-                                            tol=1e-2, n_neigh=n, alpha=a+eps))
-        # compute q(alpha)
-        q_a = np.exp(b)*sol_a**3 / (np.exp(-b)+np.exp(b)*sol_a**3)
-        # compute q(alpha+epsilon)
-        q_a_eps = np.exp(b)*sol_a_eps**3 / (np.exp(-b)+np.exp(b)*sol_a_eps**3)
-        # compute as d q/d alpha = (q(alpha+epsilon)-q(alpha))/epsilon
-        d_q_d_a = (q_a_eps-q_a)/eps
-        # compute dKL/dalpha = dKL/dq * dq/dalpha
-        d_kl_da = d_kl_d_q(q_a, p)*d_q_d_a
-        a = a - lr*d_kl_da
+        if mode == 'inference':
+            # find r(alpha)
+            sol_a = np.max(find_solution_bp(j, b, min_r=0., max_r=30, w_size=0.1,
+                                            tol=1e-2, n_neigh=n, alpha=a))
+            # find r(alpha+epsilon)
+            sol_a_eps = np.max(find_solution_bp(j, b, min_r=0., max_r=30, w_size=0.1,
+                                                tol=1e-2, n_neigh=n, alpha=a+eps))
+            # compute q(alpha)
+            q_a = np.exp(b)*sol_a**3 / (np.exp(-b)+np.exp(b)*sol_a**3)
+            # compute q(alpha+epsilon)
+            q_a_eps = np.exp(b)*sol_a_eps**3 / (np.exp(-b)+np.exp(b)*sol_a_eps**3)
+            # compute as d q/d alpha = (q(alpha+epsilon)-q(alpha))/epsilon
+            d_q_d_a = (q_a_eps-q_a)/eps
+            # compute dKL/dalpha = dKL/dq * dq/dalpha
+            derivative = d_kl_d_q(q_a, p)*d_q_d_a
+        if mode == 'correct':
+            p_a = p_alpha_correct(1, 1, 0.01, n=3, noise=0.2)
+            p_a_eps = p_alpha_correct(1+eps, 1, 0.01, n=3, noise=0.2)
+            # derivative = dpc_dalpha(a, j, b, noise=noise, n=3)
+            derivative = (p_a_eps - p_a)/eps
+        grad_memory += derivative**2
+        learning_rate = lr / (np.sqrt(grad_memory)+epsgrad)
+        change_a = derivative*learning_rate + der_memory[i]*0.9
+        a = a - change_a
         alpha_vals.append(a)
+        der_memory.append(change_a)
         if np.abs(alpha_vals[i] - alpha_vals[i-1]) <= tol:
             break
     return a
 
 
-def plot_optimal_inference_alpha_vs_j_b(j_list=np.round(np.arange(0., 1, 1e-2), 4),
-                                        b_list=np.round(np.arange(0., 0.4, 5e-3), 4)):
-    opt_alpha_array = np.zeros((len(j_list), len(b_list)))
-    # for eacj (j, b) pair
-    for i_j, j in enumerate(j_list):
-        for i_b, b in enumerate(b_list):
-            # compute optimal alpha
-            opt_alpha_array[i_j, i_b] =  optimal_alpha_infer_grad_descent(j, b, n=3, lr=1e-2,
-                                                                          tol=1e-7)
-    # plot
+def plot_optimal_inference_alpha_vs_j_b(j_list=np.round(np.arange(0., 2.01, 1e-2), 4),
+                                        b_list=np.round(np.arange(0., 0.5005, 1e-2), 4),
+                                        load_data=True):
+    if load_data:
+        opt_alpha_array= np.load(DATA_FOLDER + 'optimal_alpha_inference_grad_descent_vfinal.npy')
+    else: 
+        opt_alpha_array = np.zeros((len(j_list), len(b_list)))
+        opt_alpha_correct_array = np.zeros((len(j_list), len(b_list)))
+        # for eacj (j, b) pair
+        for i_j, j in enumerate(j_list):
+            for i_b, b in enumerate(b_list):
+                # compute optimal alpha
+                opt_alpha_array[i_j, i_b] =  optimal_alpha_grad_descent(j, b, n=3, lr=1e-2,
+                                                                        tol=1e-7, epsgrad=1e-3)
+                # compute optimal alpha
+                # opt_alpha_correct_array[i_j, i_b] =\
+                #     optimal_alpha_grad_descent(j, b, n=3, lr=1e-2, tol=1e-6,
+                #                                mode='correct', epsgrad=1e-3, eps=1e-5)
+        # plot
+        np.save(DATA_FOLDER + 'optimal_alpha_inference_grad_descent_vfinal.npy', opt_alpha_array)
     fig, ax = plt.subplots(1)
     im = ax.imshow(np.flipud(opt_alpha_array), cmap='Blues',
                    aspect='auto', extent=[np.min(b_list), np.max(b_list),
-                                          np.min(j_list), np.max(j_list)])
-    plt.colorbar(im, ax=ax, label=r'$\hat{\alpha}$')
+                                          np.min(j_list), np.max(j_list)],
+                   interpolation='none', vmin=1, vmax=2)
+    plt.colorbar(im, ax=ax, label=r'Optimal $\hat{\alpha}$')
     ax.set_ylabel(r'Coupling, $J$')
     ax.set_xlabel(r'Sensory evidence, $B$')
 
