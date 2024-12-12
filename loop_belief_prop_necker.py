@@ -1931,8 +1931,8 @@ def plot_optimal_alpha_correct_vs_inference():
             
 
 
-def plot_optimal_alpha_vs_j_b(j_list=np.arange(0.1, 2, 0.1), 
-                              b_list=np.arange(0, 0.1, 1e-2), noise=0.2,
+def plot_optimal_alpha_vs_j_b(j_list=np.round(np.arange(0., 2.01, 5e-2), 4),
+                              b_list=np.round(np.arange(0., 0.5005, 2e-2), 4), noise=0.2,
                               n=3):
     max_val = 2.5
     min_val = -2.5
@@ -1964,7 +1964,7 @@ def plot_optimal_alpha_vs_j_b(j_list=np.arange(0.1, 2, 0.1),
             it += 1
             maxind = np.argmax(prob_correct)
             alpha_optimal[i_j, i_b] = alpha_list_all[maxind]
-    np.save(DATA_FOLDER + 'optimal_alpha_noise_03_coupling_0301_002_stim_0_015_00001.npy', alpha_optimal)
+    np.save(DATA_FOLDER + 'optimal_alpha_correct_definitive.npy', alpha_optimal)
     fig, ax = plt.subplots(ncols=1)
     im = ax.imshow(np.flipud(alpha_optimal), cmap='Blues', aspect='auto',
                    extent=[np.min(b_list), np.max(b_list),
