@@ -411,6 +411,8 @@ def plot_FP_vs_alpha(theta, num_iter, a_list=np.arange(0, 2, 0.01),
     lp = []
     ln = []
     fig, ax = plt.subplots(1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     vals_all = np.empty((theta.shape[0], len(a_list)))
     vals_all[:] = np.nan
     for i_a, alpha in enumerate(a_list):
@@ -423,9 +425,14 @@ def plot_FP_vs_alpha(theta, num_iter, a_list=np.arange(0, 2, 0.01),
         # to get upper attractor:
     ax.plot(a_list, lp, color='k')
     ax.plot(a_list, ln, color='k')
-    ax.axhline(0.5, color='k', linestyle='--', alpha=0.2)
-    ax.set_xlabel('alpha')
-    ax.set_ylabel('Approximate posterior q(x=1)')
+    ax.plot([np.min(a_list), np.max(a_list)], [0.5, 0.5],
+            color='k', linestyle='--', alpha=0.2)
+    ax.set_xlabel(r'alpha $\alpha$')
+    ax.set_ylabel(r'Approximate posterior $q(x=1)$')
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='Stable'),
+                      Line2D([0], [0], color='k', lw=2, label='Unstable')]
+    plt.legend(handles=legendelements, title='Fixed point',
+               frameon=False)
 
 
 def plot_loopy_b_prop_sol(theta, num_iter, j_list=np.arange(0, 1, 0.001),
@@ -1925,7 +1932,7 @@ def potential_2d_changing_j(b, alpha=1, n=3, noise=0.2):
 
 
 def plot_optimal_alpha_correct_vs_inference():
-    alpha_opt_correct = np.load(DATA_FOLDER + 'optimal_alpha_noise_03_coupling_0301_002_stim_0_015_00001.npy')
+    alpha_opt_correct = np.load(DATA_FOLDER + 'optimal_alpha_correct_definitive_v3.npy')
     alpha_opt_inference = np.load(DATA_FOLDER + 'optimal_alpha_inference_grad_descent_vfinal.npy')
     stimvals = np.round(np.arange(0., 0.501, 1e-2), 4)
     jvals = np.round(np.arange(0., 2.01, 1e-2), 4)
@@ -2270,6 +2277,7 @@ def plot_log_ratio(n=3, alpha=1, b=0):
     plt.plot([0, np.log(n/(n-2*alpha))/2/alpha], [0, 0], color='k')
     plt.plot([np.log(n/(n-2*alpha))/2/alpha, np.max(j)], [0, 0], color='k',
              linestyle='--')
+    plt.xlabel('Coupling, J')
 
 
 def plot_rates_neurons(j, b, alpha=1, n=3, dt=1e-3, noise=5,
@@ -2887,6 +2895,96 @@ def plot_optimal_inference_alpha_vs_j_b(j_list=np.round(np.arange(0., 2.01, 1e-2
     plt.colorbar(im, ax=ax, label=r'Optimal $\hat{\alpha}$')
     ax.set_ylabel(r'Coupling, $J$')
     ax.set_xlabel(r'Sensory evidence, $B$')
+
+
+def get_psych_kernel(j=0.6, b=0., n_its=1000, t_end=15, dt=1e-2, tau=0.5,
+                     noise=0.1, nboots=1, n=3, alpha=1, comp_all=True):
+    """
+    Plots psychophysical kernel for perfect integrator (normal),
+    reflecting and absorbing boudns.
+    The higher the noise, the clearer the shape.
+    """
+    d_normal = np.zeros(n_its)
+    d_reflecting = np.zeros(n_its)
+    d_absorbing = np.zeros(n_its)
+    time = np.arange(0, t_end, dt)
+    chi = np.zeros((n_its, len(time)))
+    for it in range(n_its):
+        absorb = False
+        q = np.random.randn()*0.1
+        q2 = np.copy(q)
+        for t in range(len(time)):
+            chi[it, t] = np.random.randn()*noise
+            chi_t = chi[it, t]
+            q = q + dt*(1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(q*(n-alpha)+b)) - q)/tau +\
+                chi_t*np.sqrt(dt/tau)
+            if comp_all:
+                q2 = q2 + dt*(1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(q2*(n-alpha)+b)) - q2)/tau +\
+                    chi_t*np.sqrt(dt/tau)
+                q2 = np.clip(q2, 0, 1)
+            if (q > 0.9 or q < 0.1) and not absorb:
+                absorb = True
+                d_absorbing[it] = np.sign(q - 0.5)
+        if not absorb:
+            d_absorbing[it] = np.sign(q - 0.5)
+        d_normal[it] = np.sign(q - 0.5)
+        d_reflecting[it] = np.sign(q2 - 0.5)
+    time_2 = np.arange(0, len(time), 5)
+    aux_kernel_normal = mfn.get_kernel_bootstrap(d_normal, chi, time_2, nboot=nboots)
+    if comp_all:
+        aux_kernel_abs = mfn.get_kernel_bootstrap(d_absorbing, chi, time_2, nboot=nboots)
+        aux_kernel_ref = mfn.get_kernel_bootstrap(d_reflecting, chi, time_2, nboot=nboots)
+        return aux_kernel_normal, aux_kernel_abs, aux_kernel_ref
+    else:
+        return aux_kernel_normal
+
+
+def area_slope_PK_vs_alpha(alpha_list=np.arange(0.1, 1.5, 0.01), j=0.6, b=0, 
+                           n_its=1000, t_end=15, dt=1e-2, tau=0.5,
+                           noise=0.2, nboots=1, n=3, load_data=True):
+    
+    slope = []
+    area = []
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(alpha_list)))
+    time = np.arange(0, t_end, dt)
+    time_2 = np.arange(0, len(time), 5)*dt
+    if load_data:
+        kernel_array = np.load(DATA_FOLDER + 'pk_kernels_alpha_v3.npy')
+        alpha_list=np.arange(0.1, 1.5, 0.01)
+        for i_a, alpha in enumerate(alpha_list):
+            kernel = kernel_array[i_a]
+            conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
+            slope.append(mfn.PK_slope(conv_kern))
+            area.append(mfn.total_area_kernel(conv_kern))
+    else:
+        kernel_array = np.zeros((len(alpha_list), len(time_2)))
+        for i_a, alpha in enumerate(alpha_list):
+            kernel = get_psych_kernel(j=j, b=b, n_its=n_its, t_end=t_end, dt=dt, tau=tau,
+                                      noise=noise, nboots=nboots, n=n, alpha=alpha, comp_all=False)
+            conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
+            slope.append(mfn.PK_slope(conv_kern))
+            area.append(mfn.total_area_kernel(conv_kern))
+            kernel_array[i_a, :] = kernel
+        np.save(DATA_FOLDER + 'pk_kernels_alpha_v3.npy',kernel_array)
+    # plotting
+    fig, axes = plt.subplots(ncols=3)
+    for i_a, alpha in enumerate(alpha_list):
+        conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
+        axes[0].plot(time_2[24:-25], conv_kern, color=colormap[i_a], label=round(alpha, 3), alpha=0.5)
+    axes[0].set_xlabel('Time (s)')
+    axes[0].legend(title=r'$\alpha$')
+    axes[0].set_ylabel('Impact of stimulus')
+    for ax in axes:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    axes[1].set_xlabel(r'$\alpha$')
+    axes[2].set_xlabel(r'$\alpha$')
+    axes[1].plot(alpha_list, slope, color='k', linewidth=2.5)
+    axes[1].set_ylabel('Slope')
+    axes[2].plot(alpha_list, area, color='k', linewidth=2.5)
+    axes[2].set_ylabel('Area')
+    axes[1].axvline(1, color='k', linestyle='--', alpha=0.4)
+    axes[2].axvline(1, color='k', linestyle='--', alpha=0.4)
 
 
 if __name__ == '__main__':
