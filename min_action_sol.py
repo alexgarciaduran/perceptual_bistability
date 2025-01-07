@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from mean_field_necker import get_unst_and_stab_fp
 
 # Parameters
-J = 1.   # Interaction strength
+J = 2.   # Interaction strength
 B = 0.   # Bias
 sigma = 0.1  # Noise intensity
 
@@ -79,8 +79,8 @@ theta = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
 x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(J, B)
 x0 = np.concatenate((np.ones(d) * x_stable_1, np.zeros(d)))  # Initial state
 xf = np.concatenate((np.ones(d) * x_stable_2, np.zeros(d))) # Final state
-t_end = 1.0            # End time
-N = 1000              # Number of time points for discretization
+t_end = 10.0            # End time
+N = 1000             # Number of time points for discretization
 
 # Initial guess for X and X_dot (needed by solve_bvp)
 t = np.linspace(0, t_end, N)
@@ -112,7 +112,18 @@ plt.figure()
 for i in range(d):
     plt.plot(solution.x, solution.y[i+d, :], label=f'$x_{i+1}(t)$')
 plt.xlabel('t')
-plt.ylabel('x(t)')
+plt.ylabel('dx(t)/dt')
+plt.legend()
+plt.title('Most Probable Path Solution')
+plt.show()
+
+
+# Plot the solution
+plt.figure()
+for i in range(d-1):
+    plt.plot(solution.y[i+1], solution.y[i, :], label=f'$x_{i+1}(t)$')
+plt.xlabel('x_2(t)')
+plt.ylabel('x_1(t)')
 plt.legend()
 plt.title('Most Probable Path Solution')
 plt.show()
