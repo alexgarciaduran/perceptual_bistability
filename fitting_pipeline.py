@@ -294,7 +294,7 @@ class optimization:
                 bounds = Bounds([1e-1, -.1, -.1, 0.05, 0], [2., .4, .4, 0.3, 1.5])
             if method == 'BADS':
                 lb = [0.01, -.1, -.1, 0.05, 0.]
-                ub = [2., 0.4, 0.4, 0.3, 1.5]
+                ub = [2., 0.35, 0.35, 0.3, 3]
                 plb = [0.5, -0.05, -0.05, 0.1, 0.3]
                 pub = [1.4, 0.2, 0.2, 0.2, 1.2]
         if method != 'BADS':
@@ -303,6 +303,7 @@ class optimization:
         if method == 'BADS':
             print('BADS')
             optimizer_0 = BADS(fun, x0, lb, ub, plb, pub).optimize()
+            print(optimizer_0.x)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='trust-constr', bounds=bounds)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='BFGS', bounds=bounds)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='COBYLA', bounds=bounds)
@@ -569,9 +570,10 @@ def data_augmentation(df, times_augm=10, sigma=0.05, minval=0.4, maxval=0.9999):
     df_copy = df.copy()
     confidence = np.repeat(df_copy.confidence.values, times_augm+1)
     confidence[len(df_copy):] += np.random.randn(len(df_copy)*times_augm)*sigma
+    # confidence = np.random.choice(df_copy.confidence.values, len(df_copy)*(times_augm+1))
     confidence = np.clip(confidence, minval, maxval)
-    coupling = np.repeat(df_copy.coupling.values, times_augm+1)
-    stim_str = np.repeat(df_copy.stim_str.values, times_augm+1)
+    coupling = np.round(np.repeat(df_copy.coupling.values, times_augm+1), 4)
+    stim_str = np.round(np.repeat(df_copy.stim_str.values, times_augm+1), 4)
     data = pd.DataFrame({'stim_str': stim_str, 'coupling': coupling,
                          'confidence': confidence})
     return data
@@ -640,7 +642,7 @@ def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method=
 
 
 def fit_subjects(method='BADS', model='FBP', subjects='separated',
-                 data_augmen=False):
+                 data_augmen=False, n_init=1):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     if subjects == 'together':
         all_df['subject'] = 'all'
@@ -660,14 +662,14 @@ def fit_subjects(method='BADS', model='FBP', subjects='separated',
         dataframe['stim_str'] = np.abs(dataframe.evidence)
         data = dataframe[['coupling', 'confidence', 'stim_str']]
         if data_augmen:
-            data = data_augmentation(data, sigma=0.03, times_augm=20)
+            data = data_augmentation(data, sigma=0.04, times_augm=30)
         print(len(data))
         # fig, ax = plt.subplots(ncols=2)
         # sns.lineplot(data, x='coupling', y='confidence', hue='stim_str', ax=ax[0])
         # sns.lineplot(data, x='stim_str', y='confidence', hue='coupling', ax=ax[1])
         # [a.set_ylim(0.4, 1.05) for a in ax]
         optimizer = optimization(data=data, n_iters=50, theta=return_theta())
-        pars_array = fit_data(optimizer, model=model, n_iters=1, method=method,
+        pars_array = fit_data(optimizer, model=model, n_iters=n_init, method=method,
                               plot=False)
         params = np.median(pars_array, axis=0)
         # params = pars_array[0]
@@ -728,8 +730,8 @@ def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
 
 
 if __name__ == '__main__':
-    plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
-    # fit_subjects(method='BADS', model='FBP')
+    # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
+    fit_subjects(method='BADS', model='FBP', data_augmen=True, n_init=10)
     # parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
     #                    theta=THETA, n_iters=2500, n_trials=500,
     #                    model='FBP', method='BADS')
