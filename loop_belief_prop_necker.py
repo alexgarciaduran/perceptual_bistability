@@ -15,8 +15,12 @@ from scipy.optimize import fsolve, bisect, root, newton
 from scipy.integrate import solve_ivp
 import matplotlib as mpl
 from skimage.transform import resize
+import pandas as pd
 from matplotlib.lines import Line2D
 import matplotlib.pylab as pl
+import seaborn as sns
+# from numba import jit, prange
+# from concurrent.futures import ProcessPoolExecutor
 
 THETA = gn.THETA
 
@@ -28,9 +32,13 @@ plt.rcParams['xtick.labelsize']= 16
 plt.rcParams['ytick.labelsize']= 16
 
 
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/belief_propagation_necker/data_folder/'  # Alex
+
+elif pc_name == 'alex_CRM':
+    DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/'  # Alex CRM
+
 
 
 def jneigbours(j,i, theta=THETA):
@@ -1007,31 +1015,54 @@ def plot_lbp_3_examples():
     plt.subplots_adjust(wspace=0.2, bottom=0.16, top=0.88)
 
 
-def cyl_simulation(j_list=[0.1, 0.4, 0.8], b_list=np.arange(-1, 1.2, 2e-1),
-                   t_end=20, dt=1e-2, n_reps=1000):
-    confidence_array = np.zeros((len(j_list), len(b_list)))
-    hit_array = np.zeros((len(j_list), len(b_list)))
+def cyl_simulation(j_list=[0.1, 0.4, 0.8], b_list=np.arange(-0.4, 0.4, 1e-1),
+                   t_end=20, dt=1e-2, n_reps=100):
+    confidence_array = np.zeros((len(j_list), len(b_list), n_reps))
+    hit_array = np.zeros((len(j_list), len(b_list), n_reps))
+    choice_array = np.zeros((len(j_list), len(b_list), n_reps))
+    dataframe = pd.DataFrame({'j': [], 'b': [], 'choice': [], 'hit': [], 'confidence': [],
+                              'b_signed': []})
+    pcorr_path = DATA_FOLDER + 'cyl_simulation_pcorr_array_v2.npy'
+    conf_path = DATA_FOLDER + 'cyl_simulation_confidence_array_v2.npy'
+    choice_path = DATA_FOLDER + 'cyl_simulation_choice_array_v2.npy'
+    os.makedirs(os.path.dirname(pcorr_path), exist_ok=True)
+    exists = False
+    if os.path.exists(pcorr_path):
+        hit_array = np.load(pcorr_path, allow_pickle=True)
+        confidence_array = np.load(conf_path, allow_pickle=True)
+        choice_array = np.load(choice_path, allow_pickle=True)
+        exists = True
     for i_j, j in enumerate(j_list):
         for i_b, b in enumerate(b_list):
             print('J = ' + str(j) + ', B = ' + str(b))
-            choicelist = []
-            meanconf = []
-            hitlist = []
-            for n in n_reps:
-                q_y_1, q_y_neg1 = dynamical_system_BP_euler(j=j, stim=b, theta=gn.return_theta(), noise=0.08,
-                                                            t_end=t_end, dt=dt, plot=False, tau=0.1)
-                conf_right = np.mean(q_y_1[-1])
-                conf_left = np.mean(q_y_neg1[-1])
-                choice = np.sign(conf_right-0.5)
-                conf_overall = conf_right if (choice+1)/2 else conf_left
-                choicelist.append(choice)
-                meanconf.append(conf_overall)
-                hitlist.append(np.sign(choice) == np.sign(b+np.random.randn()*1e-7))
-            confidence_array[i_j, i_b] = np.mean(meanconf)
-            hit_array[i_j, i_b] = np.mean(hitlist)
-    
+            if not exists:
+                for n in range(n_reps):
+                    q_y_1, q_y_neg1 = dynamical_system_BP_euler(j=j, stim=b, theta=gn.return_theta(), noise=0.12,
+                                                                t_end=t_end, dt=dt, plot=False, tau=0.15)
+                    conf_right = np.mean(q_y_1[-1])
+                    conf_left = np.mean(q_y_neg1[-1])
+                    choice = np.sign(conf_right-0.5)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+                    conf_overall = conf_right if (choice+1)/2 else conf_left
+                    confidence_array[i_j, i_b, n] = conf_overall
+                    hit_array[i_j, i_b, n] = np.sign(choice) == np.sign(b+np.random.randn()*1e-7)
+                    choice_array[i_j, i_b, n] = choice
+            b_array = np.repeat(b, n_reps)
+            j_array = np.repeat(j, n_reps)
+            confidence = confidence_array[i_j, i_b, :]
+            hit = hit_array[i_j, i_b, :]
+            choice = choice_array[i_j, i_b, :]
+            dictionary = {'j':j_array, 'b': b_array, 'choice': choice, 'hit': hit, 
+                          'confidence': confidence, 'b_signed': b_array*choice}
+            dataframe = pd.concat([dataframe, pd.DataFrame(dictionary)],
+                                  ignore_index=True)
     fig, ax = plt.subplots(1)
-
+    colormap = ['navajowhite', 'orange', 'saddlebrown']
+    np.save(DATA_FOLDER + 'cyl_simulation_pcorr_array_v2.npy', hit_array)
+    np.save(DATA_FOLDER + 'cyl_simulation_confidence_array_v2.npy', confidence_array)
+    np.save(DATA_FOLDER + 'cyl_simulation_choice_array_v2.npy', choice_array)
+    sns.lineplot(dataframe.loc[dataframe.hit == 0], y='confidence', x='b', hue='j')
+    sns.lineplot(dataframe.loc[dataframe.hit == 1], y='confidence', x='b', hue='j')
+    
 
 def plot_lbp_explanation(eps=2e-1):
     fig, ax = plt.subplots(1, figsize=(4, 3))
