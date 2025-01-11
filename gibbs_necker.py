@@ -2016,6 +2016,77 @@ def plot_circle_motion(rad=10):
     # plt.plot(np.cos(x), np.sin(x), color='k')
 
 
+def theta_hebbian(n_its=100, lr=1e-3):
+    confs = np.zeros((4, 8))
+    conf_front = np.array([1, 1, 1, 1])
+    for i in range(4):
+        conf_front_2 = -conf_front*np.zeros(4)**(~np.bool8(np.arange(4)-i))
+        confs[i] = np.concatenate((conf_front, conf_front_2))
+    theta_init = np.random.randn(8, 8)
+    change_idxs = np.linspace(0, n_its, 5, dtype=int)
+    c = 0
+    for n in range(n_its):
+        if n in change_idxs and n > 0:
+            c += 1
+        conf = confs[c]
+        for i in range(8):
+            for j in range(8):
+                if i != j:
+                    theta_init[i, j] += conf[i]*conf[j]*lr
+                if i == j:
+                    theta_init[i, j] = 0
+        # theta_init = theta_init + lr*np.outer(conf, conf)
+    plt.figure()
+    plt.imshow(theta_init)
+
+
+def trans_matrix_monja(lam, mu=0.5, p=0.5):
+    nu = 1-lam
+    mu = p = 0.5
+    pmat = np.array([[0, lam, 0, nu, 0, 0],
+                     [1, 0, 0, 0, 0, 0],
+                     [0, 0, 0, p, 0, mu],
+                     [mu, 0, 1-p, 0, 0, 0],
+                     [0, 0, 0, 0, 0, 1],
+                     [0, 0, nu, 0, lam, 0]])
+    return pmat
+
+
+def markov_chain_monja(lam=0.8, n_iters=100):
+    probs = np.zeros((6, n_iters+1))
+    init_state = np.zeros(6)
+    init_state[np.random.randint(0, 6)] = 1 # np.random.choice((0, 5))]
+    probs[:, 0] = 1/6
+    # [0.5, 0, 0, 0, 0, 0.5]
+    states = np.zeros((6, n_iters+1))
+    states[:, 0] = init_state
+    pmat = trans_matrix_monja(lam, mu=0.5, p=0.5)
+    for n in range(1, n_iters+1):
+        probs[:, n] = np.matmul(pmat.T, states[:, n-1])
+        idx_state = np.random.choice(np.arange(6),
+                                     p=probs[:, n])
+        states[:, n] = np.int32(0**(np.arange(6) != idx_state))
+    fig, ax = plt.subplots(ncols=2, figsize=(14, 5))
+    for a in ax:
+        a.set_xlabel('Iteration')
+    ax[0].set_ylabel('State')
+    ax[0].set_yticks(np.arange(6), ['Mon-', '-ja', '-mon-', '-ja-',
+                                    '-mon', 'Ja-'])
+    ax[1].set_yticks(np.arange(6), ['']*6)
+    im1 = ax[0].imshow(np.flipud(probs), aspect='auto', cmap='Greens')
+    plt.colorbar(im1, ax=ax[0], label='Probability')
+    # im2 = ax[1].imshow((states.T*np.arange(1, 7)).T,
+    #                    aspect='auto', cmap='Set2')
+    var = (states.T*np.arange(1, 7)).T
+    var = np.sum(var, axis=0)
+    ax[1].plot(var, color='k', linewidth=2.5)
+    ax[1].set_ylabel('State')
+    ax[1].set_yticks(np.arange(1, 7), ['Mon-', '-ja', '-mon-', '-ja-',
+                                       '-mon', 'Ja-'][::-1])
+    fig.tight_layout()
+    # plt.colorbar(im2, ax=ax[1], label='State')
+
+
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
