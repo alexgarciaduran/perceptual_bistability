@@ -95,7 +95,7 @@ class optimization:
         return np.sum(mse_list_mf), np.sum(mse_list_fbp), np.sum(mse_list_lbp), np.sum(mse_list_gibbs)
 
 
-    def nlh_boltzmann_lbp(self, pars, n=4, eps=1e-3, conts=0.5):
+    def nlh_boltzmann_lbp(self, pars, n=3.92, eps=1e-3, conts=0.5):
         jpar, b1par, biaspar, noise  = pars
         coupling, stim_str, confidence = self.coupling, self.stim_str, self.confidence
         # for jpar in np.arange(0.1, 2, 0.2):
@@ -138,10 +138,10 @@ class optimization:
             idx = (np.array(combs) == (j[i], b[i])).all(axis=1)
             norm_cte.append(norm_cte_combs[idx][0])
         boltzman_lbp = bmann_distro(potential_lbp)
-        nlh_lbp = -np.nansum(boltzman_lbp-np.log(norm_cte))
+        # nlh_lbp = -np.nansum(boltzman_lbp-np.log(norm_cte))
         # contaminants (?)
-        # distro = np.exp(boltzman_lbp)/norm_cte
-        # nlh_lbp = -np.nansum(np.log(distro*(1-eps)+conts*eps))
+        distro = np.exp(boltzman_lbp)/norm_cte
+        nlh_lbp = -np.nansum(np.log(distro*(1-eps)+conts*eps))
         # iexp = 20
         # print(nlh_lbp)
         # qv = np.arange(-2, 2, 1e-2)
@@ -155,7 +155,7 @@ class optimization:
         return nlh_lbp
 
 
-    def nlh_boltzmann_fbp(self, pars, n=3, eps=1e-3, conts=0.5):
+    def nlh_boltzmann_fbp(self, pars, n=3.92, eps=1e-3, conts=0.5):
         jpar, b1par, biaspar, noise, alpha = pars
         coupling, stim_str, confidence = self.coupling, self.stim_str, self.confidence
         # for jpar in np.arange(0.1, 2, 0.2):
@@ -212,7 +212,7 @@ class optimization:
         return nlh_fbp
 
 
-    def nlh_boltzmann_mf(self, pars, n=4, eps=1e-3, conts_distro=1e-2):
+    def nlh_boltzmann_mf(self, pars, n=3.92, eps=1e-3, conts_distro=1e-2):
         jpar, b1par, biaspar, noise = pars
         coupling, stim_str, confidence = self.coupling, self.stim_str, self.confidence
         j = jpar*np.array(coupling)
@@ -246,7 +246,7 @@ class optimization:
         return nlh_mf
 
 
-    def nlh_gibbs(self, pars, n=4, eps=1e-3, conts_distro=1e-2):
+    def nlh_gibbs(self, pars, n=3.92, eps=1e-3, conts_distro=1e-2):
         jpar, b1par, biaspar, noise, time = pars
         coupling, stim_str, confidence = self.coupling, self.stim_str, self.confidence
         j = jpar*np.array(coupling)
@@ -283,26 +283,28 @@ class optimization:
             if method != 'BADS':
                 bounds = Bounds([1e-1, -.5, -.5, 0.05], [3, .5, .5, 0.3])
             if method == 'BADS':
-                lb = [0.01, -.5, -.5, 0.05]
-                ub = [3., 1., 1., 0.3]
-                plb = [0.5, -0.2, -0.2, 0.1]
-                pub = [2.3, 0.5, 0.5, 0.2]
+                lb = [0.01, -.3, -.3, 0.05]
+                ub = [2., 0.3, 0.3, 0.5]
+                plb = [0.2, -0.1, -0.1, 0.1]
+                pub = [1.4, 0.1, 0.1, 0.2]
         if model == 'FBP':
             fun = self.nlh_boltzmann_fbp
             assert len(x0) == 5, 'x0 should have 5 values (J, B1, bias, noise, alpha)'
             if method != 'BADS':
                 bounds = Bounds([1e-1, -.1, -.1, 0.05, 0], [2., .4, .4, 0.3, 1.5])
             if method == 'BADS':
-                lb = [0.01, -.1, -.1, 0.05, 0.]
-                ub = [2., 0.35, 0.35, 0.3, 3]
-                plb = [0.5, -0.05, -0.05, 0.1, 0.3]
-                pub = [1.4, 0.2, 0.2, 0.2, 1.2]
+                lb = [0.01, -.3, -.3, 0.05, 0.]
+                ub = [2., 0.3, 0.3, 0.5, 1.9]
+                plb = [0.2, -0.1, -0.1, 0.1, 0.3]
+                pub = [1.4, 0.1, 0.1, 0.2, 1.495]
         if method != 'BADS':
             optimizer_0 = scipy.optimize.minimize(fun, x0, method=method,
                                                   bounds=bounds)
         if method == 'BADS':
             print('BADS')
-            optimizer_0 = BADS(fun, x0, lb, ub, plb, pub).optimize()
+            constraint = lambda x: np.abs(x[:, 1]+x[:, 2]) > 0.3
+            optimizer_0 = BADS(fun, x0, lb, ub, plb, pub,
+                               non_box_cons=constraint).optimize()
             print(optimizer_0.x)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='trust-constr', bounds=bounds)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='BFGS', bounds=bounds)
@@ -662,7 +664,7 @@ def fit_subjects(method='BADS', model='FBP', subjects='separated',
         dataframe['stim_str'] = np.abs(dataframe.evidence)
         data = dataframe[['coupling', 'confidence', 'stim_str']]
         if data_augmen:
-            data = data_augmentation(data, sigma=0.04, times_augm=30)
+            data = data_augmentation(data, sigma=0.05, times_augm=40)
         print(len(data))
         # fig, ax = plt.subplots(ncols=2)
         # sns.lineplot(data, x='coupling', y='confidence', hue='stim_str', ax=ax[0])
@@ -723,15 +725,17 @@ def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
         else:
             var = accuracies
             lab = 'p(correct)'
+        corr = np.corrcoef(var, parmat[:, i_a % numpars])[0, 1]
         a.plot(var, parmat[:, i_a % numpars], color='k', marker='o', linestyle='')
         a.set_xlabel(lab)
         a.set_ylabel(labels[i_a % numpars])
+        a.set_title(rf'$\rho =$ {round(corr, 3)}')
     fig2.tight_layout()
 
 
 if __name__ == '__main__':
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
-    fit_subjects(method='BADS', model='FBP', data_augmen=True, n_init=10)
+    fit_subjects(method='BADS', model='FBP', data_augmen=True, n_init=1)
     # parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
     #                    theta=THETA, n_iters=2500, n_trials=500,
     #                    model='FBP', method='BADS')
