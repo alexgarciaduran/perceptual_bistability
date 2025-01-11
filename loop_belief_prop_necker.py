@@ -33,7 +33,7 @@ plt.rcParams['xtick.labelsize']= 16
 plt.rcParams['ytick.labelsize']= 16
 
 
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/belief_propagation_necker/data_folder/'  # Alex
 
@@ -2167,7 +2167,8 @@ def plot_pot_boltzmann(j=0.8, b_list=[0.04], noise=0.1, alpha_list=[0.1, 1, 1.4]
 
 
 def log_potential(b, j_list=None, alpha=1, n=3,
-                  ax=None, labels=True, norm=True, transform=True):
+                  ax=None, labels=True, norm=True, transform=True,
+                  colormap=None):
     max_val = 3
     min_val = -3
     min_val_integ = -10
@@ -2180,7 +2181,8 @@ def log_potential(b, j_list=None, alpha=1, n=3,
         fig, ax = plt.subplots(1)
         colormap = pl.cm.Purples(np.linspace(0.2, 1, len(j_list)))
     else:
-        colormap = ['k']
+        if colormap is None:
+            colormap = ['k']
     for i_j, j in enumerate(j_list):
         pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
         potential = []
@@ -2195,10 +2197,10 @@ def log_potential(b, j_list=None, alpha=1, n=3,
         label = str(j)  if i_j != 2 else r'$J^* = \frac{1}{2\alpha}\log{\frac{N}{N-2\alpha}}$'
         if transform:
             ax.plot(sigmoid(vals*n+b), norm_pot,
-                    label=label, color=color)
+                    label=label, color=color, linewidth=2.5)
         else:
             ax.plot(vals, norm_pot,
-                    label=label, color=color)
+                    label=label, color=color, linewidth=2.5)
     if labels:
         plt.legend(title='Coupling, J')
         if not transform:
@@ -2209,7 +2211,7 @@ def log_potential(b, j_list=None, alpha=1, n=3,
                        fontsize=12)
         plt.ylabel(r'Potential on log-message ratio, $V(M_{i\rightarrow j})$')
         if norm:
-            plt.ylim(-0.015, 0.15)
+            ax.set_ylim(-0.015, 0.07)
 
 
 def dyn_sys_fbp(logmess, j, b, alpha=1, n=3, dt=1e-1, noise=0.1):
@@ -2272,6 +2274,36 @@ def dyn_sys_ql(ql, ra, rb, j, b, dt=1e-2, n=3, alpha=1, noise=0.1,
     rat = ra + dt*(10*sigmoid(qlt + ipta+ np.random.randn()*noise) -ra)/tau
     rbt = rb + dt*(10*sigmoid(-qlt + iptb+ np.random.randn()*noise) - rb)/tau
     return qlt, rat, rbt
+
+
+def dyn_sys_8d_ql(ql, ml, j, b, dt=1e-2, n=3, alpha=1, noise=0.1,
+                  tau=0.08, theta=THETA):
+    # ml: 8x8 matrix with log messages
+    # ql: 8 component vector of the log beliefs
+    for i in range(theta.shape[0]):
+        for t in np.where(theta[i, :] != 0)[0]:
+            mlt = dt*(1/alpha * np.arctanh(np.tanh(j*alpha)*
+                                           np.tanh((ql[i] - ml[i, t]*alpha
+                                                    + b*alpha)/n))-ml[t, i]
+                      + np.random.randn()*noise)/tau
+            ml[t, i] += mlt
+        qlt = dt*(np.sum(ml[theta[i]]) + b - ql[i] + np.random.randn()*noise)/tau
+        ql[i] += qlt
+    return ql, ml
+
+
+def plot_8d_sys_log(j, b, dt=1e-2, n=3, alpha=1, noise=0.1,
+                    tau=0.08, theta=THETA, t_end=20):
+    ml = np.random.randn(8, 8)*0.1
+    ql = np.random.randn(8)*0.4
+    time = np.arange(0, t_end, dt)
+    qlarr = np.zeros((8, len(time)))
+    for t in range(len(time)):
+        qlarr[:, t] = ql
+        ql, ml = dyn_sys_8d_ql(ql, ml, j, b, dt=dt, n=n, alpha=alpha,
+                               noise=noise, tau=tau, theta=THETA)
+    plt.figure()
+    [plt.plot(time, qlarr[i]) for i in range(8)]
 
 
 def plot_log_ratio(n=3, alpha=1, b=0):
@@ -2967,13 +2999,13 @@ def area_slope_PK_vs_alpha(alpha_list=np.arange(0.1, 1.5, 0.01), j=0.6, b=0,
     time = np.arange(0, t_end, dt)
     time_2 = np.arange(0, len(time), 5)*dt
     if load_data:
-        kernel_array = np.load(DATA_FOLDER + 'pk_kernels_alpha_v3.npy')
+        kernel_array = np.load(DATA_FOLDER + 'pk_kernels_alpha_v3_b01.npy')
         alpha_list=np.arange(0.1, 1.5, 0.01)
         for i_a, alpha in enumerate(alpha_list):
             kernel = kernel_array[i_a]
-            conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
-            slope.append(mfn.PK_slope(conv_kern))
-            area.append(mfn.total_area_kernel(conv_kern))
+            # conv_kern = np.convolve(kernel_array[i_a, :], np.ones(20)/20, mode='valid')
+            slope.append(mfn.PK_slope(kernel))
+            area.append(mfn.total_area_kernel(kernel))
     else:
         kernel_array = np.zeros((len(alpha_list), len(time_2)))
         for i_a, alpha in enumerate(alpha_list):
@@ -2983,26 +3015,120 @@ def area_slope_PK_vs_alpha(alpha_list=np.arange(0.1, 1.5, 0.01), j=0.6, b=0,
             slope.append(mfn.PK_slope(conv_kern))
             area.append(mfn.total_area_kernel(conv_kern))
             kernel_array[i_a, :] = kernel
-        np.save(DATA_FOLDER + 'pk_kernels_alpha_v3.npy',kernel_array)
+        np.save(DATA_FOLDER + 'pk_kernels_alpha_v3_b01.npy',kernel_array)
     # plotting
-    fig, axes = plt.subplots(ncols=3)
+    fig, axes = plt.subplots(ncols=4, figsize=(17, 4.5))
+    for i_a, alpha in enumerate(alpha_list[::20]):
+        log_potential(b, j_list=[j], alpha=alpha, n=3,
+                      ax=axes[0], labels=False, norm=True, transform=False,
+                      colormap=[colormap[i_a*20]])
+    axes[0].set_xlim(-1.1, 1.1)
+    axes[0].set_ylim(-0.002, 0.035)
+    axes[0].set_xlabel(r'Log message ratio $M$')
+    axes[0].set_ylabel(r'Potential $V(q)$')
+    plt.subplots_adjust(wspace=0.4, bottom=0.2, left=0.08, right=0.92)
     for i_a, alpha in enumerate(alpha_list):
         conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
-        axes[0].plot(time_2[24:-25], conv_kern, color=colormap[i_a], label=round(alpha, 3), alpha=0.5)
-    axes[0].set_xlabel('Time (s)')
-    axes[0].legend(title=r'$\alpha$')
-    axes[0].set_ylabel('Impact of stimulus')
+        axes[1].plot(time_2[24:-25], conv_kern, color=colormap[i_a], label=round(alpha, 3), alpha=0.5)
+    ax_pos = axes[0].get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.1, ax_pos.y0+ax_pos.height*1.1,
+                            ax_pos.width*0.8, ax_pos.height*0.05])
+    newcmp = mpl.colors.ListedColormap(colormap)
+    mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'$\alpha$',
+                              orientation='horizontal')
+    ax_cbar.set_xticks([0, 0.5, 1], np.round([np.min(alpha_list),
+                                     np.mean(alpha_list),
+                                     np.max(alpha_list)], 3))
+    axes[1].set_xlabel('Time (s)')
+    # axes[0].legend(title=r'$\alpha$')
+    axes[1].set_ylabel('Impact of stimulus (PK)')
     for ax in axes:
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-    axes[1].set_xlabel(r'$\alpha$')
+    axes[2].plot(alpha_list, slope, color='k', linewidth=2.5)
+    axes[2].set_ylabel('PK slope')
     axes[2].set_xlabel(r'$\alpha$')
-    axes[1].plot(alpha_list, slope, color='k', linewidth=2.5)
-    axes[1].set_ylabel('Slope')
-    axes[2].plot(alpha_list, area, color='k', linewidth=2.5)
-    axes[2].set_ylabel('Area')
-    axes[1].axvline(1, color='k', linestyle='--', alpha=0.4)
+    axes[3].set_xlabel(r'$\alpha$')
+    axes[3].plot(alpha_list, area, color='k', linewidth=2.5)
+    axes[3].set_ylabel('PK area')
     axes[2].axvline(1, color='k', linestyle='--', alpha=0.4)
+    axes[2].set_ylim(-.3, .3)
+    axes[3].axvline(1, color='k', linestyle='--', alpha=0.4)
+
+
+def area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1, b=0, 
+                              n_its=1000, t_end=15, dt=1e-2, tau=0.5,
+                              noise=0.2, nboots=1, n=3, load_data=True):
+    
+    slope = []
+    area = []
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(j_list)))
+    time = np.arange(0, t_end, dt)
+    time_2 = np.arange(0, len(time), 5)*dt
+    if load_data:
+        kernel_array = np.load(DATA_FOLDER + 'pk_kernels_J_v3_b01.npy')
+        j_list=np.arange(0.1, 1.5, 0.1)
+        for i_a, j in enumerate(j_list):
+            kernel = kernel_array[i_a]
+            # conv_kern = np.convolve(kernel_array[i_a, :], np.ones(20)/20, mode='valid')
+            slope.append(mfn.PK_slope(kernel))
+            area.append(mfn.total_area_kernel(kernel))
+    else:
+        kernel_array = np.zeros((len(j_list), len(time_2)))
+        for i_a, j in enumerate(j_list):
+            kernel = get_psych_kernel(j=j, b=b, n_its=n_its, t_end=t_end, dt=dt, tau=tau,
+                                      noise=noise, nboots=nboots, n=n, alpha=alpha, comp_all=False)
+            conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
+            slope.append(mfn.PK_slope(conv_kern))
+            area.append(mfn.total_area_kernel(conv_kern))
+            kernel_array[i_a, :] = kernel
+        np.save(DATA_FOLDER + 'pk_kernels_J_v3_b01.npy',kernel_array)
+    # plotting
+    fig, axes = plt.subplots(ncols=4, figsize=(17, 4.5))
+    # j_list = j_list[0:-2]
+    for i_a, j in enumerate(j_list[::2]):
+        log_potential(b, j_list=[j], alpha=alpha, n=3,
+                      ax=axes[0], labels=False, norm=True, transform=False,
+                      colormap=[colormap[i_a*2]])
+    axes[0].set_xlim(-2.3, 2.3)
+    axes[0].set_ylim(-0.01, 0.22)
+    axes[0].set_xlabel(r'Log message ratio $M$')
+    axes[0].set_ylabel(r'Potential $V(q)$')
+    plt.subplots_adjust(wspace=0.4, bottom=0.2, left=0.08, right=0.92)
+    for i_a, j in enumerate(j_list):
+        conv_kern = np.convolve(kernel_array[i_a, :], np.ones(20)/20, mode='valid')
+        axes[1].plot(time_2[9:-10], conv_kern-0.5, color=colormap[i_a], label=round(j, 3), alpha=1,
+                     linewidth=2)
+    ax_pos = axes[0].get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.1, ax_pos.y0+ax_pos.height*1.1,
+                            ax_pos.width*0.8, ax_pos.height*0.05])
+    newcmp = mpl.colors.ListedColormap(colormap)
+    colorbar = mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling, J',
+                                         orientation='horizontal')
+    colorbar.ax.xaxis.set_ticks_position('top')
+    colorbar.ax.xaxis.set_label_position('top')
+    ax_cbar.set_xticks([0, 0.5, 1], np.round([np.min(j_list),
+                                     np.mean(j_list),
+                                     np.max(j_list)], 3))
+    axes[1].set_xlabel('Time (s)')
+    # axes[0].legend(title=r'$\alpha$')
+    axes[1].set_ylabel('Impact of stimulus (PK)')
+    for ax in axes:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    axes[2].plot(j_list, slope, color='k', linewidth=2.5)
+    axes[2].set_ylabel('PK slope')
+    axes[2].set_xlabel(r'Coupling, J')
+    axes[3].set_xlabel(r'Coupling, J')
+    axes[3].plot(j_list, area, color='k', linewidth=2.5)
+    axes[3].set_ylabel('PK area')
+    jcrit = np.log(n/(n-2))/2
+    axes[2].axvline(jcrit, color='k', linestyle='--', alpha=0.4)
+    axes[2].axhline(0, color='k', linestyle='--', alpha=0.4)
+    axes[2].set_ylim(-.3, .3)
+    axes[3].axvline(jcrit, color='k', linestyle='--', alpha=0.4)
+    fig.savefig(DATA_FOLDER + 'PK_coupling.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'PK_coupling.svg', dpi=400, bbox_inches='tight')
 
 
 if __name__ == '__main__':
