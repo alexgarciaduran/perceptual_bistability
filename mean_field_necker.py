@@ -11,7 +11,7 @@ import scipy
 import itertools
 import os
 import gibbs_necker as gn
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, curve_fit
 from scipy.integrate import solve_ivp
 import numpy as np
 import matplotlib.pylab as pl
@@ -670,7 +670,8 @@ def plot_q_evol_time_noise(j=0.7, dt=1e-3, num_iter=100, sigma=1):
 
 
 def plot_psych_kernel(noise_list=[0.05, 0.2, 0.3], j=0.6, b=0,
-                      dt=1e-2, tau=0.5, t_end=20, n_its=10000):
+                      dt=1e-2, tau=0.5, t_end=20, n_its=10000,
+                      nboots=100):
     fig, ax = plt.subplots(ncols=3, nrows=3, figsize=(10, 10))
     ax = ax.flatten()
     for ia, a in enumerate(ax):
@@ -689,7 +690,7 @@ def plot_psych_kernel(noise_list=[0.05, 0.2, 0.3], j=0.6, b=0,
     for i_n, noise in enumerate(noise_list):
         aux_kernel_normal, aux_kernel_abs, aux_kernel_ref =\
             get_psych_kernel(j=j, b=b, n_its=n_its, t_end=t_end, dt=dt, tau=tau,
-                             noise=noise, nboots=1000)
+                             noise=noise, nboots=nboots)
         # aux_kernel_normal = np.convolve(aux_kernel_normal, np.ones(10)/10, mode='valid')
         # aux_kernel_abs = np.convolve(aux_kernel_abs, np.ones(10)/10, mode='valid')
         # aux_kernel_ref = np.convolve(aux_kernel_ref, np.ones(10)/10, mode='valid')
@@ -741,6 +742,9 @@ def get_psych_kernel(j=0.8, b=0.1, n_its=100, t_end=10, dt=1e-3, tau=0.1,
 
 
 def get_kernel_bootstrap(d, chi, time, nboot=100):
+    """
+    Computes psychophysical kernel using bootstrap, with 'nboot' partitions.
+    """
     aux_kernel = np.zeros((len(time), nboot))
     indexs = np.random.randint(0, len(d),(nboot, len(d)))
     if nboot == 1:
@@ -1954,6 +1958,55 @@ def get_unst_and_stab_fp(j, b, tol=1e-10):
     return x_stable_1, x_stable_2, x_unstable
 
 
+def plot_dominance_distro_approx(j=0.6, b=0, t_dur=100, noise=0.1,
+                                 fit_gamma=False):
+    """
+    Plots P(T_eff) = P(k_eff) dk_eff/dT_eff,
+    with dk_eff/dT_eff = 1/T_eff^2
+    P(k_eff) is just taken as a normal distribution (for large T though...)
+    """
+    if t_dur < 10:
+        t_f = t_dur*2
+        dt = 1e-2
+    else:
+        t_f = t_dur
+        dt = 1e-1
+    t = np.arange(1e-1, t_f, dt)
+    x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+    k_2 = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+    k_1 = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
+    k = (k_1+k_2)
+    pinf = k_1/k
+    p1 = (pinf)*(1-np.exp(-k*t_dur))
+    p2 = (1-pinf)*(1-np.exp(-k*t_dur))
+    mu = k_1*p2 + k_2*p1  # k_eff, average transition rate
+    sig = noise**2 / t_dur
+    p_t_eff = 1/t**3 * np.exp(-(1/(1/t-mu))**2 / (2*sig))
+    p_t_eff = p_t_eff/np.sum(p_t_eff)
+    fig, ax = plt.subplots(1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.plot(t, p_t_eff, label='Analytical distro', color='k', linewidth=2.5)
+    ax.set_ylabel('Density')
+    ax.set_xlabel(r'Effective duration $(1/k_{e})$')
+    if fit_gamma:
+        # Fit the gamma distribution to the computed P(T_eff)
+        fit_alpha, fit_loc, fit_beta = scipy.stats.gamma.fit(p_t_eff)
+        y = scipy.stats.gamma.pdf(t, a=fit_alpha, scale=fit_beta, loc=fit_loc)
+        # fix_loc_exp, fit_lmb = scipy.stats.expon.fit(p_t_eff)
+        # y_exp = scipy.stats.expon.pdf(t, loc=fix_loc_exp, scale=fit_lmb)
+        ax.text(75, 0.02, r'$\alpha = ${}'.format(np.round(fit_alpha, 2)) 
+                + '\n'+ r'$\beta = ${}'.format(np.round(fit_beta, 2)),
+                fontsize=11)
+        ax.plot(t, y, label='Gamma distro. fit', color='r', linestyle='--',
+                alpha=0.7)
+        # plt.plot(t, y_exp, label='Expo. distro. fit', color='b', linestyle='--',
+        #          alpha=0.7)
+        ax.legend()
+    ax.set_yticks([])
+    fig.tight_layout()
+
+
 def levelts_analytical(t_dur=10000, tol=1e-8,
                        b_list=np.arange(-0.2, 0.201, 0.001),
                        j=0.8, noise=0.1):
@@ -2048,17 +2101,28 @@ def levelts_analytical(t_dur=10000, tol=1e-8,
     a4.set_xlim(np.log(np.min((np.min(list_time_q2), np.min(list_time_q1))))-1,
                 np.log(np.max((np.max(list_time_q2), np.max(list_time_q1))))+1)
     a4.legend(frameon=False)
+    trans_rate_vs_noise(noise_list = np.arange(0.05, 0.5, 1e-2),
+                        b=0.0, j=j, t_dur=t_dur)
 
 
 def plot_entropy_approximation():
-    q = np.arange(0, 1, 1e-4)
+    q = np.arange(1e-4, 1, 1e-4)
     fig, ax = plt.subplots(1)
-    ax.plot(q, -(q*(q-1) + (q-1)*(q)))
-    ax.set_ylabel(r'$-q(q-1) - (1-q)(-q)$')
+    ax.plot(q, -(q*(q-1) + (q-1)*(q)), linewidth=2.5,color='b',
+            label='Approximation')
+    ax.legend(frameon=False)
+    # ax.set_ylabel(r'Approx., $H(q) \approx -q(q-1) - (1-q)(-q)$')
+    ax.set_ylabel(r'Approximate entropy, $\hat{H}(q)$')
     ax2 = ax.twinx()
-    ax2.plot(q,-q*np.log(q)-(1-q)*np.log(1-q), color='k')
-    ax2.set_ylabel(r'$-q \log(q) - (1-q) \log(1-q)$')
+    ax.spines['top'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    ax2.plot(q,-q*np.log(q)-(1-q)*np.log(1-q), color='k', linewidth=2.5,
+             label='True')
+    ax2.legend(frameon=False)
+    ax2.set_ylabel(r'True entropy, $H(q)$')
+    # ax2.set_ylabel(r'True, $H(q)=-q \log(q) - (1-q) \log(1-q)$')
     ax.set_xlabel('q')
+    fig.tight_layout()
 
 
 def trans_rate_vs_coupling(j_list = np.arange(0.34, 1, 1e-3),
@@ -2102,15 +2166,144 @@ def trans_rate_vs_stim(b_list = np.arange(-0.2, 0.2, 1e-3),
 
 
 def trans_rate_vs_noise(noise_list = np.arange(0.05, 0.5, 1e-2),
-                        b=0.0, j=0.7):
+                        b=0.0, j=0.7, t_dur=100):
+    """
+    IV Levelt law: alternation rate vs stimulus strength (noise)
+    """
     x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
-    plt.figure()
+    k_2 = k_i_to_j(j, x_stable_1, x_unstable, noise_list, b)
+    k_1 = k_i_to_j(j, x_stable_2, x_unstable, noise_list, b)
+    k = (k_1+k_2)
+    pinf = k_1/k
+    p1 = (pinf)*(1-np.exp(-k*t_dur))
+    p2 = (1-pinf)*(1-np.exp(-k*t_dur))
+    k_weighted = k_1*p2 + k_2*p1
+    fig, ax = plt.subplots(1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     # plt.plot(noise_list, k_i_to_j(j, x_stable_1, x_unstable, noise_list, b), label='error')
-    plt.plot(noise_list, k_i_to_j(j, x_stable_2, x_unstable, noise_list, b), label='correct',
+    ax.plot(noise_list, k_weighted, label='correct',
              color='k', linewidth=2.5)
-    plt.xlabel(r'Noise, $\sigma$')
-    plt.ylabel('Transition rate')
+    ax.set_xlabel(r'Noise, $\sigma$')
+    ax.set_ylabel('Transition rate')
     # plt.legend(title='transition')
+
+
+def trans_rate_vs_noise_2d(noise_list=np.arange(0.03, 0.2, 1e-3),
+                           b=0.0, j=0.7, t_dur=100):
+    """
+    Plots duration of state some noise values
+    """
+    x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+    noise1, noise2 = np.meshgrid(noise_list, noise_list)
+    k_2 = k_i_to_j(j, x_stable_1, x_unstable, np.sqrt(noise1**2+noise2**2), b)
+    # k_1 = k_i_to_j(j, x_stable_2, x_unstable, np.sqrt(noise1**2+noise2**2), b)
+    # k = (k_1+k_2)
+    # pinf = k_1/k
+    # p1 = (pinf)*(1-np.exp(-k*t_dur))
+    # p2 = (1-pinf)*(1-np.exp(-k*t_dur))
+    # k_weighted = k_1*p2 + k_2*p1
+    ax = plt.figure().add_subplot(projection='3d')
+    ax.plot_surface(noise1, noise2, np.log(1/(k_2)), color='gray',
+                    edgecolor='k', lw=0.5, rstride=8, cstride=8,
+                    alpha=0.3)
+    ax.set_xlabel(r'Strength X')
+    ax.set_ylabel(r'Strength Y')
+    ax.set_zlabel('Duration X')
+    ax.set_yticks([0.01, np.max(noise_list)+1e-2], ['low', 'high'])
+    ax.set_xticks([0.01, np.max(noise_list)+1e-2], ['low', 'high'])
+    ax.set_zticks([0., np.max(np.log(1/(k_1)))+1e-2], ['low', 'high'])
+    # plt.legend(title='transition')
+
+
+def duration_X_vs_stim_2d(b_list=np.arange(0.0, 0.125, 2.5e-3),
+                          noise=0.1, j=0.7, t_dur=100):
+    """
+    Plots duration_X vs B, Brascamp 2015 3D style.
+    """
+    def return_k_all(b_list, j):
+        karr = np.zeros((len(b_list), len(b_list)))
+        for i_b1, b1 in enumerate(b_list):
+            for i_b2, b2 in enumerate(-b_list):
+                b = b1+b2
+                x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+                k_2 = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+                karr[i_b1, i_b2] = k_2
+        return karr
+    b1, b2 = np.meshgrid(b_list, -b_list)
+    k_2 = return_k_all(b_list, j)
+    # k_1 = k_i_to_j(j, x_stable_2, x_unstable, np.sqrt(noise1**2+noise2**2), b)
+    # k = (k_1+k_2)
+    # pinf = k_1/k
+    # p1 = (pinf)*(1-np.exp(-k*t_dur))
+    # p2 = (1-pinf)*(1-np.exp(-k*t_dur))
+    # k_weighted = k_1*p2 + k_2*p1
+    ax = plt.figure().add_subplot(projection='3d')
+    ax.plot_surface(b1, b2, (1/(k_2)), color='gray',
+                    edgecolor='k', lw=0.5, rstride=8, cstride=8,
+                    alpha=0.3)
+    ax.set_xlabel(r'Strength Y')
+    ax.set_ylabel(r'Strength X')
+    ax.set_zlabel('Duration X')
+    ax.set_xticks([0.0, np.max(b1)+1e-2], ['low', 'high'])
+    ax.set_yticks([-np.max(b1)+1e-2, 0], ['high', 'low'])
+    ax.set_zticks([0., np.max(1/k_2)+1e-2], ['low', 'high'])
+    # plt.legend(title='transition')
+
+
+def convergence_time_vs_j(j_list=np.arange(1e-3, 2.5, 1e-2),
+                          b_list=[0, 0.05, 0.1], noise=0.1, theta=theta, tol=1e-9,
+                          dt=5e-3, time_end=5, nreps=100):
+    niters_conv_array = np.zeros((len(j_list), len(b_list)))
+    disam_array = np.zeros((len(j_list), len(b_list)))
+    kldiv_array = np.zeros((len(j_list), len(b_list)))
+    for i_b, b in enumerate(b_list):
+        n_iters_convergence = []
+        disambiguity = []
+        kldiv = []
+        for j in j_list:
+            p = gn.true_posterior(j=j, stim=b)
+            vec = mean_field_stim(j, num_iter=1000, stim=b, sigma=0, theta=theta,
+                                  val_init=0.6, sxo=0.)
+            mse = np.sum(np.diff(vec, axis=0)**2, axis=1)
+            first_min_mse = np.where(mse <= tol)[0][0]
+            n_iters_convergence.append(first_min_mse)
+            disambiguity_j = []
+            kldiv_j = []
+            for n in range(nreps):
+                time, vec_sims = solution_mf_sdo_euler(j, b, theta, noise, tau=0.5,
+                                                       time_end=time_end, dt=dt)
+                disambiguity_single = np.abs(np.mean(vec_sims[-1])-0.5)
+                disambiguity_j.append(disambiguity_single)
+                q = np.mean(vec_sims[-1])
+                kldiv_j.append(q*np.log(q/p)+(1-q)*np.log((1-q)/(1-p)))
+            kldiv.append(np.nanmean(kldiv_j))
+            disambiguity.append(np.nanmean(disambiguity_j))
+        niters_conv_array[:, i_b] = n_iters_convergence
+        disam_array[:, i_b] = disambiguity
+        kldiv_array[:, i_b] = kldiv
+    fig, ax = plt.subplots(ncols=3, figsize=(13, 4.5))
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    ax[0].set_xlabel('Coupling, J')
+    ax[0].set_ylabel('Ambiguity')
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(b_list)))
+    for i in range(len(b_list)):
+        ax[0].plot(j_list, 1-disam_array[:, i], color=colormap[i], linewidth=2.5,
+                   label=round(b_list[i], 3))
+        ax[1].plot(j_list, kldiv_array[:, i], color=colormap[i], linewidth=2.5)
+        ax[2].plot(j_list, niters_conv_array[:, i], color=colormap[i], linewidth=2.5)
+    ax[0].legend(title='Stim., B', frameon=False)
+    ax[1].set_xlabel('Coupling, J')
+    ax[1].set_ylabel('KL divergence')
+    ax[2].axvline(1/3, color='r', alpha=0.2, linestyle='--')
+    ax[2].set_yscale('log')
+    ax[2].set_xlabel('Coupling, J')
+    ax[2].set_ylabel('Iterations for convergence')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'coupling_use.png', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'coupling_use.svg', dpi=300, bbox_inches='tight')
 
 
 def accuracy_vs_noise(t_dur, noiselist=np.arange(0.001, 0.5, 1e-3),
