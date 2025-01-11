@@ -11,6 +11,8 @@ import torch.nn as nn
 import numpy as np
 import glob
 import matplotlib.pyplot as plt
+import matplotlib.pylab as pl
+import seaborn as sns
 
 from tqdm import tqdm
 from torch.optim import Adam
@@ -260,6 +262,7 @@ if __name__ == '__main__':
               cmap='gist_gray')
     x = x.view(10, 72*82)
     c = 0
+    zarr = np.zeros((1, 12))
     for i in range(n_iter+steps):
         x, _, _, z = model(x)
         if (i+1) % steps == 0:
@@ -268,3 +271,12 @@ if __name__ == '__main__':
             ax[c].imshow(x[0].detach().numpy(),
                       cmap='gist_gray')
             x = x.view(10, 72*82)
+            zarr = np.row_stack((zarr, z.detach().numpy()))
+    zarr = zarr[1:]
+    plt.figure()
+    colormap = pl.cm.Oranges(np.linspace(0.1, 1, 110))
+    for i in range(110):
+        v = 1/(1+np.exp(-zarr[i]))
+        sns.kdeplot(v, bw_adjust=0.5, color=colormap[i],
+                    alpha=0.4)
+    
