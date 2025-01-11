@@ -11,7 +11,7 @@ import itertools
 import os
 import gibbs_necker as gn
 import mean_field_necker as mfn
-from scipy.optimize import fsolve, bisect, root, newton
+from scipy.optimize import fsolve, bisect, root, newton, minimize, Bounds
 from scipy.integrate import solve_ivp
 import matplotlib as mpl
 from skimage.transform import resize
@@ -19,6 +19,7 @@ import pandas as pd
 from matplotlib.lines import Line2D
 import matplotlib.pylab as pl
 import seaborn as sns
+
 # from numba import jit, prange
 # from concurrent.futures import ProcessPoolExecutor
 
@@ -1966,52 +1967,69 @@ def plot_optimal_alpha_correct_vs_inference():
     ax.set_xlabel('Optimal alpha from p(correct)')
     ax.set_ylabel('Optimal alpha from D_KL')
     ax.plot([0, 1.5], [0, 1.5], color='k', alpha=0.4)
-            
 
 
-def plot_optimal_alpha_vs_j_b(j_list=np.round(np.arange(0., 2.01, 5e-2), 4),
-                              b_list=np.round(np.arange(0., 0.5005, 2e-2), 4), noise=0.2,
-                              n=3):
+def return_p_correct(j, b, alpha, n=3, noise=0.2, vals=[],
+                                 min_val=2.5):
+    pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
+    potential = []
+    # norm_cte = []
+    for i in range(len(vals)):
+        potential.append(-scipy.integrate.quad(pot, min_val, vals[i])[0])
+        # norm_cte.append(np.exp(scipy.integrate.quad(lambda x: pot(x), min_val, vals[i])[0]*2/noise**2))
+    potential = np.array(potential)
+    # norm_cte = np.sum(norm_cte)
+    boltzmann_distro = np.exp(-potential*2/noise**2)
+    return np.sum(boltzmann_distro[vals >= 0]) / (np.sum(boltzmann_distro))
+    
+
+def plot_optimal_alpha_vs_j_b(j_list=np.round(np.arange(0., 2.01, 1e-2), 4),
+                              b_list=np.round(np.arange(0., 0.5005, 1e-2), 4),
+                              noise=0.2, n=3):
     max_val = 2.5
     min_val = -2.5
     epsilon = 5e-3
     vals = np.arange(min_val+epsilon, max_val, epsilon)
-    alpha_list_all = np.arange(0.0001, 1.49, 2e-2)
+    alpha_list_all = np.arange(0.01, 2, 1e-2)[::-1]
     alpha_optimal = np.zeros((len(j_list), len(b_list)))
     numits = len(j_list)*len(b_list)
     it = 0
+    # alpha_list_1 = [0.5, 1, 1.5]
+    print('Start finding optimal alpha for p_correct')
     for i_b, b in enumerate(b_list):
         for i_j, j in enumerate(j_list):
-            prob_correct = []
-            for i_a, alpha in enumerate(alpha_list_all):
-                pot = lambda x: 1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(x*(n-alpha)+b)) - x
-                potential = []
-                # norm_cte = []
-                for i in range(len(vals)):
-                    potential.append(-scipy.integrate.quad(pot, min_val, vals[i])[0])
-                    # norm_cte.append(np.exp(scipy.integrate.quad(lambda x: pot(x), min_val, vals[i])[0]*2/noise**2))
-                potential = np.array(potential)
-                # norm_cte = np.sum(norm_cte)
-                boltzmann_distro = np.exp(-potential*2/noise**2)
-                correct_area = np.sum(boltzmann_distro[vals >= 0]) / (np.sum(boltzmann_distro))
-                prob_correct.append(correct_area)
-                if i_a > 10 and np.nansum(np.sign(np.diff(prob_correct))) < len(prob_correct)-1:
-                    break
+            # 1st try: [0.5, 1, 1.5]
+            # prob_correct_1 = [return_p_correct(j, b, alpha, n=n, noise=noise,
+            #                                    vals=vals, min_val=min_val)
+            #                   for alpha in alpha_list_1]
+            # maxalpha = alpha_list_1[np.argmax(prob_correct_1)]
+            # # then focus on the region given by the neighborhood of the max value
+            # alpha_list_all = np.arange(maxalpha-0.5, maxalpha+0.5, 2e-2)
+            prob_correct = [return_p_correct(j, b, alpha, n=n, noise=noise,
+                                             vals=vals, min_val=min_val)
+                            for alpha in alpha_list_all]
+            # alpha_opt = minimize(lambda x:
+            #                    -np.log(return_p_correct(
+            #                        j, b, x, vals=vals, noise=noise, n=n)), x0=1,
+            #                    bounds=Bounds([0], [3]))
             if it % 100 == 0:
                 print(str(round(it / numits * 100, 2)) + ' %')
             it += 1
+            # print(alpha_opt.x)
             maxind = np.argmax(prob_correct)
             alpha_optimal[i_j, i_b] = alpha_list_all[maxind]
-    np.save(DATA_FOLDER + 'optimal_alpha_correct_definitive.npy', alpha_optimal)
+            # alpha_optimal[i_j, i_b] = alpha_opt.x
+    np.save(DATA_FOLDER + 'optimal_alpha_correct_definitive_v3.npy', alpha_optimal)
     fig, ax = plt.subplots(ncols=1)
     im = ax.imshow(np.flipud(alpha_optimal), cmap='Blues', aspect='auto',
                    extent=[np.min(b_list), np.max(b_list),
-                           np.min(j_list), np.max(j_list)])  #, interpolation='bicubic')
+                           np.min(j_list), np.max(j_list)])
+    # , interpolation='bicubic')
     ax.set_ylabel('Coupling, J')
     ax.set_xlabel('Sensory evidence, B')
     plt.colorbar(im, label=r'Optimal alpha, $\hat{\alpha}$')
-    fig.savefig(DATA_FOLDER + 'optimal_alpha_jb_noise03.png', dpi=400)
-    fig.savefig(DATA_FOLDER + 'optimal_alpha_jb_noise03.svg', dpi=400)
+    fig.savefig(DATA_FOLDER + 'optimal_alpha_jb_noise03v3.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'optimal_alpha_jb_noise03v3.svg', dpi=400)
 
 
 def plot_optimal_alpha_numerical(j_list=np.arange(0.1, 2, 0.1), 
@@ -3029,8 +3047,9 @@ if __name__ == '__main__':
     #                             tol=1e-5, varchange='noise')
     # cyl_simulation(j_list=[0.1, 0.4, 0.8], b_list=np.arange(-1, 1.2, 2e-1),
     #                t_end=100, dt=1e-3)
-    # plot_optimal_alpha_vs_j_b(j_list=np.arange(0.01, 3.01, 0.05), 
-    #                           b_list=np.arange(0, 0.15, 3e-3), noise=0.3)
+    plot_optimal_alpha_vs_j_b(j_list=np.round(np.arange(0., 2.01, 1e-2), 4),
+                              b_list=np.round(np.arange(0., 0.5005, 1e-2), 4), noise=0.2,
+                              n=3)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
@@ -3054,5 +3073,5 @@ if __name__ == '__main__':
     # plot_lbp_3_examples()
     # plot_lbp_explanation()
     # plot_m1_m2_vector_field(j=.65, b=0., n=3)
-    plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
-                     thr=1e-15, stim=0.0, j=0.5*np.log(3))
+    # plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
+    #                  thr=1e-15, stim=0.0, j=0.5*np.log(3))
