@@ -36,7 +36,7 @@ plt.rcParams['ytick.labelsize']= 14
 
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/mean_field_necker/data_folder/'  # Alex
 
@@ -2007,6 +2007,28 @@ def plot_dominance_distro_approx(j=0.6, b=0, t_dur=100, noise=0.1,
     fig.tight_layout()
 
 
+def alternation_rate_vs_coupling(t_dur=10000, tol=1e-8,
+                                 j_list=np.arange(0.6, 1, 0.001),
+                                 b=0, noise=0.1):
+    k_weighted = np.zeros((len(j_list)))
+    for i_j, j in enumerate(j_list):
+        x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+        k_2 = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+        k_1 = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
+        k = (k_1+k_2)
+        pinf = k_1/k
+        p1 = (pinf)*(1-np.exp(-k*t_dur))
+        p2 = (1-pinf)*(1-np.exp(-k*t_dur))
+        k_weighted[i_j] = k_1*p2 + k_2*p1
+    fig, ax = plt.subplots(1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.plot(j_list, k_weighted, color='k', linewidth=3)
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('Alternation rate')
+    fig.tight_layout()
+
+
 def levelts_analytical(t_dur=10000, tol=1e-8,
                        b_list=np.arange(-0.2, 0.201, 0.001),
                        j=0.8, noise=0.1):
@@ -3414,16 +3436,28 @@ def plot_mf_hysteresis(j_list=[0.01, 0.2, 0.41],
                        b_list=np.linspace(-0.5, 0.5, 1001),
                        theta=theta):
     b_list = np.concatenate((b_list[:-1], b_list[::-1]))
-    plt.figure()
+    fig, ax = plt.subplots(1)
     colormap = ['navajowhite', 'orange', 'saddlebrown']
+    ax.axvline(0, color='k', alpha=0.3, linestyle='--', zorder=1)
     for i_j, j in enumerate(reversed(j_list)):
         vec = mean_field_stim_change(j, b_list,
                                      val_init=None, theta=theta)
-        plt.plot(b_list, vec[:, 0], color=colormap[i_j],
-                 label=np.round(j, 1), linewidth=4)
-    plt.xlabel('Sensory evidence, B')
-    plt.ylabel('Approximate posterior q(x=1)')
-    plt.legend(title='J')
+        ax.plot(b_list, vec[:, 0], color=colormap[i_j],
+                label=np.round(j, 1), linewidth=4,
+                zorder=2)
+        ax.arrow(-0.0875, 0.6, 0, -0.10,
+                 color='navajowhite', zorder=3, head_width=0.05)
+        ax.arrow(0.0875, 0.4, 0, 0.10,
+                 color='navajowhite', zorder=3, head_width=0.05)
+    ax.set_xlabel('Sensory evidence, B')
+    ax.set_ylabel('Approximate posterior q(x=1)')
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    fig.savefig(DATA_FOLDER + 'hysteresis_cartoon.png', dpi=400,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'hysteresis_cartoon.svg', dpi=400,
+                bbox_inches='tight')
+    # plt.legend(title='J')
 
 
 def boltzmann_2d_change_j(noise=0.1, b=0):
