@@ -19,6 +19,8 @@ import pandas as pd
 from matplotlib.lines import Line2D
 import matplotlib.pylab as pl
 import seaborn as sns
+from fokker_planck.simulator import simulator
+import fokker_planck.forceFunctions as ff
 
 # from numba import jit, prange
 # from concurrent.futures import ProcessPoolExecutor
@@ -2168,7 +2170,7 @@ def plot_pot_boltzmann(j=0.8, b_list=[0.04], noise=0.1, alpha_list=[0.1, 1, 1.4]
 
 def log_potential(b, j_list=None, alpha=1, n=3,
                   ax=None, labels=True, norm=True, transform=True,
-                  colormap=None):
+                  colormap=None, lw=2.5):
     max_val = 3
     min_val = -3
     min_val_integ = -10
@@ -2197,10 +2199,10 @@ def log_potential(b, j_list=None, alpha=1, n=3,
         label = str(j)  if i_j != 2 else r'$J^* = \frac{1}{2\alpha}\log{\frac{N}{N-2\alpha}}$'
         if transform:
             ax.plot(sigmoid(vals*n+b), norm_pot,
-                    label=label, color=color, linewidth=2.5)
+                    label=label, color=color, linewidth=lw)
         else:
             ax.plot(vals, norm_pot,
-                    label=label, color=color, linewidth=2.5)
+                    label=label, color=color, linewidth=lw)
     if labels:
         plt.legend(title='Coupling, J')
         if not transform:
@@ -2959,6 +2961,7 @@ def get_psych_kernel(j=0.6, b=0., n_its=1000, t_end=15, dt=1e-2, tau=0.5,
     d_absorbing = np.zeros(n_its)
     time = np.arange(0, t_end, dt)
     chi = np.zeros((n_its, len(time)))
+    psi_x = lambda q, s: n/alpha * np.arctanh(np.tanh(j*alpha)*np.tanh((q*(n-alpha) + b*s*alpha)/n)) - (q-b*s)/n
     for it in range(n_its):
         absorb = False
         q = np.random.randn()*0.1
@@ -2966,19 +2969,17 @@ def get_psych_kernel(j=0.6, b=0., n_its=1000, t_end=15, dt=1e-2, tau=0.5,
         for t in range(len(time)):
             chi[it, t] = np.random.randn()*noise
             chi_t = chi[it, t]
-            q = q + dt*(1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(q*(n-alpha)+b)) - q)/tau +\
-                chi_t*np.sqrt(dt/tau)
+            q = q + dt*(psi_x(q, chi_t))/tau
             if comp_all:
-                q2 = q2 + dt*(1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(q2*(n-alpha)+b)) - q2)/tau +\
-                    chi_t*np.sqrt(dt/tau)
+                q2 = q2 + dt*(psi_x(q2, chi_t))/tau
                 q2 = np.clip(q2, 0, 1)
             if (q > 0.9 or q < 0.1) and not absorb:
                 absorb = True
-                d_absorbing[it] = np.sign(q - 0.5)
+                d_absorbing[it] = np.sign(q)
         if not absorb:
-            d_absorbing[it] = np.sign(q - 0.5)
-        d_normal[it] = np.sign(q - 0.5)
-        d_reflecting[it] = np.sign(q2 - 0.5)
+            d_absorbing[it] = np.sign(q)
+        d_normal[it] = np.sign(q)
+        d_reflecting[it] = np.sign(q2)
     time_2 = np.arange(0, len(time), 5)
     aux_kernel_normal = mfn.get_kernel_bootstrap(d_normal, chi, time_2, nboot=nboots)
     if comp_all:
@@ -2991,7 +2992,8 @@ def get_psych_kernel(j=0.6, b=0., n_its=1000, t_end=15, dt=1e-2, tau=0.5,
 
 def area_slope_PK_vs_alpha(alpha_list=np.arange(0.1, 1.5, 0.01), j=0.6, b=0, 
                            n_its=1000, t_end=15, dt=1e-2, tau=0.5,
-                           noise=0.2, nboots=1, n=3, load_data=True):
+                           noise=0.2, nboots=1, n=3, load_data=True,
+                           fig=None, axes=None):
     
     slope = []
     area = []
@@ -3017,7 +3019,8 @@ def area_slope_PK_vs_alpha(alpha_list=np.arange(0.1, 1.5, 0.01), j=0.6, b=0,
             kernel_array[i_a, :] = kernel
         np.save(DATA_FOLDER + 'pk_kernels_alpha_v3_b01.npy',kernel_array)
     # plotting
-    fig, axes = plt.subplots(ncols=4, figsize=(17, 4.5))
+    if axes is None:
+        fig, axes = plt.subplots(ncols=4, figsize=(17, 4.5))
     for i_a, alpha in enumerate(alpha_list[::20]):
         log_potential(b, j_list=[j], alpha=alpha, n=3,
                       ax=axes[0], labels=False, norm=True, transform=False,
@@ -3058,7 +3061,8 @@ def area_slope_PK_vs_alpha(alpha_list=np.arange(0.1, 1.5, 0.01), j=0.6, b=0,
 
 def area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1, b=0, 
                               n_its=1000, t_end=15, dt=1e-2, tau=0.5,
-                              noise=0.2, nboots=1, n=3, load_data=True):
+                              noise=0.2, nboots=1, n=3, load_data=True,
+                              filename='', axes=None, fig=None, savefig=True):
     
     slope = []
     area = []
@@ -3066,50 +3070,56 @@ def area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1, b=0,
     time = np.arange(0, t_end, dt)
     time_2 = np.arange(0, len(time), 5)*dt
     if load_data:
-        kernel_array = np.load(DATA_FOLDER + 'pk_kernels_J_v3_b01.npy')
-        j_list=np.arange(0.1, 1.5, 0.1)
+        kernel_array = np.load(DATA_FOLDER + filename)
+        # j_list=np.arange(0.1, 1.5, 0.1)
         for i_a, j in enumerate(j_list):
             kernel = kernel_array[i_a]
-            # conv_kern = np.convolve(kernel_array[i_a, :], np.ones(20)/20, mode='valid')
-            slope.append(mfn.PK_slope(kernel))
-            area.append(mfn.total_area_kernel(kernel))
+            conv_kern = np.convolve(kernel_array[i_a, :], np.ones(30)/30, mode='valid')
+            slope.append(mfn.PK_slope(conv_kern))
+            area.append(mfn.total_area_kernel(conv_kern))
     else:
         kernel_array = np.zeros((len(j_list), len(time_2)))
         for i_a, j in enumerate(j_list):
             kernel = get_psych_kernel(j=j, b=b, n_its=n_its, t_end=t_end, dt=dt, tau=tau,
                                       noise=noise, nboots=nboots, n=n, alpha=alpha, comp_all=False)
-            conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
-            slope.append(mfn.PK_slope(conv_kern))
-            area.append(mfn.total_area_kernel(conv_kern))
+            # conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
+            slope.append(mfn.PK_slope(kernel))
+            area.append(mfn.total_area_kernel(kernel))
             kernel_array[i_a, :] = kernel
-        np.save(DATA_FOLDER + 'pk_kernels_J_v3_b01.npy',kernel_array)
+        np.save(DATA_FOLDER + filename, kernel_array)
     # plotting
-    fig, axes = plt.subplots(ncols=4, figsize=(17, 4.5))
+    if axes is None:
+        fig, axes = plt.subplots(ncols=4, figsize=(17, 4.5))
     # j_list = j_list[0:-2]
-    for i_a, j in enumerate(j_list[::2]):
-        log_potential(b, j_list=[j], alpha=alpha, n=3,
+    for i_a, j in enumerate(j_list[1:][::2]):
+        if np.round(j, 5) == 0.6:
+            color = 'r'
+            lw = 5
+        else:
+            color = colormap[i_a*2+1]
+            lw = 2
+        log_potential(0, j_list=[j], alpha=alpha, n=3,
                       ax=axes[0], labels=False, norm=True, transform=False,
-                      colormap=[colormap[i_a*2]])
+                      colormap=[color], lw=lw)
     axes[0].set_xlim(-2.3, 2.3)
     axes[0].set_ylim(-0.01, 0.22)
     axes[0].set_xlabel(r'Log message ratio $M$')
-    axes[0].set_ylabel(r'Potential $V(q)$')
-    plt.subplots_adjust(wspace=0.4, bottom=0.2, left=0.08, right=0.92)
-    for i_a, j in enumerate(j_list):
-        conv_kern = np.convolve(kernel_array[i_a, :], np.ones(20)/20, mode='valid')
-        axes[1].plot(time_2[9:-10], conv_kern-0.5, color=colormap[i_a], label=round(j, 3), alpha=1,
-                     linewidth=2)
-    ax_pos = axes[0].get_position()
-    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.1, ax_pos.y0+ax_pos.height*1.1,
-                            ax_pos.width*0.8, ax_pos.height*0.05])
-    newcmp = mpl.colors.ListedColormap(colormap)
-    colorbar = mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling, J',
-                                         orientation='horizontal')
-    colorbar.ax.xaxis.set_ticks_position('top')
-    colorbar.ax.xaxis.set_label_position('top')
-    ax_cbar.set_xticks([0, 0.5, 1], np.round([np.min(j_list),
-                                     np.mean(j_list),
-                                     np.max(j_list)], 3))
+    axes[0].set_ylabel(r'Potential $V(M)$')
+    for i_a, j in enumerate(j_list[1:][::2]):
+        if np.round(j, 5) == 0.6:
+            color = 'r'
+            lw = 4
+            zorder = 10
+        else:
+            color = colormap[i_a*2+1]
+            lw = 2
+            zorder = 1
+        conv_kern = np.convolve(kernel_array[i_a*2+1, :],
+                                np.ones(30)/30, mode='valid')
+        axes[1].plot(time_2[14:-15], conv_kern-0.5, color=color, label=round(j, 3), alpha=1,
+                     linewidth=lw, zorder=zorder)
+    legendelements = [Line2D([0], [0], color='r', lw=4, label=r'$J^*$')]
+    axes[1].legend(handles=legendelements, frameon=False)
     axes[1].set_xlabel('Time (s)')
     # axes[0].legend(title=r'$\alpha$')
     axes[1].set_ylabel('Impact of stimulus (PK)')
@@ -3122,13 +3132,560 @@ def area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1, b=0,
     axes[3].set_xlabel(r'Coupling, J')
     axes[3].plot(j_list, area, color='k', linewidth=2.5)
     axes[3].set_ylabel('PK area')
-    jcrit = np.log(n/(n-2))/2
-    axes[2].axvline(jcrit, color='k', linestyle='--', alpha=0.4)
+    # jcrit = np.log(n/(n-2))/2
+    jcrit = 0.6
+    axes[2].axvline(jcrit, color='r', linestyle='--', alpha=0.4)
     axes[2].axhline(0, color='k', linestyle='--', alpha=0.4)
-    axes[2].set_ylim(-.3, .3)
-    axes[3].axvline(jcrit, color='k', linestyle='--', alpha=0.4)
-    fig.savefig(DATA_FOLDER + 'PK_coupling.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'PK_coupling.svg', dpi=400, bbox_inches='tight')
+    axes[2].set_ylim(-1, 1)
+    axes[3].axvline(jcrit, color='r', linestyle='--', alpha=0.4)
+    if savefig:
+        plt.subplots_adjust(wspace=0.5, bottom=0.2, left=0.08, right=0.92)
+        ax_pos = axes[0].get_position()
+        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.1, ax_pos.y0-ax_pos.height*1.2,
+                                ax_pos.width*0.8, ax_pos.height*0.05])
+        newcmp = mpl.colors.ListedColormap(colormap)
+        colorbar = mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling, J',
+                                              orientation='horizontal')
+        colorbar.ax.xaxis.set_ticks_position('top')
+        colorbar.ax.xaxis.set_label_position('top')
+        ax_cbar.set_xticks([0, 0.5, 1], np.round([np.min(j_list),
+                                          np.mean(j_list),
+                                          np.max(j_list)], 3))
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'PK_coupling.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'PK_coupling.svg', dpi=400, bbox_inches='tight')
+
+
+def log_ratio_FBP_ddm(drift=2, noise=0.05, j=0.1, 
+                      time_end=2, bound=0.2, tau=0.3, dt=1e-3,
+                      alpha=1, n=3, ntrials=50000, b=0.05, tau_ddm=1,
+                      time_eff=0.05, only_examples=False, return_all_q=False):
+    time = np.arange(0, time_end, dt)
+    noise_2 = noise
+    sensory_ev = np.repeat((-1, -0.5, -0.25, 0, 0.25, 0.5, 1), int(ntrials/7))
+    n_iters = sensory_ev.shape[0]
+    stim = 0.04*np.random.randn(len(time), len(sensory_ev)) + sensory_ev
+    reac_times = []
+    choice = []
+    confval = []
+    nits_teff = int(time_eff/dt)
+    if not only_examples:
+        for ite in range(n_iters):
+            q = np.random.randn()*0.1
+            qlt = [q]
+            dv = 0
+            dvt = [dv]
+            for i_t, t in enumerate(time):
+                chi_t = np.random.randn()*noise
+                q = q + dt*(n/alpha * np.arctanh(np.tanh(j*alpha)*np.tanh((q*(n-alpha) + b*stim[i_t, ite]*alpha)/n)) - (q-b*stim[i_t, ite])/n)/tau +\
+                    chi_t*np.sqrt(dt/tau)
+                if t >= time_eff:
+                    dv = dv + dt*(drift*qlt[i_t-nits_teff])/tau_ddm + np.random.randn()*noise_2*np.sqrt(dt/tau_ddm)
+                else:
+                    dv = dv + np.random.randn()*noise_2*np.sqrt(dt/tau_ddm)
+                qlt.append(q)
+                dvt.append(dv)
+                if np.abs(dv) >= bound:
+                    reac_times.append(t)
+                    choice.append(np.sign(dv))
+                    confval.append(q)
+                    break
+                if i_t == len(time) - 1:
+                    reac_times.append(np.nan)
+                    choice.append(np.nan)
+                    confval.append(np.nan)
+    sensory_ev_examples = np.array((-1, 0, 1))
+    stim_examples = sensory_ev_examples + np.repeat(0.05*np.random.randn(len(time)),
+                                                    len(sensory_ev_examples)).reshape((len(time), len(sensory_ev_examples)))
+    q_examples = np.zeros((len(time), len(sensory_ev_examples)))
+    dv_examples = np.zeros((len(time), len(sensory_ev_examples)))
+    for ite in range(len(sensory_ev_examples)):
+        q = np.random.randn()*0.05
+        qlt = [q]
+        dv = 0
+        dvt = [dv]
+        for i_t, t in enumerate(time[:-1]):
+            chi_t = np.random.randn()*noise
+            q = q + dt*(n/alpha * np.arctanh(np.tanh(j*alpha)*np.tanh((q*(n-alpha) + b*stim_examples[i_t, ite]*alpha)/n)) - (q-b*stim_examples[i_t, ite])/n)/tau +\
+                chi_t*np.sqrt(dt/tau)
+            if t >= time_eff:
+                dv = dv + dt*(drift*qlt[i_t-nits_teff])/tau_ddm + np.random.randn()*noise_2*np.sqrt(dt/tau_ddm)
+            else:
+                dv = dv + np.random.randn()*noise_2*np.sqrt(dt/tau_ddm)
+            qlt.append(q)
+            dvt.append(dv)
+        q_examples[:, ite] = qlt
+        dv_examples[:, ite] = dvt
+    confval = np.array(confval)
+    return reac_times, sensory_ev, q_examples, dv_examples, time, sensory_ev_examples, choice, sigmoid(2*confval)
+
+
+def plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
+                        time_end=2.5, bound=1, tau=0.1, dt=1e-3,
+                        alpha=1, n=3, ntrials=7000, b=0.3, tau_ddm=0.1,
+                        fig=None, ax=None, savefig=True):
+    dict_data = pd.DataFrame()
+    for i_j, j in enumerate(j_list):
+        reac_times, sensory_ev, q_examples, dv_examples, time, sensory_ev_examples, \
+        choice , confval =\
+            log_ratio_FBP_ddm(drift=drift, noise=noise, j=j, 
+                              time_end=time_end, bound=bound, tau=tau, dt=dt,
+                              alpha=alpha, n=n, ntrials=ntrials, b=b, tau_ddm=tau_ddm)
+        jarr = np.repeat(round(j, 3), len(sensory_ev))
+        temp_data = pd.DataFrame({'rt': reac_times, 'coh': sensory_ev, 'coupling': jarr})
+        dict_data = pd.concat((dict_data, temp_data))
+    if ax is None:
+        fig, ax = plt.subplots(ncols=2, figsize=(8.5, 4))
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    dict_data = dict_data.reset_index()
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(j_list)))
+    newcmp = mpl.colors.ListedColormap(colormap)
+    mpl.cm.register_cmap("cmap", newcmp)
+    sns.lineplot(dict_data, x='coh', y='rt', hue='coupling', ax=ax[0], legend=False,
+                 palette='cmap')
+    ax_pos = ax[0].get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.1, ax_pos.y0+ax_pos.height*1.1,
+                            ax_pos.width*0.8, ax_pos.height*0.05])
+    colorbar = mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling, J',
+                                         orientation='horizontal')
+    colorbar.ax.xaxis.set_ticks_position('top')
+    colorbar.ax.xaxis.set_label_position('top')
+    ax[0].set_xlabel('Sensory evidence, s')
+    ax[0].set_ylabel('Reaction time (s)')
+    data1 = dict_data[dict_data.coh == 1]
+    data0 = dict_data[dict_data.coh.abs() == 0]
+    diffrt = data0.rt.values-data1.rt.values
+    newcoup = data0.coupling.values
+    df = pd.DataFrame({'diff_rt': diffrt, 'coupling': newcoup})
+    sns.lineplot(df, x='coupling', y='diff_rt', ax=ax[1], lw=3, color='k')
+    ax[1].set_xlabel('Coupling')
+    ax[1].set_ylabel(r'$\Delta RT (s) = RT(s=0)-RT(s=1)$')
+    ax[1].axhline(0, color='k', linestyle='--', alpha=0.4)
+    if savefig:
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_vs_coupling_eff.png', dpi=200, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_vs_coupling_eff.svg', dpi=200, bbox_inches='tight')
+
+
+def accuracy_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.3),
+                         time_end=3, bound=1, tau=0.1, dt=1e-3,
+                         alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1, nbins=20,
+                         time_eff=0.05, savefig=True, fig=None, ax=None):
+    dict_data = pd.DataFrame()
+    for i_j, j in enumerate(j_list):
+        reac_times, sensory_ev, q_examples, dv_examples, time, sensory_ev_examples, \
+        choice, confval =\
+            log_ratio_FBP_ddm(drift=drift, noise=noise, j=j, 
+                              time_end=time_end, bound=bound, tau=tau, dt=dt,
+                              alpha=alpha, n=n, ntrials=ntrials, b=b, tau_ddm=tau_ddm,
+                              time_eff=time_eff)
+        jarr = np.repeat(round(j, 3), len(sensory_ev))
+        temp_data = pd.DataFrame({'rt': reac_times, 'coh': np.abs(sensory_ev), 'coupling': jarr,
+                                  'hit': np.sign(
+                                      sensory_ev+np.random.randn(len(sensory_ev))*1e-7) == choice,
+                                  'confidence': np.abs(2*confval-1), 'raw_ev': sensory_ev})
+        dict_data = pd.concat((dict_data, temp_data))
+    dict_data = dict_data.reset_index()
+    dict_data = dict_data.dropna()
+    if ax is None:
+        fig, ax = plt.subplots(ncols=2, figsize=(8, 4.5))
+        """
+        acc vs coupling cond on coh
+        acc vs rt cond on coupling
+        """
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    data_coupling = dict_data.copy()  # loc[(dict_data.coupling == 0.1) + (dict_data.coupling == 1) + (dict_data.coupling == 0.5)]
+    colormap = pl.cm.Greys(np.linspace(0.4, 1, len(j_list)))
+    legendelements = []
+    for i_j, j in enumerate(j_list):
+        df2 = data_coupling.loc[data_coupling.coupling == j]
+        # df2['x_binned'] = pd.qcut(df2['rt'], q=nbins)
+        # df2['x_bin_center'] = df2['x_binned'].apply(lambda b: (b.left + b.right) / 2)
+        # sns.lineplot(df2, x='x_bin_center', y='hit', ax=ax[0], color=colormap[i_j])
+        sns.kdeplot(df2, x='rt', ax=ax[0], color=colormap[i_j], lw=2.5)
+        legendelements.append(Line2D([0], [0], color=colormap[i_j], lw=2.5, label=str(j)))
+    ax[0].legend(title='Coupling, J', frameon=False, handles=legendelements)
+    ax[0].set_xlabel('RT (s)')
+    ax[0].set_ylabel('Density')
+    ax[0].set_xlim(-0.1, 2.1)
+    sns.lineplot(dict_data, x='coupling', y='hit', hue='coh', ax=ax[1])
+    ax[1].set_ylabel(' ')
+    ax[1].set_xlabel('Coupling, J')
+    if savefig:
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'ddm_fbp_vs_coupling_accuracy.png', dpi=200, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'ddm_fbp_vs_coupling_accuracy.svg', dpi=200, bbox_inches='tight')
+
+
+def tachometric_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.5),
+                            time_end=3, bound=1, tau=0.1, dt=1e-3,
+                            alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1, nbins=20,
+                            time_eff=0.05, savefig=True):
+    dict_data = pd.DataFrame()
+    for i_j, j in enumerate(j_list):
+        reac_times, sensory_ev, q_examples, dv_examples, time, sensory_ev_examples, \
+        choice, confval =\
+            log_ratio_FBP_ddm(drift=drift, noise=noise, j=j, 
+                              time_end=time_end, bound=bound, tau=tau, dt=dt,
+                              alpha=alpha, n=n, ntrials=ntrials, b=b, tau_ddm=tau_ddm,
+                              time_eff=time_eff)
+        jarr = np.repeat(round(j, 3), len(sensory_ev))
+        temp_data = pd.DataFrame({'rt': reac_times, 'coh': np.abs(sensory_ev), 'coupling': jarr,
+                                  'hit': np.sign(
+                                      sensory_ev+np.random.randn(len(sensory_ev))*1e-7) == choice,
+                                  'confidence': np.abs(2*confval-1), 'raw_ev': sensory_ev})
+        dict_data = pd.concat((dict_data, temp_data))
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(10, 8))
+    fig2, ax2 = plt.subplots(ncols=2, nrows=2, figsize=(10, 8))
+    ax = ax.flatten()
+    ax2 = ax2.flatten()
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    for a in ax2:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    dict_data = dict_data.reset_index()
+    for i_j, j in enumerate(j_list):
+        ax[i_j].axhline(0.5, color='k', linestyle='--', alpha=0.4)
+        df = dict_data[dict_data.coupling == np.round(j, 3)]
+        # Bin x into 10 equal-width bins
+        df['x_binned'] = pd.qcut(df['rt'], q=nbins)
+        df['x_bin_center'] = df['x_binned'].apply(lambda b: (b.left + b.right) / 2)
+        leg = False if i_j != 0 else True
+        sns.lineplot(df, x='x_bin_center', y='hit', hue='coh', ax=ax[i_j],
+                     legend=leg)
+        ax[i_j].set_title('J = ' + str(round(j, 3)))
+        sns.lineplot(df.loc[df.hit == 1], x='raw_ev', y='confidence', ax=ax2[i_j],
+                     legend=False, color='g', lw=2.5)
+        sns.lineplot(df.loc[df.hit == 0], x='raw_ev', y='confidence', ax=ax2[i_j],
+                     legend=False, color='r', lw=2.5)
+        ax2[i_j].set_title('J = ' + str(round(j, 3)))
+    legendelements = [Line2D([0], [0], color='g', lw=2.5, label='correct'),
+                      Line2D([0], [0], color='r', lw=2.5, label='error')]
+    ax2[0].legend(handles=legendelements, frameon=False)
+    for i in range(4):
+        if i not in [2, 3]:
+            ax[i].set_xlabel(' ')
+            ax2[i].set_xlabel(' ')
+        else:
+            ax[i].set_xlabel('RT (s)')
+            ax2[i].set_xlabel('Sensory evidence')
+        if i not in [0, 2]:
+            ax[i].set_ylabel(' ')
+            ax2[i].set_ylabel(' ')
+        else:
+            ax[i].set_ylabel('Accuracy')
+            ax2[i].set_ylabel('Confidence')
+        ax[i].set_ylim(0.45, 1.05)
+        ax2[i].set_ylim(-0.05, 1.05)
+    if savefig:
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'tachometric_ddm_fbp_v1_eff.png', dpi=200, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'tachometric_ddm_fbp_v1_eff.svg', dpi=200, bbox_inches='tight')
+        fig2.tight_layout()
+        fig2.savefig(DATA_FOLDER + 'confidence_ddm_fbp_v3_eff.png', dpi=200, bbox_inches='tight')
+        fig2.savefig(DATA_FOLDER + 'confidence_ddm_fbp_v3_eff.svg', dpi=200, bbox_inches='tight')
+
+
+def plot_rt_FBP_ddm(drift=.5, noise=0.1, j=0.1, 
+                    time_end=10, bound=1, tau=0.5, dt=1e-3,
+                    alpha=1, n=3, ntrials=1400, b=0.4, tau_ddm=0.5, savefig=True):
+    """
+    drift: DDM accumulation drift
+    noise: DDM and inference noise, assumed to be the same (internal process)
+    j: feature coupling
+    bound: DDM threshold
+    tau: timescale of inference
+    tau_ddm: timescale of evidence integration
+    b: weight of sensory evidence in inference process (B(t) = b*stim(t))
+    """
+    reac_times, sensory_ev, q_examples, dv_examples, time, sensory_ev_examples, \
+        choice, confval =\
+        log_ratio_FBP_ddm(drift=drift, noise=noise, j=j, 
+                          time_end=time_end, bound=bound, tau=tau, dt=dt,
+                          alpha=alpha, n=n, ntrials=ntrials, b=b, tau_ddm=tau_ddm)
+    dict_data = pd.DataFrame({'rt': reac_times, 'coh': sensory_ev})
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(11, 8))
+    ax = ax.flatten()
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    colormap = pl.cm.coolwarm(np.linspace(0., 1, 5))
+    ax[0].set_xlabel('Time (s)')
+    ax[0].set_title(r'Inference: $\dot{Q} = \phi(Q(t), J, B) - Q(t) + \xi_t$', fontsize=14)
+    ax[0].set_ylabel('Log-belief ratio')
+    ax[1].axhline(bound, linestyle='--', color='k', alpha=0.6)
+    ax[1].axhline(-bound, linestyle='--', color='k', alpha=0.6)
+    ax[1].set_title(r'Accumulation: $\dot{x} = \nu Q(t) + \xi_t$', fontsize=14)
+    for sev in range(len(sensory_ev_examples)):
+        ax[0].plot(time, q_examples[:, sev], label=sensory_ev_examples[sev],
+                   color=colormap[sev], linewidth=3)
+        ax[1].plot(time, dv_examples[:, sev], label=sensory_ev_examples[sev],
+                   color=colormap[sev], linewidth=3)
+    sns.lineplot(dict_data, y='rt', x='coh', ax=ax[3], color='k', lw=3)
+    ax[3].set_xlabel('Sensory evidence')
+    ax[3].set_ylabel('Reaction time (s)')
+    ax[0].set_xlim(-0.05, time_end/2+1e-2)
+    ax[1].set_xlim(-0.05, time_end/2+1e-2)
+    ax[1].set_ylim(-2*bound-1e-2, 2*bound+1e-2)
+    ax[1].legend(title='Coh')
+    ax[1].set_xlabel('Time (s)')
+    ax[1].set_ylabel('Decision variable')
+    sns.kdeplot(dict_data, x='rt', hue='coh', ax=ax[2], palette='coolwarm',
+                lw=2)
+    ax[2].set_xlabel('Reaction time (s)')
+    ax[2].set_ylabel('Density')
+    if j > 0.5:
+        label = 'High' + str(round(j, 3))
+    else:
+        label = 'Low' + str(round(j, 3))
+    fig.suptitle(label + ' coupling, J = ' + str(round(j, 2)))
+    if savefig:
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_example_'+label+'_coupling_eff.png',
+                    dpi=200, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_example_'+label+'_coupling_eff.svg',
+                    dpi=200, bbox_inches='tight')
+
+
+def fokker_planck_1d(j=0.1, alpha=1, b=0, n=3, sigma=0.1,
+                     shift_ini=0, t_max=2000, dt=0.01, dx=0.1,
+                     unimodal=False):
+    # Define parameters
+    x_min, x_max = -20, 20  # Range of x
+    # dx = 0.1               # Space step
+    # dt = 0.01              # Time step
+    while dt > dx**2/(2*sigma**2):
+        print('Careful with dt, dx. dt > dx^2 / (2 \sigma^2)')
+        print(f'Now, dt = {dt}, dx = {dx}, dx^2 / (2 \sigma^2) = {round(dx**2 / (2 * sigma**2), 6)}')
+        dx = float(input('dx: '))
+        dt = float(input('dt: '))
+    f = lambda q: n/alpha * np.arctanh(np.tanh(j*alpha)*np.tanh((q*(n-alpha) + b*alpha)/n)) - (q-b)/n
+    
+    # Create the grid
+    x = np.arange(x_min, x_max + dx, dx)
+    t = np.arange(0, t_max + dt, dt)
+    
+    # Initialize probability distribution (e.g., a Gaussian at t=0)
+    # P = np.exp(-(x-shift_ini)**2 * 2) / np.sqrt(2 * np.pi)
+    if unimodal:
+        P = 0.5 * np.exp(-(x-shift_ini)**2 / (40))
+    else:
+        P = 0.5 * np.exp(-(x - 5)**2 / (30)) + 0.5 * np.exp(-(x + 5)**2 / (30))
+    P /= P.sum() * dx  # Normalize
+    
+    # Precompute constants
+    D = sigma**2 / 2  # Diffusion coefficient
+    nx = len(x)
+    
+    # Finite difference coefficients
+    P_new = np.zeros_like(P)
+    Parr = np.zeros((nx, len(t)))
+    for i_t, ti in enumerate(t):
+        # Compute derivatives
+        dP_dx = np.gradient(P, dx)  # First derivative
+        d2P_dx2 = np.gradient(dP_dx, dx)  # Second derivative
+        
+        # Update using Fokker-Planck equation
+        P_new = P - dt * (f(x) * dP_dx - D * d2P_dx2)
+        
+        # Enforce boundary conditions (e.g., zero flux)
+        P_new[0], P_new[-1] = 0, 0
+        
+        # Update probability distribution
+        P = np.abs(P_new.copy())
+        P /= (P.sum() * dx)  # Re-normalize to ensure total probability is 1
+        Parr[:, i_t] = P
+    plt.figure()
+    im = plt.imshow(Parr, aspect='auto', extent=[0, t_max, x_min, x_max], cmap='Reds',
+                    )
+    plt.colorbar(im, label="log P(x, t)")
+    plt.ylabel("x")
+    plt.xlabel("Time (s)")
+    plt.title("Probability Distribution Evolution")
+    plt.show()
+    colormap = pl.cm.Greens(np.linspace(0.3, 1, 6))
+    plt.figure()
+    coef = int(t_max / (6*dt))
+    for i in range(6):
+        plt.plot(x, Parr[:, i*coef], color=colormap[i], label=round(i*coef*dt, 1))
+    plt.legend(frameon=False)
+    plt.xlabel('x')
+    plt.ylabel('P(x, t)')
+
+
+def plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
+                         time_end=2.5, bound=1, tau=0.1, dt=1e-3,
+                         alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
+                         fig=None, ax=None, savefig=True):
+    """
+    drift: DDM accumulation drift
+    noise: DDM and inference noise, assumed to be the same (internal process)
+    j: feature coupling
+    bound: DDM threshold
+    tau: timescale of inference
+    tau_ddm: timescale of evidence integration
+    b: weight of sensory evidence in inference process (B(t) = b*stim(t))
+    """
+    if ax is None:
+        fig, ax = plt.subplots(ncols=2, figsize=(8.5, 4.5))
+    ax = ax.flatten()
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    colormap = pl.cm.coolwarm(np.linspace(0., 1, 3))
+    ax[0].set_xlabel('Time (s)')
+    ax[0].set_title(r'Inference: $\dot{Q} = \phi(Q(t), J, B) - Q(t) + \xi_t$', fontsize=14)
+    ax[0].set_ylabel('Log-belief ratio')
+    ax[1].axhline(bound, linestyle='--', color='k', alpha=0.6)
+    ax[1].axhline(-bound, linestyle='--', color='k', alpha=0.6)
+    ax[1].set_title(r'Accumulation: $\dot{x} = \nu Q(t) + \xi_t$', fontsize=14)
+    for j in jvals:
+        if j < 0.5:
+            lst = 'solid'
+        else:
+            lst = '--'
+        reac_times, sensory_ev, q_examples, dv_examples, time, sensory_ev_examples, \
+            choice, confval =\
+            log_ratio_FBP_ddm(drift=drift, noise=noise, j=j, 
+                              time_end=time_end, bound=bound, tau=tau, dt=dt,
+                              alpha=alpha, n=n, ntrials=ntrials, b=b, tau_ddm=tau_ddm,
+                              only_examples=True)
+        for sev in range(len(sensory_ev_examples)):
+            ax[0].plot(time, q_examples[:, sev], label=sensory_ev_examples[sev],
+                       color=colormap[sev], linewidth=3, linestyle=lst)
+            ax[1].plot(time, dv_examples[:, sev], label=sensory_ev_examples[sev],
+                       color=colormap[sev], linewidth=3, linestyle=lst)
+    ax[0].set_xlim(-0.05, time_end/2+1e-2)
+    ax[1].set_xlim(-0.05, time_end/2+1e-2)
+    ax[1].set_ylim(-2*bound-1e-2, 2*bound+1e-2)
+    legendelements = [Line2D([0], [0], color=colormap[2], lw=2, label='s=1'),
+                      Line2D([0], [0], color=colormap[1], lw=2, label='s=0'),
+                      Line2D([0], [0], color=colormap[0], lw=2, label='s=-1'),
+                      Line2D([0], [0], color='k', lw=2, label='J=0.1'),
+                      Line2D([0], [0], color='k', lw=2, label='J=0.5', linestyle='--')]
+    ax[1].set_xlabel('Time (s)')
+    ax[1].set_ylabel('Decision variable')
+    ax[1].legend(handles=legendelements, frameon=False, bbox_to_anchor=(0.5, 1.05),
+                 ncol=2, labelspacing=0.15)
+    if savefig:
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_example_coupling_eff_both.png',
+                    dpi=200, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_example_coupling_eff_both.svg',
+                    dpi=200, bbox_inches='tight')
+
+
+def plot_psychophysics_results_together():
+    fig, ax = plt.subplots(ncols=4, nrows=2, figsize=(16, 8))
+    ax = ax.flatten()
+    plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
+                             time_end=2.5, bound=1, tau=0.1, dt=1e-3,
+                             alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
+                             fig=fig, ax=ax[:2], savefig=False)
+    area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1.09864,
+                              b=1, n_its=100000, t_end=10, dt=1e-2, tau=0.5,
+                              noise=0.2, nboots=10, n=3, load_data=True,
+                              filename='pk_kernels_J_b0_big_dJ_moreits_smaller_b.npy',
+                              axes=ax[4:], fig=fig, savefig=False)
+    fig.tight_layout()
+    plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
+                        time_end=2.5, bound=1, tau=0.1, dt=1e-3,
+                        alpha=1, n=3, ntrials=700, b=0.3, tau_ddm=0.1,
+                        fig=fig, ax=ax[2:4], savefig=False)
+    
+    letters = ['a', '', 'b', '', 'c', 'd', 'e', 'f']
+    for i_a, a in enumerate(ax):
+        a.text(-0.25, 1.22, letters[i_a], transform=a.transAxes, fontsize=15,
+               fontweight='bold', va='top', ha='right')
+    fig.savefig(DATA_FOLDER + 'fbp_ddm_figure.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'fbp_ddm_figure.svg', dpi=200, bbox_inches='tight')
+
+
+def log_ratio_FBP(noise=0.1, j=0.1, time_end=2, tau=0.1, dt=1e-2,
+                  alpha=1, n=3, ntrials=10000, b=0.5, coh=0):
+    time = np.arange(0, time_end, dt)
+    sensory_ev = np.repeat(coh, ntrials)
+    n_iters = sensory_ev.shape[0]
+    stim = 0.04*np.random.randn(len(time), len(sensory_ev)) + sensory_ev
+    all_q = np.zeros((len(time), len(sensory_ev)))
+    for ite in range(n_iters):
+        q = np.random.randn()*0.1
+        qlt = [q]
+        for i_t, t in enumerate(time[:-1]):
+            chi_t = np.random.randn()*noise
+            q = q + dt*(n/alpha * np.arctanh(np.tanh(j*alpha)*np.tanh((q*(n-alpha) + b*stim[i_t, ite]*alpha)/n)) - (q-b*stim[i_t, ite])/n)/tau +\
+                chi_t*np.sqrt(dt/tau)
+            qlt.append(q)
+        all_q[:, ite] = qlt
+    return all_q
+
+
+def plot_density_fbp(noise=0.1, j=0.1, time_end=2, tau=0.1, dt=1e-2,
+                     alpha=1, n=3, ntrials=50000, b=0.5, coh=0,
+                     logscale=True, ax=None, cbar=True, fig=None, cmap='binary'):
+    filename = DATA_FOLDER + 'density_FBP_sigma_' + str(noise) + '_J_' + str(j) + '_b_' + str(b) + '_coh_' + str(coh) + '.npy'
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    if os.path.exists(filename):
+        all_q_kde = np.load(filename)
+    else:
+        all_q = log_ratio_FBP(noise=noise, j=j, time_end=time_end, tau=tau, dt=dt,
+                              alpha=alpha, n=n, ntrials=ntrials, b=b, coh=coh)
+        time = np.arange(0, time_end, dt)
+        bins = np.linspace(-10, 10, 100)
+        all_q_kde = np.zeros((len(bins)-1, len(time)))
+        for i_t, t in enumerate(time):
+            all_q_kde[:, i_t] = np.histogram(all_q[i_t], bins=bins)[0] / ntrials
+        np.save(filename, all_q_kde)
+    if ax is None:
+        fig, ax = plt.subplots(1)
+    lab = 'P(Q, t)'
+    if logscale:
+        im = ax.imshow(all_q_kde, cmap=cmap, aspect='auto',
+                       norm=mpl.colors.LogNorm(vmin=1e-3, vmax=np.nanmax(all_q_kde)),
+                       extent=[0, time_end, -10, 10])
+        
+    else:
+        im = ax.imshow(all_q_kde, cmap=cmap, aspect='auto', extent=[0, time_end, -10, 10])
+    if cbar:
+        ax_pos = ax.get_position()
+        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
+                                ax_pos.width*0.07, ax_pos.height*0.7])
+        plt.colorbar(im, label=lab, cax=ax_cbar)
+
+
+def plot_all_fbp_densities(j_list=[0.1, 0.6, 0.8], b_list=[0., 0.25, 0.5],
+                           ntrials=50000, logscale=True, cmap='binary'):
+    combs = list(itertools.product(j_list, b_list))
+    fig, ax = plt.subplots(ncols=3, nrows=3, figsize=(12, 10))
+    fig.tight_layout()
+    plt.subplots_adjust(wspace=0.2, hspace=0.2)
+    ax = ax.flatten()
+    for i_c, (j, b) in enumerate(combs):
+        plot_density_fbp(noise=0.1, j=j, time_end=5, tau=0.1, dt=1e-2,
+                         alpha=1, n=3, ntrials=ntrials, b=0.5, coh=b,
+                         logscale=logscale, ax=ax[i_c],
+                         cbar=False**(i_c != (len(ax)-1)), fig=fig,
+                         cmap=cmap)
+        ax[i_c].axhline(0, color='r', linestyle='--', alpha=0.4)
+    for i in range(9):
+        if i in [0, 3, 6]:
+            ax[i].set_ylabel('Log-belief ratio, Q')
+        else:
+            ax[i].set_yticks([])
+        if i in [6, 7, 8]:
+            ax[i].set_xlabel('Time (s)')
+        else:
+            ax[i].set_xticks([])
+        if i in [0, 1, 2]:
+            ax[i].set_ylim(-5, 5)
+    fig.savefig(DATA_FOLDER + 'fbp_density_plot.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'fbp_density_plot.svg', dpi=200, bbox_inches='tight')
 
 
 if __name__ == '__main__':
@@ -3173,9 +3730,35 @@ if __name__ == '__main__':
     #                             tol=1e-5, varchange='noise')
     # cyl_simulation(j_list=[0.1, 0.4, 0.8], b_list=np.arange(-1, 1.2, 2e-1),
     #                t_end=100, dt=1e-3)
-    plot_optimal_alpha_vs_j_b(j_list=np.round(np.arange(0., 2.01, 1e-2), 4),
-                              b_list=np.round(np.arange(0., 0.5005, 1e-2), 4), noise=0.2,
-                              n=3)
+    # plot_optimal_alpha_vs_j_b(j_list=np.round(np.arange(0., 2.01, 1e-2), 4),
+    #                           b_list=np.round(np.arange(0., 0.5005, 1e-2), 4), noise=0.2,
+    #                           n=3)
+    # area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1.09864,
+    #                           b=1, n_its=100000, t_end=10, dt=1e-2, tau=0.5,
+    #                           noise=0.2, nboots=10, n=3, load_data=True,
+    #                           filename='pk_kernels_J_b0_big_dJ_moreits_smaller_b.npy')
+    # plot_rt_FBP_ddm_both(drift=.2, noise=0.1, jvals=[0.2, 0.6], 
+    #                      time_end=4, bound=2, tau=0.1, dt=1e-3,
+    #                      alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
+    #                      fig=None, ax=None)
+    # plot_psychophysics_results_together()
+    # plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
+    #                     time_end=2.5, bound=1, tau=0.1, dt=1e-3,
+    #                     alpha=1, n=3, ntrials=7000, b=0.3, tau_ddm=0.1)
+    # plot_rt_FBP_ddm(drift=.4, noise=0.1, j=0.1, 
+    #                 time_end=2.5, bound=1, tau=0.1, dt=1e-3,
+    #                 alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1)
+    # plot_rt_FBP_ddm(drift=.4, noise=0.1, j=0.6, 
+    #                 time_end=2.5, bound=1, tau=0.1, dt=1e-3,
+    #                 alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1)
+    tachometric_vs_coupling(drift=.3, noise=0.3, j_list=[0.1, 0.4, 0.6, 1.],
+                            time_end=5, bound=2, tau=0.1, dt=1e-2,
+                            alpha=1, n=3, ntrials=70000, b=.7, tau_ddm=0.1, nbins=20,
+                            time_eff=0.05)
+    tachometric_vs_coupling(drift=.4, noise=0.25, j_list=[0.1, 0.4, 0.6, 1.],
+                            time_end=5, bound=1, tau=0.1, dt=1e-2,
+                            alpha=1, n=3, ntrials=70000, b=.3, tau_ddm=0.1, nbins=20,
+                            time_eff=0.05)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
