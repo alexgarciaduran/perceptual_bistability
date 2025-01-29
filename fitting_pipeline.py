@@ -272,7 +272,13 @@ class optimization:
         if model == 'MF':
             fun = self.nlh_boltzmann_mf
             assert len(x0) == 4, 'x0 should have 4 values (J, B1, bias, noise)'
-            bounds = Bounds([1e-1, -0.2, -0.2, 0.06], [1, 0.25, 0.25, 0.3])
+            if method != 'BADS':
+                bounds = Bounds([1e-1, -0.2, -0.2, 0.06], [1, 0.25, 0.25, 0.3])
+            if method == 'BADS':
+                lb = [0.01, -.3, -.3, 0.05]
+                ub = [2., 0.3, 0.3, 0.5]
+                plb = [0.2, -0.1, -0.1, 0.1]
+                pub = [1.4, 0.1, 0.1, 0.2]
         if model == 'GS':
             fun = self.nlh_gibbs
             assert len(x0) == 5, 'x0 should have 5 values (J, B1, bias, noise, time_end)'
@@ -293,18 +299,17 @@ class optimization:
             if method != 'BADS':
                 bounds = Bounds([1e-1, -.1, -.1, 0.05, 0], [2., .4, .4, 0.3, 1.5])
             if method == 'BADS':
-                lb = [0.01, -.3, -.3, 0.05, 0.]
-                ub = [2., 0.3, 0.3, 0.5, 1.9]
-                plb = [0.2, -0.1, -0.1, 0.1, 0.3]
-                pub = [1.4, 0.1, 0.1, 0.2, 1.495]
+                lb = [0.01, -.3, -.05, 0.05, 0.]
+                ub = [2., 0.3, 0.05, 0.5, 2]
+                plb = [0.2, -0.1, -0.01, 0.1, 0.6]
+                pub = [1.4, 0.1, 0.01, 0.2, 1.3]
         if method != 'BADS':
             optimizer_0 = scipy.optimize.minimize(fun, x0, method=method,
                                                   bounds=bounds)
         if method == 'BADS':
             print('BADS')
             constraint = lambda x: np.abs(x[:, 1]+x[:, 2]) > 0.3
-            optimizer_0 = BADS(fun, x0, lb, ub, plb, pub,
-                               non_box_cons=constraint).optimize()
+            optimizer_0 = BADS(fun, x0, lb, ub, plb, pub).optimize()  # non_box_cons=constraint
             print(optimizer_0.x)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='trust-constr', bounds=bounds)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='BFGS', bounds=bounds)
@@ -410,7 +415,7 @@ def fit_data(optimizer, plot=True, model='MF', n_iters=200, method='nelder-mead'
         else:
             j0 = np.random.uniform(0.3, 1.4)
         b10 = np.random.uniform(0.05, 0.1)
-        bias0 = np.random.uniform(0.05, 0.1)
+        bias0 = np.random.uniform(-0.05, 0.05)
         noise0 = np.random.uniform(0.1, 0.2)
         if model == 'FBP':
             alpha0 = np.random.uniform(0.1, 1.4)
@@ -645,6 +650,7 @@ def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method=
 
 def fit_subjects(method='BADS', model='FBP', subjects='separated',
                  data_augmen=False, n_init=1):
+    # good sub: s_6
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     if subjects == 'together':
         all_df['subject'] = 'all'
@@ -660,11 +666,12 @@ def fit_subjects(method='BADS', model='FBP', subjects='separated',
         unique_vals = dataframe['pShuffle'].unique()
         dataframe['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
                                     value= [1, 0.5, 0.2])
-        dataframe['confidence'] = transform(np.abs(dataframe.confidence.values))
-        dataframe['stim_str'] = np.abs(dataframe.evidence)
+        dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
+        dataframe['stim_str'] = (dataframe.evidence.values)
         data = dataframe[['coupling', 'confidence', 'stim_str']]
         if data_augmen:
-            data = data_augmentation(data, sigma=0.05, times_augm=40)
+            data = data_augmentation(data, sigma=0.05, times_augm=5,
+                                     minval=0.001, maxval=0.999)
         print(len(data))
         # fig, ax = plt.subplots(ncols=2)
         # sns.lineplot(data, x='coupling', y='confidence', hue='stim_str', ax=ax[0])
