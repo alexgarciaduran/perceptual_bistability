@@ -291,7 +291,7 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
             mean_nod[ind_j, :] = mean_prob_gibbs(j, ax=None, burn_in=burn_in, n_iter=n_iter,
                                                  wsize=wsize, node=node, stim=stim)
             allmeans[ind_j] = np.nanmean(np.abs(mean_nod[ind_j, :]*2-1))
-        im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='seismic_r',
+        im = ax.imshow(np.flipud(mean_nod), aspect='auto', cmap='coolwarm_r',
                        interpolation='none')
         ax.set_yticks(np.arange(0, len(j_list), len(j_list)//2),
                       j_list[np.arange(0, len(j_list), len(j_list)//2)][::-1])
@@ -299,7 +299,7 @@ def plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000, n_iter=1
         ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
                                 ax_pos.width*0.06, ax_pos.height*0.7])
         # ax_cbar.set_title(r'  $\frac{1}{8}\sum_i^8 {x_i}$')
-        plt.colorbar(im, cax=ax_cbar, orientation='vertical').set_label(r'    $<\mathbf{x}^{*}>$', size=16,
+        plt.colorbar(im, cax=ax_cbar, orientation='vertical').set_label(r'    $<\mathbf{y}>$', size=16,
                                                                         labelpad=0.04)
         ax.set_ylabel(r'Coupling $J$')
         ax.set_xlabel('Sample')
@@ -2100,11 +2100,11 @@ if __name__ == '__main__':
     # plot_analytical_prob(data_folder=DATA_FOLDER)
     # save_necker_cubes(offset=np.arange(0.1, 0.55, 0.01))
     # plot_k_vs_mu_analytical(eps=0, stim=0.25, plot_arist=False, plot_cubes=False)
-    plot_duration_dominance_gamma_fit_adaptation(j=0.7, burn_in=1000, n_iter=200000, gamma_adapt=0.1)
+    # plot_duration_dominance_gamma_fit_adaptation(j=0.7, burn_in=1000, n_iter=200000, gamma_adapt=0.1)
     # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
-    # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
-    #                       n_iter=200000, wsize=1, stim=0, j_ex=0.495, f_all=False,
-    #                       theta=return_theta(rows=10, columns=5, layers=2))
+    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
+                         n_iter=11001, wsize=1, stim=0, j_ex=0.495, f_all=True,
+                         theta=THETA)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
     #                       n_iter=10000, wsize=1, stim=0, j_ex=1, f_single=True,
     #                       theta=return_theta(), extralab='cyl')
