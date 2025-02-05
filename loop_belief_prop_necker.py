@@ -3455,9 +3455,10 @@ def plot_rt_FBP_ddm(drift=.5, noise=0.1, j=0.1,
 
 def fokker_planck_1d(j=0.1, alpha=1, b=0, n=3, sigma=0.1,
                      shift_ini=0, t_max=2000, dt=0.01, dx=0.1,
-                     unimodal=False):
+                     unimodal=False, ax=None, cmap='binary', logscale=False,
+                     cbar=False, fig=None):
     # Define parameters
-    x_min, x_max = -20, 20  # Range of x
+    x_min, x_max = -10, 10  # Range of x
     # dx = 0.1               # Space step
     # dt = 0.01              # Time step
     while dt > dx**2/(2*sigma**2):
@@ -3466,33 +3467,34 @@ def fokker_planck_1d(j=0.1, alpha=1, b=0, n=3, sigma=0.1,
         dx = float(input('dx: '))
         dt = float(input('dt: '))
     f = lambda q: n/alpha * np.arctanh(np.tanh(j*alpha)*np.tanh((q*(n-alpha) + b*alpha)/n)) - (q-b)/n
-    
+
     # Create the grid
     x = np.arange(x_min, x_max + dx, dx)
     t = np.arange(0, t_max + dt, dt)
-    
+
     # Initialize probability distribution (e.g., a Gaussian at t=0)
     # P = np.exp(-(x-shift_ini)**2 * 2) / np.sqrt(2 * np.pi)
     if unimodal:
-        P = 0.5 * np.exp(-(x-shift_ini)**2 / (40))
+        P = 0.5 * np.exp(-(x-shift_ini)**2 / (10*sigma**2))
     else:
-        P = 0.5 * np.exp(-(x - 5)**2 / (30)) + 0.5 * np.exp(-(x + 5)**2 / (30))
+        P = 0.5 * np.exp(-(x - 5)**2 / (10)) + 0.5 * np.exp(-(x + 5)**2 / (10))
     P /= P.sum() * dx  # Normalize
-    
+
     # Precompute constants
     D = sigma**2 / 2  # Diffusion coefficient
     nx = len(x)
-    
+
     # Finite difference coefficients
     P_new = np.zeros_like(P)
     Parr = np.zeros((nx, len(t)))
     for i_t, ti in enumerate(t):
         # Compute derivatives
         dP_dx = np.gradient(P, dx)  # First derivative
+        dPf_dx = np.gradient(P*f(x), dx)  # First derivative of (p*f)
         d2P_dx2 = np.gradient(dP_dx, dx)  # Second derivative
         
         # Update using Fokker-Planck equation
-        P_new = P - dt * (f(x) * dP_dx - D * d2P_dx2)
+        P_new = P - dt * (dPf_dx - D * d2P_dx2)
         
         # Enforce boundary conditions (e.g., zero flux)
         P_new[0], P_new[-1] = 0, 0
@@ -3501,22 +3503,21 @@ def fokker_planck_1d(j=0.1, alpha=1, b=0, n=3, sigma=0.1,
         P = np.abs(P_new.copy())
         P /= (P.sum() * dx)  # Re-normalize to ensure total probability is 1
         Parr[:, i_t] = P
-    plt.figure()
-    im = plt.imshow(Parr, aspect='auto', extent=[0, t_max, x_min, x_max], cmap='Reds',
-                    )
-    plt.colorbar(im, label="log P(x, t)")
-    plt.ylabel("x")
-    plt.xlabel("Time (s)")
-    plt.title("Probability Distribution Evolution")
-    plt.show()
-    colormap = pl.cm.Greens(np.linspace(0.3, 1, 6))
-    plt.figure()
-    coef = int(t_max / (6*dt))
-    for i in range(6):
-        plt.plot(x, Parr[:, i*coef], color=colormap[i], label=round(i*coef*dt, 1))
-    plt.legend(frameon=False)
-    plt.xlabel('x')
-    plt.ylabel('P(x, t)')
+    if ax is None:
+        fig, ax = plt.subplots(1)
+    lab = 'P(Q, t)'
+    if logscale:
+        im = ax.imshow(Parr, cmap=cmap, aspect='auto',
+                       norm=mpl.colors.LogNorm(vmin=1e-12, vmax=1),
+                       extent=[0, t_max, -10, 10])
+    else:
+        im = ax.imshow(Parr, cmap=cmap, aspect='auto', extent=[0, t_max, -10, 10],
+                       vmin=0, vmax=np.max(Parr))
+    if cbar:
+        ax_pos = ax.get_position()
+        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.1,
+                                ax_pos.width*0.07, ax_pos.height*0.7])
+        plt.colorbar(im, label=lab, cax=ax_cbar)
 
 
 def plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
@@ -3660,14 +3661,21 @@ def plot_density_fbp(noise=0.1, j=0.1, time_end=2, tau=0.1, dt=1e-2,
 
 
 def plot_all_fbp_densities(j_list=[0.1, 0.6, 0.8], b_list=[0., 0.25, 0.5],
-                           ntrials=50000, logscale=True, cmap='binary'):
+                           ntrials=50000, logscale=True, cmap='binary',
+                           analytical=True):
     combs = list(itertools.product(j_list, b_list))
     fig, ax = plt.subplots(ncols=3, nrows=3, figsize=(12, 10))
     fig.tight_layout()
     plt.subplots_adjust(wspace=0.2, hspace=0.2)
     ax = ax.flatten()
     for i_c, (j, b) in enumerate(combs):
-        plot_density_fbp(noise=0.1, j=j, time_end=5, tau=0.1, dt=1e-2,
+        if analytical:
+            fokker_planck_1d(j=j, alpha=1, b=b, n=3, sigma=0.2,
+                             shift_ini=0, t_max=10, dt=0.001, dx=0.05,
+                             unimodal=True, ax=ax[i_c], cmap=cmap, logscale=logscale,
+                             cbar=False**(i_c != (len(ax)-1)), fig=fig)
+        else:
+            plot_density_fbp(noise=0.1, j=j, time_end=5, tau=0.1, dt=1e-2,
                          alpha=1, n=3, ntrials=ntrials, b=0.5, coh=b,
                          logscale=logscale, ax=ax[i_c],
                          cbar=False**(i_c != (len(ax)-1)), fig=fig,
