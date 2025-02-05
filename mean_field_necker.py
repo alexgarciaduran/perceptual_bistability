@@ -89,6 +89,21 @@ def mean_field_stim(J, num_iter, stim, sigma=1, theta=theta, val_init=None, sxo=
     return vec_time
 
 
+def mean_field_stim_matmul(J, num_iter, stim, sigma=1, theta=theta, val_init=None, sxo=0.):
+    #initialize random state of the cube
+    if val_init is None:
+        vec = np.random.rand(theta.shape[0])
+    else:
+        vec = np.repeat(val_init, theta.shape[0]) + np.random.randn()*sxo
+    vec_time = np.empty((num_iter, theta.shape[0]))
+    vec_time[:] = np.nan
+    vec_time[0, :] = vec
+    for i in range(1, num_iter):
+        vec = gn.sigmoid(2*J*np.matmul(theta, 2*vec-1) + 2*stim)+np.random.randn()*sigma
+        vec_time[i, :] = vec
+    return vec_time
+
+
 def mean_field_neg_stim_back(j, num_iter, stim, theta=theta, val_init=None):
     #initialize random state of the cube
     if val_init is None:
@@ -250,25 +265,25 @@ def find_repulsor(j=0.1, num_iter=20, q_i=0.001, q_f=0.999,
     diff = 1
     neighs = np.sum(theta, axis=1)
     f_a = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
-                          theta=theta, val_init=q_f)[-1, neighs == neigh][0]
+                          theta=theta, val_init=q_f)[-1, neighs == neigh]
     f_b = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
-                          theta=theta, val_init=q_i)[-1, neighs == neigh][0]
+                          theta=theta, val_init=q_i)[-1, neighs == neigh]
     if np.abs(f_a-f_b) < threshold:
         return np.nan
     while diff >= threshold*1e-2:
         c = (q_i+q_f)/2
         f_c = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
-                              theta=theta, val_init=c)[-1, neighs == neigh][0]
+                              theta=theta, val_init=c)[-1, neighs == neigh]
         if np.abs(f_a-f_c) < threshold and np.abs(f_b-f_c) < threshold:
             return np.nan
         if np.abs(f_a-f_c) < threshold:
             q_f = c
             f_a = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
-                                  theta=theta, val_init=q_f)[-1, neighs == neigh][0]
+                                  theta=theta, val_init=q_f)[-1, neighs == neigh]
         elif np.abs(f_b-f_c) < threshold:
             q_i = c
             f_b = mean_field_stim(j, num_iter=num_iter, stim=stim, sigma=0,
-                                  theta=theta, val_init=q_i)[-1, neighs == neigh][0]
+                                  theta=theta, val_init=q_i)[-1, neighs == neigh]
         else:
             return c
         diff = np.abs(q_i-q_f)
@@ -2148,7 +2163,7 @@ def plot_entropy_approximation():
 
 
 def trans_rate_vs_coupling(j_list = np.arange(0.34, 1, 1e-3),
-                           b=0.05, noise=0.1):
+                           b=0.0, noise=0.1):
     xstb = []
     xustb = []
     xstb2 = []
@@ -4437,6 +4452,124 @@ def plot_2d_mean_passage_time(J=2, B=0, sigma=0.1):
     plt.show()
 
 
+def example_dynamics_hierarchical_theta(theta=gn.THETA_HIER):
+    # bifurcation happens at 1/\lambda_max ~ 0.212766
+    j_list = [0.1, 0.1, 0.222]
+    b_list = [0, 0.2, 0]
+    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(6, 4.5))
+    ax = ax.flatten()
+    i = 0
+    times = [50, 50, 50]
+    time_min = [0, 0, 0]
+    dt_list = [1e-3, 1e-3, 1e-3]
+    noise_list = [0.05, 0.05, 0.05]
+    convlist = [True, True, False]
+    tau = 0.008
+    for j, b, t_end, dt, noise, t_min, conv in zip(j_list, b_list, times, dt_list,
+                                              noise_list, time_min, convlist):
+        time, vec, _ = \
+            solution_mf_sdo_euler_OU_noise(j, b, theta=theta, noise=noise, tau=tau,
+                                           time_end=t_end, dt=dt, tau_n=tau)
+        vals = vec[time >= t_min, -1].T
+        x = time[:len(vals)][::100]
+        y = vals[::100]
+        ax[i+3].axhline(0.5, color='k', alpha=0.4, linestyle='--')
+        ax[i].axhline(0.5, color='k', alpha=0.4, linestyle='--')
+        line = colored_line(x, y, y, ax[i], linewidth=2, cmap='coolwarm_r', 
+                            norm=plt.Normalize(vmin=0,vmax=1))
+        for it in range(8):
+            ax[i+3].plot(time[10:][::300], vec[10:, it][::300])
+        ax[i].spines['right'].set_visible(False)
+        ax[i].spines['top'].set_visible(False)
+        ax[i].set_ylim(0, 1)
+        ax[i+3].set_ylim(0, 1)
+        ax[i].set_xlim(0, t_end)
+        ax[i+3].spines['right'].set_visible(False)
+        ax[i+3].spines['top'].set_visible(False)
+        i += 1
+    ax[4].set_xlabel('Time (s)')
+    ax[0].set_ylabel('Percept')
+    ax[3].set_ylabel(r'$q_i(x=1)$')
+    fig.tight_layout()
+    ax_pos = ax[2].get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.13, ax_pos.y0+ax_pos.height*0.2,
+                            ax_pos.width*0.1, ax_pos.height*0.7])
+    fig.colorbar(line, cax=ax_cbar, pad=0.3, aspect=7.5).set_label(label=r'$q(x=1)$', size=14) # add a color legend
+    fig.savefig(DATA_FOLDER + 'example_dynamics_hierarchical.png', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'example_dynamics_hierarchical.svg', dpi=300, bbox_inches='tight')
+
+
+def eigenvalue_matrix_desc_asc(varlist=np.arange(0, 2.01, 0.01)):
+    alist = dlist = varlist
+    combs = list(itertools.product(alist, dlist))
+    eigvals = np.zeros((len(varlist), len(varlist)))
+    c = 0
+    for a, d in combs:
+        theta = gn.theta_hierarchical(a=a, d=d)
+        jcrit = 1/np.max(np.real(np.linalg.eigvals(theta)))
+        i, j = np.unravel_index(c, eigvals.shape)
+        eigvals[i, j] = jcrit
+        c += 1
+    # eigvals_mat = np.array(eigvals).reshape(len(varlist), len(varlist))
+    plt.figure()
+    im = plt.imshow(eigvals, cmap='Oranges',
+                    extent=[np.min(varlist), np.max(varlist), np.min(varlist),
+                            np.max(varlist)])
+    plt.colorbar(im, label=r'$J^*$')
+    plt.xlabel('Descending loops')
+    plt.ylabel('Ascending loops')
+
+
+def bifurcation_hierarchical(b=0, varchange='descending'):
+    if varchange == 'coupling':
+        lab = 'Coupling, J'
+        d = 1
+        a = 1
+        var_list=np.arange(0, 0.5, 5e-3)
+    if varchange == 'ascending':
+        lab = 'Ascending coupling'
+        d = 1
+        j = 0.2
+        var_list=np.arange(0, 2, 0.01)
+    if varchange == 'descending':
+        lab = 'Descending coupling'
+        a = 1
+        j = 0.2
+        var_list=np.arange(0, 2, 0.01)
+    i0 = 0
+    i1 = 1
+    v0 = []
+    v1 = []
+    v_unstable = []
+    for i_j, var in enumerate(var_list):
+        if varchange == 'coupling':
+            j = var
+        if varchange == 'ascending':
+            a = var
+        if varchange == 'descending':
+            d = var
+        theta = gn.theta_hierarchical(a=a, d=d)
+        vals_0 = mean_field_stim_matmul(j, 400, stim=b, sigma=0, theta=theta, val_init=i0, sxo=0.1)
+        vals_1 = mean_field_stim_matmul(j, 400, stim=b, sigma=0, theta=theta, val_init=i1, sxo=0.1)
+        v1.append(vals_1[-1][-1])
+        # qb = find_repulsor(j=j, num_iter=50, q_i=0.0,
+        #                    q_f=1, stim=b, threshold=1e-3,
+        #                    theta=theta, neigh=8)
+        qb = np.nan
+        if np.abs(vals_1[-1][-1] - vals_0[-1][-1]) < 1e-7:
+            v0.append(np.nan)
+            v_unstable.append(np.nan)
+        else:
+            v0.append(vals_0[-1][-1])
+            v_unstable.append(qb)
+    plt.figure()
+    plt.plot(var_list, v0, color='k')
+    plt.plot(var_list, v1, color='k')
+    plt.plot(var_list, v_unstable, color='k', linestyle='--')
+    plt.xlabel(lab)
+    plt.ylabel('Percept')
+
+
 if __name__ == '__main__':
     # mf_dyn_sys_circle(n_iters=100, b=0.)
     # plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
@@ -4504,8 +4637,12 @@ if __name__ == '__main__':
     # psychometric_mf_analytical(t_dur=1000000, noiselist=[0.05, 0.08, 0.1, 0.15],
     #                            j_list=np.arange(0.6, 1.3, 0.1),
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
-    calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
-                                  tol_stop=1e-30)
+    # calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
+    #                               tol_stop=1e-30)
+    # example_dynamics_hierarchical_theta(theta=gn.THETA_HIER)
+    bifurcation_hierarchical(b=0, varchange='descending')
+    bifurcation_hierarchical(b=0, varchange='ascending')
+    bifurcation_hierarchical(b=0, varchange='coupling')
     # calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
     # boltzmann_2d_change_sigma(j=0.5, b=0)
