@@ -79,6 +79,22 @@ THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [0, 0, 1, 0, 1, 0, 0, 1], [0, 0, 0, 1, 0, 1, 1, 0]])
 
 
+THETA_HIER = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0, 1], [1, 0, 0, 1, 0, 1, 0, 0, 1],
+                       [1, 0, 0, 1, 0, 0, 1, 0, 1], [0, 1, 1, 0, 0, 0, 0, 1, 1],
+                       [1, 0, 0, 0, 0, 1, 1, 0, 1], [0, 1, 0, 0, 1, 0, 0, 1, 1],
+                       [0, 0, 1, 0, 1, 0, 0, 1, 1], [0, 0, 0, 1, 0, 1, 1, 0, 1],
+                       [1, 1, 1, 1, 1, 1, 1, 1, 0]])
+
+
+def theta_hierarchical(a=1, d=1):
+    theta = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0, d], [1, 0, 0, 1, 0, 1, 0, 0, d],
+                      [1, 0, 0, 1, 0, 0, 1, 0, d], [0, 1, 1, 0, 0, 0, 0, 1, d],
+                      [1, 0, 0, 0, 0, 1, 1, 0, d], [0, 1, 0, 0, 1, 0, 0, 1, d],
+                      [0, 0, 1, 0, 1, 0, 0, 1, d], [0, 0, 0, 1, 0, 1, 1, 0, d],
+                      [a, a, a, a, a, a, a, a, 0]])
+    return theta
+
+
 def theta_circle(j_star=1):
     return np.array([[0 ,1 ,0 ,0 ,j_star ,0 ,0 ,1], [1, 0, 1, 0, 0, j_star, 0, 0],
                     [0, 1, 0, 1, 0, 0, j_star, 0], [0, 0, 1, 0, 1, 0, 0, j_star],
@@ -2086,11 +2102,135 @@ def markov_chain_monja(lam=0.8, n_iters=100):
     fig.tight_layout()
     # plt.colorbar(im2, ax=ax[1], label='State')
 
+def necker_spiking_neuron(j=0.7, stim=0, n_iter=12501, burn_in=1,
+                          ron=0.0001, roff=0.00005, dt=1e-2, go=2.5):
+    init_state = np.random.choice([-1, 1], 8)
+    states_mat = gibbs_samp_necker(init_state=init_state,
+                                   burn_in=burn_in, n_iter=n_iter, j=j,
+                                   stim=stim)
+    l1, g1, o1, l2, g2, o2 = 0, 0, 0, 0, 0, 0
+    l_all_1 = [l1]
+    g_all_1 = [g1]
+    o_all_1 = [o1]
+    l_all_2 = [l2]
+    g_all_2 = [g2]
+    o_all_2 = [o2]
+    time = np.arange(n_iter-burn_in)
+    weight_mat = np.ones((8))/8
+    for i_t, t in enumerate(time[:-1]):
+        l1 = l1 + dt*(ron*(1+np.exp(-l1)) - roff*(1+np.exp(l1)) + np.dot(weight_mat, states_mat[i_t] == 1))
+        g1 = g1 + dt*(ron*(1+np.exp(-g1)) - roff*(1+np.exp(g1)) + go*o_all_1[i_t])
+        l2 = l2 + dt*(ron*(1+np.exp(-l2)) - roff*(1+np.exp(l2)) + np.dot(weight_mat, states_mat[i_t] == -1))
+        g2 = g2 + dt*(ron*(1+np.exp(-g2)) - roff*(1+np.exp(g2)) + go*o_all_2[i_t])
+        o1 = 1 if l1 > (g1+go/2) else 0
+        o2 = 1 if l2 > (g2+go/2) else 0
+        l_all_1.append(l1)
+        g_all_1.append(g1)
+        o_all_1.append(o1)
+        l_all_2.append(l2)
+        g_all_2.append(g2)
+        o_all_2.append(o2)
+    spikes = np.row_stack((o_all_1, o_all_2))
+    fig, ax = plt.subplots(nrows=3, figsize=(14, 10))
+    ax[2].plot(time*dt, l_all_1, color='b', linewidth=2.5)
+    ax[2].plot(time*dt, g_all_1, linestyle='--', linewidth=2.5, color='b')
+    ax[2].plot(time*dt, l_all_2, linewidth=2.5, color='r')
+    ax[2].plot(time*dt, g_all_2, linestyle='--', linewidth=2.5, color='r')
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='L'),
+                      Line2D([0], [0], color='k', lw=2, linestyle='--', label='G'),
+                      Line2D([0], [0], color='r', lw=2, label='1'),
+                      Line2D([0], [0], color='b', lw=2, label='2')]
+    ax[2].legend(handles=legendelements, frameon=False)
+    ax[2].set_xlim([np.min(time)*dt, np.max(time)*dt])
+    ax[1].imshow(spikes, cmap='binary', aspect='auto', interpolation='none',
+                 extent=[np.min(time*dt), np.max(time*dt), 1, 2])
+    ax[1].set_yticks([1.25, 1.75], [1, 2])
+    ax[1].set_ylabel('Neuron index \n spikes')
+    ax[2].set_ylabel('L, G')
+    ax[2].set_xlabel('Time (s)')
+    im = ax[0].imshow(states_mat.T, aspect='auto', cmap='coolwarm_r', interpolation='none',
+                      extent=[np.min(time*dt), np.max(time*dt), 1, 9])
+    ax[0].set_ylabel('Sampling \n input neuron index')
+    fig.tight_layout()
+    ax_pos = ax[0].get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.01, ax_pos.y0+ax_pos.height*0.1,
+                            ax_pos.width*0.03, ax_pos.height*0.7])
+    plt.colorbar(im, cax=ax_cbar, label='')
+    fig.savefig(DATA_FOLDER + 'gibbs_sampling_spiking_network.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'gibbs_sampling_spiking_network.svg', dpi=200, bbox_inches='tight')
+
+
+def necker_spiking_n_indep_neurons(j=0.7, stim=0, n_iter=12501, burn_in=1,
+                                   ron=0.001, roff=0.0005, dt=1e-2, go=2.5,
+                                   nneurons=4, noise=0.2):
+    init_state = np.random.choice([-1, 1], 8)
+    states_mat = gibbs_samp_necker(init_state=init_state,
+                                   burn_in=burn_in, n_iter=n_iter, j=j,
+                                   stim=stim)
+    time = np.arange(n_iter-burn_in)
+    spikes_all_1 = np.zeros(len(time))
+    spikes_all_2 = np.zeros(len(time))
+    for n in range(nneurons):
+        l1, g1, o1, l2, g2, o2 = 0, 0, 0, 0, 0, 0
+        weight_mat = np.ones((8))/8  #  + np.random.randn(8)*0.1
+        l_all_1 = [l1]
+        g_all_1 = [g1]
+        o_all_1 = [o1]
+        l_all_2 = [l2]
+        g_all_2 = [g2]
+        o_all_2 = [o2]
+        for i_t, t in enumerate(time[:-1]):
+            l1 = l1 + dt*(ron*(1+np.exp(-l1)) - roff*(1+np.exp(l1)) + np.dot(weight_mat, states_mat[i_t] == 1)) + np.random.randn()*np.sqrt(dt)*noise
+            g1 = g1 + dt*(ron*(1+np.exp(-g1)) - roff*(1+np.exp(g1)) + go*o_all_1[i_t]) + np.random.randn()*np.sqrt(dt)*noise
+            l2 = l2 + dt*(ron*(1+np.exp(-l2)) - roff*(1+np.exp(l2)) + np.dot(weight_mat, states_mat[i_t] == -1)) + np.random.randn()*np.sqrt(dt)*noise
+            g2 = g2 + dt*(ron*(1+np.exp(-g2)) - roff*(1+np.exp(g2)) + go*o_all_2[i_t]) + np.random.randn()*np.sqrt(dt)*noise
+            o1 = 1 if l1 > (g1+go/2) else 0
+            o2 = 1 if l2 > (g2+go/2) else 0
+            l_all_1.append(l1)
+            g_all_1.append(g1)
+            o_all_1.append(o1)
+            l_all_2.append(l2)
+            g_all_2.append(g2)
+            o_all_2.append(o2)
+        spikes_all_1 = np.row_stack((spikes_all_1, o_all_1))
+        spikes_all_2 = np.row_stack((spikes_all_2, o_all_2))
+    spikes = np.row_stack((spikes_all_1[1:], spikes_all_2[1:]))
+    fig, ax = plt.subplots(nrows=3, figsize=(14, 10))
+    ax[2].plot(time[::10]*dt, l_all_1[::10], color='b', linewidth=2.5)
+    ax[2].plot(time[::10]*dt, g_all_1[::10], linestyle='--', linewidth=2.5, color='b', alpha=0.5)
+    ax[2].plot(time[::10]*dt, l_all_2[::10], linewidth=2.5, color='r')
+    ax[2].plot(time[::10]*dt, g_all_2[::10], linestyle='--', linewidth=2.5, color='r', alpha=0.5)
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='L'),
+                      Line2D([0], [0], color='k', lw=2, linestyle='--', label='G', alpha=0.5),
+                      Line2D([0], [0], color='r', lw=2, label='1'),
+                      Line2D([0], [0], color='b', lw=2, label='2')]
+    ax[2].legend(handles=legendelements, frameon=False)
+    ax[2].set_xlim([np.min(time)*dt, np.max(time)*dt])
+    ax[1].imshow(spikes, cmap='binary', aspect='auto', interpolation='none',
+                 extent=[np.min(time*dt), np.max(time*dt), 1, nneurons*2])
+    # ax[1].set_yticks([1.25, 1.75], [1, 2])
+    ax[1].set_ylabel('Neuron index \n spikes')
+    ax[2].set_ylabel('L, G')
+    ax[2].set_xlabel('Time (s)')
+    im = ax[0].imshow(states_mat.T, aspect='auto', cmap='coolwarm_r', interpolation='none',
+                      extent=[np.min(time*dt), np.max(time*dt), 1, 9])
+    ax[0].set_ylabel('Sampling \n input neuron index')
+    fig.tight_layout()
+    ax_pos = ax[0].get_position()
+    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.01, ax_pos.y0+ax_pos.height*0.1,
+                            ax_pos.width*0.03, ax_pos.height*0.7])
+    plt.colorbar(im, cax=ax_cbar, label='')
+    fig.savefig(DATA_FOLDER + 'gibbs_sampling_spiking_network_nneurons.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'gibbs_sampling_spiking_network_nneurons.svg', dpi=200, bbox_inches='tight')
+
 
 if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
     C = np.load(c_data, allow_pickle=True)
+    necker_spiking_n_indep_neurons(j=0.7, stim=0, n_iter=12501, burn_in=1,
+                                   ron=0.0001, roff=0.00005, dt=1e-2, go=1.7,
+                                   nneurons=4, noise=0.2)
     # plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False,
     #               save_fig=False, n_fig=0)
     # hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
@@ -2102,9 +2242,9 @@ if __name__ == '__main__':
     # plot_k_vs_mu_analytical(eps=0, stim=0.25, plot_arist=False, plot_cubes=False)
     # plot_duration_dominance_gamma_fit_adaptation(j=0.7, burn_in=1000, n_iter=200000, gamma_adapt=0.1)
     # plot_necker_cubes(ax=None, mu=None, bot=True, offset=0.6, factor=1.5, msize=4)
-    plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
-                         n_iter=11001, wsize=1, stim=0, j_ex=0.495, f_all=True,
-                         theta=THETA)
+    # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
+    #                      n_iter=11001, wsize=1, stim=0, j_ex=0.495, f_all=True,
+    #                      theta=THETA)
     # plot_mean_prob_gibbs(j_list=np.arange(0, 1.05, 0.05), burn_in=1000,
     #                       n_iter=10000, wsize=1, stim=0, j_ex=1, f_single=True,
     #                       theta=return_theta(), extralab='cyl')
