@@ -318,27 +318,27 @@ plt.xlabel('Input pixel index')
 
 #%% Sample across time
 # change across time
-# fig, ax = plt.subplots(ncols=1)
-# # ax = ax.flatten()
-# numiters = 10000
-# visible, hidden_probs, weights = rbm.gibbs_sampling(test_data[:100], k=1)  # train_data
-# c = 0
-# # ax[c].imshow(test_data[0].reshape(7, 5), cmap='binary', aspect='auto')
-# preds = np.zeros((numiters, 100))
-# # ax[0].set_title('Test data')
-# for i in range(numiters):
-#     predictions = classifier.predict(hidden_probs)
-#     # if i % 50 == 0 and i != 0:
-#     #     c += 1
-#     #     ax[c].imshow(visible[0].reshape(7, 5), cmap='binary', aspect='auto')
-#     #     ax[c].set_title('Pred: ' + str(predictions[0]))
-#     visible, hidden_probs, weights = rbm.gibbs_sampling(visible, k=1, adapt=0)
-#     preds[i] = predictions[:100]
-# ax.plot(preds)
-# ax.set_xlabel('Iteration')
-# ax.set_ylabel('Predicted number')
-# fig, ax = plt.subplots(ncols=1)
-# ax.plot(preds[:, 19])
+fig, ax = plt.subplots(ncols=1)
+# ax = ax.flatten()
+numiters = 10000
+visible, hidden_probs, weights = rbm.gibbs_sampling(test_data[:100], k=1)  # train_data
+c = 0
+# ax[c].imshow(test_data[0].reshape(7, 5), cmap='binary', aspect='auto')
+preds = np.zeros((numiters, 100))
+# ax[0].set_title('Test data')
+for i in range(numiters):
+    predictions = classifier.predict(hidden_probs)
+    # if i % 50 == 0 and i != 0:
+    #     c += 1
+    #     ax[c].imshow(visible[0].reshape(7, 5), cmap='binary', aspect='auto')
+    #     ax[c].set_title('Pred: ' + str(predictions[0]))
+    visible, hidden_probs, weights = rbm.gibbs_sampling(visible, k=1, adapt=0)
+    preds[i] = predictions[:100]
+ax.plot(preds)
+ax.set_xlabel('Iteration')
+ax.set_ylabel('Predicted number')
+fig, ax = plt.subplots(ncols=1)
+ax.plot(preds[:, 19])
 #%% rates-FPCD
 # change across time
 fig, ax = plt.subplots(ncols=1)
