@@ -4514,7 +4514,7 @@ def eigenvalue_matrix_desc_asc(varlist=np.arange(0, 2.01, 0.01)):
     plt.figure()
     im = plt.imshow(eigvals, cmap='Oranges',
                     extent=[np.min(varlist), np.max(varlist), np.min(varlist),
-                            np.max(varlist)])
+                            np.max(varlist)], vmin=0)
     plt.colorbar(im, label=r'$J^*$')
     plt.xlabel('Descending loops')
     plt.ylabel('Ascending loops')
