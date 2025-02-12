@@ -25,7 +25,7 @@ class ring:
         ring.ndots = n_dots
         ring.eps = epsilon
     
-    def compute_likelihood_vector(self, s, z, s_t=[1]):
+    def compute_likelihood_vector(self, s, z, s_t=np.ones(6)):
         """
         Compute the likelihood P(s_i = 1 | s, z) for all N positions.
         
@@ -49,11 +49,11 @@ class ring:
     
             # Compute contributions from motion influences
             if s[i_prev] == 1 and z[i_prev] == 1:  # CW influence from left
-                p_s[i] += p_CW
+                p_s[i] += p_CW*(1-epsilon)
             if s[i_next] == 1 and z[i_next] == -1:  # CCW influence from right
-                p_s[i] += p_CCW
+                p_s[i] += p_CCW*(1-epsilon)
             if s[i] == 1 and z[i] == 0:  # Stationary influence
-                p_s[i] += p_NM
+                p_s[i] += p_NM*(1-epsilon)
     
             # Apply inclusion-exclusion correction
             if s[i_prev] == 1 and s[i_next] == 1 and z[i_prev] == 1 and z[i_next] == -1:
@@ -64,11 +64,16 @@ class ring:
                 p_s[i] += -p_CCW * p_NM
             if s[i_prev] == 1 and s[i] == 1 and s[i_next] == 1 and z[i_prev] == 1 and z[i] == 0 and z[i_next] == -1:
                 p_s[i] += p_CW * p_CCW * p_NM
-    
+            if s[i_prev] == 0 and z[i_prev] == 1:
+                p_s[i] *= (1-p)
+            if s[i_next] == 0 and z[i_next] == -1:
+                p_s[i] *= (1-p)
+
         # Ensure probabilities remain valid
         p_s = np.clip(p_s, 0, 1)
-        # p_s = [p_s[i] if s_t[i] else 1-p_s[i] for i in range(N)]
+        p_s = [p_s[i] if s_t[i] else 1-p_s[i] for i in range(N)]
         return p_s
+
 
     def exp_kernel(self, tau=0.8):
         x = np.arange(self.ndots)
@@ -126,7 +131,7 @@ class ring:
     
                     # Get the CPT value for p(s_i | s, z)
                     p_s_given_z = self.compute_likelihood_vector(s, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
-    
+
                     # Add q_{i-1} · q_{i+1} · p(s_i | s, z)
                     likelihood_contribution += np.log(p_s_given_z + 1e-10)*q_z_p*q_z_n
                     # print(likelihood_contribution)
@@ -141,6 +146,7 @@ class ring:
         - 'CCW': counterclockwise rotation (note that it is 100% bistable)
         - 'NM': not moving
         - 'combination': start with CW and then jump to NM
+        - '2combination': start with CW and then jump to NM and jump again to CW
         """
         s_init = np.repeat(np.array(s_init).reshape(-1, 1), self.ndots//len(s_init), axis=1).T.flatten()
         if true == 'NM':
@@ -149,14 +155,22 @@ class ring:
             roll = 1
         if true == 'CCW':
             roll = -1
-        if true == 'combination':
+        if 'combination' in true:
             s = s_init
             sv = [s]
             for t in range(n_iters-1):
-                if t < n_iters // 2:
-                    roll = 1
-                else:
-                    roll = 0
+                if true == '2combination':
+                    if t < n_iters // 3:
+                        roll = 1
+                    if n_iters //3 <= t < 2*n_iters // 3:
+                        roll = 0
+                    else:
+                        roll = 1
+                if true == 'combination':
+                    if t < n_iters // 2:
+                        roll = 1
+                    else:
+                        roll = 0
                 s = np.roll(s, roll)
                 sv.append(s)
         else:
@@ -169,7 +183,7 @@ class ring:
 
 
     def mean_field_ring(self, j=2, n_iters=50, nstates=3, b=np.zeros(3),
-                        true='NM', plot=False):
+                        true='NM', plot=False, noise=0):
         # bifurcation at j ~ 0.554
         kernel = self.exp_kernel()
         n_dots = self.ndots
@@ -191,12 +205,12 @@ class ring:
         z_arr = np.zeros((n_dots, n_iters))
         z_arr[:, 0] = z
         for t in range(1, n_iters):
-            stim_likelihood = self.compute_likelihood_vector(stim[t-1], z, stim[t])
+            stim_likelihood = self.compute_likelihood_vector(stim[t-1], z, np.ones(n_dots))
             s = np.array([np.random.choice([0, 1], p=[1-stim_likelihood[a], stim_likelihood[a]]) for a in range(n_dots)])
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
             likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t])
-            var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + np.ones(3)*b + likelihood)  # np.random.randn(6, 3)
+            var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood + np.random.randn(n_dots, nstates)*noise)
             q_mf = (var_m1.T / np.sum(var_m1, axis=1)).T
             q_mf_arr[:, :, t] = q_mf
             z = [np.random.choice([-1, 0, 1], p=q_mf[a]) for a in range(n_dots)]
@@ -205,7 +219,7 @@ class ring:
         print('Percept: ' + str(['CCW', 'NM', 'CW'][int(np.mean(z_arr.T[-1]))+1]))
         if plot:
             plt.figure()
-            colors = ['b', 'k', 'r']
+            colors = ['r', 'k', 'b']
             labels = ['CCW', 'NM', 'CW']
             for i in range(nstates):
                 plt.plot(q_mf_arr[0, i, :], color=colors[i], label=labels[i])
@@ -232,17 +246,82 @@ class ring:
             ax[0].set_position([ax_0_pos.x0, ax_0_pos.y0, ax_1_pos.width, ax_1_pos.height])
             ax = plt.figure().add_subplot(projection='3d')
             lab1 = 'NM'
-            lab2 = 'CW'
+            lab2 = 'CCW'
             for i in range(n_dots):
                 ax.plot(np.arange(n_iters), q_mf_arr[i, 0, :], q_mf_arr[i, 1, :],
                         color='k', label=lab1)
                 ax.plot(np.arange(n_iters), q_mf_arr[i, 0, :], q_mf_arr[i, 2, :],
-                        color='r', label=lab2)
+                        color='b', label=lab2)
                 if i == 0:
                     ax.legend()
             ax.set_xlabel('Iterations')
-            ax.set_zlabel('q(z_i = CW), q(z_i = NM)')
-            ax.set_ylabel('q(z_i = CCW)')
+            ax.set_zlabel('q(z_i = CCW), q(z_i = NM)')
+            ax.set_ylabel('q(z_i = CW)')
+
+
+    def mean_field_sde(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=3, b=np.zeros(3),
+                       true='NM', noise=0.2, plot=False, stim_weight=1):
+        t_end = n_iters*dt
+        kernel = self.exp_kernel()
+        n_dots = self.ndots
+        s = [1, 0]
+        stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+        s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
+        # q_mf = np.repeat(np.array([[0.25], [0.3], [0.2]]), 6, axis=-1).T
+        # q_mf = np.ones((n_dots, nstates))/3 + np.random.randn(n_dots, 3)*0.05
+        q_mf = np.random.rand(n_dots, nstates)
+        q_mf = (q_mf.T / np.sum(q_mf, axis=1)).T
+        z = [np.random.choice([-1, 0, 1], p=q_mf[a]) for a in range(n_dots)]
+        j_mat = circulant(kernel)*j
+        np.fill_diagonal(j_mat, 0)
+        q_mf_arr = np.zeros((n_dots, nstates, n_iters))
+        q_mf_arr[:, :, 0] = q_mf
+        s_arr = np.zeros((n_dots, n_iters))
+        s_arr[:, 0] = s
+        z_arr = np.zeros((n_dots, n_iters))
+        z_arr[:, 0] = z
+        for t in range(1, n_iters):
+            # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
+            # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
+            likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t])
+            var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood*stim_weight)
+            q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
+            q_mf_arr[:, :, t] = q_mf
+        if plot:
+            time = np.arange(0, t_end, dt)
+            fig, ax = plt.subplots(nrows=4, figsize=(8, 12))
+            for i_a, a in enumerate(ax.flatten()):
+                a.spines['top'].set_visible(False)
+                a.spines['right'].set_visible(False)
+                if i_a < 3:
+                    a.set_xticks([])
+                if i_a > 0:
+                    a.set_ylim(-0.15, 1.15)
+            ax[3].set_xlabel('Time (s)')
+            ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none')
+            ax[0].set_ylabel('Stimulus')
+            ax[1].set_ylabel('q(z_i=CW)')
+            ax[2].set_ylabel('q(z_i=NM)')
+            ax[3].set_ylabel('q(z_i=CCW)')
+            ax[1].axhline(1/3, color='r', alpha=0.4, linestyle='--', linewidth=2)
+            ax[1].text(t_end+70*dt, 1/3-0.02, '1/3', color='r')
+            ax[1].text(t_end+70*dt, 1/2+0.02, '1/2', color='r')
+            ax[1].axhline(1/2, color='r', alpha=0.4, linestyle=':', linewidth=2)
+            ax[2].axhline(1/3, color='k', alpha=0.4, linestyle='--', linewidth=2)
+            ax[3].axhline(1/3, color='b', alpha=0.4, linestyle='--', linewidth=2)
+            ax[3].axhline(1/2, color='b', alpha=0.4, linestyle=':', linewidth=2)
+            if true == '2combination':
+                title = r'$CW \longrightarrow NM \longrightarrow CW$'
+            if true == 'combination':
+                title = r'$CW \longrightarrow NM$'
+            if true not in ['combination', '2combination']:
+                title = true
+            ax[0].set_title(title)
+            for dot in range(n_dots):
+                ax[1].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5)
+                ax[2].plot(time, q_mf_arr[dot, 1, :], color='k', linewidth=2.5)
+                ax[3].plot(time, q_mf_arr[dot, 2, :], color='b', linewidth=2.5)
+
 
     def compute_likelihood_contribution_BP(self, s, messages, stim_i):
         z_states = [-1, 0, 1]
@@ -320,7 +399,7 @@ class ring:
             s_arr[:, t] = s
         if plot:
             plt.figure()
-            colors = ['b', 'k', 'r']
+            colors = ['r', 'k', 'b']
             labels = ['CCW', 'NM', 'CW']
             for i in range(nstates):
                 plt.plot(q_mf_arr[0, i, :], color=colors[i], label=labels[i])
@@ -347,21 +426,25 @@ class ring:
             ax[0].set_position([ax_0_pos.x0, ax_0_pos.y0, ax_1_pos.width, ax_1_pos.height])
             ax = plt.figure().add_subplot(projection='3d')
             lab1 = 'NM'
-            lab2 = 'CW'
+            lab2 = 'CCW'
             for i in range(n_dots):
                 ax.plot(np.arange(n_iters), q_mf_arr[i, 0, :], q_mf_arr[i, 1, :],
                         color='k', label=lab1)
                 ax.plot(np.arange(n_iters), q_mf_arr[i, 0, :], q_mf_arr[i, 2, :],
-                        color='r', label=lab2)
+                        color='b', label=lab2)
                 if i == 0:
                     ax.legend()
             ax.set_xlabel('Iterations')
-            ax.set_zlabel('q(z_i = CW), q(z_i = NM)')
-            ax.set_ylabel('q(z_i = CCW)')
+            ax.set_zlabel('q(z_i = CCW), q(z_i = NM)')
+            ax.set_ylabel('q(z_i = CW)')
+            
 
             
 
 if __name__ == '__main__':
-    # ring().mean_field_ring(true='combination', j=0.1, b=[0., 0., 0.], plot=True)
-    ring(epsilon=0.001).belief_propagation(plot=True, true='combination', j=0.1)
+    # ring(epsilon=0.001).mean_field_ring(true='2combination', j=0.8, b=[0., 0., 0.], plot=True,
+    #                                     n_iters=300, noise=0)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.2,
+                                       true='2combination', noise=0., plot=True)
+    # ring(epsilon=0.01).belief_propagation(plot=True, true='combination', j=0.7)
 
