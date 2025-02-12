@@ -473,7 +473,7 @@ class ring:
             stim_weight = 1
         if os.path.exists(path):
             q_eps_jlist = np.load(path)
-            j_list=np.arange(0, 1, 0.01)
+            j_list=np.arange(0, 2, 0.02)
             epslist=[0.1, 0.01, 0.001]
             if true == 'none':
                 epslist = [0.001]
