@@ -462,7 +462,7 @@ class ring:
         #               [0.3, 0.3, 0.4], [0.4, 0.3, 0.3], [0.8, 0.1, 0.1],
         #               [0.1, 0.1, 0.8], [0.1, 0.2, 0.7], [0.7, 0.2, 0.1],
         #               [0.2, 0.1, 0.7], [0.7, 0.1, 0.2]]
-        path = DATA_FOLDER + 'fixed_points_eps_jlist_'+ true + '_random_ini_conds.npy'
+        path = DATA_FOLDER + 'fixed_points_eps_jlist_'+ true + '_random_ini_conds_z_1.npy'
         ini_conds = np.repeat(None, 50)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if true == 'none':
@@ -489,13 +489,18 @@ class ring:
                                                    true=true, noise=0., plot=False,
                                                    ini_cond=ini_conds[initialization],
                                                    stim_weight=stim_weight)
-                        q_mf = np.round(np.nanmean(q_mf, axis=0), 4)
+                        # q_mf = np.round(np.nanmean(q_mf, axis=0), 8)
+                        q_mf = np.round(q_mf[0], 8)
                         q_initializations[initialization, :] = q_mf
                     q_jlist[i_j, :] = q_initializations
                 q_eps_jlist[i_e] = q_jlist
             np.save(path, q_eps_jlist)
         # j_crit = 1/np.sum(self.exp_kernel())
-        fig, ax = plt.subplots(nrows=len(epslist), ncols=3, figsize=(9, 10))
+        if len(epslist) == 1:
+            figsize = (9, 5)
+        else:
+            figsize = (9, 10)
+        fig, ax = plt.subplots(nrows=len(epslist), ncols=3, figsize=figsize)
         colors = ['r', 'k', 'b']
         for i_a, a in enumerate(ax.flatten()):
             a.spines['top'].set_visible(False)
@@ -515,24 +520,37 @@ class ring:
         for i_e, eps in enumerate(epslist):
             for state in range(3):
                 vals, idx = np.unique(q_eps_jlist[i_e, :, :, state], return_index=True)
-                ax[i_e, state].plot(j_list[idx // len(ini_conds)], vals, color=colors[state],
-                                    linewidth=2, marker='o', linestyle='', markersize=2)
-        ax[2, 0].set_xlabel('Coupling, J')
-        ax[2, 2].set_xlabel('Coupling, J')
-        ax[2, 1].set_xlabel('Coupling, J')
-        ax[0, 0].set_ylabel(r'q(z_i), $\varepsilon$ = {}'.format(epslist[0]))
-        ax[1, 0].set_ylabel(r'q(z_i), $\varepsilon$ = {}'.format(epslist[1]))
-        ax[2, 0].set_ylabel(r'q(z_i), $\varepsilon$ = {}'.format(epslist[2]))
-        ax[0, 0].set_title('q(z_i=CW)', fontsize=17)
-        ax[0, 1].set_title('Stim: ' + true + '\nq(z_i=NM)', fontsize=17)
-        ax[0, 2].set_title('q(z_i=CCW)', fontsize=17)
+                if len(epslist) == 1:
+                    ax[state].plot(j_list[idx // len(ini_conds)], vals, color=colors[state],
+                                   linewidth=2, marker='o', linestyle='', markersize=2)
+                else:
+                    ax[i_e, state].plot(j_list[idx // len(ini_conds)], vals, color=colors[state],
+                                        linewidth=2, marker='o', linestyle='', markersize=2)
+        if len(epslist) == 1:
+            ax[0].set_xlabel('Coupling, J')
+            ax[2].set_xlabel('Coupling, J')
+            ax[1].set_xlabel('Coupling, J')
+            ax[0].set_ylabel(r'q(z_i), $\varepsilon$ = {}'.format(epslist[0]))
+            ax[0].set_title('q(z_i=CW)', fontsize=17)
+            ax[1].set_title('Stim: ' + true + '\nq(z_i=NM)', fontsize=17)
+            ax[2].set_title('q(z_i=CCW)', fontsize=17)
+        else:
+            ax[2, 0].set_xlabel('Coupling, J')
+            ax[2, 2].set_xlabel('Coupling, J')
+            ax[2, 1].set_xlabel('Coupling, J')
+            ax[0, 0].set_ylabel(r'q(z_i), $\varepsilon$ = {}'.format(epslist[0]))
+            ax[1, 0].set_ylabel(r'q(z_i), $\varepsilon$ = {}'.format(epslist[1]))
+            ax[2, 0].set_ylabel(r'q(z_i), $\varepsilon$ = {}'.format(epslist[2]))
+            ax[0, 0].set_title('q(z_i=CW)', fontsize=17)
+            ax[0, 1].set_title('Stim: ' + true + '\nq(z_i=NM)', fontsize=17)
+            ax[0, 2].set_title('q(z_i=CCW)', fontsize=17)
         fig.tight_layout()
 
 
 if __name__ == '__main__':
     # ring(epsilon=0.001).mean_field_ring(true='2combination', j=0.8, b=[0., 0., 0.], plot=True,
     #                                     n_iters=300, noise=0)
-    ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='none')
+    ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='NM')
     # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.2,
     #                                    true='2combination', noise=0., plot=True)
     # ring(epsilon=0.01).belief_propagation(plot=True, true='combination', j=0.7)
