@@ -23,7 +23,8 @@ import os
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from sklearn import linear_model
-
+import warnings
+warnings.filterwarnings("ignore")
 
 THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [1, 0, 0, 1, 0, 0, 1, 0], [0, 1, 1, 0, 0, 0, 0, 1],
@@ -217,10 +218,14 @@ class optimization:
 
 
     def nlh_boltzmann_mf(self, pars, n=3.92, eps=1e-3, conts_distro=1e-2,
-                         penalization_nan=1e3):
-        jpar, b1par, biaspar, noise = pars
+                         penalization_nan=0):
         coupling, stim_str, confidence = self.coupling, self.stim_str, self.confidence
-        j = jpar*np.array(coupling)
+        if len(pars) == 4:
+            jpar, b1par, biaspar, noise = pars
+            j = jpar*np.array(coupling)
+        else:
+            jpar, jbiaspar, b1par, biaspar, noise = pars
+            j = jpar*np.array(coupling)+jbiaspar
         b = b1par*np.array(stim_str)+biaspar
 
         q = np.arange(0, 1, 1e-2)  # Define q outside the loop, shape (100,)
@@ -235,7 +240,7 @@ class optimization:
 
         # Vectorized potential (pot_mf_i) for all i and all q
         # pot_mf = (q*q) / 2 - log_term / (4* n * j)  # Shape: (500, 100)
-        pot_mf = np.where(j > 1e-6, (q*q) / 2 - log_term / (4* n * j),
+        pot_mf = np.where(j > 1e-4, (q*q) / 2 - log_term / (4* n * j),
                           q*q/2 - q*sigmoid(2*b))
 
         # Apply Boltzmann distribution function over the potential values (vectorized)
@@ -247,7 +252,7 @@ class optimization:
         j = np.array(j).reshape(-1)  # Reshape j to shape (500, 1)
         b = np.array(b).reshape(-1)  # Reshape b to shape (500, 1)
         pot_mf_fun = lambda q: np.where(
-                            j > 1e-6,
+                            j > 1e-4,
                             q*q/2 - np.log(1+np.exp(2*n*(j*(2*q-1))+b*2))/(4*n*j), 
                             q*q/2 - q*sigmoid(2*b))
         bmann_distro_log = lambda potential: -2*np.array(potential) / (noise*noise)
@@ -255,12 +260,8 @@ class optimization:
         log_likelihood[np.isnan(log_likelihood)] = -penalization_nan
         nlh_mf = -np.sum(log_likelihood)
         # nlh_mf = -np.nansum(bmann_distro_log(pot_mf_fun(confidence)) - np.log(norm_cte))
-        log_prior = (
-            np.log(scipy.stats.norm.pdf(jpar, 1/3.92, 1)) +  # J1 prior
-            np.log(scipy.stats.norm.pdf(b1par, 0.5, 1)) +  # B1 prior
-            np.log(scipy.stats.norm.pdf(biaspar, 0., 0.6))+  # B0 prior
-            np.log(scipy.stats.uniform.pdf(noise, 0.1, 0.5)+1e-15))  # Uniform prior for sigma (positive only)
-        return np.max((nlh_mf, 0)) - log_prior*len(j)
+        
+        return np.max((nlh_mf, 0))  #  - log_prior(pars)*len(j)
 
 
     def nlh_gibbs(self, pars, n=3.92, eps=1e-3, conts_distro=1e-2):
@@ -322,17 +323,27 @@ class optimization:
 
     def optimize_nlh(self, x0, model='MF', method='nelder-mead'):
         # effective_n = np.max(np.linalg.eigvals(self.theta))
-        assert model in ['MF', 'LBP', 'FBP', 'GS'], 'Model should be either GS, MF, LBP or FBP'
+        assert model in ['MF', 'MF5', 'LBP', 'FBP', 'GS'], 'Model should be either GS, MF, MF5, LBP or FBP'
         if model == 'MF':
             fun = self.nlh_boltzmann_mf
             assert len(x0) == 4, 'x0 should have 4 values (J, B1, bias, noise)'
             if method != 'BADS':
-                bounds = Bounds([1e-1, -0.2, -0.2, 0.06], [1, 0.25, 0.25, 0.3])
+                bounds = Bounds([0., -0.2, -.7, 0.1], [2, 2, .8, 0.6])
             if method == 'BADS':
-                lb = [0.01, -0.2, -0.8, 0.1]
+                lb = [0., -0.2, -0.8, 0.1]
                 ub = [2., 2, 0.8, 0.8]
-                plb = [0.18, 0.1, -0.6, 0.15]
-                pub = [1.2, 0.9, 0.6, 0.3]
+                plb = [0.1, 0.1, -0.6, 0.12]
+                pub = [1.4, 0.9, 0.6, 0.4]
+        if model == 'MF5':
+            fun = self.nlh_boltzmann_mf
+            assert len(x0) == 5, 'x0 should have 5 values (J1, Jbias, B1, bias, noise)'
+            if method != 'BADS':
+                bounds = Bounds([0., -0.4, -0.2, -.7, 0.1], [2, 0.6, 2, .8, 0.6])
+            if method == 'BADS':
+                lb = [0, -0.4, -0.2, -0.8, 0.1]
+                ub = [2., 0.4, 2, 0.8, 0.8]
+                plb = [0.1, -0.2, 0.1, -0.6, 0.12]
+                pub = [1.4, 0.2, 0.9, 0.6, 0.4]
         if model == 'GS':
             fun = self.nlh_gibbs
             assert len(x0) == 4, 'x0 should have 4 values (J, B1, bias, time_end)'
@@ -368,15 +379,16 @@ class optimization:
                                                   bounds=bounds)
         if method == 'BADS':
             print('BADS')
-            constraint = lambda x: np.abs(x[:, 1]+x[:, 2]) > 0.6
+            # constraint = lambda x: np.abs(x[:, 1]+x[:, 2]) > 0.6
             optimizer_0 = BADS(fun, x0, lb, ub, plb, pub).optimize()  # non_box_cons=constraint
             print(optimizer_0.x)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='trust-constr', bounds=bounds)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='BFGS', bounds=bounds)
         # optimizer_0 = scipy.optimize.minimize(fun, x0, method='COBYLA', bounds=bounds)
         pars = optimizer_0.x
-        if optimizer_0.fval == 0:
-            pars = self.optimize_nlh(x0=x0, model=model, method=method)
+        if method == 'BADS':
+            if optimizer_0.fval == 0:
+                pars = self.optimize_nlh(x0=x0, model=model, method=method)
         # if (np.abs(pars - lb) < 1e-3).any() or (np.abs(pars - ub) < 1e-3).any():
         #     pars = self.optimize_nlh(x0=x0, model=model, method=method)
         return pars
@@ -464,7 +476,7 @@ def transform(x, minval=0.5, maxval=0.9999):
 
 
 def fit_data(optimizer, plot=True, model='MF', n_iters=200, method='nelder-mead'):
-    if model == 'FBP':
+    if model == 'FBP' or model == 'MF5':
         numpars = 5
     else:
         numpars = 4
@@ -475,10 +487,10 @@ def fit_data(optimizer, plot=True, model='MF', n_iters=200, method='nelder-mead'
     for k in range(n_iters):
         if k % 2 == 0:
             print(str(round(k/n_iters*100, 2)) + ' %')
-        j0 = np.random.uniform(0.6, 1.1)
-        b10 = np.random.uniform(0.2, 0.4)
-        bias0 = np.random.uniform(-0.15, 0.15)
-        noise0 = np.random.uniform(0.15, 0.3)
+        j0 = np.random.uniform(0.2, 0.6)
+        b10 = np.random.uniform(0.4, 0.6)
+        bias0 = np.random.uniform(0, 0.3)
+        noise0 = np.random.uniform(0.3, 0.4)
         if model == 'FBP':
             alpha0 = np.random.uniform(0.1, 1.4)
             x0 = [j0, b10, bias0, noise0, alpha0]
@@ -487,6 +499,9 @@ def fit_data(optimizer, plot=True, model='MF', n_iters=200, method='nelder-mead'
             x0 = [j0, b10, bias0, time]
         if model in ['LBP', 'MF']:
             x0 = [j0, b10, bias0, noise0]
+        if model == 'MF5':
+            jbias0 = np.random.uniform(0.1, 0.2)
+            x0 = [j0, jbias0, b10, bias0, noise0]
         pars_array_0[k, :] = x0
         # df_simul = simulate_data(data_orig, x0, optimizer, 50)
         # optimizer.confidence = df_simul.confidence
@@ -574,8 +589,12 @@ def simulate_FBP(pars, n_iters,
             alpha = 1
     if model == 'MF':
         jpar, b1par, biaspar, noise = pars
+    if model == 'MF5':
+        jpar, jbiaspar, b1par, biaspar, noise = pars
     b = stimulus*b1par + biaspar
     j = coupling*jpar
+    if model == 'MF5':
+        j += jbiaspar
     if recovery:
         folder = 'param_recovery'
     else:
@@ -630,13 +649,17 @@ def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER,
 
 def simulate_subjects(sv_folder=SV_FOLDER,
                       model='MF', resimulate=True, extra='',
-                      mcmc=True):
+                      mcmc=True, method='BADS'):
+    if model in ['MF5', 'FBP']:
+        numpars = 5
+    else:
+        numpars = 4
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
     accuracies = []
     accuracies_model = []
     pright_model = []
-    parmat = np.zeros((len(subjects), 4))
+    parmat = np.zeros((len(subjects), numpars))
     conf_model = []
     if mcmc:
         path = SV_FOLDER + extra + 'MCMC_fitted_MF_parameters.npy'
@@ -663,8 +686,12 @@ def simulate_subjects(sv_folder=SV_FOLDER,
         # data = data_augmentation(data, sigma=0.05, times_augm=4,
         #                          minval=0.001)
         print(len(data))
+        if method == 'BADS':
+            appendix = '_BADS'
+        else:
+            appendix = ''
         if not mcmc:
-            pars = np.load(sv_folder + '/parameters_MF_BADS' + sub + extra + '.npy')
+            pars = np.load(sv_folder + '/parameters_' + model + appendix + sub + extra + '.npy')
         else:
             pars = params[:, i_s]
         print(pars)
@@ -710,40 +737,46 @@ def simulate_subjects(sv_folder=SV_FOLDER,
             a.set_title(labs[i_a])
             a.set_ylim(0, 1)
         fig.tight_layout()
-        fig.savefig(SV_FOLDER + 'ind_simuls/sims_'+sub+extra+'_MF.png', dpi=100, bbox_inches='tight')
-        fig.savefig(SV_FOLDER + 'ind_simuls/sims_'+sub+extra+'_MF.svg', dpi=100, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + 'ind_simuls/sims_'+sub+extra+'_'+ model+'.png', dpi=100, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + 'ind_simuls/sims_'+sub+extra+'_'+ model+'.svg', dpi=100, bbox_inches='tight')
         plt.close(fig)
-    fig2, ax2 = plt.subplots(ncols=4, nrows=3, figsize=(16, 14))
+    fig2, ax2 = plt.subplots(ncols=numpars, nrows=3, figsize=(16, 14))
     ax2 = ax2.flatten()
-    labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha'][:4]
+    labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha'][:numpars]
+    if model == 'MF5':
+        labels = ['Coupling slope, J1', 'Coupling bias, J0', 'Stimulus weight, B1', 'Bias, B0', 'noise']
     for i_a, a in enumerate(ax2):
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
-        if i_a < 4:
+        if i_a < numpars:
             var = pright_model
             lab = 'p(right)'
-        if i_a >= 4 < 8:
+        if i_a >= numpars < 2*numpars:
             var = accuracies_model
             lab = 'p(correct)'
-        if i_a >= 8:
+        if i_a >= 2*numpars:
             var = conf_model
             lab = 'Confidence'
         # corr = np.corrcoef(var, parmat[:, i_a % numpars])[0, 1]
-        corr = scipy.stats.pearsonr(var, parmat[:, i_a % 4])
-        if i_a == 7:
+        corr = scipy.stats.pearsonr(var, parmat[:, i_a % numpars])
+        if i_a == (2*numpars-1):
             cmap = mpl.cm.Oranges
-            norm = mpl.colors.Normalize(vmin=0, vmax=0.8)
-            color = cmap(norm(parmat[:, 1]))
-            a.scatter(parmat[:, i_a % 4], var, c=color, marker='o')
+            if model == 'MF5':
+                c_index = 2
+            else:
+                c_index = 1
+            norm = mpl.colors.Normalize(vmin=0, vmax=np.max(parmat[:, c_index]))
+            color = cmap(norm(parmat[:, c_index]))
+            a.scatter(parmat[:, i_a % numpars], var, c=color, marker='o')
         else:
             color = 'k'
-            a.plot(parmat[:, i_a % 4], var, color=color, marker='o', linestyle='')
+            a.plot(parmat[:, i_a % numpars], var, color=color, marker='o', linestyle='')
         a.set_ylabel(lab)
-        a.set_xlabel(labels[i_a % 4])
+        a.set_xlabel(labels[i_a % numpars])
         a.set_title(rf'$\rho =$ {round(corr.statistic, 3)}, p={corr.pvalue:.1e}')
     fig2.tight_layout()
-    fig2.savefig(SV_FOLDER + extra + 'correlations_fitted_parameters_with_model.png', dpi=200, bbox_inches='tight')
-    fig2.savefig(SV_FOLDER + extra + 'correlations_fitted_parameters_with_model.svg', dpi=200, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + extra + model +'correlations_fitted_parameters_with_model.png', dpi=200, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + extra + model +'correlations_fitted_parameters_with_model.svg', dpi=200, bbox_inches='tight')
 
 
 def parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
@@ -848,7 +881,7 @@ def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method=
     ax2.set_ylabel('Inferred parameters', fontsize=14)
 
 
-def fit_subjects(method='BADS', model='GS', subjects='separated',
+def fit_subjects(method='BADS', model='MF', subjects='separated',
                  data_augmen=False, n_init=1, extra=''):
     # good sub: s_6
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
@@ -924,6 +957,8 @@ def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
         conf.append(np.mean(np.abs(dataframe.confidence)))
     fig, ax = plt.subplots(ncols=numpars, figsize=(15,5))
     labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha'][:numpars]
+    if model == 'MF5':
+        labels = ['Coupling slope, J1', 'Coupling bias, J0', 'Stimulus weight, B1', 'Bias, B0', 'noise']
     for i in range(numpars):
         ax[i].spines['top'].set_visible(False)
         ax[i].spines['right'].set_visible(False)
@@ -951,10 +986,10 @@ def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
             lab = 'Confidence'
         # corr = np.corrcoef(var, parmat[:, i_a % numpars])[0, 1]
         corr = scipy.stats.pearsonr(var, parmat[:, i_a % numpars])
-        if i_a == 7:
+        if i_a == 2*numpars-1:
             cmap = mpl.cm.Oranges
-            norm = mpl.colors.Normalize(vmin=0, vmax=0.8)
-            color = cmap(norm(parmat[:, 1]))
+            norm = mpl.colors.Normalize(vmin=0, vmax=np.max(parmat[:, 2]))
+            color = cmap(norm(parmat[:, 2]))
             a.scatter(parmat[:, i_a % numpars], var, c=color, marker='o')
         else:
             color = 'k'
@@ -978,10 +1013,10 @@ def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
         a.set_xlabel(xlabs[i_a])
         a.set_ylabel(ylabs[i_a])
     for i_s, stim in enumerate(stim_list):
-        ax3[0].plot(parmat[:, 1]*stim, pright, color=colormap[i_s], marker='o', linestyle='')
-        ax3[1].plot(parmat[:, 1]*stim, accuracies, color=colormap[i_s], marker='o', linestyle='')
-        ax3[2].plot(parmat[:, 1]*stim+parmat[:, 2], pright, color=colormap[i_s], marker='o', linestyle='')
-        ax3[3].plot(parmat[:, 1]*stim+parmat[:, 2], accuracies, color=colormap[i_s], marker='o', linestyle='')
+        ax3[0].plot(parmat[:, 2]*stim, pright, color=colormap[i_s], marker='o', linestyle='')
+        ax3[1].plot(parmat[:, 2]*stim, accuracies, color=colormap[i_s], marker='o', linestyle='')
+        ax3[2].plot(parmat[:, 2]*stim+parmat[:, 3], pright, color=colormap[i_s], marker='o', linestyle='')
+        ax3[3].plot(parmat[:, 2]*stim+parmat[:, 3], accuracies, color=colormap[i_s], marker='o', linestyle='')
     fig3.tight_layout()
     fig3.savefig(SV_FOLDER + 'biases_modulation_fitted_params.png', dpi=200, bbox_inches='tight')
     fig3.savefig(SV_FOLDER + 'biases_modulation_fitted_params.svg', dpi=200, bbox_inches='tight')
@@ -990,8 +1025,12 @@ def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
     corrmat[corrmat > 0.99] = np.nan
     im = ax.imshow(corrmat, cmap='coolwarm', vmin=-0.5, vmax=0.5)
     plt.colorbar(im, ax=ax, label='correlation')
-    ax.set_yticks(np.arange(4), ['J', 'B1', 'B0', 'N'])
-    ax.set_xticks(np.arange(4), ['J', 'B1', 'B0', 'N'])
+    
+    labs = ['J', 'B1', 'B0', 'N', 'A'][:numpars]
+    if model == 'MF5':
+        labs = ['J1', 'J0', 'B1', 'B0', 'N']    
+    ax.set_yticks(np.arange(numpars), labs)
+    ax.set_xticks(np.arange(numpars), labs)
     fig4, ax4 = plt.subplots(ncols=4, figsize=(16, 4.5))
     for i_a, a in enumerate(ax4):
         a.spines['right'].set_visible(False)
@@ -1039,7 +1078,7 @@ def compute_j_crit(j_list=np.arange(0., 1.005, 0.01),
     return first_j
 
 
-def plot_density(num_iter=100):
+def plot_density(num_iter=100, extra='', method='BADS', model='MF'):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
     state = []
@@ -1053,7 +1092,11 @@ def plot_density(num_iter=100):
                                     value= [1., 0.3, 0.]) 
         dataframe['confidence'] = dataframe.confidence.values
         dataframe['stim_str'] = (dataframe.evidence.values)
-        pars = np.load(SV_FOLDER + '/parameters_MF_BADS' + sub + '.npy')
+        if method == 'BADS':
+            appendix = '_BADS'
+        else:
+            appendix = ''
+        pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '.npy')
         b_eff = dataframe.stim_str.values*pars[1]+pars[2]
         j_eff = dataframe.coupling.values*pars[0]
         jstar = jstar + list(j_eff)
@@ -1087,9 +1130,14 @@ def plot_density(num_iter=100):
     ax.set_ylabel('J = (1-Shuffling)*J_1')
 
 
-def plot_regression_weights(sv_folder=SV_FOLDER, load=True):
+def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='BADS'):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
+    modeln = 'MF'
+    if method == 'BADS':
+        appendix = '_BADS'
+    else:
+        appendix = ''
     if not load:
         data_orig = pd.DataFrame()
         data_model_null = pd.DataFrame()
@@ -1104,10 +1152,10 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True):
             dataframe['stim_str'] = (dataframe.evidence.values)
             dataframe['stim_ev_cong'] = dataframe.response.values*dataframe.stim_str.values
             data = dataframe[['coupling', 'confidence', 'stim_str', 'stim_ev_cong', 'response']]
-            pars = np.load(sv_folder + '/parameters_MF_BADS' + sub + extra + '.npy')
+            pars = np.load(sv_folder + '/parameters_'+modeln + appendix + sub + extra + '.npy')
             df_null = simulate_FBP(pars, 400,
                                    data.stim_str.values, data.coupling.values,
-                                   sv_folder=SV_FOLDER, n_iter=sub, model='MF',
+                                   sv_folder=SV_FOLDER, n_iter=sub, model=modeln,
                                    recovery=False, resimulate=False, extra=extra)
             df_null['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
                                                                value= [1., 0.3, 0.]) 
@@ -1120,10 +1168,10 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True):
             dataframe['stim_ev_cong'] = dataframe.response.values*dataframe.stim_str.values
             data = dataframe[['coupling', 'confidence', 'stim_str', 'stim_ev_cong', 'response']]
             data_orig = pd.concat((data_orig, data))
-            pars = np.load(sv_folder + '/parameters_MF_BADS' + sub + extra + '.npy')
+            pars = np.load(sv_folder + '/parameters_'+model + appendix + sub + extra + '.npy')
             df_no_null = simulate_FBP(pars, 400,
                                       data.stim_str.values, data.coupling.values,
-                                      sv_folder=SV_FOLDER, n_iter=sub, model='MF',
+                                      sv_folder=SV_FOLDER, n_iter=sub, model=model,
                                       recovery=False, resimulate=False, extra=extra)
             df_no_null['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
                                                                    value= [1., 0.3, 0.]) 
@@ -1132,12 +1180,12 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True):
             datframe['abs_confidence'] = np.abs(datframe.confidence-0.5)*2
             datframe['subject'] = all_df.subject
         data_orig.to_csv(sv_folder + 'simulated_data' + '/df_orig.csv')
-        data_model_orig.to_csv(sv_folder + 'simulated_data' + '/df_simul_MF_orig.csv')
-        data_model_null.to_csv(sv_folder + 'simulated_data' + '/df_simul_MF_null_model.csv')
+        data_model_orig.to_csv(sv_folder + 'simulated_data' + '/df_simul_'+model+'_orig.csv')
+        data_model_null.to_csv(sv_folder + 'simulated_data' + '/df_simul_'+modeln+'_null_model.csv')
     else:
         data_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_orig.csv')
-        data_model_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_MF_orig.csv')
-        data_model_null = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_MF_null_model.csv')
+        data_model_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+model+'_orig.csv')
+        data_model_null = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+modeln+'_null_model.csv')
     # md_orig = smf.mixedlm("abs_confidence ~ coupling*stim_str",
     #                       data_orig.dropna(), groups="subject")
     # md_orig = md_orig.fit()
@@ -1185,6 +1233,8 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True):
     xlabs = ['Data', 'Model', 'Null']
     ylabs = ['Intercept', 'Coupling', 'Stim.', 'Coupling:stim']
     for j in range(4):
+        ax[j].spines['right'].set_visible(False)
+        ax[j].spines['top'].set_visible(False)
         sns.boxplot([weights_o[j], weights_model_o[j], weights_model_null[j]], ax=ax[j])
         ax[j].set_ylabel(ylabs[j])
         ax[j].set_xticks([0, 1, 2], xlabs, rotation=45)
@@ -1220,9 +1270,48 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True):
                        marker='o', color=['tab:blue', 'tab:orange', 'tab:green'][t], linestyle='',
                        markersize=5, markeredgewidth=1, markeredgecolor='grey')
     fig.tight_layout()
-    scipy.stats.ttest_ind(weights_o[3],  weights_model_o[3])
-    scipy.stats.ttest_ind(weights_model_null[3],  weights_model_o[3])
-    scipy.stats.ttest_ind(weights_o[3],  weights_model_null[3])
+    pvals_o = []
+    pvals_fm = []
+    pvals_null = []
+    for wo, wfm, wnull in zip(weights_o, weights_model_o, weights_model_null):
+        pvals_o.append(stars_pval(scipy.stats.ttest_1samp(wo, 0).pvalue))
+        pvals_fm.append(stars_pval(scipy.stats.ttest_1samp(wfm, 0).pvalue))
+        pvals_null.append(stars_pval(scipy.stats.ttest_1samp(wnull, 0).pvalue))
+    h_o = np.max(weights_o, axis=1)
+    h_fm = np.max(weights_model_o, axis=1)
+    h_null = np.max(weights_model_null, axis=1)
+    for a in range(4):
+        ax[a].text(0, h_o[a]+0.1, f"{pvals_o[a]}", ha='center', va='bottom', color='k',
+                   fontsize=14)
+        ax[a].text(1, h_fm[a]+0.1, f"{pvals_fm[a]}", ha='center', va='bottom', color='k',
+                   fontsize=14)
+        ax[a].text(2, h_null[a]+0.1, f"{pvals_null[a]}", ha='center', va='bottom', color='k',
+                   fontsize=14)
+        x1, x2 = [0, 1]
+        p = stars_pval(scipy.stats.ttest_ind(weights_o[a],  weights_model_o[a]).pvalue)
+        y, h, col = max(map(max, np.column_stack((weights_o[a],
+                                                  weights_model_o[a]))))+0.6, 0.1, 'k'
+        ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+        ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
+                   fontsize=14)
+        p = stars_pval(scipy.stats.ttest_ind(weights_o[a],  weights_model_null[a]).pvalue)
+        x1, x2 = [0, 2]
+        y, h, col = max(map(max, np.column_stack((weights_o[a],
+                                                  weights_model_null[a]))))+0.6, 0.6, 'k'
+        ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+        ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
+                   fontsize=14)
+
+
+def stars_pval(pval):
+    s = 'ns'
+    if pval < 0.01 and pval >= 0.001:
+        s = '*'
+    if pval < 0.001 and pval >= 0.0001:
+        s = '**'
+    if pval < 0.0001:
+        s = '***'
+    return s
 
 
 def p_corr_vs_noise(n_trials=2000, n_iters=300, noiselist=np.arange(0.1, 0.525, 0.025),
@@ -1336,15 +1425,36 @@ def plot_noise_vs_b_accuracy(n_trials=2000, n_iters=300, noiselist=np.arange(0.1
     fig.tight_layout()
 
 
+def log_prior(pars):
+    # if prior is added, worse fits may happen, but better params distros (kind of forced?)
+    if len(pars) == 4:
+        jpar, b1par, biaspar, noise = pars
+        lp = (np.log(scipy.stats.norm.pdf(jpar, 1/3.92/2, 1)+1e-12) +  # J1 prior
+                np.log(scipy.stats.norm.pdf(b1par, 0.5, 1.)+1e-12) +  # B1 prior
+                np.log(scipy.stats.norm.pdf(biaspar, 0., 0.8)+1e-12)+  # B0 prior
+                np.log(scipy.stats.uniform.pdf(noise, 0.1, 0.5)+1e-12))  # Uniform prior for sigma (positive only)
+    else:
+        jpar, jbiaspar, b1par, biaspar, noise = pars
+        lp = (np.log(scipy.stats.norm.pdf(jpar, 1/3.92/2, 1)+1e-12) +  # J1 prior
+                np.log(scipy.stats.norm.pdf(jbiaspar, 0., 0.4)+1e-12) + # JBias
+                np.log(scipy.stats.norm.pdf(b1par, 0.5, 1.)+1e-12) +  # B1 prior
+                np.log(scipy.stats.norm.pdf(biaspar, 0., 0.8)+1e-12)+  # B0 prior
+                np.log(scipy.stats.uniform.pdf(noise, 0.1, 0.5)+1e-12))  # Uniform prior for sigma (positive only)
+    return lp
+
+
 def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
-                                   log_posterior=True):
+                                   model='MF', bic=True,
+                                   plot_all=False, method='nelder-mead'):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
     llh_all = np.zeros((3, len(subjects)))
     for i_e, extra in enumerate(['', 'null']):
         if mcmc:
-            path = SV_FOLDER + extra + 'MCMC_fitted_MF_parameters.npy'
+            path = SV_FOLDER + extra + 'MCMC_fitted_'+model+'_parameters.npy'
             params = np.load(path)
+        if extra == 'null':
+            model = 'MF'
         for i_s, sub in enumerate(subjects):
             # print(sub)
             dataframe = all_df.copy().loc[all_df['subject'] == sub]
@@ -1361,43 +1471,58 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
             if mcmc:
                 pars = params[:, i_s]
             if not mcmc:
-                pars = np.load(sv_folder + '/parameters_MF_BADS' + sub + extra + '.npy')
-            llh = optimization(data=data, n_iters=10).nlh_boltzmann_mf(pars=pars)
-            if not log_posterior:
-                llh += len(dataframe)*(
-                    np.log(scipy.stats.norm.pdf(pars[0], 1/3.92, 1)) +  # J1 prior
-                    np.log(scipy.stats.norm.pdf(pars[1], 0.5, 1)) +  # B1 prior
-                    np.log(scipy.stats.norm.pdf(pars[2], 0., 0.6))+  # B0 prior
-                    np.log(scipy.stats.uniform.pdf(pars[3], 0.1, 0.5)+1e-15))  # Uniform prior for sigma (positive only)
-            llh_all[i_e, i_s] = llh
+                if method == 'BADS':
+                    appendix = '_BADS'
+                else:
+                    appendix = ''
+                pars = np.load(sv_folder + '/parameters_'+model+ appendix+ sub + extra + '.npy')
+            # negative log likelihood
+            nllh = optimization(data=data, n_iters=10).nlh_boltzmann_mf(pars=pars)
+            if bic:
+                numpars = 5 if model == 'MF5' else 4
+                nllh = numpars*np.log(len(dataframe))+2*(nllh)  # +log_prior(pars)*len(dataframe))
+            llh_all[i_e, i_s] = nllh
     llh_all[2] = llh_all[1]-llh_all[0]
+    print('Average \Delta BIC (Null-Full):')
+    print(np.mean(llh_all[2]))
     fig, ax = plt.subplots(1)
-    ax.boxplot(llh_all.T)
+    if plot_all:
+        ax.boxplot(llh_all.T)
+        ax.set_xticks([1, 2, 3], ['Full', 'Null', 'Null-Full'], rotation=45)
+    else:
+        ax.boxplot(llh_all[2])
     ax.axhline(0, linestyle='--', color='k', alpha=0.5)
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
     for i_s in range(len(subjects)):
         jitter = np.random.randn(3)*0.03
-        ax.plot([1+jitter[0], 2+jitter[1]], [llh_all[0, i_s], llh_all[1, i_s]],
-                 color='gray', alpha=0.4)
-        ax.plot([1+jitter[0], 2+jitter[1]], [llh_all[0, i_s], llh_all[1, i_s]],
-                 color='k', marker='o', linestyle='', markersize=4, alpha=0.6)
-        ax.plot([1+jitter[0], 2+jitter[1], 3+jitter[2]],
-                [llh_all[0, i_s], llh_all[1, i_s], llh_all[2, i_s]],
-                 color='k', marker='o', linestyle='', markersize=4, alpha=0.6)
-    if log_posterior:
-        ax.set_ylabel('Negative log-posterior')
+        if plot_all:
+            ax.plot([1+jitter[0], 2+jitter[1]], [llh_all[0, i_s], llh_all[1, i_s]],
+                     color='gray', alpha=0.4)
+            ax.plot([1+jitter[0], 2+jitter[1]], [llh_all[0, i_s], llh_all[1, i_s]],
+                     color='k', marker='o', linestyle='', markersize=4, alpha=0.6)
+            ax.plot([1+jitter[0], 2+jitter[1], 3+jitter[2]],
+                    [llh_all[0, i_s], llh_all[1, i_s], llh_all[2, i_s]],
+                     color='k', marker='o', linestyle='', markersize=4, alpha=0.6)
+        else:
+            ax.plot([1+jitter[0]], [llh_all[2, i_s]],
+                     color='k', marker='o', linestyle='', markersize=4, alpha=0.6)
+    if bic:
+        ax.set_ylabel(r'$\Delta BIC$')
     else:
         ax.set_ylabel('Negative log-likelihood')
-    ax.set_xticks([1, 2, 3], ['Full', 'Null', 'Null-Full'], rotation=45)
     p = scipy.stats.ttest_ind(llh_all[0], llh_all[1]).pvalue
     x1, x2 = 1, 2
-    y, h, col = max(map(max, llh_all)) + 150, 80, 'k'
-    ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
-    ax.text((x1+x2)*.5, y+h, f"p = {p:.2e}", ha='center', va='bottom', color=col)
-    ax.set_ylim(np.min((np.min(llh_all[2])-200, -10)), y+200)
     p = scipy.stats.ttest_1samp(llh_all[2], popmean=0).pvalue
-    ax.text(3, np.max(llh_all[2])+50, f"p = {p:.2e}", ha='center', va='bottom', color=col)
+    if plot_all:
+        y, h, col = max(map(max, llh_all)) + 150, 80, 'k'
+        ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+        ax.text((x1+x2)*.5, y+h, f"p = {p:.2e}", ha='center', va='bottom', color=col)
+        ax.set_ylim(np.min((np.min(llh_all[2])-200, -10)), y+200)
+        ax.text(3, np.max(llh_all[2])+50, f"p = {p:.2e}", ha='center', va='bottom', color=col)
+    else:
+        ax.text(1, np.max(llh_all[2])+10, f"p = {p:.2e}", ha='center', va='bottom', color='k')
+        ax.set_xticks([1], [r'$BIC(Null)-BIC(Full)$'])
     fig.tight_layout()
 
 
@@ -1499,15 +1624,19 @@ def plot_mcmc_individual(states, vals, dists, burn_in):
 
 
 if __name__ == '__main__':
+    opt_algorithm = 'Powell'  # Powell, nelder-mead, BADS, L-BFGS-B
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
-    fit_subjects(method='BADS', model='GS', data_augmen=False, n_init=1, extra='')
-    fit_subjects(method='BADS', model='GS', data_augmen=False, n_init=1, extra='null')
-    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=True)
-    # plot_density(num_iter=100)
-    # simulate_subjects(sv_folder=SV_FOLDER, model='MF', resimulate=True, extra='')
-    # simulate_subjects(sv_folder=SV_FOLDER, model='MF', resimulate=True, extra='null', mcmc=True)
-    # plot_regression_weights(sv_folder=SV_FOLDER, load=False)
-    # plot_fitted_params(sv_folder=SV_FOLDER, model='MF', method='BADS',
+    # fit_subjects(method=opt_algorithm, model='MF5', data_augmen=False, n_init=1, extra='')
+    # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=1, extra='null')
+    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm)
+    plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
+    plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
+    # simulate_subjects(sv_folder=SV_FOLDER, model='MF5', resimulate=False,
+    #                   extra='', mcmc=False, method=opt_algorithm)
+    # simulate_subjects(sv_folder=SV_FOLDER, model='MF', resimulate=False,
+    #                   extra='null', mcmc=True, method=opt_algorithm)
+    plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5')
+    # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                     subjects='separated')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
@@ -1523,48 +1652,3 @@ if __name__ == '__main__':
     # parameter_recovery(n_pars=50, sv_folder=SV_FOLDER,
     #                     theta=THETA, n_iters=2500, n_trials=500,
     #                     model='LBP', method='BADS')
-    # optimizer.mse_minimization()  # optimize via MSE
-    # combinations = optimizer.combinations
-    # mse_list_mf = optimizer.mse_list_mf
-    # mse_list_fbp = optimizer.mse_list_fbp
-    # mse_list_lbp = optimizer.mse_list_lbp
-    # mse_list_gibbs = optimizer.mse_list_gibbs
-    # best_pars_mf_idx = np.argmin(mse_list_mf)
-    # best_combo_mf = combinations[best_pars_mf_idx]
-    # best_pars_fbp_idx = np.argmin(mse_list_fbp)
-    # best_combo_fbp = combinations[best_pars_fbp_idx]
-    # best_pars_lbp_idx = np.argmin(mse_list_lbp)
-    # best_combo_lbp = combinations[best_pars_lbp_idx]
-    # best_pars_gibbs_idx = np.argmin(mse_list_gibbs)
-    # best_combo_gibbs = combinations[best_pars_gibbs_idx]
-
-    # df_simul = simulate_data(data, best_combo_lbp, optimizer, 50)
-    # fig, ax = plt.subplots(ncols=4, nrows=2, figsize=(14, 7))
-    # ax = ax.flatten()
-    # sns.lineplot(df_simul, x='coupling', y='confidence_mf', hue='stim_str', ax=ax[0])
-    # sns.lineplot(df_simul, x='coupling', y='confidence_fbp', hue='stim_str', ax=ax[1])
-    # sns.lineplot(df_simul, x='coupling', y='confidence_lbp', hue='stim_str', ax=ax[2])
-    # sns.lineplot(df_simul, x='coupling', y='confidence_gibbs', hue='stim_str', ax=ax[3])
-    # sns.lineplot(df_simul, x='stim_str', y='confidence_mf', hue='coupling', ax=ax[4])
-    # sns.lineplot(df_simul, x='stim_str', y='confidence_fbp', hue='coupling', ax=ax[5])
-    # sns.lineplot(df_simul, x='stim_str', y='confidence_lbp', hue='coupling', ax=ax[6])
-    # sns.lineplot(df_simul, x='stim_str', y='confidence_gibbs', hue='coupling', ax=ax[7])
-    # fig.tight_layout()
-
-
-    # fig, ax = plt.subplots(ncols=4, figsize=(12, 3))
-    # ax[0].plot(df.confidence, df_simul.confidence_mf, marker='o',
-    #            linestyle='', color='k', markersize=3)
-    # ax[0].set_title('MF, corr = ' + str(np.corrcoef(df.confidence, df_simul.confidence_mf)[0][1]))
-    # ax[1].plot(df.confidence, df_simul.confidence_lbp, marker='o',
-    #            linestyle='', color='k', markersize=3)
-    # ax[1].set_title('LBP, corr = ' + str(np.corrcoef(df.confidence, df_simul.confidence_lbp)[0][1]))
-    # ax[2].plot(df.confidence, df_simul.confidence_fbp, marker='o',
-    #            linestyle='', color='k', markersize=3)
-    # ax[2].set_title('FBP, corr = ' + str(np.corrcoef(df.confidence, df_simul.confidence_fbp)[0][1]))
-    # ax[3].plot(df.confidence, df_simul.confidence_gibbs, marker='o',
-    #            linestyle='', color='k', markersize=3)
-    # ax[3].set_title('Gibbs, corr = ' + str(np.corrcoef(df.confidence, df_simul.confidence_gibbs)[0][1]))
-    # for a in ax:
-    #     a.plot([0.4, 1], [0.4, 1], color='k', alpha=0.2)
-    # fig.tight_layout()
