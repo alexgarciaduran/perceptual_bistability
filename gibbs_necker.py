@@ -1173,7 +1173,7 @@ def occ_function_markov(a, b, t, x):
     def i_n(n, x):
         return np.exp(x)*(1+(1-4*n**2)/(8*x)) / (2*np.pi*x)
     first_exp = np.exp(-a*x - b*(t-x))
-    first_comp = p2*0**(x) + p1*0**(t-x)
+    first_comp = (p2*0**(x) + p1*0**(t-x))*1e5
     x_arg = 2*np.sqrt(a*b*x*(t-x))
     # i_0 = i_n(0, x_arg)
     # i_1 = i_n(1, x_arg)
