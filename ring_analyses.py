@@ -156,6 +156,7 @@ class ring:
         - 'NM': not moving
         - 'combination': start with CW and then jump to NM
         - '2combination': start with CW and then jump to NM and jump again to CW
+        - 'combination_reverse': start with NM and jump to CW
         """
         s_init = np.repeat(np.array(s_init).reshape(-1, 1), self.ndots//len(s_init), axis=1).T.flatten()
         if true == 'NM':
@@ -180,6 +181,11 @@ class ring:
                         roll = 1
                     else:
                         roll = 0
+                if true == 'combination_reverse':
+                    if t < n_iters // 3:
+                        roll = 0
+                    else:
+                        roll = 1
                 s = np.roll(s, roll)
                 sv.append(s)
         else:
@@ -327,13 +333,16 @@ class ring:
                 title = r'$CW \longrightarrow NM \longrightarrow CW$'
             if true == 'combination':
                 title = r'$CW \longrightarrow NM$'
-            if true not in ['combination', '2combination']:
+            if true == 'combination_reverse':
+                title = r'$NM \longrightarrow CW$'
+            if true not in ['combination', '2combination', 'combination_reverse']:
                 title = true
             ax[0].set_title(title)
             for dot in range(n_dots):
                 ax[1].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5)
                 ax[2].plot(time, q_mf_arr[dot, 1, :], color='k', linewidth=2.5)
                 ax[3].plot(time, q_mf_arr[dot, 2, :], color='b', linewidth=2.5)
+            fig.suptitle(f'Coupling J = {j}', fontsize=16)
         else:
             return q_mf
 
@@ -463,14 +472,8 @@ class ring:
         #               [0.1, 0.1, 0.8], [0.1, 0.2, 0.7], [0.7, 0.2, 0.1],
         #               [0.2, 0.1, 0.7], [0.7, 0.1, 0.2]]
         path = DATA_FOLDER + 'fixed_points_eps_jlist_'+ true + '_random_ini_conds_z_1.npy'
-        ini_conds = np.repeat(None, 50)
+        ini_conds = np.repeat(None, 100)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        if true == 'none':
-            stim_weight = 0
-            epslist = [0.001]
-            true = 'NM'
-        else:
-            stim_weight = 1
         if os.path.exists(path):
             q_eps_jlist = np.load(path)
             j_list=np.arange(0, 2, 0.02)
@@ -478,6 +481,12 @@ class ring:
             if true == 'none':
                 epslist = [0.001]
         else:
+            if true == 'none':
+                stim_weight = 0
+                epslist = [0.001]
+                true = 'NM'
+            else:
+                stim_weight = 1
             q_eps_jlist = np.zeros((len(epslist), len(j_list), len(ini_conds), 3))
             for i_e, eps in enumerate(epslist):
                 self.eps = eps
@@ -485,7 +494,7 @@ class ring:
                 for i_j, j in enumerate(j_list):
                     q_initializations = np.zeros((len(ini_conds), 3))
                     for initialization in range(len(ini_conds)):
-                        q_mf = self.mean_field_sde(dt=0.1, tau=0.1, n_iters=100, j=j,
+                        q_mf = self.mean_field_sde(dt=0.01, tau=0.05, n_iters=400, j=j,
                                                    true=true, noise=0., plot=False,
                                                    ini_cond=ini_conds[initialization],
                                                    stim_weight=stim_weight)
@@ -495,7 +504,7 @@ class ring:
                     q_jlist[i_j, :] = q_initializations
                 q_eps_jlist[i_e] = q_jlist
             np.save(path, q_eps_jlist)
-        # j_crit = 1/np.sum(self.exp_kernel())
+        j_crit = 1/np.sum(self.exp_kernel())*4/3
         if len(epslist) == 1:
             figsize = (9, 5)
         else:
@@ -505,8 +514,9 @@ class ring:
         for i_a, a in enumerate(ax.flatten()):
             a.spines['top'].set_visible(False)
             a.spines['right'].set_visible(False)
-            if i_a < 6:
-                a.set_xticks([])
+            if len(epslist) > 1:
+                if i_a < 6:
+                    a.set_xticks([])
             a.set_ylim(-0.15, 1.15)
             # a.axvline(j_crit)
             if i_a in [0, 3, 6]:
@@ -517,15 +527,18 @@ class ring:
                 color = 'b'
             a.axhline(1/3, color=color, alpha=0.4, linestyle='--', linewidth=2)
             a.axhline(1/2, color=color, alpha=0.4, linestyle=':', linewidth=2)
+            if len(epslist) == 1:
+                a.axvline(j_crit, color='k', alpha=0.4, linewidth=2.5)
         for i_e, eps in enumerate(epslist):
             for state in range(3):
-                vals, idx = np.unique(q_eps_jlist[i_e, :, :, state], return_index=True)
+                # vals, idx = np.unique(q_eps_jlist[i_e, :, :, state], return_index=True)
+                
                 if len(epslist) == 1:
-                    ax[state].plot(j_list[idx // len(ini_conds)], vals, color=colors[state],
-                                   linewidth=2, marker='o', linestyle='', markersize=2)
+                    axis = ax[state]
                 else:
-                    ax[i_e, state].plot(j_list[idx // len(ini_conds)], vals, color=colors[state],
-                                        linewidth=2, marker='o', linestyle='', markersize=2)
+                    axis = ax[i_e, state]
+                axis.plot(j_list, q_eps_jlist[i_e, :, :, state], color=colors[state],
+                          linewidth=2, marker='o', linestyle='', markersize=2)
         if len(epslist) == 1:
             ax[0].set_xlabel('Coupling, J')
             ax[2].set_xlabel('Coupling, J')
@@ -551,7 +564,23 @@ if __name__ == '__main__':
     # ring(epsilon=0.001).mean_field_ring(true='2combination', j=0.8, b=[0., 0., 0.], plot=True,
     #                                     n_iters=300, noise=0)
     ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='NM')
-    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.2,
-    #                                    true='2combination', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='CW')
+    ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='none')
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=5000, j=0.5,
+                                       true='combination_reverse', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=5000, j=0.7,
+                                       true='combination_reverse', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=5000, j=1.1,
+                                       true='combination_reverse', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=5000, j=1.4,
+                                       true='combination_reverse', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.5,
+                                       true='2combination', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
+                                       true='2combination', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.1,
+                                       true='2combination', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.4,
+                                       true='2combination', noise=0., plot=True)
     # ring(epsilon=0.01).belief_propagation(plot=True, true='combination', j=0.7)
 
