@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import scipy
 import matplotlib as mpl
 import matplotlib.pylab as pl
+from matplotlib.lines import Line2D
 from loop_belief_prop_necker import discrete_DBN, Loopy_belief_propagation, dyn_sys_fbp
 from mean_field_necker import mean_field_stim, solution_mf_sdo_euler, dyn_sys_mf, backwards
 from gibbs_necker import gibbs_samp_necker, return_theta, occ_function_markov
@@ -24,7 +25,7 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from sklearn import linear_model
 import warnings
-warnings.filterwarnings("ignore")
+# warnings.filterwarnings("ignore")
 
 THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [1, 0, 0, 1, 0, 0, 1, 0], [0, 1, 1, 0, 0, 0, 0, 1],
@@ -264,28 +265,29 @@ class optimization:
         return np.max((nlh_mf, 0))  #  - log_prior(pars)*len(j)
 
 
-    def nlh_gibbs(self, pars, n=3.92, eps=1e-3, conts_distro=1e-2):
+    def nlh_gibbs(self, pars, n=3.92, eps=1e-3, conts_distro=1e-2, nan_penalty=1e-5):
         jpar, b1par, biaspar, time = pars
         coupling, stim_str, confidence = self.coupling, self.stim_str, self.confidence
         j = jpar*np.array(coupling)
         b = b1par*np.array(stim_str)+biaspar
         likelihood = []
-        for i in range(len(confidence)):
-            k_1 = 12*j[i] + 8*b[i]
-            k_2 = 6*j[i] + 6*b[i]
-            k_3 = 4*j[i] + 4*b[i]
-            k_4 = 2*j[i] + 2*b[i]
-            k_5 = 12*j[i] - 8*b[i]
-            k_6 = 6*j[i] - 6*b[i]
-            k_7 = 4*j[i] - 4*b[i]
-            k_8 = 2*j[i] - 2*b[i]
-            lamb = sigmoid(k_1-k_2)*sigmoid(k_2-k_3)*sigmoid(k_3-k_4)
-            nu = sigmoid(k_5-k_6)*sigmoid(k_6-k_7)*sigmoid(k_7-k_8)
-            val = occ_function_markov(lamb, nu, time, confidence[i]*time)
-            time_vals = np.arange(0, time+1, 1)
-            norm_cte = np.nansum(occ_function_markov(lamb, nu, time, time_vals))
-            likelihood.append(val / norm_cte)
-        likelihood = np.array(likelihood)
+        k_1 = 12*j + 8*b
+        k_2 = 6*j + 6*b
+        k_3 = 4*j + 4*b
+        k_4 = 2*j + 2*b
+        k_5 = 12*j - 8*b
+        k_6 = 6*j - 6*b
+        k_7 = 4*j - 4*b
+        k_8 = 2*j - 2*b
+        lamb = sigmoid(k_1-k_2)*sigmoid(k_2-k_3)*sigmoid(k_3-k_4)
+        nu = sigmoid(k_5-k_6)*sigmoid(k_6-k_7)*sigmoid(k_7-k_8)
+        val = occ_function_markov(lamb, nu, time, confidence*time)
+        time_vals = np.arange(0, time+1, 1)
+        norm_cte = np.array([np.nansum(occ_function_markov(nu[i], lamb[i], time, time_vals)) for i in range(len(confidence))])
+        lh = val / norm_cte
+        lh[np.isnan(norm_cte) + np.isnan(val) + (norm_cte == 0) + np.isnan(lh)] = nan_penalty
+        lh += 1e-10
+        likelihood = np.array(lh)
         return -np.nansum(np.log(likelihood*(1-eps) + eps*conts_distro))
 
 
@@ -348,7 +350,7 @@ class optimization:
             fun = self.nlh_gibbs
             assert len(x0) == 4, 'x0 should have 4 values (J, B1, bias, time_end)'
             if method != 'BADS':
-                bounds = Bounds([1e-1, -1, -1, 0.06, 1], [1, 0.25, 0.25, 0.3, 1e6])
+                bounds = Bounds([0., -0.2, -.7, 5], [2, 2, .8, 1e5])
             if method == 'BADS':
                 lb = [0.01, -0.2, -0.8, 1]
                 ub = [2., 2, 0.8, 1e5]
@@ -883,7 +885,6 @@ def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method=
 
 def fit_subjects(method='BADS', model='MF', subjects='separated',
                  data_augmen=False, n_init=1, extra=''):
-    # good sub: s_6
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     if subjects == 'together':
         all_df['subject'] = 'all'
@@ -1097,8 +1098,12 @@ def plot_density(num_iter=100, extra='', method='BADS', model='MF'):
         else:
             appendix = ''
         pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '.npy')
-        b_eff = dataframe.stim_str.values*pars[1]+pars[2]
-        j_eff = dataframe.coupling.values*pars[0]
+        if model == 'MF5':
+            b_eff = dataframe.stim_str.values*pars[2]+pars[3]
+            j_eff = dataframe.coupling.values*pars[0]+pars[1]
+        else:
+            b_eff = dataframe.stim_str.values*pars[1]+pars[2]
+            j_eff = dataframe.coupling.values*pars[0]
         jstar = jstar + list(j_eff)
         bstar = bstar + list(b_eff)
         for j, b in zip(j_eff, b_eff):
@@ -1117,7 +1122,7 @@ def plot_density(num_iter=100, extra='', method='BADS', model='MF'):
     plt.figure()
     # all_df['abs_evidence'] = np.abs(all_df.evidence)
     sns.kdeplot(all_df.loc[all_df.evidence == 0], x='confidence', hue='state',
-                alpha=1, lw=2.5, bw_adjust=0.5, common_norm=False)
+                alpha=1, lw=2.5, bw_adjust=0.7, common_norm=False)
     fig, ax = plt.subplots(1)
     b_list=np.arange(-1.5, 1.5, 0.01)
     first_j = compute_j_crit(j_list=np.arange(0., 1.405, 0.01),
@@ -1130,75 +1135,141 @@ def plot_density(num_iter=100, extra='', method='BADS', model='MF'):
     ax.set_ylabel('J = (1-Shuffling)*J_1')
 
 
-def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='BADS'):
-    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
-    subjects = all_df.subject.unique()
-    modeln = 'MF'
+def compute_jstar_bstar(sub, dataframe, model='MF', method='BADS',
+                        extra='', num_iter=100):
+    state = []
     if method == 'BADS':
         appendix = '_BADS'
     else:
         appendix = ''
-    if not load:
-        data_orig = pd.DataFrame()
-        data_model_null = pd.DataFrame()
-        data_model_orig = pd.DataFrame()
-        for sub in subjects:
-            print(sub)
-            dataframe = all_df.copy().loc[all_df['subject'] == sub]
-            unique_vals = np.sort(dataframe['pShuffle'].unique())
-            extra = 'null'
-            dataframe['coupling'] = 1
-            dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
-            dataframe['stim_str'] = (dataframe.evidence.values)
-            dataframe['stim_ev_cong'] = dataframe.response.values*dataframe.stim_str.values
-            data = dataframe[['coupling', 'confidence', 'stim_str', 'stim_ev_cong', 'response']]
-            pars = np.load(sv_folder + '/parameters_'+modeln + appendix + sub + extra + '.npy')
-            df_null = simulate_FBP(pars, 400,
-                                   data.stim_str.values, data.coupling.values,
-                                   sv_folder=SV_FOLDER, n_iter=sub, model=modeln,
-                                   recovery=False, resimulate=False, extra=extra)
-            df_null['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
-                                                               value= [1., 0.3, 0.]) 
-            data_model_null = pd.concat((data_model_null, df_null))
-            extra = ''
-            dataframe['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
-                                        value= [1., 0.3, 0.]) 
-            dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
-            dataframe['stim_str'] = (dataframe.evidence.values)
-            dataframe['stim_ev_cong'] = dataframe.response.values*dataframe.stim_str.values
-            data = dataframe[['coupling', 'confidence', 'stim_str', 'stim_ev_cong', 'response']]
-            data_orig = pd.concat((data_orig, data))
-            pars = np.load(sv_folder + '/parameters_'+model + appendix + sub + extra + '.npy')
-            df_no_null = simulate_FBP(pars, 400,
-                                      data.stim_str.values, data.coupling.values,
-                                      sv_folder=SV_FOLDER, n_iter=sub, model=model,
-                                      recovery=False, resimulate=False, extra=extra)
-            df_no_null['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
-                                                                   value= [1., 0.3, 0.]) 
-            data_model_orig = pd.concat((data_model_orig, df_no_null))
-        for datframe in [data_orig, data_model_null, data_model_orig]:
-            datframe['abs_confidence'] = np.abs(datframe.confidence-0.5)*2
-            datframe['subject'] = all_df.subject
-        data_orig.to_csv(sv_folder + 'simulated_data' + '/df_orig.csv')
-        data_model_orig.to_csv(sv_folder + 'simulated_data' + '/df_simul_'+model+'_orig.csv')
-        data_model_null.to_csv(sv_folder + 'simulated_data' + '/df_simul_'+modeln+'_null_model.csv')
+    pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '.npy')
+    if model == 'MF5':
+        b_eff = dataframe.stim_str.values*pars[2]+pars[3]
+        j_eff = dataframe.coupling.values*pars[0]+pars[1]
     else:
-        data_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_orig.csv')
-        data_model_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+model+'_orig.csv')
-        data_model_null = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+modeln+'_null_model.csv')
-    # md_orig = smf.mixedlm("abs_confidence ~ coupling*stim_str",
-    #                       data_orig.dropna(), groups="subject")
-    # md_orig = md_orig.fit()
-    # print(md_orig.summary())
-    # md_model_orig = smf.mixedlm("abs_confidence ~ coupling*stim_str",
-    #                       data_model_orig, groups="subject")
-    # md_model_orig = md_model_orig.fit()
-    # print(md_model_orig.summary())
-    # md_model_null = smf.mixedlm("abs_confidence ~ coupling*stim_str",
-    #                             data_model_null, groups="subject")
-    # md_model_null = md_model_null.fit()
-    # print(md_model_null.summary())
-    # sub by sub lienar regression
+        if extra == 'null':
+            j_eff = np.ones(len(dataframe))*pars[0]
+        else:
+            j_eff = dataframe.coupling.values*pars[0]
+        b_eff = dataframe.stim_str.values*pars[1]+pars[2]
+        
+    for j, b in zip(j_eff, b_eff):
+        q_fin = 0.65
+        for i in range(num_iter):
+            q_fin = backwards(q_fin, j, b, n_neigh=3.92)
+            if np.isnan(q_fin):
+                state.append('Monostable')
+                break
+        if ~np.isnan(q_fin):
+            state.append('Bistable')
+    return j_eff, b_eff, state
+
+
+def plot_density_comparison(num_iter=100, method='nelder-mead',
+                            kde=False, stim_ev_0=False):
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    subjects = all_df.subject.unique()
+    state = [[], [], [], []]
+    data_orig, data_model_orig, data_model_null =\
+        load_all_data(all_df, model='MF5', method=method, sv_folder=SV_FOLDER)
+    for sub in subjects:
+        dataframe = data_orig.copy().loc[data_orig['subject'] == sub]
+        data_model_o_sub = data_model_orig.copy().loc[all_df['subject'] == sub]
+        data_model_null_sub = data_model_null.copy().loc[all_df['subject'] == sub]
+        j_eff, b_eff, state_sub = compute_jstar_bstar(sub, dataframe, model='MF',
+                                                      method=method, extra='null',
+                                                      num_iter=num_iter)
+        state[0] = state[0] + state_sub
+        j_eff, b_eff, state_sub = compute_jstar_bstar(sub, dataframe, model='MF5',
+                                                      method=method, extra='',
+                                                      num_iter=num_iter)
+        state[1] = state[1] + state_sub
+        j_eff, b_eff, state_sub = compute_jstar_bstar(sub, data_model_o_sub, model='MF5',
+                                                      method=method, extra='',
+                                                      num_iter=num_iter)
+        state[2] = state[2] + state_sub
+        j_eff, b_eff, state_sub = compute_jstar_bstar(sub, data_model_null_sub, model='MF',
+                                                      method=method, extra='null',
+                                                      num_iter=num_iter)
+        state[3] = state[3] + state_sub
+    data_orig_mf_null = data_orig.copy()
+    data_orig_mf = data_orig.copy()
+    data_orig_mf_null['state'] = state[0]
+    data_orig_mf_null = data_orig_mf_null.reset_index()
+    data_orig_mf['state'] = state[1]
+    data_orig_mf = data_orig_mf.reset_index()
+    data_model_orig['state'] = state[2]
+    data_model_orig = data_model_orig.reset_index()
+    data_model_null['state'] = state[3]
+    data_model_null = data_model_null.reset_index()
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(11, 10))
+    ax = ax.flatten()
+    leg = [True, False, False, False]
+    titles = [r'Data, $\theta_{null}$', r'Data, $\theta_{full}$',
+              r'Null data, $\theta_{null}$', r'Full data, $\theta_{full}$']
+    for df, a, l, title in zip([data_orig_mf_null, data_orig_mf, data_model_null, data_model_orig],
+                               ax, leg, titles):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        df['signed_confidence'] = 2*df.confidence-1
+        if not kde:
+            sns.histplot(df.loc[df.stim_str == 0], x='signed_confidence', hue='state',
+                         alpha=0.4, lw=1.5, common_norm=False, ax=a,
+                         legend=l, stat='density', bins=10, palette=['k', 'r'])
+            a.set_ylim(-0.1, 1.2)
+        if kde:
+            if not stim_ev_0:
+                stim = [0, 0.4, 0.8, 1]
+                colormap_r = pl.cm.Reds(np.linspace(0.3, 1, 4))
+                colormap_k = pl.cm.gist_gray(np.linspace(0., 0.7, 4))
+                for ia in range(4):
+                    sns.kdeplot(df.loc[df.stim_str.abs() == stim[ia]], x='signed_confidence', hue='state',
+                                 alpha=1, lw=2.5, common_norm=False, ax=a,
+                                 legend=l, bw_adjust=0.6, palette=[colormap_k[ia], colormap_r[ia]])
+                a.set_ylim(-0.1, 1.1)
+            if stim_ev_0:
+                sns.kdeplot(df.loc[df.stim_str == 0], x='signed_confidence', hue='state',
+                             alpha=1, lw=2.5, common_norm=False, ax=a,
+                             legend=l, bw_adjust=0.5, palette=['k', 'r'])
+                a.set_ylim(-0.1, 1.1)
+        a.set_xlabel('Confidence')
+        a.set_ylabel('Density')
+        a.set_title(title)
+    fig.tight_layout()
+    fig2, ax2 = plt.subplots(ncols=2, figsize=(10, 5))
+    stim = [0, 0.4, 0.8, 1]
+    colormap_r = pl.cm.Reds(np.linspace(0.3, 1, 4))
+    colormap_k = pl.cm.gist_gray_r(np.linspace(0.3, 1, 4))
+    data_monost = data_orig_mf.loc[data_orig_mf.state == 'Monostable']
+    data_bist = data_orig_mf.loc[data_orig_mf.state == 'Bistable']
+    legendelements = []
+    for ia in range(4):
+        sns.kdeplot(data_monost.loc[(data_orig_mf.stim_str.abs() == stim[ia])],
+                    x='signed_confidence',
+                    alpha=1, lw=3., common_norm=False, ax=ax2[0],
+                    legend=False, bw_adjust=0.7, color=colormap_k[ia])
+        sns.kdeplot(data_bist.loc[(data_orig_mf.stim_str.abs() == stim[ia])],
+                    x='signed_confidence',
+                    alpha=1, lw=3., common_norm=False, ax=ax2[1],
+                    legend=False, bw_adjust=0.7, color=colormap_k[ia])
+        legendelements.append(Line2D([0], [0], color=colormap_k[ia],
+                                     lw=2, label=stim[ia]))
+    ax2[0].set_title('Monostable')
+    ax2[1].set_title('Bistable')
+    ax2[0].set_ylabel('Density')
+    ax2[1].set_ylabel('')
+    ax2[1].legend(frameon=False, title='Stimulus\nstrength', handles=legendelements,
+                  bbox_to_anchor=(0.86, 0.6))
+    for a2 in ax2:
+        a2.spines['right'].set_visible(False)
+        a2.spines['top'].set_visible(False)
+        a2.set_xlabel('Confidence')
+        a2.set_ylim(-0.05, 0.85)
+    fig2.tight_layout()
+
+
+def linear_regression(data_orig, data_model_orig, data_model_null):
+    subjects = data_orig.subject.unique()
     weights_o = np.zeros((4, len(subjects)))
     weights_model_o = np.zeros((4, len(subjects)))
     weights_model_null = np.zeros((4, len(subjects)))
@@ -1207,31 +1278,131 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         df_model_o = data_model_orig.loc[data_model_orig.subject == sub]
         df_model_null = data_model_null.loc[data_model_null.subject == sub]
         coupling = df_o.coupling.values
-        stim_str = np.abs(df_o.stim_str.values)
+        # stim_str = np.abs(df_o.stim_str.values)
+        stim_str_cong_o = df_o.stim_ev_cong.values
+        stim_str_cong_model_o = df_model_o.stim_ev_cong.values
+        stim_str_cong_model_null = df_model_null.stim_ev_cong.values
         val_conf_yo = df_o.abs_confidence.values
         idx_non_nan = np.where(~np.isnan(val_conf_yo))[0]
-        X = np.column_stack((coupling[idx_non_nan], stim_str[idx_non_nan],
-                             stim_str[idx_non_nan]*coupling[idx_non_nan]))
+        X_o = np.column_stack((coupling[idx_non_nan], stim_str_cong_o[idx_non_nan],
+                               stim_str_cong_o[idx_non_nan]*coupling[idx_non_nan]))
+        X_model_o = np.column_stack((coupling[idx_non_nan], stim_str_cong_model_o[idx_non_nan],
+                                     stim_str_cong_model_o[idx_non_nan]*coupling[idx_non_nan]))
+        X_model_null = np.column_stack((coupling[idx_non_nan], stim_str_cong_model_null[idx_non_nan],
+                                        stim_str_cong_model_null[idx_non_nan]*coupling[idx_non_nan]))
         y_o = scipy.stats.zscore(val_conf_yo[idx_non_nan])
         y_model_o = scipy.stats.zscore(df_model_o.abs_confidence.values[idx_non_nan])
         y_model_null = scipy.stats.zscore(df_model_null.abs_confidence.values[idx_non_nan])
         regr_o = linear_model.LinearRegression(fit_intercept=True)
-        regr_o.fit(X, y_o)
+        regr_o.fit(X_o, y_o)
         weights_o[1:, i_s] = regr_o.coef_
         weights_o[0, i_s] = regr_o.intercept_
         regr_model_o = linear_model.LinearRegression(fit_intercept=True)
-        regr_model_o.fit(X, y_model_o)
+        regr_model_o.fit(X_model_o, y_model_o)
         weights_model_o[1:, i_s] = regr_model_o.coef_
         weights_model_o[0, i_s] = regr_model_o.intercept_
         regr_model_null = linear_model.LinearRegression(fit_intercept=True)
-        regr_model_null.fit(X, y_model_null)
+        regr_model_null.fit(X_model_null, y_model_null)
         weights_model_null[1:, i_s] = regr_model_null.coef_
         weights_model_null[0, i_s] = regr_model_null.intercept_
+    return weights_o, weights_model_o, weights_model_null
+
+
+def linear_mixed_model(data_orig, data_model_orig, data_model_null):
+    md_orig = smf.mixedlm("abs_confidence ~ coupling*stim_ev_cong",
+                          data_orig.dropna(), groups="subject",
+                          re_formula='~coupling*stim_ev_cong')
+    md_orig = md_orig.fit()
+    print(md_orig.summary())
+    md_model_orig = smf.mixedlm("abs_confidence ~ coupling*stim_ev_cong",
+                          data_model_orig, groups="subject",
+                          re_formula='~coupling*stim_ev_cong')
+    md_model_orig = md_model_orig.fit()
+    print(md_model_orig.summary())
+    md_model_null = smf.mixedlm("abs_confidence ~ coupling*stim_ev_cong",
+                                data_model_null, groups="subject",
+                                re_formula='~coupling*stim_ev_cong')
+    md_model_null = md_model_null.fit()
+    print(md_model_null.summary())
+
+
+def load_all_data(all_df, model='MF5', method='BADS', sv_folder=SV_FOLDER):
+    subjects = all_df.subject.unique()
+    subjects = all_df.subject.unique()
+    modeln = 'MF'
+    data_orig = pd.DataFrame()
+    data_model_null = pd.DataFrame()
+    data_model_orig = pd.DataFrame()
+    if method == 'BADS':
+        appendix = '_BADS'
+    else:
+        appendix = ''
+    for sub in subjects:
+        print(sub)
+        dataframe = all_df.copy().loc[all_df['subject'] == sub]
+        unique_vals = np.sort(dataframe['pShuffle'].unique())
+        extra = 'null'
+        dataframe['coupling'] = 1
+        dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
+        dataframe['stim_str'] = (dataframe.evidence.values)
+        dataframe['stim_ev_cong'] = dataframe.response.values*dataframe.stim_str.values
+        data = dataframe[['coupling', 'confidence', 'stim_str', 'stim_ev_cong', 'response']]
+        pars = np.load(sv_folder + '/parameters_'+modeln + appendix + sub + extra + '.npy')
+        df_null = simulate_FBP(pars, 400,
+                               data.stim_str.values, data.coupling.values,
+                               sv_folder=SV_FOLDER, n_iter=sub, model=modeln,
+                               recovery=False, resimulate=False, extra=extra)
+        df_null['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
+                                                           value= [1., 0.3, 0.]) 
+        data_model_null = pd.concat((data_model_null, df_null))
+        extra = ''
+        dataframe['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
+                                    value= [1., 0.3, 0.]) 
+        dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
+        dataframe['stim_str'] = (dataframe.evidence.values)
+        dataframe['stim_ev_cong'] = dataframe.response.values*dataframe.stim_str.values
+        data = dataframe[['coupling', 'confidence', 'stim_str', 'stim_ev_cong', 'response']]
+        data_orig = pd.concat((data_orig, data))
+        pars = np.load(sv_folder + '/parameters_'+model + appendix + sub + extra + '.npy')
+        df_no_null = simulate_FBP(pars, 400,
+                                  data.stim_str.values, data.coupling.values,
+                                  sv_folder=SV_FOLDER, n_iter=sub, model=model,
+                                  recovery=False, resimulate=False, extra=extra)
+        df_no_null['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
+                                                               value= [1., 0.3, 0.]) 
+        data_model_orig = pd.concat((data_model_orig, df_no_null))
+    for datframe in [data_orig, data_model_null, data_model_orig]:
+        datframe['abs_confidence'] = np.abs(datframe.confidence-0.5)*2
+        datframe['subject'] = all_df.subject
+    return data_orig, data_model_orig, data_model_null
+
+
+def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='BADS'):
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    subjects = all_df.subject.unique()
+    modeln = 'MF'
+    if not load:
+        data_orig, data_model_orig, data_model_null =\
+            load_all_data(all_df, model=model, method=method, sv_folder=SV_FOLDER)
+        data_orig.to_csv(sv_folder + 'simulated_data' + '/df_orig.csv')
+        data_model_orig.to_csv(sv_folder + 'simulated_data' + '/df_simul_'+model+'_orig.csv')
+        data_model_null.to_csv(sv_folder + 'simulated_data' + '/df_simul_'+modeln+'_null_model.csv')
+    else:
+        data_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_orig.csv')
+        data_model_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+model+'_orig.csv')
+        data_model_null = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+modeln+'_null_model.csv')
+    # linear_mixed_model(data_orig, data_model_orig, data_model_null)
+    # data_orig['decision'] = data_orig.response
+    # for df in ([data_orig, data_model_orig, data_model_null]):
+    #     df['congruent_confidence'] = df.confidence*df.decision
+    # sub by sub lienar regression
+    weights_o, weights_model_o, weights_model_null =\
+        linear_regression(data_orig, data_model_orig, data_model_null)
     fig, ax = plt.subplots(ncols=4, figsize=(16, 4))
     for a in ax:
         a.axhline(0, color='k', linestyle='--')
     xlabs = ['Data', 'Model', 'Null']
-    ylabs = ['Intercept', 'Coupling', 'Stim.', 'Coupling:stim']
+    ylabs = ['Intercept', 'Coupling', 'Stim. congr.', 'Coupling:stim. congr.']
     for j in range(4):
         ax[j].spines['right'].set_visible(False)
         ax[j].spines['top'].set_visible(False)
@@ -1280,27 +1451,36 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
     h_o = np.max(weights_o, axis=1)
     h_fm = np.max(weights_model_o, axis=1)
     h_null = np.max(weights_model_null, axis=1)
+    eps = 0.05
     for a in range(4):
         ax[a].text(0, h_o[a]+0.1, f"{pvals_o[a]}", ha='center', va='bottom', color='k',
-                   fontsize=14)
+                   fontsize=12)
         ax[a].text(1, h_fm[a]+0.1, f"{pvals_fm[a]}", ha='center', va='bottom', color='k',
-                   fontsize=14)
+                   fontsize=12)
         ax[a].text(2, h_null[a]+0.1, f"{pvals_null[a]}", ha='center', va='bottom', color='k',
-                   fontsize=14)
-        x1, x2 = [0, 1]
+                   fontsize=12)
+        x1, x2 = [0+eps, 1-eps]
         p = stars_pval(scipy.stats.ttest_ind(weights_o[a],  weights_model_o[a]).pvalue)
         y, h, col = max(map(max, np.column_stack((weights_o[a],
-                                                  weights_model_o[a]))))+0.6, 0.1, 'k'
+                                                  weights_model_o[a]))))+0.4, 0.05, 'k'
         ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
         ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
-                   fontsize=14)
+                   fontsize=12)
         p = stars_pval(scipy.stats.ttest_ind(weights_o[a],  weights_model_null[a]).pvalue)
-        x1, x2 = [0, 2]
+        x1, x2 = [0-eps, 2+eps]
         y, h, col = max(map(max, np.column_stack((weights_o[a],
-                                                  weights_model_null[a]))))+0.6, 0.6, 'k'
+                                                  weights_model_o[a]))))+0.65, 0.05, 'k'
         ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
         ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
-                   fontsize=14)
+                   fontsize=12)
+        x1, x2 = [1+eps, 2-eps]
+        y, h, col = max(map(max, np.column_stack((weights_o[a],
+                                                  weights_model_o[a]))))+0.4, 0.05, 'k'
+        ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+        ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
+                   fontsize=12)
+    fig.savefig(SV_FOLDER + 'linear_regression_analysis.png', dpi=100, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'linear_regression_analysis.svg', dpi=100, bbox_inches='tight')
 
 
 def stars_pval(pval):
@@ -1485,6 +1665,8 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
     llh_all[2] = llh_all[1]-llh_all[0]
     print('Average \Delta BIC (Null-Full):')
     print(np.mean(llh_all[2]))
+    print('Median \Delta BIC (Null-Full):')
+    print(np.median(llh_all[2]))
     fig, ax = plt.subplots(1)
     if plot_all:
         ax.boxplot(llh_all.T)
@@ -1629,15 +1811,17 @@ if __name__ == '__main__':
     # fit_subjects(method=opt_algorithm, model='MF5', data_augmen=False, n_init=1, extra='')
     # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=1, extra='null')
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm)
-    plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
-    plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
+    # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
+    # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
+    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
+    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True)
     # simulate_subjects(sv_folder=SV_FOLDER, model='MF5', resimulate=False,
     #                   extra='', mcmc=False, method=opt_algorithm)
     # simulate_subjects(sv_folder=SV_FOLDER, model='MF', resimulate=False,
     #                   extra='null', mcmc=True, method=opt_algorithm)
     plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5')
     # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
-    #                     subjects='separated')
+    #                    subjects='separated')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
