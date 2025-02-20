@@ -666,8 +666,8 @@ def solution_for_sigmoid_taylor_order2(j, beta):
     return numerator / denominator
 
 
-def dyn_sys_mf(q, dt, j, sigma=1, bias=0, tau=1):
-    return np.clip(q + dt*(gn.sigmoid(6*j*(2*q-1)+2*bias)-q)/tau+
+def dyn_sys_mf(q, dt, j, sigma=1, bias=0, tau=1, n=3):
+    return np.clip(q + dt*(gn.sigmoid(2*n*j*(2*q-1)+2*bias)-q)/tau+
         np.random.randn()*np.sqrt(dt/tau)*sigma, 0, 1)
 
 

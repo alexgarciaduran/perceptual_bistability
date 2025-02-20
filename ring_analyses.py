@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib.pylab as pl
 import matplotlib as mpl
 import itertools
+import scipy
 import os
 
 mpl.rcParams['font.size'] = 16
@@ -84,6 +85,15 @@ class ring:
         return p_s
 
 
+    def compute_likelihood_continuous_stim(self, s, z, s_t=np.ones(6), noise=0.1):
+        cw = scipy.stats.norm.cdf(s_t, np.roll(s, -1), noise)*(z == 1)
+        nm = scipy.stats.norm.cdf(s_t, s, noise)*(z == 0)
+        ccw = scipy.stats.norm.cdf(s_t, np.roll(s, 1), noise)*(z == -1)
+        likelihood = cw+ccw+nm-cw*nm-cw*ccw-ccw*nm+ccw*nm*cw
+        likelihood = np.min((likelihood, np.ones(len(likelihood))), axis=0)
+        return np.max([likelihood, np.zeros(len(likelihood))+1e-10], axis=0)
+
+
     def exp_kernel(self, tau=0.8):
         x = np.arange(self.ndots)
         kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
@@ -94,8 +104,9 @@ class ring:
     def kdelta(a, b):
         return 1 if a == b else 0
 
-    
-    def compute_expectation_log_likelihood(self, s, q_z_prev, s_t):
+
+    def compute_expectation_log_likelihood(self, s, q_z_prev, s_t, discrete_stim=True,
+                                           noise=0.1):
         """
         Compute the likelihood expectation over q_{i-1}(z_{i-1}) and q_{i+1}(z_{i+1})
         using the CPT (likelihood, Conditional Probabilities Table) and
@@ -139,7 +150,10 @@ class ring:
                     q_z_n = q_z_prev[i_next, comb[1]+1]
     
                     # Get the CPT value for p(s_i | s, z)
-                    p_s_given_z = self.compute_likelihood_vector(s, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
+                    if discrete_stim:
+                        p_s_given_z = self.compute_likelihood_vector(s, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
+                    else:
+                        p_s_given_z = self.compute_likelihood_continuous_stim(s, zn, s_t, noise=noise)[idx]
 
                     # Add q_{i-1} · q_{i+1} · p(s_i | s, z)
                     likelihood_contribution += np.log(p_s_given_z + 1e-10)*q_z_p*q_z_n
@@ -156,6 +170,7 @@ class ring:
         - 'NM': not moving
         - 'combination': start with CW and then jump to NM
         - '2combination': start with CW and then jump to NM and jump again to CW
+        - 'combination_reverse': start with NM and jump to CW
         """
         s_init = np.repeat(np.array(s_init).reshape(-1, 1), self.ndots//len(s_init), axis=1).T.flatten()
         if true == 'NM':
@@ -180,6 +195,11 @@ class ring:
                         roll = 1
                     else:
                         roll = 0
+                if true == 'combination_reverse':
+                    if t < n_iters // 3:
+                        roll = 0
+                    else:
+                        roll = 1
                 s = np.roll(s, roll)
                 sv.append(s)
         else:
@@ -188,7 +208,39 @@ class ring:
             for _ in range(n_iters-1):
                 s = np.roll(s, roll)
                 sv.append(s)
-        return np.row_stack((sv))    
+        return np.row_stack((sv)) 
+    
+    
+    def stim_creation_ou_process(self, s_init=[0, 1], n_iters=100, true='NM',
+                                 dt=1e-2, tau=0.6, noise=0.1, change=1e-2):
+        """
+        Create stimulus given a 'true' structure. true is a string with 4 possible values:
+        - 'CW': clockwise rotation
+        - 'CCW': counterclockwise rotation (note that it is 100% bistable)
+        - 'NM': not moving
+            - 'combination': start with CW and then jump to NM
+            - '2combination': start with CW and then jump to NM and jump again to CW
+            - 'combination_reverse': start with NM and jump to CW
+        """
+        change = dt
+        s_init = np.repeat(np.array(s_init).reshape(-1, 1), self.ndots//len(s_init), axis=1).T.flatten()
+        if true == 'NM':
+            roll = 0
+        if true == 'CW':
+            roll = 1
+        if true == 'CCW':
+            roll = -1
+        s = s_init
+        sv = [s]
+        last_change = 0.
+        for it in range(n_iters-1):
+            # if round(it*dt-last_change, 5) == change:
+            s = np.roll(s, -roll) + dt*(np.roll(s, roll)-np.roll(s, -roll))/tau + np.random.randn(self.ndots)*np.sqrt(dt/tau)*noise
+            #     last_change = it*dt
+            # else:
+            #     s = s + np.random.randn()*np.sqrt(dt/tau)*noise
+            sv.append(s)
+        return np.row_stack((sv))
 
 
     def mean_field_ring(self, j=2, n_iters=50, nstates=3, b=np.zeros(3),
@@ -244,7 +296,8 @@ class ring:
                          vmin=0, vmax=1)
             # plt.colorbar(im1, ax=ax[0], label='sampled hidden state, z')
             # ax[0].set_title('Percept: ' + str(labels[int(np.mean(z_arr[:, :-10]))+2]))
-            im2 = ax[1].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none')
+            im2 = ax[1].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
+                               vmin=0, vmax=1)
             plt.colorbar(im2, ax=ax[1], label='true stimulus, s')
             im2 = ax[2].imshow(s_arr, cmap='binary', aspect='auto', interpolation='none')
             plt.colorbar(im2, ax=ax[2], label='sampled (expected)\n stimulus, s*')
@@ -269,12 +322,16 @@ class ring:
 
 
     def mean_field_sde(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=3, b=np.zeros(3),
-                       true='NM', noise=0.2, plot=False, stim_weight=1, ini_cond=None):
+                       true='NM', noise=0.2, plot=False, stim_weight=1, ini_cond=None,
+                       discrete_stim=True, s=[1, 0]):
         t_end = n_iters*dt
         kernel = self.exp_kernel()
         n_dots = self.ndots
-        s = [1, 0]
-        stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+        if discrete_stim:
+            stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+        else:
+            stim = self.stim_creation_ou_process(true=true, noise=noise, s_init=s,
+                                                 n_iters=n_iters, dt=dt)
         s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
         # q_mf = np.repeat(np.array([[0.25], [0.3], [0.2]]), 6, axis=-1).T
         # q_mf = np.ones((n_dots, nstates))/3 + np.random.randn(n_dots, 3)*0.05
@@ -296,7 +353,9 @@ class ring:
         for t in range(1, n_iters):
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
-            likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t])
+            likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t],
+                                                                 discrete_stim=discrete_stim,
+                                                                 noise=noise)
             var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood*stim_weight)
             q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
             q_mf_arr[:, :, t] = q_mf
@@ -311,7 +370,8 @@ class ring:
                 if i_a > 0:
                     a.set_ylim(-0.15, 1.15)
             ax[3].set_xlabel('Time (s)')
-            ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none')
+            ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
+                         vmin=0, vmax=1)
             ax[0].set_ylabel('Stimulus')
             ax[1].set_ylabel('q(z_i=CW)')
             ax[2].set_ylabel('q(z_i=NM)')
@@ -327,13 +387,19 @@ class ring:
                 title = r'$CW \longrightarrow NM \longrightarrow CW$'
             if true == 'combination':
                 title = r'$CW \longrightarrow NM$'
-            if true not in ['combination', '2combination']:
+            if true == 'combination_reverse':
+                title = r'$NM \longrightarrow CW$'
+            if true not in ['combination', '2combination', 'combination_reverse']:
                 title = true
             ax[0].set_title(title)
             for dot in range(n_dots):
                 ax[1].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5)
                 ax[2].plot(time, q_mf_arr[dot, 1, :], color='k', linewidth=2.5)
                 ax[3].plot(time, q_mf_arr[dot, 2, :], color='b', linewidth=2.5)
+            fig.suptitle(f'Coupling J = {j}', fontsize=16)
+            plt.figure()
+            plt.plot(np.max(np.abs(np.diff(stim.T, axis=0)), axis=0))
+            plt.ylim(0, 2)
         else:
             return q_mf
 
@@ -481,6 +547,12 @@ class ring:
             if true == 'none':
                 epslist = [0.001]
         else:
+            if true == 'none':
+                stim_weight = 0
+                epslist = [0.001]
+                true = 'NM'
+            else:
+                stim_weight = 1
             q_eps_jlist = np.zeros((len(epslist), len(j_list), len(ini_conds), 3))
             for i_e, eps in enumerate(epslist):
                 print(r' $\varepsilon$ = {}'.format(eps))
@@ -499,7 +571,7 @@ class ring:
                     q_jlist[i_j, :] = q_initializations
                 q_eps_jlist[i_e] = q_jlist
             np.save(path, q_eps_jlist)
-        # j_crit = 1/np.sum(self.exp_kernel())
+        j_crit = 1/np.sum(self.exp_kernel())*4/3
         if len(epslist) == 1:
             figsize = (9, 5)
         else:
@@ -509,8 +581,9 @@ class ring:
         for i_a, a in enumerate(ax.flatten()):
             a.spines['top'].set_visible(False)
             a.spines['right'].set_visible(False)
-            if i_a < 6:
-                a.set_xticks([])
+            if len(epslist) > 1:
+                if i_a < 6:
+                    a.set_xticks([])
             a.set_ylim(-0.15, 1.15)
             # a.axvline(j_crit)
             if i_a in [0, 3, 6]:
@@ -521,15 +594,18 @@ class ring:
                 color = 'b'
             a.axhline(1/3, color=color, alpha=0.4, linestyle='--', linewidth=2)
             a.axhline(1/2, color=color, alpha=0.4, linestyle=':', linewidth=2)
+            if len(epslist) == 1:
+                a.axvline(j_crit, color='k', alpha=0.4, linewidth=2.5)
         for i_e, eps in enumerate(epslist):
             for state in range(3):
-                vals, idx = np.unique(q_eps_jlist[i_e, :, :, state], return_index=True)
+                # vals, idx = np.unique(q_eps_jlist[i_e, :, :, state], return_index=True)
+                
                 if len(epslist) == 1:
-                    ax[state].plot(j_list[idx // len(ini_conds)], vals, color=colors[state],
-                                   linewidth=2, marker='o', linestyle='', markersize=2)
+                    axis = ax[state]
                 else:
-                    ax[i_e, state].plot(j_list[idx // len(ini_conds)], vals, color=colors[state],
-                                        linewidth=2, marker='o', linestyle='', markersize=2)
+                    axis = ax[i_e, state]
+                axis.plot(j_list, q_eps_jlist[i_e, :, :, state], color=colors[state],
+                          linewidth=2, marker='o', linestyle='', markersize=2)
         if len(epslist) == 1:
             ax[0].set_xlabel('Coupling, J')
             ax[2].set_xlabel('Coupling, J')
@@ -554,10 +630,45 @@ class ring:
 if __name__ == '__main__':
     # ring(epsilon=0.001).mean_field_ring(true='2combination', j=0.8, b=[0., 0., 0.], plot=True,
     #                                     n_iters=300, noise=0)
-    ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='NM')
+    # ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='NM')
     # ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='CW')
     # ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='none')
     # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.2,
+    # ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='NM')
+    # ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='CW')
+    # ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='none')
+    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=5000, j=0.5,
+    #                                    true='combination_reverse', noise=0., plot=True)
+    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=5000, j=0.7,
+    #                                    true='combination_reverse', noise=0., plot=True)
+    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=5000, j=1.1,
+    #                                    true='combination_reverse', noise=0., plot=True)
+    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=5000, j=1.4,
+    #                                    true='combination_reverse', noise=0., plot=True)
+    ss = [[1, 0], [0.8, 0.2], [0.5, 0.5]]
+    for i in range(len(ss)):
+        ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=500, j=0.7,
+                                           true='CW', noise=0.05, plot=True,
+                                           discrete_stim=False, s=ss[i])
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=500, j=0.7,
+                                       true='NM', noise=0.05, plot=True,
+                                       discrete_stim=False, s=[0.7, 0.3])
+    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
+    #                                    true='2combination', noise=0., plot=True)
+    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.1,
+    #                                    true='2combination', noise=0., plot=True)
+    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.4,
     #                                    true='2combination', noise=0., plot=True)
     # ring(epsilon=0.01).belief_propagation(plot=True, true='combination', j=0.7)
-
+    r = ring(epsilon=0.001)
+    dt = 1e-2
+    n_iters= 100
+    snm = r.stim_creation_ou_process(true='NM', noise=0.01, s_init=[0.5, 0.5],
+                                     n_iters=n_iters, dt=dt)
+    scw = r.stim_creation_ou_process(true='CW', noise=0.01, s_init=[0.2, 0.8],
+                                     n_iters=n_iters, dt=dt)
+    fig, ax = plt.subplots(ncols=2, figsize=(10, 5))
+    for a in ax:
+        a.set_ylim(0, 1)
+    ax[0].plot(np.arange(0, n_iters*dt, dt), snm)
+    ax[1].plot(np.arange(0, n_iters*dt, dt), scw)
