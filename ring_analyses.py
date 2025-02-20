@@ -21,7 +21,7 @@ plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
 
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/ring_analyses/data_folder/'  # Alex
 
@@ -458,13 +458,16 @@ class ring:
                                                         j_list=np.arange(0, 2, 0.02),
                                                         true='CW'):
         
-        # ini_conds = [[0.1, 0.8, 0.1], [0.2, 0.7, 0.1], [0.1, 0.7, 0.2],
-        #               [0.3, 0.3, 0.4], [0.4, 0.3, 0.3], [0.8, 0.1, 0.1],
-        #               [0.1, 0.1, 0.8], [0.1, 0.2, 0.7], [0.7, 0.2, 0.1],
-        #               [0.2, 0.1, 0.7], [0.7, 0.1, 0.2]]
+        ini_conds = [[0.1, 0.8, 0.1], [0.2, 0.7, 0.1], [0.1, 0.7, 0.2],
+                      [0.3, 0.3, 0.4], [0.4, 0.3, 0.3], [0.8, 0.1, 0.1],
+                      [0.1, 0.1, 0.8], [0.1, 0.2, 0.7], [0.7, 0.2, 0.1],
+                      [0.2, 0.1, 0.7], [0.7, 0.1, 0.2], [0.3, 0.35, 0.35],
+                      [0.35, 0.35, 0.3], [0.35, 0.3, 0.35], [0.5, 0.3, 0.2],
+                      [0.1, 0.6, 0.3]]
         path = DATA_FOLDER + 'fixed_points_eps_jlist_'+ true + '_random_ini_conds_z_1.npy'
-        ini_conds = np.repeat(None, 50)
+        ini_conds = ini_conds + [None]*100
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        print('Computing fixed points')
         if true == 'none':
             stim_weight = 0
             epslist = [0.001]
@@ -480,12 +483,13 @@ class ring:
         else:
             q_eps_jlist = np.zeros((len(epslist), len(j_list), len(ini_conds), 3))
             for i_e, eps in enumerate(epslist):
+                print(r' $\varepsilon$ = {}'.format(eps))
                 self.eps = eps
                 q_jlist = np.zeros((len(j_list), len(ini_conds), 3))
                 for i_j, j in enumerate(j_list):
                     q_initializations = np.zeros((len(ini_conds), 3))
                     for initialization in range(len(ini_conds)):
-                        q_mf = self.mean_field_sde(dt=0.1, tau=0.1, n_iters=100, j=j,
+                        q_mf = self.mean_field_sde(dt=0.01, tau=0.06, n_iters=600, j=j,
                                                    true=true, noise=0., plot=False,
                                                    ini_cond=ini_conds[initialization],
                                                    stim_weight=stim_weight)
@@ -551,6 +555,8 @@ if __name__ == '__main__':
     # ring(epsilon=0.001).mean_field_ring(true='2combination', j=0.8, b=[0., 0., 0.], plot=True,
     #                                     n_iters=300, noise=0)
     ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='NM')
+    # ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='CW')
+    # ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='none')
     # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.2,
     #                                    true='2combination', noise=0., plot=True)
     # ring(epsilon=0.01).belief_propagation(plot=True, true='combination', j=0.7)
