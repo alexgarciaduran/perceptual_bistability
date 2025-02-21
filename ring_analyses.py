@@ -59,11 +59,11 @@ class ring:
     
             # Compute contributions from motion influences
             if s[i_prev] == 1 and z[i_prev] == 1:  # CW influence from left
-                p_s[i] += p_CW*(1-epsilon)
+                p_s[i] += p_CW
             if s[i_next] == 1 and z[i_next] == -1:  # CCW influence from right
-                p_s[i] += p_CCW*(1-epsilon)
+                p_s[i] += p_CCW
             if s[i] == 1 and z[i] == 0:  # Stationary influence
-                p_s[i] += p_NM*(1-epsilon)
+                p_s[i] += p_NM
     
             # Apply inclusion-exclusion correction
             if s[i_prev] == 1 and s[i_next] == 1 and z[i_prev] == 1 and z[i_next] == -1:
@@ -74,14 +74,14 @@ class ring:
                 p_s[i] += -p_CCW * p_NM
             if s[i_prev] == 1 and s[i] == 1 and s[i_next] == 1 and z[i_prev] == 1 and z[i] == 0 and z[i_next] == -1:
                 p_s[i] += p_CW * p_CCW * p_NM
-            if s[i_prev] == 0 and z[i_prev] == 1:
-                p_s[i] *= (1-p)
-            if s[i_next] == 0 and z[i_next] == -1:
-                p_s[i] *= (1-p)
+            # if s[i_prev] == 0 and z[i_prev] == 1:
+            #     p_s[i] *= (1-p)
+            # if s[i_next] == 0 and z[i_next] == -1:
+            #     p_s[i] *= (1-p)
 
         # Ensure probabilities remain valid
         p_s = np.clip(p_s, 0, 1)
-        p_s = [p_s[i] if s_t[i] else 1-p_s[i] for i in range(N)]
+        p_s = [p_s[i] if s_t[i] == 1 else 1-p_s[i] for i in range(N)]
         return p_s
 
 
@@ -271,7 +271,8 @@ class ring:
             s = np.array([np.random.choice([0, 1], p=[1-stim_likelihood[a], stim_likelihood[a]]) for a in range(n_dots)])
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
-            likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t])
+            likelihood = self.compute_expectation_log_likelihood(s=stim[t-1], q_z_prev=q_mf_arr[:, :, t-1],
+                                                                 s_t=stim[t])
             var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood + np.random.randn(n_dots, nstates)*noise)
             q_mf = (var_m1.T / np.sum(var_m1, axis=1)).T
             q_mf_arr[:, :, t] = q_mf
@@ -691,7 +692,9 @@ def plot_all():
 
 
 if __name__ == '__main__':
-    ring().prob_nm_vs_max_difference_continuous_stim(nreps=50, resimulate=True)
+    ring(epsilon=0.001).mean_field_ring(true='CW', j=0.1, b=[0., 0., 0.], plot=True,
+                                        n_iters=300, noise=0)
+    # ring().prob_nm_vs_max_difference_continuous_stim(nreps=50, resimulate=True)
     # ss = [[1, 0], [0.8, 0.2], [0.5, 0.5], [0.9, 0.9]]
     # for i in range(len(ss)):
     #     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.7,
