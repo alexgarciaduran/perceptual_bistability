@@ -136,31 +136,31 @@ class ring:
             # Iterate over all possible latent states z_{t-1}
             for z_i_index in range(num_states_z):  # for each possible state of z_i (columns)
                 likelihood_contribution = 0
-                # for startpoint in [0]:  # to get extra components \sum_{j \in N(i)}
-                startpoint = 0
-                # iterate over all possible combinations of neighbors
-                for comb in combinations:  # for all combinations of z_{i-1}, z_{i+1}
-                    i_prev = (i+startpoint-1) % num_variables
-                    i_next = (i+startpoint+1) % num_variables
-                    idx = (i+startpoint) % num_variables
-                    zn = np.ones(num_variables)
-                    zn[i_prev] = comb[0]  # z_{i-1}
-                    zn[i_next] = comb[1]  # z_{i+1}
-                    zn[idx] = z_states[z_i_index]  # z_i
-                    # Get the probability of z from q_z_prev (approx. posterior)
-                    # q_z_prev: num_variables x num_states_z (6 rows x 3 columns)
-                    q_z_p = q_z_prev[i_prev, comb[0]+1]
-                    q_z_n = q_z_prev[i_next, comb[1]+1]
-    
-                    # Get the CPT value for p(s_i | s, z)
-                    if discrete_stim:
-                        p_s_given_z = self.compute_likelihood_vector(s, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
-                    else:
-                        
-                        p_s_given_z = self.compute_likelihood_continuous_stim(s, zn, s_t, noise=noise)[idx]
-                    # Add q_{i-1} · q_{i+1} · p(s_i | s, z)
-                    likelihood_contribution += np.log(p_s_given_z + 1e-10)*q_z_p*q_z_n
-                    # print(likelihood_contribution)
+                for startpoint in [-1, 0, 1]:  # to get extra components \sum_{j \in N(i)}
+                # startpoint = 0
+                    # iterate over all possible combinations of neighbors
+                    for comb in combinations:  # for all combinations of z_{i-1}, z_{i+1}
+                        i_prev = (i+startpoint-1) % num_variables
+                        i_next = (i+startpoint+1) % num_variables
+                        idx = (i+startpoint) % num_variables
+                        zn = np.ones(num_variables)
+                        zn[i_prev] = comb[0]  # z_{i-1}
+                        zn[i_next] = comb[1]  # z_{i+1}
+                        zn[idx] = z_states[z_i_index]  # z_i
+                        # Get the probability of z from q_z_prev (approx. posterior)
+                        # q_z_prev: num_variables x num_states_z (6 rows x 3 columns)
+                        q_z_p = q_z_prev[i_prev, comb[0]+1]
+                        q_z_n = q_z_prev[i_next, comb[1]+1]
+        
+                        # Get the CPT value for p(s_i | s, z)
+                        if discrete_stim:
+                            p_s_given_z = self.compute_likelihood_vector(s, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
+                        else:
+                            
+                            p_s_given_z = self.compute_likelihood_continuous_stim(s, zn, s_t, noise=noise)[idx]
+                        # Add q_{i-1} · q_{i+1} · p(s_i | s, z)
+                        likelihood_contribution += np.log(p_s_given_z + 1e-10)*q_z_p*q_z_n
+                        # print(likelihood_contribution)
                 likelihood_c_all[i, z_i_index] = likelihood_contribution
         return likelihood_c_all
 
