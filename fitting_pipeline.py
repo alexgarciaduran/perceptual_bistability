@@ -1166,7 +1166,8 @@ def compute_jstar_bstar(sub, dataframe, model='MF', method='BADS',
 
 
 def plot_density_comparison(num_iter=100, method='nelder-mead',
-                            kde=False, stim_ev_0=False):
+                            kde=False, stim_ev_0=False, ax0=None, fig=None,
+                            full_fig=False):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
     state = [[], [], [], []]
@@ -1202,41 +1203,45 @@ def plot_density_comparison(num_iter=100, method='nelder-mead',
     data_model_orig = data_model_orig.reset_index()
     data_model_null['state'] = state[3]
     data_model_null = data_model_null.reset_index()
-    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(11, 10))
-    ax = ax.flatten()
-    leg = [True, False, False, False]
-    titles = [r'Data, $\theta_{null}$', r'Data, $\theta_{full}$',
-              r'Null data, $\theta_{null}$', r'Full data, $\theta_{full}$']
-    for df, a, l, title in zip([data_orig_mf_null, data_orig_mf, data_model_null, data_model_orig],
-                               ax, leg, titles):
-        a.spines['right'].set_visible(False)
-        a.spines['top'].set_visible(False)
-        df['signed_confidence'] = 2*df.confidence-1
-        if not kde:
-            sns.histplot(df.loc[df.stim_str == 0], x='signed_confidence', hue='state',
-                         alpha=0.4, lw=1.5, common_norm=False, ax=a,
-                         legend=l, stat='density', bins=10, palette=['k', 'r'])
-            a.set_ylim(-0.1, 1.2)
-        if kde:
-            if not stim_ev_0:
-                stim = [0, 0.4, 0.8, 1]
-                colormap_r = pl.cm.Reds(np.linspace(0.3, 1, 4))
-                colormap_k = pl.cm.gist_gray(np.linspace(0., 0.7, 4))
-                for ia in range(4):
-                    sns.kdeplot(df.loc[df.stim_str.abs() == stim[ia]], x='signed_confidence', hue='state',
+    if not full_fig:
+        fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(11, 10))
+        ax = ax.flatten()
+        leg = [True, False, False, False]
+        titles = [r'Data, $\theta_{null}$', r'Data, $\theta_{full}$',
+                  r'Null data, $\theta_{null}$', r'Full data, $\theta_{full}$']
+        for df, a, l, title in zip([data_orig_mf_null, data_orig_mf, data_model_null, data_model_orig],
+                                   ax, leg, titles):
+            a.spines['right'].set_visible(False)
+            a.spines['top'].set_visible(False)
+            df['signed_confidence'] = 2*df.confidence-1
+            if not kde:
+                sns.histplot(df.loc[df.stim_str == 0], x='signed_confidence', hue='state',
+                             alpha=0.4, lw=1.5, common_norm=False, ax=a,
+                             legend=l, stat='density', bins=10, palette=['k', 'r'])
+                a.set_ylim(-0.1, 1.2)
+            if kde:
+                if not stim_ev_0:
+                    stim = [0, 0.4, 0.8, 1]
+                    colormap_r = pl.cm.Reds(np.linspace(0.3, 1, 4))
+                    colormap_k = pl.cm.gist_gray(np.linspace(0., 0.7, 4))
+                    for ia in range(4):
+                        sns.kdeplot(df.loc[df.stim_str.abs() == stim[ia]], x='signed_confidence', hue='state',
+                                     alpha=1, lw=2.5, common_norm=False, ax=a,
+                                     legend=l, bw_adjust=0.6, palette=[colormap_k[ia], colormap_r[ia]])
+                    a.set_ylim(-0.1, 1.1)
+                if stim_ev_0:
+                    sns.kdeplot(df.loc[df.stim_str == 0], x='signed_confidence', hue='state',
                                  alpha=1, lw=2.5, common_norm=False, ax=a,
-                                 legend=l, bw_adjust=0.6, palette=[colormap_k[ia], colormap_r[ia]])
-                a.set_ylim(-0.1, 1.1)
-            if stim_ev_0:
-                sns.kdeplot(df.loc[df.stim_str == 0], x='signed_confidence', hue='state',
-                             alpha=1, lw=2.5, common_norm=False, ax=a,
-                             legend=l, bw_adjust=0.5, palette=['k', 'r'])
-                a.set_ylim(-0.1, 1.1)
-        a.set_xlabel('Confidence')
-        a.set_ylabel('Density')
-        a.set_title(title)
-    fig.tight_layout()
-    fig2, ax2 = plt.subplots(ncols=2, figsize=(10, 5))
+                                 legend=l, bw_adjust=0.5, palette=['k', 'r'])
+                    a.set_ylim(-0.1, 1.1)
+            a.set_xlabel('Confidence')
+            a.set_ylabel('Density')
+            a.set_title(title)
+    if ax0 is None:
+        fig.tight_layout()
+        fig2, ax2 = plt.subplots(ncols=2, figsize=(10, 5))
+    else:
+        ax2 = ax0
     stim = [0, 0.4, 0.8, 1]
     colormap_r = pl.cm.Reds(np.linspace(0.3, 1, 4))
     colormap_k = pl.cm.gist_gray_r(np.linspace(0.3, 1, 4))
@@ -1265,7 +1270,7 @@ def plot_density_comparison(num_iter=100, method='nelder-mead',
         a2.spines['top'].set_visible(False)
         a2.set_xlabel('Confidence')
         a2.set_ylim(-0.05, 0.85)
-    fig2.tight_layout()
+    # fig2.tight_layout()
 
 
 def linear_regression(data_orig, data_model_orig, data_model_null):
@@ -1377,7 +1382,8 @@ def load_all_data(all_df, model='MF5', method='BADS', sv_folder=SV_FOLDER):
     return data_orig, data_model_orig, data_model_null
 
 
-def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='BADS'):
+def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='BADS',
+                            ax=None, fig=None):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
     modeln = 'MF'
@@ -1398,7 +1404,10 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
     # sub by sub lienar regression
     weights_o, weights_model_o, weights_model_null =\
         linear_regression(data_orig, data_model_orig, data_model_null)
-    fig, ax = plt.subplots(ncols=4, figsize=(16, 4))
+    savefig = False
+    if ax is None:
+        fig, ax = plt.subplots(ncols=4, figsize=(16, 4))
+        savefig = True
     for a in ax:
         a.axhline(0, color='k', linestyle='--')
     xlabs = ['Data', 'Model', 'Null']
@@ -1440,7 +1449,8 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
                        [weights_o[3][i_s], weights_model_o[3][i_s], weights_model_null[3][i_s]][t],
                        marker='o', color=['tab:blue', 'tab:orange', 'tab:green'][t], linestyle='',
                        markersize=5, markeredgewidth=1, markeredgecolor='grey')
-    fig.tight_layout()
+    if savefig:
+        fig.tight_layout()
     pvals_o = []
     pvals_fm = []
     pvals_null = []
@@ -1479,8 +1489,9 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
         ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
                    fontsize=12)
-    fig.savefig(SV_FOLDER + 'linear_regression_analysis.png', dpi=100, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + 'linear_regression_analysis.svg', dpi=100, bbox_inches='tight')
+    if savefig:
+        fig.savefig(SV_FOLDER + 'linear_regression_analysis.png', dpi=100, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + 'linear_regression_analysis.svg', dpi=100, bbox_inches='tight')
 
 
 def stars_pval(pval):
@@ -1805,23 +1816,202 @@ def plot_mcmc_individual(states, vals, dists, burn_in):
     fig.tight_layout()
 
 
+def plot_all_subjects():
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    unique_vals = np.sort(all_df['pShuffle'].unique())
+    all_df['coupling'] = all_df['pShuffle'].replace(to_replace=unique_vals,
+                                value= [1., 0.3, 0.])
+    all_df['stim_str'] = (all_df.evidence.values)
+    all_df['stim_ev_cong'] = all_df.stim_str * all_df.response
+    subjects = all_df.subject.unique()
+    fig, ax = plt.subplots(ncols=8, nrows=4, figsize=(19, 12))
+    ax = ax.flatten()
+    df_sub = pd.DataFrame({})
+    for i_s, sub in enumerate(subjects):
+        ax[i_s].spines['right'].set_visible(False)
+        ax[i_s].spines['top'].set_visible(False)
+        dataframe = all_df.copy().loc[all_df['subject'] == sub]
+        dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
+        dataframe['abs_confidence'] = np.abs(dataframe.confidence-0.5)*2
+        df_sub = pd.concat((df_sub, dataframe[['stim_ev_cong', 'coupling', 'abs_confidence', 'subject']]))
+        l = True if i_s == 0 else False
+        sns.lineplot(dataframe, x='stim_ev_cong', y='abs_confidence',
+                     hue='coupling', ax=ax[i_s], legend=l)
+        if i_s > 23:
+            ax[i_s].set_xlabel('Stim. ev. cong.')
+        else:
+            ax[i_s].set_xlabel('')
+        if i_s in [0, 8, 16, 24]:
+            ax[i_s].set_ylabel('Confidence')
+        else:
+            ax[i_s].set_ylabel('')
+        ax[i_s].set_xticks([-1, 0, 1])
+        ax[i_s].set_ylim([0, 1])
+        ax[i_s].set_yticks([0, 0.5, 1])
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'all_subjects_abs_conf.png', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'all_subjects_abs_conf.svg', dpi=200, bbox_inches='tight')
+    fig2, ax2 = plt.subplots(1)
+    df_sub_final = df_sub.dropna().reset_index()
+    # df_sub_final['abs_confidence'] = scipy.stats.zscore(df_sub_final.abs_confidence.values)
+    # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
+    df_subject_avg = df_sub_final.groupby(['subject', 'stim_ev_cong', 'coupling'])['abs_confidence'].mean().reset_index()
+    # Plot
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    sns.lineplot(data=df_subject_avg, x='stim_ev_cong', y='abs_confidence', hue='coupling', ax=ax2,
+                 errorbar=('se'))
+    # Perform statistical tests at each stim_ev_cong level
+    alpha = 0.01  # Significance threshold
+    significant_x = []  # Store x positions where significant differences occur
+    significant_x2 = []
+    significant_x3 = []
+    df = df_subject_avg.copy()
+    # stim_values = df['stim_ev_cong'].unique()
+    coupling_values = df['coupling'].unique()
+    
+    for stim in [0, 0.4, 0.8, 1]:
+        groups = []
+        
+        for coup in coupling_values:
+            # Extract confidence values for each coupling at a given stim_ev_cong
+            conf_values = df_subject_avg.loc[
+                (df_subject_avg['stim_ev_cong'] == stim) & (df_subject_avg['coupling'] == coup),
+                'abs_confidence'].values
+            
+            groups.append(conf_values)
+    
+        stat, p_val = scipy.stats.ttest_rel(groups[0], groups[2])  # Paired t-test across subjects
+        stat, p_val2 = scipy.stats.ttest_rel(groups[0], groups[1])  # Paired t-test across subjects
+        stat, p_val3 = scipy.stats.ttest_rel(groups[2], groups[1])  # Paired t-test across subjects
+    
+        # If p-value is below alpha, mark this stim_ev_cong as significant
+        if p_val < alpha:
+            significant_x.append(stim)
+        if p_val2 < alpha:
+            significant_x3.append(stim)
+        if p_val3 < alpha:
+            significant_x2.append(stim)
+    # Add horizontal lines on top for significant differences
+    colormap = sns.color_palette("rocket", as_cmap=True)
+    cmap = colormap([0, 0.5, 1])
+    if significant_x:
+        for i, sig_x in enumerate([significant_x, significant_x2, significant_x3]): 
+            y_max = 0.3 + i*0.04 # Position above highest confidence
+            if sig_x == [0, 0.4, 0.8, 1] or sig_x == [0, 0.4, 0.8]:
+                ax2.plot(sig_x, [y_max]*len(sig_x),
+                         color=cmap[i], linewidth=4)
+            else:
+                for x in sig_x:
+                    plt.plot([x - 0.2, x], [y_max, y_max],
+                             color=cmap[i], linewidth=4)  # Short line above plot
+    ax2.set_xlabel('Stim. ev. cong')
+    ax2.set_ylabel('Absolute confidence')
+    fig2.tight_layout()
+    fig.savefig(SV_FOLDER + 'mean_across_all_subjects_abs_conf.png', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'mean_across_all_subjects_abs_conf.svg', dpi=200, bbox_inches='tight')
+
+
+def plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method='Powell',
+                            variable='abs_confidence'):
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    data_orig, data_model_orig, data_model_null =\
+        load_all_data(all_df, model='MF5', method=method, sv_folder=SV_FOLDER)
+    data_orig['decision'] = (data_orig.response.values+1)/2
+    data_model_orig['decision'] = (data_model_orig.decision.values+1)/2
+    data_model_null['decision'] = (data_model_null.decision.values+1)/2
+    df_sub_final = data_orig.dropna().reset_index()
+    # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
+    df_subject_avg = df_sub_final.groupby(['subject', 'coupling'])[variable].mean().reset_index()
+    df_sub_model = data_model_orig.dropna().reset_index()
+    # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
+    df_model_subject_avg = df_sub_model.groupby(['subject', 'coupling'])[variable].mean().reset_index()
+    df_sub_null = data_model_null.dropna().reset_index()
+    # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
+    df_null_subject_avg = df_sub_null.groupby(['subject', 'coupling'])[variable].mean().reset_index()
+    fig2, ax2 = plt.subplots(ncols=3, nrows=2, figsize=(9, 5.5))
+    ax2 = ax2.flatten()
+    if variable != 'decision':
+        lab = 'conf.'
+    else:
+        lab = 'p(right)'
+    titles = ['Model '+lab, 'Null model '+lab]
+    for a in ax2:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_xlim(-0.05, 1.05)
+        a.set_ylim(-0.05, 1.05)
+        a.plot([-0.05, 1.05], [-0.05, 1.05], color='k', alpha=0.4)
+    for i_c, c in enumerate([0, 0.3, 1]):
+        df_data_coup = df_subject_avg.loc[df_subject_avg.coupling == c]
+        df_model_coup = df_model_subject_avg.loc[df_model_subject_avg.coupling == c]
+        df_null_coup = df_null_subject_avg.loc[df_null_subject_avg.coupling == c]
+        # for i_s, stim in enumerate([0, 0.4, 0.8, 1]):
+        conf_data = df_data_coup[variable].values
+        conf_model = df_model_coup[variable].values
+        conf_null = df_null_coup[variable].values
+        ro_model = scipy.stats.pearsonr(conf_data, conf_model)
+        ro_null = scipy.stats.pearsonr(conf_data, conf_null)
+        # ro_model = scipy.stats.linregress(conf_data, conf_model).slope
+        # ro_null = scipy.stats.linregress(conf_data, conf_null).slope
+        ax2[i_c].set_title(f'Shuffling = {100*(1-c)}%', fontsize=15)
+        ax2[i_c].plot(conf_data, conf_model, marker='o', color='k', linestyle='')
+        ax2[i_c].text(0.06, 0.84, rf'$\rho = $ {round(ro_model.statistic, 3)}',  # , p={ro_model.pvalue: .3e}
+                      fontsize=14)
+        ax2[i_c+3].plot(conf_data, conf_null, marker='o', color='r', linestyle='')
+        ax2[i_c+3].text(0.06, 0.84, rf'$\rho = $ {round(ro_null.statistic, 3)}',  # , p={ro_model.pvalue: .3e}
+                        fontsize=14)
+        ax2[i_c+3].set_xlabel('Data ' + lab, fontsize=15)
+    ax2[0].set_ylabel(titles[0], fontsize=15)
+    ax2[3].set_ylabel(titles[1], fontsize=15)
+    fig2.tight_layout()
+    fig2.savefig(SV_FOLDER + 'full_comparison_shuffling_' + lab + '.png', dpi=200, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + 'full_comparison_shuffling_' + lab + '.svg', dpi=200, bbox_inches='tight')
+    # avg. psychometrics
+    df_subject_avg = df_sub_final.groupby(['subject', 'coupling', 'stim_str'])['decision'].mean().reset_index()
+    df_model_subject_avg = df_sub_model.groupby(['subject', 'coupling', 'stim_str'])['decision'].mean().reset_index()
+    df_null_subject_avg = df_sub_null.groupby(['subject', 'coupling', 'stim_str'])['decision'].mean().reset_index()
+    fig, ax = plt.subplots(ncols=3, figsize=(9, 4))
+    titles = ['Data', 'Model', 'Null']
+    for i_a, a in enumerate(ax):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_ylim(0, 1)
+        a.set_title(titles[i_a], fontsize=15)
+    sns.lineplot(df_subject_avg, x='stim_str', y='decision', hue='coupling', errorbar=('se'), ax=ax[0],
+                 legend=True, marker='o')
+    sns.lineplot(df_model_subject_avg, x='stim_str', y='decision', hue='coupling', errorbar=('se'), ax=ax[1],
+                 legend=False, marker='o')
+    sns.lineplot(df_null_subject_avg, x='stim_str', y='decision', hue='coupling', errorbar=('se'), ax=ax[2],
+                 legend=False, marker='o')
+    ax[0].set_ylabel('P(rightward)')
+    ax[1].set_ylabel('')
+    ax[2].set_ylabel('')
+    ax[0].set_xlabel('')
+    ax[1].set_xlabel('Stimulus evidence')
+    ax[2].set_xlabel('')
+    fig.tight_layout()
+
+
 if __name__ == '__main__':
     opt_algorithm = 'Powell'  # Powell, nelder-mead, BADS, L-BFGS-B
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
     # fit_subjects(method=opt_algorithm, model='MF5', data_augmen=False, n_init=1, extra='')
     # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=1, extra='null')
-    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm)
+    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm)
+    plot_all_subjects()
+    plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
-    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
+    # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
     plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True)
     # simulate_subjects(sv_folder=SV_FOLDER, model='MF5', resimulate=False,
     #                   extra='', mcmc=False, method=opt_algorithm)
     # simulate_subjects(sv_folder=SV_FOLDER, model='MF', resimulate=False,
     #                   extra='null', mcmc=True, method=opt_algorithm)
     plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5')
-    # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
-    #                    subjects='separated')
+    plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+                       subjects='separated')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
