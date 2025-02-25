@@ -109,7 +109,7 @@ class optimization:
             j = jpar*np.array(coupling)
         else:
             jpar, jbiaspar, b1par, biaspar, noise = pars
-            j = jpar*np.array(coupling)+np.round(jbiaspar, 5)
+            j = jpar*np.array(coupling)+jbiaspar
         b = b1par*np.array(stim_str)+biaspar
         unique_j = np.unique(j)
         unique_b = np.unique(b)
@@ -132,7 +132,7 @@ class optimization:
             norm_cte_i = []
             for i_m, m in enumerate(m_vals):
                 # in positive bc V(q) = int{-F(q)}
-                # then Boltzmann is exp(-V) = exp{int{F(q)}}
+                # then Boltzmann is ~ exp(-V) = exp{int{F(q)}}
                 norm_cte_i.append(np.exp((scipy.integrate.quad(lambda x: pot_lbp_combs(x, i),
                                                            min_val_integ, m)[0])*2/ (noise*noise)))
                 
@@ -369,10 +369,10 @@ class optimization:
             if method != 'BADS':
                 bounds = Bounds([1e-1, -.5, -.5, 0.05], [3, .5, .5, 0.3])
             if method == 'BADS':
-                lb = [0., -.2, -.8, 0.05]
-                ub = [2., 2., 0.8, 0.6]
-                plb = [0.2, 0., -0.3, 0.1]
-                pub = [1.4, 0.6, 0.3, 0.3]
+                lb = [0., -0.2, -0.8, 0.01]
+                ub = [1.3, 2, 0.8, 0.25]
+                plb = [0.1, 0.1, -0.6, 0.08]
+                pub = [1.1, 0.9, 0.6, 0.20]
         if model == 'LBP5':
             fun = self.nlh_boltzmann_lbp
             assert len(x0) == 5, 'x0 should have 5 values (J1, J0, B1, bias, noise)'
@@ -380,9 +380,9 @@ class optimization:
                 bounds = Bounds([1e-1, -.5, -.5, 0.05], [3, .5, .5, 0.3])
             if method == 'BADS':
                 lb = [0, 0., -0.2, -0.8, 0.01]
-                ub = [2., 1.5, 2, 0.8, 0.5]
+                ub = [2., 1.5, 1.5, 0.8, 0.25]
                 plb = [0.1, 0.1, 0.1, -0.6, 0.08]
-                pub = [1.4, 1.3, 0.9, 0.6, 0.25]
+                pub = [1.4, 1.3, 0.9, 0.6, 0.20]
         if model == 'FBP':
             fun = self.nlh_boltzmann_fbp
             assert len(x0) == 5, 'x0 should have 5 values (J, B1, bias, noise, alpha)'
@@ -522,7 +522,7 @@ def fit_data(optimizer, plot=True, model='MF', n_iters=200, method='nelder-mead'
         j0 = np.random.uniform(0.2, 0.6)
         b10 = np.random.uniform(0.4, 0.6)
         bias0 = np.random.uniform(0, 0.3)
-        noise0 = np.random.uniform(0.3, 0.4)
+        noise0 = np.random.uniform(0.12, 0.2)
         if model == 'FBP':
             alpha0 = np.random.uniform(0.1, 1.4)
             x0 = [j0, b10, bias0, noise0, alpha0]
@@ -653,7 +653,7 @@ def simulate_FBP(pars, n_iters,
     if os.path.exists(pathdata) and not resimulate:
         data = pd.read_csv(pathdata)
     else:
-        if model in ['FBP', 'LBP']:
+        if model in ['FBP', 'LBP', 'LBP5']:
             for i in range(len(stimulus)):
                 # pos, neg = discrete_DBN(j[i], b=b[i], theta=theta, num_iter=n_iters,
                 #                         thr=1e-6, alpha=alpha)
@@ -1016,13 +1016,38 @@ def fit_subjects(method='BADS', model='MF', subjects='separated',
         np.save(SV_FOLDER + 'parameters_' + model + appendix + sub +  extra + '.npy', params)
 
 
+def plot_params_LBP5_vs_MF5():
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    subjects = all_df.subject.unique()
+    nsubs = len(subjects)
+    parmat_lbp5 = np.zeros((nsubs, 5))
+    parmat_mf5 = np.zeros((nsubs, 5))
+    for i_s, sub in enumerate(subjects):
+        params_lbp5 = np.load(SV_FOLDER + 'parameters_' + 'LBP5_BADS' + sub + '.npy')
+        params_mf5 = np.load(SV_FOLDER + 'parameters_' + 'MF5_BADS' + sub + '.npy')
+        parmat_lbp5[i_s, :] = params_lbp5
+        parmat_mf5[i_s, :] = params_mf5
+    fig, ax = plt.subplots(ncols=5, figsize=(14, 3.5))
+    labels = ['Coupling slope, J1', 'Coupling bias, J0', 'Stimulus weight, B1', 'Bias, B0', 'noise']
+    for i in range(len(ax)):
+        ax[i].spines['top'].set_visible(False)
+        ax[i].spines['right'].set_visible(False)
+        ax[i].plot(parmat_mf5[:, i], parmat_lbp5[:, i], color='k', marker='o', linestyle='',
+                   markersize=4)
+        corr = scipy.stats.pearsonr(parmat_mf5[:, i], parmat_lbp5[:, i])
+        ax[i].set_title(labels[i] + '\n' + fr'$\rho=${round(corr.statistic, 4)}, p={corr.pvalue:.3e}', fontsize=15)
+        ax[i].set_ylabel('LBP5')
+        ax[i].set_xlabel('MF5')
+    fig.tight_layout()
+
+
 def plot_fitted_params(sv_folder=SV_FOLDER, model='LBP', method='BADS',
                        subjects='separated'):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     if subjects == 'together':
         all_df['subject'] = 'all'
     subjects = all_df.subject.unique()
-    if model in ['LBP', 'MF']:
+    if model in ['LBP', 'MF', 'GS']:
         numpars = 4
     else:
         numpars = 5
@@ -2318,31 +2343,30 @@ def ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method='BADS',
 
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
-    plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
-    # fit_subjects(method=opt_algorithm, model='LBP', data_augmen=False, n_init=1, extra='null')
-    # fit_subjects(method=opt_algorithm, model='LBP5', data_augmen=False, n_init=1, extra='')
-    fit_subjects(method=opt_algorithm, model='GS', data_augmen=False, n_init=1, extra='')
-    # simulate_subjects(sv_folder=SV_FOLDER, model='LBP5', resimulate=False,
-    #                   extra='', mcmc=False, method=opt_algorithm, data_augment=False,
-    #                   plot_subs=False)
-    # simulate_subjects(sv_folder=SV_FOLDER, model='LBP', resimulate=False,
-    #                   extra='null', mcmc=False, method=opt_algorithm, data_augment=False,
-    #                   plot_subs=False)
+    # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
+    fit_subjects(method=opt_algorithm, model='LBP', data_augmen=False, n_init=1, extra='null')
+    fit_subjects(method=opt_algorithm, model='LBP5', data_augmen=False, n_init=1, extra='')
+    # fit_subjects(method=opt_algorithm, model='GS', data_augmen=False, n_init=1, extra='')
+    simulate_subjects(sv_folder=SV_FOLDER, model='LBP5', resimulate=True,
+                      extra='', mcmc=False, method=opt_algorithm, data_augment=False,
+                      plot_subs=False)
+    simulate_subjects(sv_folder=SV_FOLDER, model='LBP', resimulate=True,
+                      extra='null', mcmc=False, method=opt_algorithm, data_augment=False,
+                      plot_subs=False)
     # plot_fitted_params(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
-    #                     subjects='separated')
+    #                    subjects='separated')
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='LBP5', method=opt_algorithm,
     #                                 bic=True)
     # plot_all_subjects()
-    # plot_models_predictions(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm)
-    # plot_bic_across_models(sv_folder=SV_FOLDER,
-    #                         bic=True, method='BADS')
+    plot_models_predictions(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm)
+    plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
     # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
-    # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
-    #                         variable='aligned_confidence', bw=0.7, model='LBP5')
-    # plot_regression_weights(sv_folder=SV_FOLDER, load=False, model='LBP5',
-    #                         method=opt_algorithm)
+    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
+                            variable='aligned_confidence', bw=0.7, model='LBP5')
+    plot_regression_weights(sv_folder=SV_FOLDER, load=False, model='LBP5',
+                            method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
