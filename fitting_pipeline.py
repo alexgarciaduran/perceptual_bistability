@@ -135,8 +135,7 @@ class optimization:
                 # then Boltzmann is ~ exp(-V) = exp{int{F(q)}}
                 norm_cte_i.append(np.exp((scipy.integrate.quad(lambda x: pot_lbp_combs(x, i),
                                                            min_val_integ, m)[0])*2/ (noise*noise)))
-                
-            norm_cte_combs[i] = np.sum(norm_cte_i)
+            norm_cte_combs[i] = np.sum(norm_cte_i)*dm
         norm_cte = []
         potential_lbp = []
         for i in range(len(confidence)):
@@ -148,7 +147,7 @@ class optimization:
             idx = (np.array(combs) == (j[i], b[i])).all(axis=1)
             norm_cte.append(norm_cte_combs[idx][0])
         boltzman_lbp = bmann_distro(potential_lbp)
-        # nlh_lbp = -np.nansum(boltzman_lbp-np.log(norm_cte))
+        # nlh_lbp = -np.sum(boltzman_lbp-np.log(norm_cte))
         # contaminants (?)
         distro = np.exp(boltzman_lbp)/norm_cte
         nlh_lbp = -np.sum(np.log(distro*(1-eps)+conts*eps))
@@ -162,6 +161,8 @@ class optimization:
         # potential_fbp = np.array(potential_fbp)
         # plt.plot(qv, np.exp(-potential_fbp*2/noise**2)/norm_cte[iexp], label=jpar)
         # plt.axvline(tfconf[iexp], color='r')
+        if np.isnan(nlh_lbp):
+            print('a')
         return nlh_lbp
 
 
@@ -223,7 +224,7 @@ class optimization:
 
 
     def nlh_boltzmann_mf(self, pars, n=3.92, eps=1e-3, conts_distro=1e-2,
-                         penalization_nan=0):
+                         penalization_nan=0, dq=1e-2):
         coupling, stim_str, confidence = self.coupling, self.stim_str, self.confidence
         if len(pars) == 4:
             jpar, b1par, biaspar, noise = pars
@@ -233,7 +234,7 @@ class optimization:
             j = jpar*np.array(coupling)+jbiaspar
         b = b1par*np.array(stim_str)+biaspar
 
-        q = np.arange(0, 1, 1e-2)  # Define q outside the loop, shape (100,)
+        q = np.arange(0, 1, dq)  # Define q outside the loop, shape (100,)
 
         # Reshape j and b to broadcast correctly over q
         j = np.array(j).reshape(-1, 1)  # Reshape j to shape (500, 1)
@@ -483,7 +484,9 @@ def load_data(data_folder, n_participants=1, sigmoid_fit=False):
         df_0 = pd.DataFrame()
         for i in range(len(files)):
             df = pd.read_csv(files[i])
+            df = df.dropna(subset=['confidence'])
             df['subject'] = 's_' + str(i+1)
+            # df['confidence'] = sigmoid(scipy.stats.zscore(df.confidence.values)*2)*2-1
             if sigmoid_fit:
                 fun = lambda cp, w0, w1, w2: sigmoid(w0 + w1*cp + w2*cp**3)  # cp = 2*c-1
                 df = df.dropna(subset=['confidence'])
@@ -2347,26 +2350,26 @@ if __name__ == '__main__':
     fit_subjects(method=opt_algorithm, model='LBP', data_augmen=False, n_init=1, extra='null')
     fit_subjects(method=opt_algorithm, model='LBP5', data_augmen=False, n_init=1, extra='')
     # fit_subjects(method=opt_algorithm, model='GS', data_augmen=False, n_init=1, extra='')
-    simulate_subjects(sv_folder=SV_FOLDER, model='LBP5', resimulate=True,
-                      extra='', mcmc=False, method=opt_algorithm, data_augment=False,
-                      plot_subs=False)
-    simulate_subjects(sv_folder=SV_FOLDER, model='LBP', resimulate=True,
-                      extra='null', mcmc=False, method=opt_algorithm, data_augment=False,
-                      plot_subs=False)
+    # simulate_subjects(sv_folder=SV_FOLDER, model='LBP5', resimulate=True,
+    #                   extra='', mcmc=False, method=opt_algorithm, data_augment=False,
+    #                   plot_subs=False)
+    # simulate_subjects(sv_folder=SV_FOLDER, model='LBP', resimulate=True,
+    #                   extra='null', mcmc=False, method=opt_algorithm, data_augment=False,
+    #                   plot_subs=False)
     # plot_fitted_params(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                    subjects='separated')
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='LBP5', method=opt_algorithm,
     #                                 bic=True)
     # plot_all_subjects()
-    plot_models_predictions(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm)
-    plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
+    # plot_models_predictions(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm)
+    # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
     # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
-    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
-                            variable='aligned_confidence', bw=0.7, model='LBP5')
-    plot_regression_weights(sv_folder=SV_FOLDER, load=False, model='LBP5',
-                            method=opt_algorithm)
+    # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
+    #                         variable='aligned_confidence', bw=0.7, model='LBP5')
+    # plot_regression_weights(sv_folder=SV_FOLDER, load=False, model='LBP5',
+    #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
