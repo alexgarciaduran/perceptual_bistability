@@ -2106,12 +2106,12 @@ def plot_mcmc_individual(states, vals, dists, burn_in):
     fig.tight_layout()
 
 
-def plot_all_subjects():
+def plot_all_subjects(xvar='stim_ev_cong'):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     unique_vals = np.sort(all_df['pShuffle'].unique())
     all_df['coupling'] = all_df['pShuffle'].replace(to_replace=unique_vals,
                                 value= [1., 0.3, 0.])
-    all_df['stim_str'] = (all_df.evidence.values)
+    all_df['stim_str'] = (all_df.evidence.abs().values)
     all_df['stim_ev_cong'] = all_df.stim_str * all_df.response
     subjects = all_df.subject.unique()
     fig, ax = plt.subplots(ncols=8, nrows=4, figsize=(19, 12))
@@ -2123,19 +2123,25 @@ def plot_all_subjects():
         dataframe = all_df.copy().loc[all_df['subject'] == sub]
         dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
         dataframe['abs_confidence'] = np.abs(dataframe.confidence-0.5)*2
-        df_sub = pd.concat((df_sub, dataframe[['stim_ev_cong', 'coupling', 'abs_confidence', 'subject']]))
+        df_sub = pd.concat((df_sub, dataframe[['stim_ev_cong', 'coupling', 'abs_confidence', 'subject', 'stim_str']]))
         l = True if i_s == 0 else False
-        sns.lineplot(dataframe, x='stim_ev_cong', y='abs_confidence',
-                     hue='coupling', ax=ax[i_s], legend=l)
+        sns.lineplot(dataframe, x=xvar, y='abs_confidence',
+                     hue='coupling', ax=ax[i_s], legend=l, errorbar=('se'))
         if i_s > 23:
-            ax[i_s].set_xlabel('Stim. ev. cong.')
+            if xvar == 'stim_ev_cong':
+                ax[i_s].set_xlabel('Stim. ev. cong.')
+            if xvar == 'stim_str':
+                ax[i_s].set_xlabel('Stimulus strength')
         else:
             ax[i_s].set_xlabel('')
         if i_s in [0, 8, 16, 24]:
             ax[i_s].set_ylabel('Confidence')
         else:
             ax[i_s].set_ylabel('')
-        ax[i_s].set_xticks([-1, 0, 1])
+        if xvar == 'stim_str':
+            ax[i_s].set_xticks([0, 1])
+        if xvar == 'stim_ev_cong':
+            ax[i_s].set_xticks([-1, 0, 1])
         ax[i_s].set_ylim([0, 1])
         ax[i_s].set_yticks([0, 0.5, 1])
     fig.tight_layout()
@@ -2347,33 +2353,34 @@ def ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method='BADS',
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
-    fit_subjects(method=opt_algorithm, model='LBP', data_augmen=False, n_init=1, extra='null')
-    fit_subjects(method=opt_algorithm, model='LBP5', data_augmen=False, n_init=1, extra='')
+    # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=1, extra='null')
+    # fit_subjects(method=opt_algorithm, model='MF5', data_augmen=False, n_init=1, extra='')
     # fit_subjects(method=opt_algorithm, model='GS', data_augmen=False, n_init=1, extra='')
-    # simulate_subjects(sv_folder=SV_FOLDER, model='LBP5', resimulate=True,
+    # simulate_subjects(sv_folder=SV_FOLDER, model='MF5', resimulate=True,
     #                   extra='', mcmc=False, method=opt_algorithm, data_augment=False,
     #                   plot_subs=False)
-    # simulate_subjects(sv_folder=SV_FOLDER, model='LBP', resimulate=True,
+    # simulate_subjects(sv_folder=SV_FOLDER, model='MF', resimulate=True,
     #                   extra='null', mcmc=False, method=opt_algorithm, data_augment=False,
     #                   plot_subs=False)
     # plot_fitted_params(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                    subjects='separated')
-    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='LBP5', method=opt_algorithm,
-    #                                 bic=True)
+    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
+    #                                bic=True)
     # plot_all_subjects()
-    # plot_models_predictions(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm)
+    plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+                            variable='decision')
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
     # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
-    # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
-    #                         variable='aligned_confidence', bw=0.7, model='LBP5')
-    # plot_regression_weights(sv_folder=SV_FOLDER, load=False, model='LBP5',
-    #                         method=opt_algorithm)
+    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
+                            variable='aligned_confidence', bw=0.7, model='MF5')
+    plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
+                            method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                     band_width=0.7)
-    # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
-    #                     band_width=0.7)
+    ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+                        band_width=0.7)
     # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
     #                         bw=0.8, annot=False)  # good: 11, 7, 15, 18, 23, 30
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
