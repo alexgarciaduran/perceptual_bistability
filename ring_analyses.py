@@ -136,9 +136,9 @@ class ring:
             # Iterate over all possible latent states z_{t-1}
             for z_i_index in range(num_states_z):  # for each possible state of z_i (columns)
                 likelihood_contribution = 0
-                for startpoint in [-1, 0, 1]:  # to get extra components \sum_{j \in N(i)}
+                for startpoint in np.arange(-self.ndots//2, self.ndots//2, 1):  # to get extra components \sum_{j \in N(i)}
                 # startpoint = 0
-                    # iterate over all possible combinations of neighbors
+                # iterate over all possible combinations of neighbors
                     for comb in combinations:  # for all combinations of z_{i-1}, z_{i+1}
                         i_prev = (i+startpoint-1) % num_variables
                         i_next = (i+startpoint+1) % num_variables
@@ -273,6 +273,7 @@ class ring:
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
             likelihood = self.compute_expectation_log_likelihood(s=stim[t-1], q_z_prev=q_mf_arr[:, :, t-1],
                                                                  s_t=stim[t])
+            # print(likelihood)
             var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood + np.random.randn(n_dots, nstates)*noise)
             q_mf = (var_m1.T / np.sum(var_m1, axis=1)).T
             q_mf_arr[:, :, t] = q_mf
@@ -643,7 +644,7 @@ class ring:
             q_mns_vs_diff = np.zeros((len(ss), nreps))
             for i in range(len(ss)):
                 for n in range(nreps):
-                    q = ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=300, j=0.6,
+                    q = ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=100, j=0.6,
                                                            true='CW', noise=0.01, plot=False,
                                                            discrete_stim=False, s=ss[i],
                                                            b=[0., 0., 0.], noise_stim=0.01,
@@ -668,13 +669,13 @@ class ring:
 
 def plot_all():
     # discrete stim
-    ring(epsilon=0.001).mean_field_ring(true='2combination', j=0.8, b=[0., 0., 0.], plot=True,
+    ring(epsilon=0.001).mean_field_ring(true='combination', j=0.1, b=[0., 0., 0.], plot=True,
                                         n_iters=300, noise=0)
     ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='NM')
     ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='CW')
     ring(epsilon=0.001).mean_field_fixed_points_vs_j_different_epsilons(true='none')
-    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.5,
-                                        true='combination_reverse', noise=0., plot=True)
+    ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.1,
+                                       true='CW', noise=0., plot=True)
     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
                                         true='combination_reverse', noise=0., plot=True)
     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.1,
@@ -692,19 +693,19 @@ def plot_all():
 
 
 if __name__ == '__main__':
-    ring(epsilon=0.001).mean_field_ring(true='CW', j=0.1, b=[0., 0., 0.], plot=True,
-                                        n_iters=300, noise=0)
-    # ring().prob_nm_vs_max_difference_continuous_stim(nreps=50, resimulate=True)
+    # ring().prob_nm_vs_max_difference_continuous_stim(nreps=10, resimulate=False)
+    ring(epsilon=0.).mean_field_ring(true='CW', j=0.1, b=[0., 0., 0.], plot=True,
+                                     n_iters=100, noise=0)
     # ss = [[1, 0], [0.8, 0.2], [0.5, 0.5], [0.9, 0.9]]
     # for i in range(len(ss)):
-    #     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.7,
+    #     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.4,
     #                                         true='CW', noise=0., plot=True,
     #                                         discrete_stim=False, s=ss[i],
     #                                         b=[0., 0., 0.], noise_stim=0.01)
-    # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=500, j=0.5,
-    # #                                     true='CW', noise=0.01, plot=True,
-    # #                                     discrete_stim=False, s=[0.8, 0.2],
-    # #                                     b=[0., 0., 0.], noise_stim=0.1)
+    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
+    #                                     true='NM', noise=0.01, plot=True,
+    #                                     discrete_stim=False, s=[0.8, 0.2],
+    #                                     b=[0., 0., 0.], noise_stim=0.1)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
     # # #                                     true='CW', noise=0.01, plot=True,
     # # #                                     discrete_stim=False, s=[0.9, 0.9],
