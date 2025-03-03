@@ -1375,6 +1375,81 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
     fig.tight_layout()
 
 
+def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7):
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    subjects = all_df.subject.unique()
+    state = []
+    data_orig, data_model_orig, data_model_null =\
+        load_all_data(all_df, model=model, method=method, sv_folder=SV_FOLDER)
+    datastim0 = data_orig.loc[data_orig.stim_str == 0]
+    datastim0['state'] = 0
+    arr_betavals = np.zeros((3, len(subjects)))
+    if method == 'BADS':
+        appendix = '_BADS'
+    else:
+        appendix = ''
+    for i_s, sub in enumerate(subjects):
+        dataframe = datastim0.copy().loc[(datastim0['subject'] == sub)]
+        for i_c, c in enumerate([0., 0.3, 1]):
+            skewness = scipy.stats.skew(dataframe.loc[dataframe.coupling == c, 'confidence'])
+            kurtosis = scipy.stats.kurtosis(
+                dataframe.loc[dataframe.coupling == c, 'confidence'], fisher=True)
+            n = len(dataframe)
+            val_sum = 3*(n-1)**2 / ((n-2)*(n-3))
+            beta = round((skewness**2 + 1)/(kurtosis+val_sum), 4)
+            arr_betavals[i_c, i_s] = beta
+        pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '.npy')    
+        coup = np.unique(pars[0]*dataframe.coupling+pars[1])-1/3.92
+        if (np.sign(coup) < 0).all():
+            s = 0
+        if (np.sign(coup) > 0).all():
+            s = 2
+        if np.sign(np.min(coup)) != np.sign(np.max(coup)):
+            s = 1
+        state.append(s)
+        datastim0.loc[datastim0['subject'] == sub, 'state'] = s
+    fig, ax = plt.subplots(ncols=3, figsize=(13, 5))
+    colormap = pl.cm.Oranges(np.linspace(0.3, 1, 3))
+    cmap = [c for c in colormap]
+    labs = ['Sub-critical', 'Transition', 'Supra-critical']
+    labs_j = [0, 0.3, 1]
+    legendelements = []
+    for i_a, a in enumerate(ax):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        sns.kdeplot(datastim0.loc[datastim0.state == i_a],
+                    x='confidence', hue='coupling', ax=a,
+                    bw_adjust=bw, palette=cmap, linewidth=3,
+                    legend=False)
+        legendelements.append(Line2D([0], [0], color=cmap[i_a],
+                                     lw=3, label=labs_j[i_a]))
+        a.set_title(labs[i_a], fontsize=15)
+        a.set_ylabel('')
+        a.set_xlabel('Confidence')
+    ax[0].set_ylabel('Desntiy')
+    ax[0].legend(frameon=False, title='Coupling, J', handles=legendelements,
+                 bbox_to_anchor=(0.7, 0.75))
+    fig.tight_layout()
+    fig2, ax2 = plt.subplots(figsize=(4, 4))
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    # state = np.array(state)
+    sns.barplot(arr_betavals.T, ax=ax2, palette=cmap)
+    sns.swarmplot(arr_betavals.T, color='k', size=3, legend=False, alpha=0.8)
+    # pvals = [stars_pval(scipy.stats.ttest_1samp(arr, 5/9).pvalue) for arr in arr_betavals]
+    # ax2.text(0, 1, f"{pvals[0]}", ha='center', va='bottom', color='k',
+    #          fontsize=15)
+    # ax2.text(1, 1, f"{pvals[1]}", ha='center', va='bottom', color='k',
+    #          fontsize=15)
+    # ax2.text(2, 1, f"{pvals[2]}", ha='center', va='bottom', color='k',
+    #          fontsize=15)
+    ax2.axhline(5/9, color='k', linestyle='--', alpha=0.3)
+    ax2.set_xticks([0, 1, 2], ['100', '70', '0'])
+    ax2.set_xlabel('Shuffling')
+    ax2.set_ylabel('Bimodality coef.')
+    fig2.tight_layout()
+
+
 def plot_density_comparison(num_iter=100, method='nelder-mead',
                             kde=False, stim_ev_0=False, ax0=None, fig=None,
                             full_fig=False, variable='signed_confidence',
@@ -2290,7 +2365,7 @@ def plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method='Powell',
 
 
 def ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method='BADS',
-                       band_width=0.5, together=False):
+                       band_width=0.5, together=False, sort_by_j=False):
     sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     model_nonull = 'MF5' if model in ['MF', 'MF5'] else 'LBP5'
@@ -2300,8 +2375,27 @@ def ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method='BADS',
         data_model = data_model_orig
     else:
         data_model = data_model_null
+    if method == 'BADS':
+        appendix = '_BADS'
+    else:
+        appendix = ''
+    subjects = all_df.subject.unique()
+    sum_js = np.zeros((len(subjects)))
     # Initialize the FacetGrid object
     pal = sns.cubehelix_palette(32, rot=-.25, light=.7)
+    if sort_by_j:
+        data_orig['sum_js'] = 0
+        data_model_orig['sum_js'] = 0
+        data_model_null['sum_js'] = 0
+        for i_s, sub in enumerate(subjects):
+            params_i = np.load(SV_FOLDER + 'parameters_' + 'MF5' + appendix + sub +  '' + '.npy')
+            sum_js[i_s] = params_i[0]+params_i[1]
+            data_orig.loc[data_orig.subject == sub, 'sum_js'] = params_i[0] + params_i[1]
+            data_model_orig.loc[data_model_orig.subject == sub, 'sum_js'] = params_i[0] + params_i[1]
+            data_model_null.loc[data_model_null.subject == sub, 'sum_js'] = params_i[0] + params_i[1]
+        data_orig = data_orig.sort_values('sum_js')
+        data_model_orig = data_model_orig.sort_values('sum_js')
+        data_model_null = data_model_null.sort_values('sum_js')
     g = sns.FacetGrid(data_orig, hue="subject", aspect=1, height=2.8, palette=pal,
                       row='subject', sharey=False)  # , col_wrap=4, 
     
@@ -2313,10 +2407,10 @@ def ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method='BADS',
     
     # passing color=None to refline() uses the hue mapping
     g.refline(y=0, linewidth=2, linestyle="-", color=None, clip_on=False)
-    
+    subjects_sorted = data_model_orig.subject.unique()
     for i_a, a in enumerate(g.axes):
         a[0].set_title('')
-        sns.kdeplot(data_model.loc[(data_model.subject == data_model.subject.unique()[i_a])],
+        sns.kdeplot(data_model.loc[(data_model.subject == subjects_sorted[i_a])],
                     x='confidence', ax=a[0],
                     lw=3, color='r', bw_adjust=band_width, common_norm=False)
         if together:
@@ -2367,22 +2461,22 @@ if __name__ == '__main__':
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
     #                                bic=True)
     # plot_all_subjects()
-    plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
-                            variable='decision')
+    # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
+    plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=1)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
     # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
     plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
                             variable='aligned_confidence', bw=0.7, model='MF5')
-    plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
-                            method=opt_algorithm)
+    # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
+    #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                     band_width=0.7)
-    ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
-                        band_width=0.7)
+    # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+    #                     band_width=0.7, sort_by_j=True)
     # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
-    #                         bw=0.8, annot=False)  # good: 11, 7, 15, 18, 23, 30
+    #                         bw=0.8, annot=True)  # good: 11, 7, 15, 18, 23, 30
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
