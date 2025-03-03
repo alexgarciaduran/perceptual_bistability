@@ -138,6 +138,8 @@ class ring:
                 likelihood_contribution = 0
                 for startpoint in np.arange(-self.ndots//2, self.ndots//2, 1):  # to get extra components \sum_{j \in N(i)}
                 # startpoint = 0
+                    if startpoint == 0:
+                        continue
                 # iterate over all possible combinations of neighbors
                     for comb in combinations:  # for all combinations of z_{i-1}, z_{i+1}
                         i_prev = (i+startpoint-1) % num_variables
@@ -245,7 +247,7 @@ class ring:
 
 
     def mean_field_ring(self, j=2, n_iters=50, nstates=3, b=np.zeros(3),
-                        true='NM', plot=False, noise=0):
+                        true='NM', plot=False, noise=0, ini_cond=None):
         # bifurcation at j ~ 0.554
         kernel = self.exp_kernel()
         n_dots = self.ndots
@@ -255,7 +257,11 @@ class ring:
         stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
         s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
         # q_mf = np.repeat(np.array([[0.25], [0.3], [0.2]]), 6, axis=-1).T
-        q_mf = np.ones((n_dots, nstates))/3 + np.random.randn(n_dots, 3)*0.05
+        if ini_cond is None:
+            q_mf = np.ones((n_dots, nstates))/3 + np.random.randn(n_dots, 3)*0.05
+        else:
+            ini_cond = np.array(ini_cond)
+            q_mf = np.repeat(ini_cond.reshape(-1, 1), self.ndots, axis=1).T
         q_mf = (q_mf.T / np.sum(q_mf, axis=1)).T
         z = [np.random.choice([-1, 0, 1], p=q_mf[a]) for a in range(n_dots)]
         j_mat = circulant(kernel)*j
@@ -574,7 +580,7 @@ class ring:
                     q_jlist[i_j, :] = q_initializations
                 q_eps_jlist[i_e] = q_jlist
             np.save(path, q_eps_jlist)
-        j_crit = 1/np.sum(self.exp_kernel())*4/3
+        j_crit = 1/np.sum(self.exp_kernel())
         if len(epslist) == 1:
             figsize = (9, 5)
         else:
@@ -694,18 +700,18 @@ def plot_all():
 
 if __name__ == '__main__':
     # ring().prob_nm_vs_max_difference_continuous_stim(nreps=10, resimulate=False)
-    ring(epsilon=0.).mean_field_ring(true='CW', j=0.1, b=[0., 0., 0.], plot=True,
-                                     n_iters=100, noise=0)
-    # ss = [[1, 0], [0.8, 0.2], [0.5, 0.5], [0.9, 0.9]]
+    ring(epsilon=0., n_dots=6).mean_field_ring(true='CW', j=0.5, b=[0., 0., 0.], plot=True,
+                                                n_iters=100, noise=0)
+    # ss = [[0.8, 0.2], [0.5, 0.5], [0.9, 0.9]]
     # for i in range(len(ss)):
-    #     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.4,
+    #     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.38,
     #                                         true='CW', noise=0., plot=True,
     #                                         discrete_stim=False, s=ss[i],
     #                                         b=[0., 0., 0.], noise_stim=0.01)
     # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
-    #                                     true='NM', noise=0.01, plot=True,
-    #                                     discrete_stim=False, s=[0.8, 0.2],
-    #                                     b=[0., 0., 0.], noise_stim=0.1)
+    #                                    true='NM', noise=0.01, plot=True,
+    #                                    discrete_stim=False, s=[0.55, 0.45],
+    #                                    b=[0., 0., 0.], noise_stim=0.05)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
     # # #                                     true='CW', noise=0.01, plot=True,
     # # #                                     discrete_stim=False, s=[0.9, 0.9],
