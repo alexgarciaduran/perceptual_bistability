@@ -2462,7 +2462,7 @@ if __name__ == '__main__':
     #                                bic=True)
     # plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
-    plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=1)
+    plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
     # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
