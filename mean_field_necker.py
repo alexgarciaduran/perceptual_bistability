@@ -1586,7 +1586,7 @@ def solution_mf_sdo_euler_OU_noise_adaptation(j, b, theta, noise, tau, gamma_ada
     for t in range(1, time.shape[0]):
         ou_val_diff = dt*(-ou_val / tau_n) + (np.random.randn(theta.shape[0])*noise*np.sqrt(2*dt/tau_n))
         adapt_val = adapt_val + dt*(-adapt_val + gamma_adapt*x)/tau
-        x_n = (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-n_neighs) + 2*b) - x)) / tau
+        x_n = (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-n_neighs) + 2*b-adapt_val) - x)) / tau
         x = x + x_n + ou_val_diff
         # r_neuron = gn.sigmoid(x-adapt_val)-x
         x_vec[t, :] = x
@@ -2040,6 +2040,57 @@ def alternation_rate_vs_coupling(t_dur=10000, tol=1e-8,
     ax.spines['right'].set_visible(False)
     ax.plot(j_list, k_weighted, color='k', linewidth=3)
     ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('Alternation rate')
+    fig.tight_layout()
+
+
+def alternation_rate_vs_accuracy(t_dur=10000, tol=1e-8,
+                                 j_list=np.arange(0.6, 1, 0.001),
+                                 b=0, noise_list=[0.1, 0.2, 0.3]):
+    k_weighted = np.zeros((len(j_list), len(noise_list)))
+    accuracy = np.zeros((len(j_list), len(noise_list)))
+    init_cond = 0.5
+    for i_j, j in enumerate(j_list):
+        for i_n, noise in enumerate(noise_list):
+            x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+            if b < 0:
+                x_stable_2, x_stable_1 = x_stable_1, x_stable_2
+            if np.abs(x_stable_1 - x_stable_2) <= tol:
+                continue
+            # P_{C, 0} = int_{x_E, x_0} exp(2V(x)/sigma^2) dx /
+            #            int_{x_E, x_C} exp(2V(x)/sigma^2) dx
+            pc0_numerator = scipy.integrate.quad(lambda q: np.exp(2*potential_mf(q, j, b)/noise**2),
+                                                 x_stable_2, init_cond)[0]
+            pc0_denom = scipy.integrate.quad(lambda q: np.exp(2*potential_mf(q, j, b)/noise**2),
+                                             x_stable_2, x_stable_1)[0]
+            pc0 = pc0_numerator/pc0_denom
+            # compute error transition rates k_CE, K_EC
+            k_EC = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+            k_CE = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
+            k = k_EC+k_CE
+            pCS = k_CE/k  # stationary correct
+            # correct to error transition
+            pEC = (1-pCS)*(1-np.exp(-k*t_dur))
+            # error to correct transition
+            pCE = pCS*(1-np.exp(-k*t_dur))
+            # correct to correct
+            pCC = pCS*(1-np.exp(-k*t_dur))+np.exp(-k*t_dur)
+            # probability of correct
+            pC = pc0*pCC + (1-pc0)*pCE
+            accuracy[i_j, i_n] = pC  # np.max((pC, 1-pC))
+            pinf = pCS
+            p1 = pCE
+            p2 = pEC
+            k_weighted[i_j, i_n] = k_CE*p2 + k_EC*p1
+    fig, ax = plt.subplots(1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(noise_list)))
+    for i_n in range(len(noise_list)):
+        ax.plot(accuracy[:, i_n], k_weighted[:, i_n],
+                color=colormap[i_n], linewidth=3)
+    ax.set_xlabel('Accuracy')
+    ax.set_yscale('log')
     ax.set_ylabel('Alternation rate')
     fig.tight_layout()
 
@@ -4640,9 +4691,12 @@ if __name__ == '__main__':
     # calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
     # example_dynamics_hierarchical_theta(theta=gn.THETA_HIER)
-    bifurcation_hierarchical(b=0, varchange='descending')
-    bifurcation_hierarchical(b=0, varchange='ascending')
-    bifurcation_hierarchical(b=0, varchange='coupling')
+    # bifurcation_hierarchical(b=0, varchange='descending')
+    # bifurcation_hierarchical(b=0, varchange='ascending')
+    # bifurcation_hierarchical(b=0, varchange='coupling')
+    # alternation_rate_vs_accuracy(t_dur=1, tol=1e-8,
+    #                              j_list=np.arange(0.4, 2, 0.01),
+    #                              b=0.3, noise_list=[0.1, 0.15, 0.2, 0.25, 0.3])
     # calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
     # boltzmann_2d_change_sigma(j=0.5, b=0)
@@ -4653,8 +4707,8 @@ if __name__ == '__main__':
     # plot_3d_solution_mf_vs_j_b(j_list=np.arange(0.01, 1.01, 0.00025),
     #                             b_list=np.arange(0, 0.125, 0.025), N=3,
     #                             num_iter=200, tol=1e-3, dim3d=False)
-    # plot_adaptation_mf(j=0.4, b=0., theta=theta, noise=0.0, gamma_adapt=1,
-    #                    tau=1, time_end=100, dt=1e-3)
+    plot_adaptation_mf(j=0.6, b=0.5, theta=theta, noise=0.1, gamma_adapt=3,
+                       tau=1, time_end=100, dt=1e-2)
     # plot_adaptation_1d(j=0.5, b=0., noise=0.0, gamma_adapt=0.1,
     #                    tau=1, time_end=100, dt=1e-3)
     # for b in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]:
