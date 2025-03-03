@@ -1375,14 +1375,17 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
     fig.tight_layout()
 
 
-def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7):
+def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
+                                   data_only=True):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
     state = []
     data_orig, data_model_orig, data_model_null =\
         load_all_data(all_df, model=model, method=method, sv_folder=SV_FOLDER)
     datastim0 = data_orig.loc[data_orig.stim_str == 0]
+    datastim_model0 = data_model_orig.loc[data_model_orig.stim_str == 0]
     datastim0['state'] = 0
+    datastim_model0['state'] = 0
     arr_betavals = np.zeros((3, len(subjects)))
     if method == 'BADS':
         appendix = '_BADS'
@@ -1398,8 +1401,11 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7)
             val_sum = 3*(n-1)**2 / ((n-2)*(n-3))
             beta = round((skewness**2 + 1)/(kurtosis+val_sum), 4)
             arr_betavals[i_c, i_s] = beta
-        pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '.npy')    
-        coup = np.unique(pars[0]*dataframe.coupling+pars[1])-1/3.92
+        pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '.npy')
+        if extra != 'null':
+            coup = np.unique(pars[0]*dataframe.coupling+pars[1])-1/3.92
+        else:
+            coup = np.unique(pars[0])-1/3.92
         if (np.sign(coup) < 0).all():
             s = 0
         if (np.sign(coup) > 0).all():
@@ -1408,6 +1414,7 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7)
             s = 1
         state.append(s)
         datastim0.loc[datastim0['subject'] == sub, 'state'] = s
+        datastim_model0.loc[datastim_model0['subject'] == sub, 'state'] = s
     fig, ax = plt.subplots(ncols=3, figsize=(13, 5))
     colormap = pl.cm.Oranges(np.linspace(0.3, 1, 3))
     cmap = [c for c in colormap]
@@ -1421,6 +1428,11 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7)
                     x='confidence', hue='coupling', ax=a,
                     bw_adjust=bw, palette=cmap, linewidth=3,
                     legend=False)
+        if not data_only:
+            sns.kdeplot(datastim_model0.loc[datastim_model0.state == i_a],
+                        x='confidence', hue='coupling', ax=a,
+                        bw_adjust=bw, palette=cmap, linewidth=3,
+                        legend=False, linestyle='--')
         legendelements.append(Line2D([0], [0], color=cmap[i_a],
                                      lw=3, label=labs_j[i_a]))
         a.set_title(labs[i_a], fontsize=15)
@@ -2462,13 +2474,16 @@ if __name__ == '__main__':
     #                                bic=True)
     # plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
-    plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7)
+    plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
+                                   data_only=True)
+    # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
+    #                                data_only=False)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
     # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
-    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
-                            variable='aligned_confidence', bw=0.7, model='MF5')
+    # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
+    #                         variable='aligned_confidence', bw=0.7, model='MF5')
     # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
     #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
