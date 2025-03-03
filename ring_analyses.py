@@ -700,7 +700,7 @@ def plot_all():
 
 if __name__ == '__main__':
     # ring().prob_nm_vs_max_difference_continuous_stim(nreps=10, resimulate=False)
-    ring(epsilon=0., n_dots=6).mean_field_ring(true='CW', j=0.5, b=[0., 0., 0.], plot=True,
+    ring(epsilon=0., n_dots=6).mean_field_ring(true='CW', j=0.1, b=[0., 0., 0.], plot=True,
                                                 n_iters=100, noise=0)
     # ss = [[0.8, 0.2], [0.5, 0.5], [0.9, 0.9]]
     # for i in range(len(ss)):
