@@ -1387,6 +1387,7 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     datastim0['state'] = 0
     datastim_model0['state'] = 0
     arr_betavals = np.zeros((3, len(subjects)))
+    coupvals = np.zeros((3, len(subjects)))
     if method == 'BADS':
         appendix = '_BADS'
     else:
@@ -1406,6 +1407,7 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
             coup = np.unique(pars[0]*dataframe.coupling+pars[1])-1/3.92
         else:
             coup = np.unique(pars[0])-1/3.92
+        coupvals[:, i_s] = np.sort(coup+1/3.92)
         if (np.sign(coup) < 0).all():
             s = 0
         if (np.sign(coup) > 0).all():
@@ -1460,6 +1462,16 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     ax2.set_xlabel('Shuffling')
     ax2.set_ylabel('Bimodality coef.')
     fig2.tight_layout()
+    fig3, ax3 = plt.subplots(ncols=2, figsize=(10, 4))
+    for a in ax3:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        [a.plot([0, 0.3, 1], coupvals[:, i], color='k', marker='o', alpha=0.2) for i in range(len(subjects))]
+        a.axhline(1/3.92, color='r', linestyle='--', alpha=0.3)
+        a.set_xlabel('J = 1-p_shuffle')
+        a.set_ylabel(r'$J \beta_1  + \beta_0$')
+    ax3[1].set_ylim(0.15, 0.35)
+    fig3.tight_layout()
 
 
 def plot_density_comparison(num_iter=100, method='nelder-mead',
@@ -2198,15 +2210,21 @@ def plot_all_subjects(xvar='stim_ev_cong'):
     unique_vals = np.sort(all_df['pShuffle'].unique())
     all_df['coupling'] = all_df['pShuffle'].replace(to_replace=unique_vals,
                                 value= [1., 0.3, 0.])
-    all_df['stim_str'] = (all_df.evidence.abs().values)
+    all_df['stim_str'] = all_df.evidence.values
     all_df['stim_ev_cong'] = all_df.stim_str * all_df.response
     subjects = all_df.subject.unique()
     fig, ax = plt.subplots(ncols=8, nrows=4, figsize=(19, 12))
     ax = ax.flatten()
+    fig4, ax4 = plt.subplots(ncols=8, nrows=4, figsize=(19, 12))
+    ax4 = ax4.flatten()
+    fig5, ax5 = plt.subplots(ncols=8, nrows=4, figsize=(19, 12))
+    ax5 = ax5.flatten()
     df_sub = pd.DataFrame({})
     for i_s, sub in enumerate(subjects):
         ax[i_s].spines['right'].set_visible(False)
         ax[i_s].spines['top'].set_visible(False)
+        ax5[i_s].spines['right'].set_visible(False)
+        ax5[i_s].spines['top'].set_visible(False)
         dataframe = all_df.copy().loc[all_df['subject'] == sub]
         dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
         dataframe['abs_confidence'] = np.abs(dataframe.confidence-0.5)*2
@@ -2214,6 +2232,11 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         l = True if i_s == 0 else False
         sns.lineplot(dataframe, x=xvar, y='abs_confidence',
                      hue='coupling', ax=ax[i_s], legend=l, errorbar=('se'))
+        sns.lineplot(dataframe, x='coupling', y='abs_confidence',
+                     ax=ax4[i_s], legend=l, errorbar=('se'), color='k')
+        sns.histplot(dataframe, x='confidence', legend=False, ax=ax5[i_s], bins=25)
+        ax5[i_s].axvline(0.5, color='r', linestyle='--', alpha=0.4)
+        ax5[i_s].set_xlabel('Confidence')
         if i_s > 23:
             if xvar == 'stim_ev_cong':
                 ax[i_s].set_xlabel('Stim. ev. cong.')
@@ -2230,8 +2253,11 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         if xvar == 'stim_ev_cong':
             ax[i_s].set_xticks([-1, 0, 1])
         ax[i_s].set_ylim([0, 1])
+        # ax4[i_s].set_ylim([0, 1])
         ax[i_s].set_yticks([0, 0.5, 1])
     fig.tight_layout()
+    fig5.tight_layout()
+    fig4.tight_layout()
     fig.savefig(SV_FOLDER + 'all_subjects_abs_conf.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'all_subjects_abs_conf.svg', dpi=200, bbox_inches='tight')
     fig2, ax2 = plt.subplots(1)
@@ -2472,10 +2498,10 @@ if __name__ == '__main__':
     #                    subjects='separated')
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
     #                                bic=True)
-    # plot_all_subjects()
+    plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
-    plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
-                                   data_only=True)
+    # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
+    #                                data_only=True)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                data_only=False)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
@@ -2484,11 +2510,11 @@ if __name__ == '__main__':
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
     #                         variable='aligned_confidence', bw=0.7, model='MF5')
-    # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
+    # plot_regression_weights(sv_folder=SV_FOLDER, load=False, model='MF5',
     #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                     band_width=0.7)
-    # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+    # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF', method=opt_algorithm,
     #                     band_width=0.7, sort_by_j=True)
     # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
     #                         bw=0.8, annot=True)  # good: 11, 7, 15, 18, 23, 30
