@@ -178,6 +178,7 @@ class ring:
         - 'combination_reverse': start with NM and jump to CW
         """
         s_init = np.repeat(np.array(s_init).reshape(-1, 1), self.ndots//len(s_init), axis=1).T.flatten()
+        s_init = np.array([0.1, 1, 0, 0.9, 0.1, 1, 0, 0.9])
         if true == 'NM':
             roll = 0
         if true == 'CW':
@@ -255,6 +256,7 @@ class ring:
         # print(f'J* = {round(crit_j, 4)}')
         s = [1, 0]
         stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+        # stim[:, :-1] = 0
         s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
         # q_mf = np.repeat(np.array([[0.25], [0.3], [0.2]]), 6, axis=-1).T
         if ini_cond is None:
@@ -332,15 +334,20 @@ class ring:
 
     def mean_field_sde(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=3, b=np.zeros(3),
                        true='NM', noise=0.2, plot=False, stim_weight=1, ini_cond=None,
-                       discrete_stim=True, s=[1, 0], noise_stim=0.05):
+                       discrete_stim=True, s=[1, 0], noise_stim=0.05, coh=None):
         t_end = n_iters*dt
         kernel = self.exp_kernel()
         n_dots = self.ndots
         if discrete_stim:
-            stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+            if coh is None:
+                stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+            if coh is not None:
+                stim = self.dummy_stim_creation(n_iters=n_iters, true=true, coh=coh)
         else:
             stim = self.stim_creation_ou_process(true=true, noise=noise_stim, s_init=s,
                                                  n_iters=n_iters, dt=dt)
+        if discrete_stim and coh is not None:
+            discrete_stim = False
         s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
         # q_mf = np.repeat(np.array([[0.25], [0.3], [0.2]]), 6, axis=-1).T
         # q_mf = np.ones((n_dots, nstates))/3 + np.random.randn(n_dots, 3)*0.05
@@ -671,6 +678,61 @@ class ring:
                       alpha=0.2)
         plt.xlabel('Signal difference')
         plt.ylabel(r'$q(z_i = NM) = 1-q(z_i=CCW)-q(z_i=CW)$')
+        
+
+    def dummy_stim_creation(self, n_iters=100, true='NM', coh=0):
+        """
+        Create stimulus given a 'true' structure. true is a string with 4 possible values:
+        - 'CW': clockwise rotation
+        - 'CCW': counterclockwise rotation (note that it is 100% bistable)
+        - 'NM': not moving
+        - 'combination': start with CW and then jump to NM
+        - '2combination': start with CW and then jump to NM and jump again to CW
+        - 'combination_reverse': start with NM and jump to CW
+        """
+        s_init = np.array([coh, 1, 0, 1-coh, coh, 1, 0, 1-coh])
+        if true == 'NM':
+            roll = 0
+        if true == 'CW':
+            roll = 1
+        if true == 'CCW':
+            roll = -1
+        s = s_init
+        sv = [s]
+        for _ in range(n_iters-1):
+            s = np.roll(s, roll)
+            sv.append(s)
+        return np.row_stack((sv)) 
+        
+
+def psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=200, j=0.5,
+                            noise=0.01, cohlist=np.arange(0, 0.5, 1e-2),
+                            nreps=50):
+    choice_CW = np.zeros((len(cohlist), nreps))
+    choice_CCW = np.zeros((len(cohlist)-1, nreps))
+    ring_object = ring(epsilon=0.001, n_dots=8)
+    for i_t, true in enumerate(['CW', 'CCW']):
+        for ic, coh in enumerate(cohlist):
+            if i_t == 1:
+                if coh == 0:
+                    continue
+            print(coh)
+            for n in range(nreps):
+                q = ring_object.mean_field_sde(dt=dt, tau=tau, n_iters=n_iters, j=j,
+                                               true=true, noise=noise, plot=False,
+                                               discrete_stim=True, coh=coh)
+                q_nm = np.mean(q, axis=0)[0]
+                if i_t == 0:
+                    choice_CW[ic, n] = q_nm  # np.sign(q_nm-0.5)
+                else:
+                    choice_CCW[ic-1, n] = q_nm  #np.sign(q_nm-0.5)
+    choice = np.row_stack((choice_CCW, choice_CW))
+    plt.figure()
+    mn = np.mean(choice, axis=1)
+    err = np.std(choice, axis=1)/nreps
+    final_cohlist = np.concatenate((-cohlist[::-1], cohlist[1:]))
+    plt.plot(final_cohlist, mn, color='k', marker='o')
+    plt.fill_between(final_cohlist, mn-err, mn+err, color='k', alpha=0.6)
 
 
 def plot_all():
@@ -700,18 +762,25 @@ def plot_all():
 
 if __name__ == '__main__':
     # ring().prob_nm_vs_max_difference_continuous_stim(nreps=10, resimulate=False)
-    ring(epsilon=0., n_dots=6).mean_field_ring(true='CW', j=0.1, b=[0., 0., 0.], plot=True,
-                                                n_iters=100, noise=0)
+    # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='CW', j=0.4, b=[0., 0., 0.], plot=True,
+    #                                               n_iters=100, noise=0)
+    # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='CCW', j=0.4, b=[0., 0., 0.], plot=True,
+    #                                               n_iters=100, noise=0)
     # ss = [[0.8, 0.2], [0.5, 0.5], [0.9, 0.9]]
     # for i in range(len(ss)):
     #     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.38,
     #                                         true='CW', noise=0., plot=True,
     #                                         discrete_stim=False, s=ss[i],
     #                                         b=[0., 0., 0.], noise_stim=0.01)
-    # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
-    #                                    true='NM', noise=0.01, plot=True,
-    #                                    discrete_stim=False, s=[0.55, 0.45],
-    #                                    b=[0., 0., 0.], noise_stim=0.05)
+    for i in range(5):
+        ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.1, tau=0.1, n_iters=120, j=0.1,
+                                                     true='CW', noise=0.0, plot=True,
+                                                     discrete_stim=True,
+                                                     noise_stim=0.001, coh=0.25)
+    # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
+    #                                               true='CCW', noise=0.01, plot=True,
+    #                                               discrete_stim=True, s=[0.55, 0.45],
+    #                                               b=[0., 0., 0.], noise_stim=0.0, coh=0)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
     # # #                                     true='CW', noise=0.01, plot=True,
     # # #                                     discrete_stim=False, s=[0.9, 0.9],
@@ -728,3 +797,15 @@ if __name__ == '__main__':
     # fig, ax = plt.subplots(nrows=2, figsize=(10, 5))
     # ax[0].imshow(snm.T, aspect='auto', cmap='binary', vmin=0, vmax=1)
     # ax[1].imshow(scw.T, aspect='auto', cmap='binary', vmin=0, vmax=1)
+    # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j=0.7,
+    #                         true='CW', noise=0.1,
+    #                         cohlist=np.arange(0, 0.6, 0.1),
+    #                         nreps=5)
+    # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j=0.7,
+    #                         true='CW', noise=0.,
+    #                         cohlist=np.arange(0, 0.6, 0.1),
+    #                         nreps=100)
+    # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j=0.7,
+    #                         true='CW', noise=0.1,
+    #                         cohlist=np.arange(0, 0.6, 0.1),
+    #                         nreps=200)
