@@ -14,6 +14,7 @@ import matplotlib as mpl
 import itertools
 import scipy
 import os
+import sympy
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -136,11 +137,12 @@ class ring:
             # Iterate over all possible latent states z_{t-1}
             for z_i_index in range(num_states_z):  # for each possible state of z_i (columns)
                 likelihood_contribution = 0
-                for startpoint in np.arange(-self.ndots//2, self.ndots//2, 1):  # to get extra components \sum_{j \in N(i)}
-                # startpoint = 0
-                    if startpoint == 0:
-                        continue
-                # iterate over all possible combinations of neighbors
+                for startpoint in [-1, 0, 1]:  # to get extra components \sum_{j \in N(i)}
+                # np.arange(-self.ndots//2, self.ndots//2, 1)
+                    # startpoint = 0
+                    # if startpoint == 0:
+                    #     continue
+                    # iterate over all possible combinations of neighbors
                     for comb in combinations:  # for all combinations of z_{i-1}, z_{i+1}
                         i_prev = (i+startpoint-1) % num_variables
                         i_next = (i+startpoint+1) % num_variables
@@ -150,7 +152,7 @@ class ring:
                         zn[i_next] = comb[1]  # z_{i+1}
                         zn[idx] = z_states[z_i_index]  # z_i
                         # Get the probability of z from q_z_prev (approx. posterior)
-                        # q_z_prev: num_variables x num_states_z (6 rows x 3 columns)
+                        # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
                         q_z_p = q_z_prev[i_prev, comb[0]+1]
                         q_z_n = q_z_prev[i_next, comb[1]+1]
         
@@ -158,11 +160,11 @@ class ring:
                         if discrete_stim:
                             p_s_given_z = self.compute_likelihood_vector(s, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
                         else:
-                            
+                            # based on a normal distribution centered in the expectation of the stimulus given the combination of z
                             p_s_given_z = self.compute_likelihood_continuous_stim(s, zn, s_t, noise=noise)[idx]
                         # Add q_{i-1} · q_{i+1} · p(s_i | s, z)
                         likelihood_contribution += np.log(p_s_given_z + 1e-10)*q_z_p*q_z_n
-                        # print(likelihood_contribution)
+                    # print(likelihood_contribution)
                 likelihood_c_all[i, z_i_index] = likelihood_contribution
         return likelihood_c_all
 
@@ -178,7 +180,6 @@ class ring:
         - 'combination_reverse': start with NM and jump to CW
         """
         s_init = np.repeat(np.array(s_init).reshape(-1, 1), self.ndots//len(s_init), axis=1).T.flatten()
-        s_init = np.array([0.1, 1, 0, 0.9, 0.1, 1, 0, 0.9])
         if true == 'NM':
             roll = 0
         if true == 'CW':
@@ -279,10 +280,10 @@ class ring:
             s = np.array([np.random.choice([0, 1], p=[1-stim_likelihood[a], stim_likelihood[a]]) for a in range(n_dots)])
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
-            likelihood = self.compute_expectation_log_likelihood(s=stim[t-1], q_z_prev=q_mf_arr[:, :, t-1],
-                                                                 s_t=stim[t])
+            # likelihood = self.compute_expectation_log_likelihood(s=stim[t-1], q_z_prev=q_mf_arr[:, :, t-1],
+            #                                                      s_t=stim[t])
             # print(likelihood)
-            var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood + np.random.randn(n_dots, nstates)*noise)
+            var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + np.random.randn(n_dots, nstates)*noise)
             q_mf = (var_m1.T / np.sum(var_m1, axis=1)).T
             q_mf_arr[:, :, t] = q_mf
             z = [np.random.choice([-1, 0, 1], p=q_mf[a]) for a in range(n_dots)]
@@ -370,8 +371,8 @@ class ring:
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
             likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t],
-                                                                 discrete_stim=discrete_stim,
-                                                                 noise=noise_stim)
+                                                                  discrete_stim=discrete_stim,
+                                                                  noise=noise_stim)
             var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood*stim_weight)
             q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
             q_mf_arr[:, :, t] = q_mf
@@ -417,6 +418,104 @@ class ring:
             fig.suptitle(f'Coupling J = {j}', fontsize=16)
             plt.figure()
             plt.plot(np.max(np.abs(np.diff(stim.T, axis=0)), axis=0))
+            plt.ylim(0, 2)
+    
+    
+    def mean_field_sde_ising(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=2, b=np.zeros(2),
+                            true='NM', noise=0.2, plot=False, stim_weight=1, ini_cond=None,
+                            discrete_stim=True, s=[1, 0], noise_stim=0.05, coh=None,
+                            stim_stamps=50):
+        t_end = n_iters*dt
+        kernel = self.exp_kernel()
+        n_dots = self.ndots
+        if discrete_stim:
+            if coh is None:
+                stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+            if coh is not None:
+                stim = self.dummy_stim_creation(n_iters=n_iters, true=true, coh=coh,
+                                                timesteps_between=stim_stamps)
+        else:
+            stim = self.stim_creation_ou_process(true=true, noise=noise_stim, s_init=s,
+                                                 n_iters=n_iters, dt=dt)
+        if discrete_stim and coh is not None:
+            discrete_stim = False
+        s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
+        # q_mf = np.repeat(np.array([[0.25], [0.3], [0.2]]), 6, axis=-1).T
+        # q_mf = np.ones((n_dots, nstates))/3 + np.random.randn(n_dots, 3)*0.05
+        if ini_cond is None:
+            q_mf = 0.5+np.random.randn(n_dots, nstates)*0.01
+        else:
+            ini_cond = np.array(ini_cond)
+            q_mf = np.repeat(ini_cond.reshape(-1, 1), self.ndots, axis=1).T
+        q_mf = (q_mf.T / np.sum(q_mf, axis=1)).T
+        z = [np.random.choice([-1, 1], p=q_mf[a]) for a in range(n_dots)]
+        j_mat = circulant(kernel)*j
+        np.fill_diagonal(j_mat, 0)
+        # j_mat = j_mat - (np.roll(np.eye(self.ndots), -1, axis=0) + np.roll(np.eye(self.ndots), 1, axis=0))*np.log(self.eps)/4
+        q_mf_arr = np.zeros((n_dots, nstates, n_iters))
+        q_mf_arr[:, :, 0] = q_mf
+        s_arr = np.zeros((n_dots, n_iters))
+        s_arr[:, 0] = s
+        z_arr = np.zeros((n_dots, n_iters))
+        z_arr[:, 0] = z
+        for t in range(1, n_iters):
+            # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
+            # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
+            # likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t],
+            #                                                      discrete_stim=discrete_stim,
+            #                                                      noise=noise_stim)
+            jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=noise_stim, include_m11=True, logm11=1e-2)
+            jaddmat = (np.roll(np.eye(self.ndots), -2, axis=0) + np.roll(np.eye(self.ndots), 2, axis=0))*np.array(jarr, dtype=np.float64)
+            biases = np.row_stack((mum1arr, mup1arr)).T.astype(np.float64)
+            var_m1 = np.exp(np.matmul(j_mat+jaddmat, q_mf*2-1) + b + biases)  #  + likelihood*stim_weight
+            q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
+            q_mf_arr[:, :, t] = q_mf
+        if not plot:
+            return q_mf
+        if plot:
+            time = np.arange(0, t_end, dt)
+            fig, ax = plt.subplots(nrows=3, figsize=(6, 9))
+            for i_a, a in enumerate(ax.flatten()):
+                a.spines['top'].set_visible(False)
+                a.spines['right'].set_visible(False)
+                if i_a < 3:
+                    a.set_xticks([])
+                if i_a > 0:
+                    a.set_ylim(-0.15, 1.15)
+            ax[2].set_xlabel('Time (s)')
+            ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
+                         vmin=0, vmax=1)
+            ax[0].set_ylabel('Stimulus')
+            ax[1].set_ylabel('q(z_i=CW)')
+            ax[2].set_ylabel('q(z_i=CCW)')
+            ax[1].axhline(1/3, color='r', alpha=0.4, linestyle='--', linewidth=2)
+            ax[1].text(t_end+70*dt, 1/3-0.02, '1/3', color='r')
+            ax[1].text(t_end+70*dt, 1/2+0.02, '1/2', color='r')
+            ax[1].axhline(1/2, color='r', alpha=0.4, linestyle=':', linewidth=2)
+            ax[2].axhline(1/3, color='b', alpha=0.4, linestyle='--', linewidth=2)
+            ax[2].axhline(1/2, color='b', alpha=0.4, linestyle=':', linewidth=2)
+            if true == '2combination':
+                title = r'$CW \longrightarrow NM \longrightarrow CW$'
+            if true == 'combination':
+                title = r'$CW \longrightarrow NM$'
+            if true == 'combination_reverse':
+                title = r'$NM \longrightarrow CW$'
+            if true not in ['combination', '2combination', 'combination_reverse']:
+                title = true
+            ax[0].set_title(title)
+            for dot in range(n_dots):
+                if dot % 2 == 0:
+                    linestyle = ':'
+                else:
+                    linestyle = 'solid'
+                ax[1].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5,
+                           linestyle=linestyle)
+                ax[2].plot(time, q_mf_arr[dot, 1, :], color='k', linewidth=2.5,
+                           linestyle=linestyle)
+            fig.suptitle(f'Coupling J = {j}', fontsize=16)
+            plt.figure()
+            plt.plot(np.max(np.abs(np.diff(stim.T, axis=0)), axis=0))
+            # plt.plot(q_mf_arr[:, 0, :], q_mf_arr[:, 1, :], color='k', linewidth=2.5)
             plt.ylim(0, 2)
 
 
@@ -680,7 +779,7 @@ class ring:
         plt.ylabel(r'$q(z_i = NM) = 1-q(z_i=CCW)-q(z_i=CW)$')
         
 
-    def dummy_stim_creation(self, n_iters=100, true='NM', coh=0):
+    def dummy_stim_creation(self, n_iters=100, timesteps_between=10, true='NM', coh=0):
         """
         Create stimulus given a 'true' structure. true is a string with 4 possible values:
         - 'CW': clockwise rotation
@@ -699,40 +798,60 @@ class ring:
             roll = -1
         s = s_init
         sv = [s]
-        for _ in range(n_iters-1):
-            s = np.roll(s, roll)
+        for i in range(n_iters-1):
+            if i != 0 and i % timesteps_between == 0:
+                roll_n = roll
+            else:
+                if timesteps_between == 1:
+                    roll_n = roll
+                else:
+                    roll_n = 0
+            s = np.roll(s, roll_n)
             sv.append(s)
         return np.row_stack((sv)) 
         
 
-def psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=200, j=0.5,
+def psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=200, j_list=[0, 0.4, 0.8],
                             noise=0.01, cohlist=np.arange(0, 0.5, 1e-2),
-                            nreps=50):
-    choice_CW = np.zeros((len(cohlist), nreps))
-    choice_CCW = np.zeros((len(cohlist)-1, nreps))
+                            nreps=50, true='CW', noise_stim=0.1):
+    choice = np.zeros((len(cohlist), nreps, len(j_list)))
+    choice2 = np.zeros((len(cohlist)-1, nreps, len(j_list)))
     ring_object = ring(epsilon=0.001, n_dots=8)
-    for i_t, true in enumerate(['CW', 'CCW']):
-        for ic, coh in enumerate(cohlist):
-            if i_t == 1:
-                if coh == 0:
+    for i_t, true in enumerate(['CCW', 'CW']):
+        for i_j, j in enumerate(j_list):
+            for ic, coh in enumerate(cohlist):
+                if i_t == 1 and coh == 0:
                     continue
-            print(coh)
-            for n in range(nreps):
-                q = ring_object.mean_field_sde(dt=dt, tau=tau, n_iters=n_iters, j=j,
-                                               true=true, noise=noise, plot=False,
-                                               discrete_stim=True, coh=coh)
-                q_nm = np.mean(q, axis=0)[0]
-                if i_t == 0:
-                    choice_CW[ic, n] = q_nm  # np.sign(q_nm-0.5)
-                else:
-                    choice_CCW[ic-1, n] = q_nm  #np.sign(q_nm-0.5)
-    choice = np.row_stack((choice_CCW, choice_CW))
-    plt.figure()
-    mn = np.mean(choice, axis=1)
-    err = np.std(choice, axis=1)/nreps
-    final_cohlist = np.concatenate((-cohlist[::-1], cohlist[1:]))
-    plt.plot(final_cohlist, mn, color='k', marker='o')
-    plt.fill_between(final_cohlist, mn-err, mn+err, color='k', alpha=0.6)
+                print(coh)
+                for n in range(nreps):
+                    q = ring_object.mean_field_sde_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
+                                                         true=true, noise=noise, plot=False,
+                                                         discrete_stim=True, coh=coh,
+                                                         stim_stamps=1, noise_stim=noise_stim)
+                    # q_nm = np.mean(q, axis=0)[0]  # q[0][0]
+                    q_nm = q[0][0]
+                    if i_t == 0:
+                        choice[ic, n, i_j] = (np.sign(q_nm-0.5)+1)/2
+                    else:
+                        choice2[ic-1, n, i_j] = (np.sign(q_nm-0.5)+1)/2
+    fig, ax = plt.subplots(1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    colormap = pl.cm.copper(np.linspace(0.2, 1, len(j_list)))
+    ax.set_xlabel('a')
+    # ax.set_ylabel('Approximate posterior q(z_i = CW)')
+    ax.set_ylabel('p(CW report)')
+    final_coh = np.concatenate((-cohlist[::-1], cohlist[1:]))
+    for i_j, j in enumerate(j_list):
+        mn = np.mean(choice[:, :, i_j], axis=1)
+        err = np.std(choice[:, :, i_j], axis=1)/nreps
+        mn2 = np.mean(choice2[:, :, i_j], axis=1)
+        err2 = np.std(choice2[:, :, i_j], axis=1)/nreps
+        mnfinal = np.concatenate((mn[::-1], mn2))
+        errfinal = np.concatenate((err[::-1], err2))
+        ax.plot(final_coh, mnfinal, color=colormap[i_j], marker='o', label=j)
+        ax.fill_between(final_coh, mnfinal-errfinal, mnfinal+errfinal, color=colormap[i_j], alpha=0.6)
+    plt.legend(title='Coupling, J', frameon=False)
 
 
 def plot_all():
@@ -760,11 +879,163 @@ def plot_all():
                                         true='2combination', noise=0., plot=True)
 
 
+def print_jstim_biases(include_m11=False, logm11=False, a=None, sigma=None):
+    if a is None:
+        a = sympy.symbols('a')
+    if sigma is None:
+        sigma = sympy.symbols('sigma')
+    stim = [1-a, 1, a]
+    nd = len(stim)
+    asym = sympy.symbols('a')
+    stimsym = [1-asym, 1, asym]
+    for i in range(nd):
+        i_prev = (i-1) % nd
+        i_post = (i+1) % nd
+        print('stim_i: ' + str([stimsym[i_prev], stimsym[i], stimsym[i_post]]))
+        s_vec = {
+            "s_im1": stim[i_prev],
+            "s_i": 1,
+            "s_ip1": stim[i_post]}
+        s_hat_11 = s_vec['s_im1']
+        s_hat_m1m1 = s_vec['s_ip1']
+        s_hat_m11 = s_vec['s_i']
+        s_hat_1m1 = (s_vec['s_ip1']+s_vec['s_im1'])/2
+        si = s_vec['s_i']
+        J_stim = 1/(4*2*sigma**2)*((si-s_hat_1m1)**2 - (si-s_hat_11)**2 - (si-s_hat_m1m1)**2)
+        if include_m11:
+            if logm11:
+                J_stim += -np.log(logm11)/4
+            else:
+                J_stim +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        print('J_stim = ' + str(sympy.simplify(J_stim)))
+    
+        mum1 = 1/(4*2*sigma**2)*(-(si-s_hat_1m1)**2  - (si-s_hat_11)**2 + (si-s_hat_m1m1)**2)
+        if include_m11:
+            if logm11:
+                mum1 += np.log(logm11)/4
+            else:
+                mum1 +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        print('mu_{i-1}(z_{i-1}=1) = ' + str(sympy.simplify(mum1)))
+    
+        mup1 = 1/(4*2*sigma**2)*(-(si-s_hat_1m1)**2  + (si-s_hat_11)**2 - (si-s_hat_m1m1)**2)
+        if include_m11:
+            if logm11:
+                mup1 += np.log(logm11)/4
+            else:
+                mup1 +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        print('mu_{i+1}(z_{i+1}=-1) = ' + str(sympy.simplify(mup1)))
+
+
+def compute_jstim_biases(s_t, s_tm1, sigma=0.1, include_m11=False, logm11=False):
+    nd = len(s_t)
+    jarr = []
+    mum1arr = []
+    mup1arr = []
+    for i in range(nd):
+        i_prev = (i-1) % nd
+        i_post = (i+1) % nd
+        s_vec = {
+            "s_im1": s_tm1[i_prev],
+            "s_i": s_t[i],
+            "s_ip1": s_tm1[i_post]}
+    
+        s_hat_11 = s_vec['s_im1']
+        s_hat_m1m1 = s_vec['s_ip1']
+        s_hat_m11 = s_vec['s_i']
+        s_hat_1m1 = (s_vec['s_ip1']+s_vec['s_im1'])/2
+        si = s_vec['s_i']
+        J_stim = 1/(4*2*sigma**2)*((si-s_hat_1m1)**2- (si-s_hat_11)**2 - (si-s_hat_m1m1)**2)
+        if include_m11:
+            if logm11:
+                J_stim += -np.log(logm11)/4
+            else:
+                J_stim +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        jarr.append(J_stim)
+    
+        mum1 = 1/(4*2*sigma**2)*(-(si-s_hat_1m1)**2  - (si-s_hat_11)**2 + (si-s_hat_m1m1)**2)
+        if include_m11:
+            if logm11:
+                mum1 += np.log(logm11)/4
+            else:
+                mum1 +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        mum1arr.append(mum1)
+    
+        mup1 = 1/(4*2*sigma**2)*(-(si-s_hat_1m1)**2  + (si-s_hat_11)**2 - (si-s_hat_m1m1)**2)
+        if include_m11:
+            if logm11:
+                mup1 += np.log(logm11)/4
+            else:
+                mup1 +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        mup1arr.append(mup1)
+    return jarr, mum1arr, mup1arr
+
+
+def sigmoid(x):
+    return 1/(1+np.exp(-x))
+
+
+def plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
+                            sigmalist=np.arange(0.05, 0.2, 1e-3).round(4),
+                            plot_matrix=True):
+    true = 'CW'
+    r = ring(n_dots=8)
+    jlist = np.zeros((len(cohlist), len(sigmalist)))
+    mm1list = np.zeros((len(cohlist), len(sigmalist)))
+    mp1list = np.zeros((len(cohlist), len(sigmalist)))
+    for i_s, sigma in enumerate(sigmalist):
+        for icoh, coh in enumerate(cohlist):
+            stim = r.dummy_stim_creation(n_iters=2, true=true, coh=coh,
+                                         timesteps_between=1)
+            j, mu_zm1, mu_zp1 = compute_jstim_biases(stim[1], stim[0],
+                                                     sigma=sigma, include_m11=False,
+                                                     logm11=1e-3)
+            jlist[icoh, i_s] = j[0]
+            mm1list[icoh, i_s] = mu_zm1[0]
+            mp1list[icoh, i_s] = mu_zp1[0]
+    labels = [r'Stim-induced coupling, $J_s$', r'CW bias, $\mu_i(z_{i-1}=CW)$',
+              r'CCW bias, $\mu_i(z_{i+1}=CCW)$']
+    if plot_matrix:
+        fig, ax = plt.subplots(ncols=3, figsize=(16, 4))
+        ax[1].set_title('True: ' + true, fontsize=15)
+        norm = mpl.colors.TwoSlopeNorm(vmin=np.min(jlist), vcenter=0, vmax=np.max(jlist))
+        im0 = ax[0].imshow(np.flipud(jlist.T), cmap='bwr', aspect='auto', norm=norm)
+        plt.colorbar(im0, ax=ax[0], label=labels[0])
+        im1 = ax[1].imshow(np.flipud(mm1list.T), cmap='Reds', aspect='auto')
+        plt.colorbar(im1, ax=ax[1], label=labels[1])
+        # norm = mpl.colors.TwoSlopeNorm(vmin=np.min(mp1list), vcenter=0, vmax=np.max(mp1list))
+        im2 = ax[2].imshow(np.flipud(mp1list.T), cmap='Reds', aspect='auto')
+        plt.colorbar(im2, ax=ax[2], label=labels[2])
+        for a in ax:
+            a.set_yticks([0, 50, 100, 150][::-1], sigmalist[np.arange(0, 160, 50)])
+            a.set_xticks([0, 10, 20, 30, 40, 50], cohlist[np.arange(0, 60, 10)])
+            a.set_xlabel('a')
+            a.set_ylabel(r'$\sigma$')
+            a.spines['top'].set_visible(False)
+            a.spines['right'].set_visible(False)
+    else:
+        fig, ax = plt.subplots(ncols=4, figsize=(16.5, 3.5))
+        colormap = pl.cm.Blues(np.linspace(0.2, 1, len(sigmalist)))
+        for i, idx in enumerate([0, 50, 100, 150]):
+            ax[0].plot(cohlist, jlist[:, idx], color=colormap[idx], linewidth=4,
+                       label=sigmalist[idx])
+            ax[1].plot(cohlist, mm1list[:, idx], color=colormap[idx], linewidth=4)
+            ax[2].plot(cohlist, mp1list[:, idx], color=colormap[idx], linewidth=4)
+            ax[3].plot(cohlist, mm1list[:, idx]-mp1list[:, idx], color=colormap[idx], linewidth=4)
+        ax[0].legend(title=r'$\sigma$', frameon=False)
+        labels = labels + [r'$\mu_i(z_{i-1}=CW)-\mu_i(z_{i+1}=CCW)$']
+        for i_a, a in enumerate(ax):
+            a.set_xlabel('a')
+            a.set_ylabel(labels[i_a])
+            a.spines['top'].set_visible(False)
+            a.spines['right'].set_visible(False)
+    fig.tight_layout()
+
+
 if __name__ == '__main__':
     # ring().prob_nm_vs_max_difference_continuous_stim(nreps=10, resimulate=False)
     # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='CW', j=0.4, b=[0., 0., 0.], plot=True,
     #                                               n_iters=100, noise=0)
-    # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='CCW', j=0.4, b=[0., 0., 0.], plot=True,
+    # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='NM', j=0.4, b=[0., 0., 0.], plot=True,
     #                                               n_iters=100, noise=0)
     # ss = [[0.8, 0.2], [0.5, 0.5], [0.9, 0.9]]
     # for i in range(len(ss)):
@@ -772,11 +1043,11 @@ if __name__ == '__main__':
     #                                         true='CW', noise=0., plot=True,
     #                                         discrete_stim=False, s=ss[i],
     #                                         b=[0., 0., 0.], noise_stim=0.01)
-    for i in range(5):
-        ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.1, tau=0.1, n_iters=120, j=0.1,
-                                                     true='CW', noise=0.0, plot=True,
-                                                     discrete_stim=True,
-                                                     noise_stim=0.001, coh=0.25)
+    # for i in range(5):
+    #     ring(epsilon=0.001, n_dots=8).mean_field_sde_ising(dt=0.01, tau=0.1, n_iters=100, j=0.,
+    #                                                         true='CW', noise=0.1, plot=True,
+    #                                                         discrete_stim=True, noise_stim=0.1, coh=0.,
+    #                                                         stim_stamps=1)
     # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
     #                                               true='CCW', noise=0.01, plot=True,
     #                                               discrete_stim=True, s=[0.55, 0.45],
@@ -801,11 +1072,6 @@ if __name__ == '__main__':
     #                         true='CW', noise=0.1,
     #                         cohlist=np.arange(0, 0.6, 0.1),
     #                         nreps=5)
-    # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j=0.7,
-    #                         true='CW', noise=0.,
-    #                         cohlist=np.arange(0, 0.6, 0.1),
-    #                         nreps=100)
-    # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j=0.7,
-    #                         true='CW', noise=0.1,
-    #                         cohlist=np.arange(0, 0.6, 0.1),
-    #                         nreps=200)
+    psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j_list=[0., 4],
+                            noise=0.1, cohlist=np.arange(0, 0.22, 2e-2),
+                            nreps=1000, noise_stim=0.2)
