@@ -464,9 +464,13 @@ class ring:
             # likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t],
             #                                                      discrete_stim=discrete_stim,
             #                                                      noise=noise_stim)
-            jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=noise_stim, include_m11=True, logm11=1e-2)
-            jaddmat = (np.roll(np.eye(self.ndots), -2, axis=0) + np.roll(np.eye(self.ndots), 2, axis=0))*np.array(jarr, dtype=np.float64)
-            biases = np.row_stack((mum1arr, mup1arr)).T.astype(np.float64)
+            if t % stim_stamps == 1 and t > stim_stamps or stim_stamps == 1:
+                jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=noise_stim, include_m11=True, logm11=1e-2)
+                jaddmat = (np.roll(np.eye(self.ndots), -2, axis=0) + np.roll(np.eye(self.ndots), 2, axis=0))*np.array(jarr, dtype=np.float64)
+                biases = np.row_stack((mum1arr, mup1arr)).T.astype(np.float64)
+            if t <= stim_stamps:
+                biases = 0
+                jaddmat = 0
             var_m1 = np.exp(np.matmul(j_mat+jaddmat, q_mf*2-1) + b + biases)  #  + likelihood*stim_weight
             q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
             q_mf_arr[:, :, t] = q_mf
@@ -976,7 +980,7 @@ def sigmoid(x):
 
 def plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
                             sigmalist=np.arange(0.05, 0.2, 1e-3).round(4),
-                            plot_matrix=True):
+                            plot_matrix=False):
     true = 'CW'
     r = ring(n_dots=8)
     jlist = np.zeros((len(cohlist), len(sigmalist)))
@@ -987,7 +991,7 @@ def plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
             stim = r.dummy_stim_creation(n_iters=2, true=true, coh=coh,
                                          timesteps_between=1)
             j, mu_zm1, mu_zp1 = compute_jstim_biases(stim[1], stim[0],
-                                                     sigma=sigma, include_m11=False,
+                                                     sigma=sigma, include_m11=True,
                                                      logm11=1e-3)
             jlist[icoh, i_s] = j[0]
             mm1list[icoh, i_s] = mu_zm1[0]
@@ -1015,6 +1019,7 @@ def plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
     else:
         fig, ax = plt.subplots(ncols=4, figsize=(16.5, 3.5))
         colormap = pl.cm.Blues(np.linspace(0.2, 1, len(sigmalist)))
+        ax[0].axhline(0, color='gray', linestyle='--', alpha=0.5, linewidth=3)
         for i, idx in enumerate([0, 50, 100, 150]):
             ax[0].plot(cohlist, jlist[:, idx], color=colormap[idx], linewidth=4,
                        label=sigmalist[idx])
@@ -1044,8 +1049,8 @@ if __name__ == '__main__':
     #                                         discrete_stim=False, s=ss[i],
     #                                         b=[0., 0., 0.], noise_stim=0.01)
     # for i in range(5):
-    #     ring(epsilon=0.001, n_dots=8).mean_field_sde_ising(dt=0.01, tau=0.1, n_iters=100, j=0.,
-    #                                                         true='CW', noise=0.1, plot=True,
+    #     ring(epsilon=0.001, n_dots=8).mean_field_sde_ising(dt=0.01, tau=0.1, n_iters=500, j=0.,
+    #                                                         true='CW', noise=0.01, plot=True,
     #                                                         discrete_stim=True, noise_stim=0.1, coh=0.,
     #                                                         stim_stamps=1)
     # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
