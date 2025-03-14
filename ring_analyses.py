@@ -15,6 +15,7 @@ import itertools
 import scipy
 import os
 import sympy
+from matplotlib.lines import Line2D
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -424,7 +425,7 @@ class ring:
     def mean_field_sde_ising(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=2, b=np.zeros(2),
                             true='NM', noise=0.2, plot=False, stim_weight=1, ini_cond=None,
                             discrete_stim=True, s=[1, 0], noise_stim=0.05, coh=None,
-                            stim_stamps=50):
+                            stim_stamps=50, sigma_lh=0.1):
         t_end = n_iters*dt
         kernel = self.exp_kernel()
         n_dots = self.ndots
@@ -465,7 +466,7 @@ class ring:
             #                                                      discrete_stim=discrete_stim,
             #                                                      noise=noise_stim)
             if t % stim_stamps == 1 and t > stim_stamps or stim_stamps == 1:
-                jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=noise_stim, include_m11=True, logm11=1e-2)
+                jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=sigma_lh, include_m11=True, logm11=1e-2)
                 jaddmat = (np.roll(np.eye(self.ndots), -2, axis=0) + np.roll(np.eye(self.ndots), 2, axis=0))*np.array(jarr, dtype=np.float64)
                 biases = np.row_stack((mum1arr, mup1arr)).T.astype(np.float64)
             if t <= stim_stamps:
@@ -992,8 +993,8 @@ def plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
                                          timesteps_between=1)
             j, mu_zm1, mu_zp1 = compute_jstim_biases(stim[1], stim[0],
                                                      sigma=sigma, include_m11=True,
-                                                     logm11=1e-3)
-            jlist[icoh, i_s] = j[0]
+                                                     logm11=1e-2)
+            jlist[icoh, i_s] = -3*coh**2/(32*sigma**2) - np.log(1e-2)/4
             mm1list[icoh, i_s] = mu_zm1[0]
             mp1list[icoh, i_s] = mu_zp1[0]
     labels = [r'Stim-induced coupling, $J_s$', r'CW bias, $\mu_i(z_{i-1}=CW)$',
@@ -1036,8 +1037,160 @@ def plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
     fig.tight_layout()
 
 
+def sols_vs_a_j0(alist=np.arange(0, 0.5, 1e-2),
+                 nreps=10, dt=0.01, tau=0.1, n_iters=300, true='CW', noise_stim=0.1):
+    ring_object = ring(epsilon=0.001, n_dots=8)
+    j = 0
+    sols = np.zeros((len(alist), nreps, 8))
+    for icoh, coh in enumerate(alist):
+        print(coh)
+        for n in range(nreps):
+            q = ring_object.mean_field_sde_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
+                                                 true=true, noise=0, plot=False,
+                                                 discrete_stim=True, coh=coh,
+                                                 stim_stamps=1, noise_stim=noise_stim)
+            sols[icoh, n, :] = q[0, 0].round(6)
+    fig, ax = plt.subplots(1)
+    for dot in range(1):
+        # if dot % 2 == 0:
+        #     marker = 'o'
+        # else:
+        #     marker = 'x'
+        for i_coh, coh in enumerate(alist):
+            unique_vals = np.unique(sols[i_coh, :, dot])
+            ax.plot(np.repeat(coh, len(unique_vals)),
+                    unique_vals, color='k', marker='o', linestyle='',
+                    markersize=3)
+        # for n in range(nreps):
+        #     ax.plot(alist, sols[:, n, dot], color='k', marker='o', linestyle='',
+        #             markersize=3)
+    ax.set_xlabel('a')
+    ax.set_ylabel('q(z_i = CW)')
+
+
+def sols_vs_j_cond_on_a(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(-1, 1.02, 4e-2).round(5),
+                        nreps=50, dt=0.01, tau=0.1, n_iters=250, true='CW', noise_stim=0.1):
+    ring_object = ring(epsilon=0.001, n_dots=8)
+    j = 0
+    sols = np.zeros((len(alist), len(j_list), nreps))
+    for icoh, coh in enumerate(alist):
+        print(coh)
+        for i_j, j in enumerate(j_list):
+            for n in range(nreps):
+                q = ring_object.mean_field_sde_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
+                                                     true=true, noise=0, plot=False,
+                                                     discrete_stim=True, coh=coh,
+                                                     stim_stamps=1, noise_stim=noise_stim)
+                sols[icoh, i_j, n] = q[0, 0].round(6)
+    fig, ax = plt.subplots(ncols=len(alist), figsize=(len(alist)*4, 4))
+    # colormap = pl.cm.copper(np.linspace(0.2, 1, len(alist)))
+    # legendelements = [Line2D([0], [0], color=colormap[0], lw=2, label=alist[0], marker='o'),
+    #                   Line2D([0], [0], color=colormap[1], lw=2, label=alist[1], marker='o'),
+    #                   Line2D([0], [0], color=colormap[2], lw=2, label=alist[2], marker='o')]
+    for icoh, coh in enumerate(alist):
+        for i_j, j in enumerate(j_list):
+            # js = -coh**2/(16*noise_stim**2) - np.log(6e-2)/4
+            # ax[icoh].axvline(-js, color='r', linestyle='--', linewidth=2, alpha=0.4)
+            unique_vals = np.unique(sols[icoh, i_j])
+            ax[icoh].plot(np.repeat(j, len(unique_vals)),
+                          unique_vals, color='k', marker='o', linestyle='',
+                          markersize=3)
+        ax[icoh].set_title('a = ' + str(coh))
+        ax[icoh].set_xlabel('Coupling, J')
+        ax[icoh].set_ylim(-0.05, 1.05)
+    # ax.legend(handles=legendelements, title='a', frameon=False)
+    ax[0].set_ylabel('q(z_i = CW)')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'solutions_MF_ising_ring_diff_a_j_zoomin_a_bifur_morereps.png', dpi=200)
+    fig.savefig(DATA_FOLDER + 'solutions_MF_ising_ring_diff_a_j_zoomin_a_bifur_morereps.svg', dpi=200)
+
+
+def number_fps_vs_a_j(alist=np.arange(0, 0.525, 2.5e-2).round(4),
+                      jlist=np.arange(-1.4, 1.05, 0.1).round(4),
+                      nreps=50, dt=0.01, tau=0.1, n_iters=500, true='CW', noise_stim=0.1,
+                      load_data=True):
+    ring_object = ring(epsilon=0.001, n_dots=8)
+    path = DATA_FOLDER + 'number_fps_all_smalleps.npy'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if load_data and os.path.exists(path):
+        nfps = np.load(path)
+    else:
+        nfps = np.zeros((len(alist), len(jlist)))
+        for icoh, coh in enumerate(alist):
+            print(coh)
+            for i_j, j in enumerate(jlist):
+                for n in range(nreps):
+                    q = ring_object.mean_field_sde_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
+                                                         true=true, noise=0, plot=False,
+                                                         discrete_stim=True, coh=coh,
+                                                         stim_stamps=1, noise_stim=noise_stim)
+                    nvals = len(np.unique(q[:, 0].round(4)))
+                    nfps[icoh, i_j] += nvals
+        nfps = nfps/nreps
+        np.save(path, nfps)
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud((nfps)), aspect='auto', cmap='gist_stern', extent=[-1.4, 1.05, 0, 0.525])
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('a')
+    plt.colorbar(im, ax=ax, label='Average # FPs')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_smalleps.png', dpi=200,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_smalleps.svg', dpi=200,
+                bbox_inches='tight')
+    return fig, ax
+
+
+def plot_all_jeff(alist=np.arange(0, 0.525, 1e-3).round(4),
+                  jlist=np.arange(-1.4, 1.05, 1e-2).round(4),
+                  noise_stim=0.1):
+    j, a = np.meshgrid(jlist, alist)
+    jeff = -3*a**2/(32*noise_stim**2) - np.log(6e-2)/4 + j
+    # bias_cw = 3*a**2/(32*noise_stim**2) - np.log(6e-2)/4
+    # bias_ccw = -3*a**2/(32*noise_stim**2) + np.log(6e-2)/4
+    # beff = bias_cw-bias_ccw
+    jstim = -3*a**2/(32*noise_stim**2) - np.log(6e-2)/4 
+    jprior = j
+    x, tau = np.arange(8), 0.8
+    kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
+    kernel[0] = 0
+    alpha = np.sum(kernel)
+    avals = alist[np.where(np.abs((alpha*jprior+2*jstim) - 1) < 0.01)[0]]
+    jvals = jlist[np.where(np.abs((alpha*jprior+2*jstim) - 1) < 0.01)[1]]
+    avals1 = alist[np.where(np.abs((-alpha*jprior+2*jstim) - 1) < 0.01)[0]]
+    jvals1 = jlist[np.where(np.abs((-alpha*jprior+2*jstim) - 1) < 0.01)[1]]
+    avals2 = alist[np.where(np.abs((alpha*jprior-2*jstim) - 1) < 0.01)[0]]
+    jvals2 = jlist[np.where(np.abs((alpha*jprior-2*jstim) - 1) < 0.01)[1]]
+    avals3 = alist[np.where(np.abs((-alpha*jprior-2*jstim) - 1) < 0.01)[0]]
+    jvals3 = jlist[np.where(np.abs((-alpha*jprior-2*jstim) - 1) < 0.01)[1]]
+    fig, ax = number_fps_vs_a_j(alist=np.arange(0, 0.525, 1e-2).round(4),
+                                jlist=np.arange(-1.4, 1.05, 0.1).round(4),
+                                nreps=50, dt=0.05, tau=0.1, n_iters=500, true='CW', noise_stim=0.1,
+                                load_data=True)
+    # norm = mpl.colors.TwoSlopeNorm(vmin=np.min(jeff), vcenter=0, vmax=np.max(jeff))
+    
+    ax.plot(jvals, avals, color='k')
+    ax.plot(jvals1, avals1, color='k')
+    ax.plot(jvals2, avals2, color='k')
+    ax.plot(jvals3, avals3, color='k')
+    # im = ax.imshow(np.flipud(1/np.abs(jeff)>0.6), cmap='bwr', aspect='auto', extent=[-1.4, 1.05, 0, 0.525],
+    #                vmin=np.min(jeff), vmax=np.max(np.abs(jeff)))
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('a')
+    fig2, ax2 = plt.subplots(1)
+    im = ax2.imshow(np.flipud(jeff), cmap='bwr', aspect='auto', extent=[-1.4, 1.05, 0, 0.525],
+                    vmin=np.min(jeff), vmax=np.max(np.abs(jeff)))
+    plt.colorbar(im, ax=ax2, label='J_eff')
+    ax2.set_xlabel('Coupling, J')
+    ax2.set_ylabel('a')
+    # ax[1].imshow(np.flipud(beff), cmap='Reds', aspect='auto', extent=[-1.4, 1.05, 0, 0.525])
+
+
 if __name__ == '__main__':
-    # ring().prob_nm_vs_max_difference_continuous_stim(nreps=10, resimulate=False)
+    # number_fps_vs_a_j(alist=np.arange(0, 0.525, 1e-2).round(4),
+    #                   jlist=np.arange(-1.4, 1.05, 0.05).round(4),
+    #                   nreps=50, dt=0.05, tau=0.1, n_iters=800, true='CW', noise_stim=0.1,
+    #                   load_data=True)
     # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='CW', j=0.4, b=[0., 0., 0.], plot=True,
     #                                               n_iters=100, noise=0)
     # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='NM', j=0.4, b=[0., 0., 0.], plot=True,
@@ -1048,11 +1201,12 @@ if __name__ == '__main__':
     #                                         true='CW', noise=0., plot=True,
     #                                         discrete_stim=False, s=ss[i],
     #                                         b=[0., 0., 0.], noise_stim=0.01)
-    # for i in range(5):
-    #     ring(epsilon=0.001, n_dots=8).mean_field_sde_ising(dt=0.01, tau=0.1, n_iters=500, j=0.,
-    #                                                         true='CW', noise=0.01, plot=True,
-    #                                                         discrete_stim=True, noise_stim=0.1, coh=0.,
-    #                                                         stim_stamps=1)
+    for i in range(2):
+        ring(epsilon=0.001, n_dots=8).mean_field_sde_ising(dt=0.05, tau=0.1, n_iters=400, j=0.,
+                                                            true='CW', noise=0.0, plot=True,
+                                                            discrete_stim=False, 
+                                                            noise_stim=0.1, s=[0.5, 0.5],
+                                                            stim_stamps=1, sigma_lh=0.1)
     # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
     #                                               true='CCW', noise=0.01, plot=True,
     #                                               discrete_stim=True, s=[0.55, 0.45],
@@ -1077,6 +1231,6 @@ if __name__ == '__main__':
     #                         true='CW', noise=0.1,
     #                         cohlist=np.arange(0, 0.6, 0.1),
     #                         nreps=5)
-    psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j_list=[0., 4],
-                            noise=0.1, cohlist=np.arange(0, 0.22, 2e-2),
-                            nreps=1000, noise_stim=0.2)
+    # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j_list=[0., 4],
+    #                         noise=0.1, cohlist=np.arange(0, 0.22, 2e-2),
+    #                         nreps=1000, noise_stim=0.2)
