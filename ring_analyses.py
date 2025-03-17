@@ -541,103 +541,106 @@ class ring:
         return likelihood_vector
 
 
-    def belief_propagation(self, j=2, n_iters=50, nstates=3, b=np.zeros(3),
-                           true='NM', plot=False):
+    def fractional_belief_propagation_ising(self, j, b=0, noise=0, n_iters=200, dt=0.01,
+                                            tau=1, discrete_stim=True, s=[1, 0], noise_stim=0.05, coh=None,
+                                            stim_stamps=50, sigma_lh=0.1, true='CW', plot=True):
+        t_end = n_iters*dt
         kernel = self.exp_kernel()
         n_dots = self.ndots
-        s = [1, 0]
-        stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
-        s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
-        q_mf = np.ones((n_dots, nstates))/3 + np.random.randn(6, 3)*0.05
-        q_mf = (q_mf.T / np.sum(q_mf, axis=1)).T
-        z = [np.random.choice([-1, 0, 1], p=q_mf[a]) for a in range(n_dots)]
+        q_y_1 = np.zeros((n_iters, n_dots))
+        q_y_neg1 = np.zeros((n_iters, n_dots))
+        if discrete_stim:
+            if coh is None:
+                stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+            if coh is not None:
+                stim = self.dummy_stim_creation(n_iters=n_iters, true=true, coh=coh,
+                                                timesteps_between=stim_stamps)
+        else:
+            stim = self.stim_creation_ou_process(true=true, noise=noise_stim, s_init=s,
+                                                 n_iters=n_iters, dt=dt)
+        if discrete_stim and coh is not None:
+            discrete_stim = False
         j_mat = circulant(kernel)*j
+        theta = j_mat*1
         np.fill_diagonal(j_mat, 0)
-        q_mf_arr = np.zeros((n_dots, nstates, n_iters))
-        q_mf_arr[:, :, 0] = q_mf
-        s_arr = np.zeros((n_dots, n_iters))
-        s_arr[:, 0] = s
-        z_arr = np.zeros((n_dots, n_iters))
-        z_arr[:, 0] = z
-        states_z = np.array([-1, 0, 1])
-        nstates = len(states_z)
-        messages = np.ones((n_dots, n_dots, nstates))*np.random.rand(n_dots, n_dots, nstates)
-        # Belief propagation iterations
-        for t in range(n_iters):
-            new_messages = np.ones_like(messages)
-    
-            for i in range(n_dots):  # for all nodes
-                for j in np.where(j_mat[i] != 0)[0]:  # to compute m_{j \to i}
-                    # compute prod(m_{k \to j}) for k \in N(j) different from {i-1, i, i+1}
-                    incoming_messages = np.prod([messages[k, j] for k in range(n_dots) if k not in [j-1, j, j+1] and j_mat[i, k] > 0], axis=0)
-                    # get s_{N(j)} = [s_{j-1}, s_{j}, s_{j+1}]
-                    s_neighbors = [stim[t-1][(j - 1) % n_dots], stim[t-1][j], stim[t-1][(j + 1) % n_dots]]
-                    s_t_neighbors = [stim[t][(j - 1) % n_dots], stim[t][j], stim[t][(j + 1) % n_dots]]
-                    # get messages m_{j-1 \to j} and m_{j+1 \to j}
-                    mes_input = np.row_stack((messages[(j-1) % n_dots, j],
-                                              messages[(j+1) % n_dots, j]))
-                    # now get expectation of p(s_j | z_{N(j)}, s_{N(j)}) over the messages for z_{j-1} and z_{j+1}
-                    likelihood_vector = self.compute_likelihood_contribution_BP(s_neighbors, mes_input, s_t_neighbors)
-                    # compute exp[J_{ij} \delta(z_i, z_j)] --> nxn
-                    # we can do also 2*\delta(z_i, z_j)-1
-                    compatibility = np.exp(j_mat[i, j] * (2*(states_z[:, None] == states_z)-1))
-                    # compute new message, sum_{z_j} exp[B(z_j)] * E[LH](z_j) * \prod_{k} m_{k \to j}(z_j) @ exp[J \delta(z_i, z_j)]
-                    new_messages[i, j] = np.exp(b) * likelihood_vector * (incoming_messages @ compatibility)
-                    # normalize
-                    new_messages[i, j] /= np.sum(new_messages[i, j])
-
-            messages = new_messages.copy()
-
-            # Compute final marginals q(z_i)
-            marginals = np.prod([messages[j] for j in range(n_dots)], axis=0) * np.exp(b)
-            for i in range(n_dots):
-                marginals[i] /= np.sum(marginals[i])
-            q_mf_arr[:, :, t] = marginals
-            stim_likelihood = self.compute_likelihood_vector(stim[t-1], z, stim[t])
-            s = np.array([np.random.choice([0, 1], p=[1-stim_likelihood[a], stim_likelihood[a]]) for a in range(n_dots)])
-            z = [np.random.choice([-1, 0, 1], p=marginals[a]) for a in range(n_dots)]
-            z_arr[:, t] = z
-            s_arr[:, t] = s
+        mu_y_1 = np.multiply(np.ones((n_dots, n_dots)), np.random.rand(theta.shape[0], theta.shape[1]))*0.5
+        mu_y_neg1 = np.multiply(np.ones((n_dots, n_dots)), np.random.rand(theta.shape[0], theta.shape[1]))*0.5
+        for t in range(1, n_iters):
+            jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=sigma_lh, include_m11=True, logm11=1e-2)
+            jaddmat = (np.roll(np.eye(self.ndots), -2, axis=0) + np.roll(np.eye(self.ndots), 2, axis=0))*np.array(jarr, dtype=np.float64)
+            biases = np.row_stack((mum1arr, mup1arr)).astype(np.float64)
+            theta = j_mat + jaddmat
+            for i in range(theta.shape[0]):
+                q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(biases[0][i])
+                qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(biases[1][i])
+                q_y_1[t, i] = q1/(q1+qn1)
+                q_y_neg1[t, i] = qn1/(q1+qn1)
+            for i in range(theta.shape[0]):
+                for m in np.where(theta[i, :] != 0)[0]:
+                    # positive y_i
+                    mu_y_1[m, i] += (np.exp(theta[i, m]+biases[0][m]) *\
+                            np.prod(mu_y_1[jneigbours(m, i, theta=theta), m])\
+                            + np.exp(-theta[i, m]+biases[1][m]) *\
+                            np.prod(mu_y_neg1[jneigbours(m, i, theta=theta), m]) -
+                            mu_y_1[m, i])*dt/tau +\
+                        np.sqrt(dt/tau)*noise*np.random.randn()
+                    # negative y_i
+                    mu_y_neg1[m, i] += (np.exp(-theta[i, m]+biases[0][m]) *\
+                        np.prod(mu_y_1[jneigbours(m, i, theta=theta), m])\
+                        + np.exp(theta[i, m]+biases[1][m]) *\
+                        np.prod(mu_y_neg1[jneigbours(m, i, theta=theta), m])-
+                        mu_y_neg1[m, i])*dt/tau +\
+                    np.sqrt(dt/tau)*noise*np.random.randn()
+                    m_y_1_memory = np.copy(mu_y_1[m, i])
+                    mu_y_1[m, i] = mu_y_1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
+                    mu_y_neg1[m, i] = mu_y_neg1[m, i]/(m_y_1_memory+mu_y_neg1[m, i])
+        if not plot:
+            return q_y_1[-1]
         if plot:
-            plt.figure()
-            colors = ['r', 'k', 'b']
-            labels = ['CCW', 'NM', 'CW']
-            for i in range(nstates):
-                plt.plot(q_mf_arr[0, i, :], color=colors[i], label=labels[i])
-            plt.legend(frameon=True)
-    
-            fig, ax = plt.subplots(nrows=4, figsize=(11, 16))
-            title = ['CCW', 'NM', 'CW'][int(np.mean(z_arr.T[-1]))+1]
-            ax[0].set_title('Percept: ' + title + ', True: ' + true + '\nR=q(z_i=CW), G=0, B=q(z_i=CCW)' )
-            q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T,
-                                  q_mf_arr[:, 2, :].T)).T
-            q_mf_plot[:, :, 1] = 0
-            ax[0].imshow(q_mf_plot, aspect='auto', interpolation='none',
+            time = np.arange(0, t_end, dt)
+            fig, ax = plt.subplots(nrows=3, figsize=(6, 9))
+            for i_a, a in enumerate(ax.flatten()):
+                a.spines['top'].set_visible(False)
+                a.spines['right'].set_visible(False)
+                if i_a < 3:
+                    a.set_xticks([])
+                if i_a > 0:
+                    a.set_ylim(-0.15, 1.15)
+            ax[2].set_xlabel('Time (s)')
+            ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
                          vmin=0, vmax=1)
-            # plt.colorbar(im1, ax=ax[0], label='sampled hidden state, z')
-            # ax[0].set_title('Percept: ' + str(labels[int(np.mean(z_arr[:, :-10]))+2]))
-            im2 = ax[1].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none')
-            plt.colorbar(im2, ax=ax[1], label='true stimulus, s')
-            im2 = ax[2].imshow(s_arr, cmap='binary', aspect='auto', interpolation='none')
-            plt.colorbar(im2, ax=ax[2], label='sampled (expected)\n stimulus, s*')
-            im2 = ax[3].imshow(stim.T-s_arr, cmap='PiYG', aspect='auto', interpolation='none')
-            plt.colorbar(im2, ax=ax[3], label='difference in stimulus')
-            ax_0_pos = ax[0].get_position()
-            ax_1_pos = ax[1].get_position()
-            ax[0].set_position([ax_0_pos.x0, ax_0_pos.y0, ax_1_pos.width, ax_1_pos.height])
-            ax = plt.figure().add_subplot(projection='3d')
-            lab1 = 'NM'
-            lab2 = 'CCW'
-            for i in range(n_dots):
-                ax.plot(np.arange(n_iters), q_mf_arr[i, 0, :], q_mf_arr[i, 1, :],
-                        color='k', label=lab1)
-                ax.plot(np.arange(n_iters), q_mf_arr[i, 0, :], q_mf_arr[i, 2, :],
-                        color='b', label=lab2)
-                if i == 0:
-                    ax.legend()
-            ax.set_xlabel('Iterations')
-            ax.set_zlabel('q(z_i = CCW), q(z_i = NM)')
-            ax.set_ylabel('q(z_i = CW)')
+            ax[0].set_ylabel('Stimulus')
+            ax[1].set_ylabel('q(z_i=CW)')
+            ax[2].set_ylabel('q(z_i=CCW)')
+            ax[1].axhline(1/3, color='r', alpha=0.4, linestyle='--', linewidth=2)
+            ax[1].text(t_end+70*dt, 1/3-0.02, '1/3', color='r')
+            ax[1].text(t_end+70*dt, 1/2+0.02, '1/2', color='r')
+            ax[1].axhline(1/2, color='r', alpha=0.4, linestyle=':', linewidth=2)
+            ax[2].axhline(1/3, color='b', alpha=0.4, linestyle='--', linewidth=2)
+            ax[2].axhline(1/2, color='b', alpha=0.4, linestyle=':', linewidth=2)
+            if true == '2combination':
+                title = r'$CW \longrightarrow NM \longrightarrow CW$'
+            if true == 'combination':
+                title = r'$CW \longrightarrow NM$'
+            if true == 'combination_reverse':
+                title = r'$NM \longrightarrow CW$'
+            if true not in ['combination', '2combination', 'combination_reverse']:
+                title = true
+            ax[0].set_title(title)
+            for dot in range(n_dots):
+                if dot % 2 == 0:
+                    linestyle = ':'
+                else:
+                    linestyle = 'solid'
+                ax[1].plot(time, q_y_1[:, dot], color='r', linewidth=2.5,
+                           linestyle=linestyle)
+                ax[2].plot(time, q_y_neg1[:, dot], color='k', linewidth=2.5,
+                           linestyle=linestyle)
+            fig.suptitle(f'Coupling J = {j}', fontsize=16)
+            plt.figure()
+            plt.plot(np.max(np.abs(np.diff(stim.T, axis=0)), axis=0))
+            # plt.plot(q_mf_arr[:, 0, :], q_mf_arr[:, 1, :], color='k', linewidth=2.5)
+            plt.ylim(0, 2)
 
 
     def mean_field_fixed_points_vs_j_different_epsilons(self, epslist=[0.1, 0.01, 0.001],
@@ -1105,12 +1108,49 @@ def sols_vs_j_cond_on_a(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(-1, 1.02, 4e
     fig.savefig(DATA_FOLDER + 'solutions_MF_ising_ring_diff_a_j_zoomin_a_bifur_morereps.svg', dpi=200)
 
 
+def sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
+                                    nreps=50, dt=0.01, tau=0.1, n_iters=250, true='CW', noise_stim=0.1):
+    ring_object = ring(epsilon=0.001, n_dots=8)
+    j = 0
+    sols = np.zeros((len(alist), len(j_list), nreps))
+    for icoh, coh in enumerate(alist):
+        print(coh)
+        for i_j, j in enumerate(j_list):
+            for n in range(nreps):
+                q = ring_object.fractional_belief_propagation_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
+                                                                    true=true, noise=0, plot=False,
+                                                                    discrete_stim=True, coh=coh,
+                                                                    stim_stamps=1, noise_stim=noise_stim)
+                sols[icoh, i_j, n] = q[0].round(6)
+    fig, ax = plt.subplots(ncols=len(alist), figsize=(len(alist)*4, 4))
+    # colormap = pl.cm.copper(np.linspace(0.2, 1, len(alist)))
+    # legendelements = [Line2D([0], [0], color=colormap[0], lw=2, label=alist[0], marker='o'),
+    #                   Line2D([0], [0], color=colormap[1], lw=2, label=alist[1], marker='o'),
+    #                   Line2D([0], [0], color=colormap[2], lw=2, label=alist[2], marker='o')]
+    for icoh, coh in enumerate(alist):
+        for i_j, j in enumerate(j_list):
+            # js = -coh**2/(16*noise_stim**2) - np.log(6e-2)/4
+            # ax[icoh].axvline(-js, color='r', linestyle='--', linewidth=2, alpha=0.4)
+            unique_vals = np.unique(sols[icoh, i_j])
+            ax[icoh].plot(np.repeat(j, len(unique_vals)),
+                          unique_vals, color='k', marker='o', linestyle='',
+                          markersize=3)
+        ax[icoh].set_title('a = ' + str(coh))
+        ax[icoh].set_xlabel('Coupling, J')
+        ax[icoh].set_ylim(-0.05, 1.05)
+    # ax.legend(handles=legendelements, title='a', frameon=False)
+    ax[0].set_ylabel('q(z_i = CW)')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'solutions_LBP_ising_ring_diff_a_j.png', dpi=200)
+    fig.savefig(DATA_FOLDER + 'solutions_LBP_ising_ring_diff_a_j.svg', dpi=200)
+
+
 def number_fps_vs_a_j(alist=np.arange(0, 0.525, 2.5e-2).round(4),
                       jlist=np.arange(-1.4, 1.05, 0.1).round(4),
                       nreps=50, dt=0.01, tau=0.1, n_iters=500, true='CW', noise_stim=0.1,
                       load_data=True):
     ring_object = ring(epsilon=0.001, n_dots=8)
-    path = DATA_FOLDER + 'number_fps_all_smalleps.npy'
+    path = DATA_FOLDER + 'number_fps_all_smalleps_bigsigma.npy'
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if load_data and os.path.exists(path):
         nfps = np.load(path)
@@ -1123,7 +1163,8 @@ def number_fps_vs_a_j(alist=np.arange(0, 0.525, 2.5e-2).round(4),
                     q = ring_object.mean_field_sde_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
                                                          true=true, noise=0, plot=False,
                                                          discrete_stim=True, coh=coh,
-                                                         stim_stamps=1, noise_stim=noise_stim)
+                                                         stim_stamps=1, noise_stim=noise_stim,
+                                                         sigma_lh=0.2)
                     nvals = len(np.unique(q[:, 0].round(4)))
                     nfps[icoh, i_j] += nvals
         nfps = nfps/nreps
@@ -1134,9 +1175,46 @@ def number_fps_vs_a_j(alist=np.arange(0, 0.525, 2.5e-2).round(4),
     ax.set_ylabel('a')
     plt.colorbar(im, ax=ax, label='Average # FPs')
     fig.tight_layout()
-    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_smalleps.png', dpi=200,
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_smalleps_bigsigma.png', dpi=200,
                 bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_smalleps.svg', dpi=200,
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_smalleps_bigsigma.svg', dpi=200,
+                bbox_inches='tight')
+    return fig, ax
+
+
+def number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
+                      jlist=np.arange(0, 1.05, 0.1).round(4),
+                      nreps=50, dt=0.01, tau=0.1, n_iters=500, true='CW', noise_stim=0.1,
+                      load_data=True):
+    ring_object = ring(epsilon=0.001, n_dots=8)
+    path = DATA_FOLDER + 'number_fps_all_smalleps_bprop.npy'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if load_data and os.path.exists(path):
+        nfps = np.load(path)
+    else:
+        nfps = np.zeros((len(alist), len(jlist)))
+        for icoh, coh in enumerate(alist):
+            print(coh)
+            for i_j, j in enumerate(jlist):
+                for n in range(nreps):
+                    q = ring_object.fractional_belief_propagation_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
+                                                                        true=true, noise=0, plot=False,
+                                                                        discrete_stim=True, coh=coh,
+                                                                        stim_stamps=1, noise_stim=noise_stim,
+                                                                        sigma_lh=noise_stim)
+                    nvals = len(np.unique(q.round(4)))
+                    nfps[icoh, i_j] += nvals
+        nfps = nfps/nreps
+        np.save(path, nfps)
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(np.flipud((nfps)), aspect='auto', cmap='gist_stern', extent=[0, 1.05, 0, 0.525])
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('a')
+    plt.colorbar(im, ax=ax, label='Average # FPs')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_bprop.png', dpi=200,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_bprop.svg', dpi=200,
                 bbox_inches='tight')
     return fig, ax
 
@@ -1145,11 +1223,11 @@ def plot_all_jeff(alist=np.arange(0, 0.525, 1e-3).round(4),
                   jlist=np.arange(-1.4, 1.05, 1e-2).round(4),
                   noise_stim=0.1):
     j, a = np.meshgrid(jlist, alist)
-    jeff = -3*a**2/(32*noise_stim**2) - np.log(6e-2)/4 + j
+    jeff = -3*a**2/(32*noise_stim**2) - np.log(1e-2)/4 + j
     # bias_cw = 3*a**2/(32*noise_stim**2) - np.log(6e-2)/4
     # bias_ccw = -3*a**2/(32*noise_stim**2) + np.log(6e-2)/4
     # beff = bias_cw-bias_ccw
-    jstim = -3*a**2/(32*noise_stim**2) - np.log(6e-2)/4 
+    jstim = -3*a**2/(32*noise_stim**2) - np.log(1e-2)/4 
     jprior = j
     x, tau = np.arange(8), 0.8
     kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
@@ -1169,10 +1247,10 @@ def plot_all_jeff(alist=np.arange(0, 0.525, 1e-3).round(4),
                                 load_data=True)
     # norm = mpl.colors.TwoSlopeNorm(vmin=np.min(jeff), vcenter=0, vmax=np.max(jeff))
     
-    ax.plot(jvals, avals, color='k')
-    ax.plot(jvals1, avals1, color='k')
-    ax.plot(jvals2, avals2, color='k')
-    ax.plot(jvals3, avals3, color='k')
+    ax.plot(jvals, avals, color='white')
+    ax.plot(jvals1, avals1, color='white')
+    ax.plot(jvals2, avals2, color='white')
+    ax.plot(jvals3, avals3, color='white')
     # im = ax.imshow(np.flipud(1/np.abs(jeff)>0.6), cmap='bwr', aspect='auto', extent=[-1.4, 1.05, 0, 0.525],
     #                vmin=np.min(jeff), vmax=np.max(np.abs(jeff)))
     ax.set_xlabel('Coupling, J')
@@ -1186,11 +1264,74 @@ def plot_all_jeff(alist=np.arange(0, 0.525, 1e-3).round(4),
     # ax[1].imshow(np.flipud(beff), cmap='Reds', aspect='auto', extent=[-1.4, 1.05, 0, 0.525])
 
 
+def jneigbours(j,i, theta):
+    """
+    return the neighbours of j except i
+
+    Input:
+    - i {integer}: index of our current node
+    - j {integer}: index of j
+    Output:
+    - return a list with all the neighbours of neighbour of j except our 
+      current node
+    """
+    neigbours = np.array(np.where(theta[j,:] != 0))
+    return neigbours[neigbours!=i]
+
+
+def fractional_belief_prop(j, b, theta, num_iter=100, thr=1e-10,
+                           alpha=1):
+    # multiply arrays element wise
+    mat_1 = np.random.rand(theta.shape[0], theta.shape[1])
+    mat_neg1 = np.random.rand(theta.shape[0], theta.shape[1])
+    mu_y_1 = np.multiply(theta, mat_1)
+    mat_memory_1 = np.copy(mu_y_1)
+    mu_y_neg1 = np.multiply(theta, mat_neg1)
+    mat_memory_neg1 = np.copy(mu_y_neg1)
+    for n in range(num_iter):
+        mat_memory_1 = np.copy(mu_y_1)
+        mat_memory_neg1 = np.copy(mu_y_neg1)
+        # for all the nodes that i is connected
+        for i in range(theta.shape[0]):
+            for t in np.where(theta[i, :] != 0)[0]:
+                # positive y_i
+                mu_y_1[t, i] = (np.exp(j*alpha*theta[i, t]+b) *\
+                        np.prod(mu_y_1[jneigbours(t, i, theta=theta), t]) *\
+                            mu_y_1[i, t]**(1-alpha) \
+                        + np.exp(-j*alpha*theta[i, t]-b) *\
+                        np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])*\
+                            mu_y_neg1[i, t]**(1-alpha))**(1/alpha)
+                # mu_y_1 += np.random.rand(8, 8)*1e-3
+                # negative y_i
+                mu_y_neg1[t, i] = (np.exp(-j*alpha*theta[i, t]+b) *\
+                    np.prod(mu_y_1[jneigbours(t, i, theta=theta), t])*\
+                    mu_y_1[i, t]**(1-alpha)
+                    + np.exp(j*alpha*theta[i, t]-b) *\
+                    np.prod(mu_y_neg1[jneigbours(t, i, theta=theta), t])*\
+                    mu_y_neg1[i, t]**(1-alpha))**(1/alpha)
+
+                m_y_1_memory = np.copy(mu_y_1[t, i])
+                mu_y_1[t, i] = mu_y_1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                mu_y_neg1[t, i] = mu_y_neg1[t, i]/(m_y_1_memory+mu_y_neg1[t, i])
+                # mu_y_neg1 += np.random.rand(8, 8)*1e-3
+        if np.sqrt(np.sum(mat_memory_1 - mu_y_1)**2) and\
+            np.sqrt(np.sum(mat_memory_neg1 - mu_y_neg1)**2) <= thr:
+            break
+    q_y_1 = np.zeros(theta.shape[0])
+    q_y_neg1 = np.zeros(theta.shape[0])
+    for i in range(theta.shape[0]):
+        q1 = np.prod(mu_y_1[np.where(theta[:, i] != 0), i]) * np.exp(b)
+        qn1 = np.prod(mu_y_neg1[np.where(theta[:, i] != 0), i]) * np.exp(-b)
+        q_y_1[i] = q1/(q1+qn1)
+        q_y_neg1[i] = qn1/(q1+qn1)
+    return q_y_1, q_y_neg1
+
+
 if __name__ == '__main__':
-    # number_fps_vs_a_j(alist=np.arange(0, 0.525, 1e-2).round(4),
-    #                   jlist=np.arange(-1.4, 1.05, 0.05).round(4),
-    #                   nreps=50, dt=0.05, tau=0.1, n_iters=800, true='CW', noise_stim=0.1,
-    #                   load_data=True)
+    number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
+                            jlist=np.arange(0, 1.05, 0.05).round(4),
+                            nreps=20, dt=0.05, tau=0.1, n_iters=2500, true='CW', noise_stim=0.1,
+                            load_data=True)
     # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='CW', j=0.4, b=[0., 0., 0.], plot=True,
     #                                               n_iters=100, noise=0)
     # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='NM', j=0.4, b=[0., 0., 0.], plot=True,
@@ -1201,12 +1342,15 @@ if __name__ == '__main__':
     #                                         true='CW', noise=0., plot=True,
     #                                         discrete_stim=False, s=ss[i],
     #                                         b=[0., 0., 0.], noise_stim=0.01)
-    for i in range(2):
-        ring(epsilon=0.001, n_dots=8).mean_field_sde_ising(dt=0.05, tau=0.1, n_iters=400, j=0.,
-                                                            true='CW', noise=0.0, plot=True,
-                                                            discrete_stim=False, 
-                                                            noise_stim=0.1, s=[0.5, 0.5],
-                                                            stim_stamps=1, sigma_lh=0.1)
+    # sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
+    #                                 nreps=50, dt=0.05, tau=0.1, n_iters=250, true='CW', noise_stim=0.1)
+    # for i in range(2):
+    #     ring(epsilon=0.001, n_dots=8).fractional_belief_propagation_ising(dt=0.05, tau=0.1, n_iters=500, j=0.1,
+    #                                                                       true='CW', noise=0.0, plot=True,
+    #                                                                       discrete_stim=True, 
+    #                                                                       noise_stim=0.1, s=[0.5, 0.5],
+    #                                                                       stim_stamps=1, sigma_lh=0.1,
+    #                                                                       coh=0.)
     # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
     #                                               true='CCW', noise=0.01, plot=True,
     #                                               discrete_stim=True, s=[0.55, 0.45],
