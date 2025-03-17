@@ -1280,7 +1280,7 @@ def compute_jstar_bstar(sub, dataframe, model='MF', method='BADS',
 
 
 def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
-                            bw=0.5, annot=False):
+                            bw=0.5, annot=False, model_density=True):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     data_orig, data_model_orig, data_model_null =\
         load_all_data(all_df, model='MF5', method=method, sv_folder=SV_FOLDER)
@@ -1294,7 +1294,7 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
     df_sub_null = data_model_null.dropna().reset_index()
     stim_str = np.array([-1, 0, 1])
     if plot_all:
-        fig, ax = plt.subplots(ncols=3, nrows=3, figsize=(12, 12))
+        fig, ax = plt.subplots(ncols=3, nrows=3, figsize=(12, 10))
         ax = ax.flatten()
     else:
         fig, ax = plt.subplots(ncols=1, nrows=3, figsize=(4, 8))
@@ -1306,7 +1306,7 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
             df_model_coup['confidence'] = df_model_coup.groupby('subject')['confidence'].apply(scipy.stats.zscore)
             df_null_coup = df_sub_null.loc[(df_sub_null.coupling == c)]
             df_null_coup['confidence'] = df_null_coup.groupby('subject')['confidence'].apply(scipy.stats.zscore)
-            s = 0.5
+            s = 0.4
         else:
             df_data_coup = df_sub_final.loc[(df_sub_final.coupling == c) & (df_sub_final.subject == subject)]
             df_model_coup = df_sub_model.loc[(df_sub_model.coupling == c) & (df_sub_model.subject == subject)]
@@ -1330,15 +1330,21 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
             stat, p = diptest(df_data_coup.loc[df_data_coup.stim_str == 0, variable])
             print(p)
             ax[i_c].set_title(f'Bimodal coef. = {beta},\npval = {p:.3e}', fontsize=14)
-        sns.violinplot(df_data_coup, x='stim_str', y=variable, ax=ax[i_c],
-                       palette='coolwarm_r', hue='stim_str',
-                       legend=False, inner=None, split=False, bw_adjust=bw,
-                       linewidth=0)
+        if model_density:
+            sns.violinplot(df_model_coup, x='stim_str', y=variable, ax=ax[i_c],
+                           palette='coolwarm_r', hue='stim_str',
+                           legend=False, inner=None, split=False, bw_adjust=bw,
+                           linewidth=0, cut=0)
+        else:
+            sns.violinplot(df_data_coup, x='stim_str', y=variable, ax=ax[i_c],
+                           palette='coolwarm_r', hue='stim_str',
+                           legend=False, inner=None, split=False, bw_adjust=bw,
+                           linewidth=0, cut=0)
         sns.swarmplot(df_data_coup, x='stim_str', y=variable, ax=ax[i_c],
                       color='k', size=s, legend=False, alpha=0.8)
-        slope = scipy.stats.linregress(df_data_coup.stim_str, df_data_coup.confidence).slope
-        intercept = scipy.stats.linregress(df_data_coup.stim_str, df_data_coup.confidence).intercept
-        ax[i_c].plot([0, 3, 6], stim_str*slope+intercept, color='gray', linestyle='--', alpha=0.7)
+        # slope = scipy.stats.linregress(df_data_coup.stim_str, df_data_coup.confidence).slope
+        # intercept = scipy.stats.linregress(df_data_coup.stim_str, df_data_coup.confidence).intercept
+        # ax[i_c].plot([0, 3, 6], stim_str*slope+intercept, color='gray', linestyle='--', alpha=0.7)
         if plot_all:
             sns.violinplot(df_model_coup, x='stim_str', y=variable, ax=ax[i_c+3],
                            palette='coolwarm_r', hue='stim_str',
@@ -1362,7 +1368,7 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
         if i_a != 1:
             a.set_ylabel('')
         if subject != 'all':
-            a.set_ylim(-0.4, 1.4)
+            a.set_ylim(-0.2, 1.2)
             a.set_yticks([0, 0.5, 1])
             a.axhline(1, color='gray', linestyle='--', alpha=0.7)
             a.axhline(0, color='gray', linestyle='--', alpha=0.7)
@@ -1373,6 +1379,8 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
     else:
         ax[1].set_ylabel('Confidence')
     fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'conf_vs_stim_data_density_plot_model.png', dpi=150, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'conf_vs_stim_data_density_plot_model.svg', dpi=150, bbox_inches='tight')
 
 
 def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
@@ -2498,7 +2506,7 @@ if __name__ == '__main__':
     #                    subjects='separated')
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
     #                                bic=True)
-    plot_all_subjects()
+    # plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                data_only=True)
@@ -2516,8 +2524,8 @@ if __name__ == '__main__':
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF', method=opt_algorithm,
     #                     band_width=0.7, sort_by_j=True)
-    # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
-    #                         bw=0.8, annot=True)  # good: 11, 7, 15, 18, 23, 30
+    plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
+                            bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
