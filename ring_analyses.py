@@ -87,16 +87,40 @@ class ring:
         return p_s
 
 
-    def compute_likelihood_continuous_stim(self, s, z, s_t=np.ones(6), noise=0.1,
-                                           penalization=0):
-        phi = np.roll(s, -1)*(np.roll(z, -1) == -1) + np.roll(s, 1)*(np.roll(z, 1) == 1) + s*(z == 0)
-        norms = 1*(np.roll(z, 1) == 1) + 1*(z==0) + 1*(np.roll(z, -1) == -1)
-        phi[norms == 0] = penalization
-        norms[norms == 0] = 1
-        likelihood = 1/(noise*np.sqrt(2*np.pi))*np.exp(-((s_t-phi/norms)**2)/noise**2/2)
-        # likelihood = scipy.stats.norm.pdf(s_t, phi/3, noise)
-        # likelihood = np.min((likelihood, np.ones(len(likelihood))), axis=0)
-        return likelihood+1e-12
+    def compute_likelihood_continuous_stim(self, s_t_1, z, s_t=np.ones(6), noise=0.1):
+        phi = np.sum(1*(z[0] == 1)*s_t_1[0] + 1*(z[1] == 0)*s_t_1[1] + 1*(z[2] == -1)*s_t_1[2])
+        norms = np.sum((z[0] == 1)*1 + 1*(z[1] == 0) + (z[2] == -1)*1)
+        if norms != 0:
+            likelihood = 1/(noise*np.sqrt(2*np.pi))*np.exp(-(s_t[1]-phi/norms)**2/noise**2/2)
+        else:
+            likelihood = self.eps
+        return likelihood
+
+
+    # def compute_likelihood_continuous_stim(self, s, z, s_t=np.ones(6), noise=0.1,
+    #                                        epsilon=1e-2):
+    #     phi = np.roll(s, -1)*(np.roll(z, -1) == -1) + np.roll(s, 1)*(np.roll(z, 1) == 1) + s*(z == 0)
+    #     norms = 1*(np.roll(z, 1) == 1) + 1*(z==0) + 1*(np.roll(z, -1) == -1)
+    #     phi[norms == 0] = penalization
+    #     norms[norms == 0] = 1
+    #     likelihood = 1/(noise*np.sqrt(2*np.pi))*np.exp(-((s_t-phi/norms)**2)/noise**2/2)
+    #     # likelihood = scipy.stats.norm.pdf(s_t, phi/3, noise)
+    #     # likelihood = np.min((likelihood, np.ones(len(likelihood))), axis=0)
+    #     return likelihood+1e-12
+
+
+    def compute_likelihood_continuous_stim_ising(self, s_t_1, z, s_t=np.ones(3), noise=0.1,
+                                                 epsilon=1e-2):
+        if z[0] == -1:
+            if z[2] == 1:
+                return np.log(epsilon)
+            else:
+                return -(s_t[1]-s_t_1[2])**2 / (2*noise**2)
+        if z[0] == 1:
+            if z[2] == 1:
+                return -(s_t[1]-s_t_1[0])**2 / (2*noise**2)
+            else:
+                return -(s_t[1]-s_t_1[0]*0.5-s_t_1[2]*0.5)**2 / (2*noise**2)
 
 
     def exp_kernel(self, tau=0.8):
@@ -136,37 +160,164 @@ class ring:
         combinations = list(itertools.product(z_states, z_states))
         for i in range(num_variables):  # for all dots
             # Iterate over all possible latent states z_{t-1}
+            M = np.zeros((len(combinations), num_states_z))  # Ensure correct shape
+
+            for z_i_index in range(num_states_z):  # Iterate over possible states of z_i (columns)
+                for ic, (z_prev, z_next) in enumerate(combinations):  # Iterate over (z_{i-1}, z_{i+1}) pairs
+                    zn = np.ones(num_variables)
+                    i_prev = (i - 1) % num_variables  # Ensure correct wrapping
+                    i_next = (i + 1) % num_variables  # Ensure correct wrapping
+                    zn[i_prev] = z_prev
+                    zn[i_next] = z_next
+                    zn[i] = z_states[z_i_index]  # Assign z_i
+                    idxs = [i_prev, i, i_next]
+            
+                    # Get the CPT value for p(s_i | s, z)
+                    if discrete_stim:
+                        p_s_given_z = self.compute_likelihood_vector(s, zn, s_t)[i]  # CPT lookup based on s and z, takes p(s_i | s, z)
+                    else:
+                        # based on a normal distribution centered in the expectation of the stimulus given the combination of z
+                        p_s_given_z =\
+                            self.compute_likelihood_continuous_stim(s[idxs], zn[idxs], s_t[idxs], noise=noise)
+            
+                    # Store log-likelihood in matrix with clipping for stability
+                    M[ic, z_i_index] = np.log(np.clip(p_s_given_z, 1e-10, None))
+            i_1prev = (i-1) % num_variables
+            i_1next = (i+1) % num_variables
+            q_z_1p = q_z_prev[i_1prev, :]
+            q_z_1n = q_z_prev[i_1next, :]
+            # Reshape M to a 3D tensor (z_{i-1}, z_i, z_{i+1})
+            M_tensor = M.reshape(num_states_z, num_states_z, num_states_z)
+            
+            # Compute expectation using q distributions
+            v = np.tensordot(q_z_1p, M_tensor, axes=(0, 0))  # Sum over z_{i-1}
+            v = np.tensordot(v, q_z_1n, axes=(1, 0))  # Sum over z_{i+1}
+
+            # Final expectation over q_i
+            # expectation = v*q_z_prev[i, 0]
+            # U = np.tensordot(q_z_1p, mat, axes=(0, 0))
+            # V = np.tensordot(U, q_z_1n, axes=(1, 0))
+            likelihood_c_all[i, :] = v
+        return likelihood_c_all
+
+
+    def compute_expectation_log_likelihood_original(self, s_t_1, q_z_prev, s_t, discrete_stim=True,
+                                                    noise=0.1):
+        """
+        Compute the likelihood expectation over q_{i-1}(z_{i-1}) and q_{i+1}(z_{i+1})
+        using the CPT (likelihood, Conditional Probabilities Table) and
+        the approx. posterior over latent states.
+    
+        Parameters:
+        - s (array): Stimulus.
+        - q_z_prev (array-like): Belief on previous latent states probabilities (q_{z_{t-1}}).
+        - z (array): latent scene (not very useful, just to have some structure)
+          
+        Returns:
+        - likelihood_c_all (array): The computed log-likelihood expectation.
+        """
+
+        # Number of possible latent states (e.g., 3 for CW, NM, CCW)
+        num_states_z = q_z_prev.shape[1]
+        num_variables = q_z_prev.shape[0]
+        # we want to compute E_{q_{i-1}, q_{i+1}}[\log p(s_i | z_{i-1}, z_i, z_{i+1}, s)]
+        #  \sum_{z_{i-1}} \sum_{z_{i+1}} \log p(s_i^t | s_{i-1, i, i+1}^{t-1}, z_{i-1}^{t-1}, z_i^{t-1}, z_{i+1}^{t-1}) + other terms
+        # with \sum_{z_{i}} \sum_{z_{i-2}} and \sum_{z_{i+2}} \sum_{z_{i}}
+        # E_{q \ i}[\log p(s_i | z, s)] = likelihood_c_all: num_variables (i) x num_states_z (3)
+        likelihood_c_all = np.zeros((num_variables, num_states_z))
+        z_states = [1, 0, -1]
+        combinations = list(itertools.product(z_states, z_states))
+        idxmap = {-1:2, 0:1, 1:0}  # state to index mapping
+        for i in range(num_variables):  # for all dots
+            # Iterate over all possible latent states z_{t-1}
             for z_i_index in range(num_states_z):  # for each possible state of z_i (columns)
                 likelihood_contribution = 0
-                for startpoint in [-1, 0, 1]:  # to get extra components \sum_{j \in N(i)}
-                # np.arange(-self.ndots//2, self.ndots//2, 1)
-                    # startpoint = 0
-                    # if startpoint == 0:
-                    #     continue
+                for startpoint in [-1, 0, 1]:  # to get i-2 and i+2
+                    i_prev = (i+startpoint-1) % num_variables
+                    i_next = (i+startpoint+1) % num_variables
+                    idx = (i+startpoint) % num_variables
                     # iterate over all possible combinations of neighbors
                     for comb in combinations:  # for all combinations of z_{i-1}, z_{i+1}
-                        i_prev = (i+startpoint-1) % num_variables
-                        i_next = (i+startpoint+1) % num_variables
-                        idx = (i+startpoint) % num_variables
-                        zn = np.ones(num_variables)
-                        zn[i_prev] = comb[0]  # z_{i-1}
-                        zn[i_next] = comb[1]  # z_{i+1}
-                        zn[idx] = z_states[z_i_index]  # z_i
+                        if startpoint == -1:
+                            zn = np.ones(num_variables)
+                            zn[i_prev] = comb[0]  # z_{i-2}
+                            zn[idx] = comb[1]  # z_{i-1}
+                            zn[i_next] = z_states[z_i_index]  # z_i
+                            q_z_p = q_z_prev[i_prev, idxmap[comb[0]]]  # extract q_{i-2}(z_{i-2}=comb[0])
+                            q_z_n = q_z_prev[idx, idxmap[comb[1]]]  # extract q_{i-1}(z_{i-1}=comb[1])
+                        if startpoint == 0:
+                            zn = np.ones(num_variables)
+                            zn[i_prev] = comb[0]  # z_{i-1}
+                            zn[i_next] = comb[1]  # z_{i+1}
+                            zn[idx] = z_states[z_i_index]  # z_i
+                            q_z_p = q_z_prev[i_prev, idxmap[comb[0]]]  # extract q_{i-1}(z_{i-1}=comb[0])
+                            q_z_n = q_z_prev[i_next, idxmap[comb[1]]]  # extract q_{i+1}(z_{i+1}=comb[1])
+                        if startpoint == 1:
+                            zn = np.ones(num_variables)
+                            zn[idx] = comb[0]  # z_{i+1}
+                            zn[i_next] = comb[1]  # z_{i+2}
+                            zn[i_prev] = z_states[z_i_index]  # z_i
+                            q_z_p = q_z_prev[idx, idxmap[comb[0]]]  # extract q_{i+1}(z_{i+1}=comb[0])
+                            q_z_n = q_z_prev[i_next, idxmap[comb[1]]]  # extract q_{i+2}(z_{i+2}=comb[1])
+                        idxs = [i_prev, idx, i_next]
                         # Get the probability of z from q_z_prev (approx. posterior)
                         # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
-                        q_z_p = q_z_prev[i_prev, comb[0]+1]
-                        q_z_n = q_z_prev[i_next, comb[1]+1]
-        
+    
                         # Get the CPT value for p(s_i | s, z)
                         if discrete_stim:
-                            p_s_given_z = self.compute_likelihood_vector(s, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
+                            p_s_given_z = self.compute_likelihood_vector(s_t_1, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
                         else:
                             # based on a normal distribution centered in the expectation of the stimulus given the combination of z
-                            p_s_given_z = self.compute_likelihood_continuous_stim(s, zn, s_t, noise=noise)[idx]
-                        # Add q_{i-1} · q_{i+1} · p(s_i | s, z)
-                        likelihood_contribution += np.log(p_s_given_z + 1e-10)*q_z_p*q_z_n
-                    # print(likelihood_contribution)
+                            p_s_given_z =\
+                                self.compute_likelihood_continuous_stim(s_t_1[idxs], zn[idxs], s_t[idxs], noise=noise)
+                        # add p(s_i | z_{i-1}, z_i, z_{i+1})*q_{i-1}*q_{i+1}
+                        likelihood_contribution += np.log(p_s_given_z + 1e-12)*q_z_p*q_z_n
                 likelihood_c_all[i, z_i_index] = likelihood_contribution
+        return likelihood_c_all
+
+
+    def compute_expectation_log_likelihood_ising(self, s_t_1, q_z_prev, s_t, discrete_stim=True,
+                                                 noise=0.1):
+        # Number of possible latent states (e.g., 3 for CW, NM, CCW)
+        num_states_z = q_z_prev.shape[1]
+        num_variables = q_z_prev.shape[0]
+        # we want to compute \sum_{i \in N(j)} E_{q_{i-1}, q_{i+1}}[\log p(s_i | z_{i-1}, z_i, z_{i+1}, s)]
+        # \sum_{i \in N(j)} E_{q_{i-1}, q_{i+1}}[\log p(s_i | z, s)]: num_variables x num_states_z
+        likelihood_c_all = np.zeros((num_variables, num_states_z))
+        z_states = [-1, 1]
+        # rows: i+1
+        # columns: i-1
+        combinations = [[1, 1], [1, -1],
+                        [-1, 1], [-1, -1]]
+        for i in range(num_variables):  # for all dots
+            # Iterate over all possible latent states z_{t-1}
+            lh = 0
+            mat = np.zeros((2, 2)).flatten()
+            i_prev = (i-1) % num_variables
+            i_next = (i+1) % num_variables
+            idx = (i) % num_variables
+            for ic, comb in enumerate(combinations):  # for all combinations of z_{i-1}, z_{i+1}
+                zn = np.ones(num_variables)
+                zn[i_prev] = comb[0]  # z_{i-1}
+                zn[i_next] = comb[1]  # z_{i+1}
+                idxs = [i_prev, i, i_next]
+                # Get the probability of z from q_z_prev (approx. posterior)
+                # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
+
+                # Get the CPT value for p(s_i | s, z)
+                if discrete_stim:
+                    p_s_given_z = self.compute_likelihood_vector(s_t_1, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
+                else:
+                    # based on a normal distribution centered in the expectation of the stimulus given the combination of z
+                    p_s_given_z = self.compute_likelihood_continuous_stim_ising(s_t_1[idxs], zn[idxs],
+                                                                                s_t[idxs], noise=noise)
+                mat[ic] = p_s_given_z
+            mat = mat.reshape((2, 2))
+            i_prev = (i-2) % num_variables
+            i_next = (i+2) % num_variables
+            q_z_p = q_z_prev[i_prev, :]
+            q_z_n = q_z_prev[i_next, :]
+            likelihood_c_all[i, :] = mat @ q_z_p + mat.T @ q_z_n
         return likelihood_c_all
 
 
@@ -283,7 +434,6 @@ class ring:
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
             # likelihood = self.compute_expectation_log_likelihood(s=stim[t-1], q_z_prev=q_mf_arr[:, :, t-1],
             #                                                      s_t=stim[t])
-            # print(likelihood)
             var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + np.random.randn(n_dots, nstates)*noise)
             q_mf = (var_m1.T / np.sum(var_m1, axis=1)).T
             q_mf_arr[:, :, t] = q_mf
@@ -336,7 +486,8 @@ class ring:
 
     def mean_field_sde(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=3, b=np.zeros(3),
                        true='NM', noise=0.2, plot=False, stim_weight=1, ini_cond=None,
-                       discrete_stim=True, s=[1, 0], noise_stim=0.05, coh=None):
+                       discrete_stim=True, s=[1, 0], noise_stim=0.05, coh=None,
+                       stim_stamps=1, noise_gaussian=0.1):
         t_end = n_iters*dt
         kernel = self.exp_kernel()
         n_dots = self.ndots
@@ -344,36 +495,37 @@ class ring:
             if coh is None:
                 stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
             if coh is not None:
-                stim = self.dummy_stim_creation(n_iters=n_iters, true=true, coh=coh)
+                stim = self.dummy_stim_creation(n_iters=n_iters, true=true, coh=coh,
+                                                timesteps_between=stim_stamps)
         else:
             stim = self.stim_creation_ou_process(true=true, noise=noise_stim, s_init=s,
                                                  n_iters=n_iters, dt=dt)
         if discrete_stim and coh is not None:
             discrete_stim = False
         s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
-        # q_mf = np.repeat(np.array([[0.25], [0.3], [0.2]]), 6, axis=-1).T
-        # q_mf = np.ones((n_dots, nstates))/3 + np.random.randn(n_dots, 3)*0.05
         if ini_cond is None:
             q_mf = np.random.rand(n_dots, nstates)
         else:
             ini_cond = np.array(ini_cond)
             q_mf = np.repeat(ini_cond.reshape(-1, 1), self.ndots, axis=1).T
         q_mf = (q_mf.T / np.sum(q_mf, axis=1)).T
-        z = [np.random.choice([-1, 0, 1], p=q_mf[a]) for a in range(n_dots)]
         j_mat = circulant(kernel)*j
         np.fill_diagonal(j_mat, 0)
         q_mf_arr = np.zeros((n_dots, nstates, n_iters))
         q_mf_arr[:, :, 0] = q_mf
         s_arr = np.zeros((n_dots, n_iters))
         s_arr[:, 0] = s
-        z_arr = np.zeros((n_dots, n_iters))
-        z_arr[:, 0] = z
         for t in range(1, n_iters):
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
-            likelihood = self.compute_expectation_log_likelihood(stim[t-1], q_mf, stim[t],
-                                                                  discrete_stim=discrete_stim,
-                                                                  noise=noise_stim)
+            if nstates == 2:
+                likelihood = self.compute_expectation_log_likelihood_ising(stim[t-1], q_mf, stim[t],
+                                                                           discrete_stim=discrete_stim,
+                                                                           noise=noise_stim)
+            if nstates > 2:
+                likelihood = self.compute_expectation_log_likelihood_original(stim[t-1], q_mf, stim[t],
+                                                                             discrete_stim=discrete_stim,
+                                                                             noise=noise_gaussian)
             var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood*stim_weight)
             q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
             q_mf_arr[:, :, t] = q_mf
@@ -381,28 +533,36 @@ class ring:
             return q_mf
         if plot:
             time = np.arange(0, t_end, dt)
-            fig, ax = plt.subplots(nrows=4, figsize=(8, 12))
+            fig, ax = plt.subplots(nrows=nstates+2, figsize=(8, 12))
             for i_a, a in enumerate(ax.flatten()):
                 a.spines['top'].set_visible(False)
                 a.spines['right'].set_visible(False)
                 if i_a < 3:
                     a.set_xticks([])
-                if i_a > 0:
+                if i_a > 1:
                     a.set_ylim(-0.15, 1.15)
-            ax[3].set_xlabel('Time (s)')
+            ax[nstates].set_xlabel('Time (s)')
             ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
                          vmin=0, vmax=1)
             ax[0].set_ylabel('Stimulus')
-            ax[1].set_ylabel('q(z_i=CW)')
-            ax[2].set_ylabel('q(z_i=NM)')
-            ax[3].set_ylabel('q(z_i=CCW)')
-            ax[1].axhline(1/3, color='r', alpha=0.4, linestyle='--', linewidth=2)
-            ax[1].text(t_end+70*dt, 1/3-0.02, '1/3', color='r')
-            ax[1].text(t_end+70*dt, 1/2+0.02, '1/2', color='r')
-            ax[1].axhline(1/2, color='r', alpha=0.4, linestyle=':', linewidth=2)
-            ax[2].axhline(1/3, color='k', alpha=0.4, linestyle='--', linewidth=2)
-            ax[3].axhline(1/3, color='b', alpha=0.4, linestyle='--', linewidth=2)
-            ax[3].axhline(1/2, color='b', alpha=0.4, linestyle=':', linewidth=2)
+            ax[1].set_ylabel('R=q(z_i=CW), G=0,\n B=q(z_i=CCW)' )
+            q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T,
+                                  q_mf_arr[:, 2, :].T)).T
+            q_mf_plot[:, :, 1] = 0
+            ax[1].imshow(q_mf_plot, aspect='auto', interpolation='none',
+                         vmin=0, vmax=1)
+            ax[2].set_ylabel('q(z_i=CW)')
+            ax[3].set_ylabel('q(z_i=NM)')
+            if nstates == 3:
+                ax[4].set_ylabel('q(z_i=CCW)')
+                ax[4].axhline(1/3, color='b', alpha=0.4, linestyle='--', linewidth=2)
+                ax[4].axhline(1/2, color='b', alpha=0.4, linestyle=':', linewidth=2)
+                ax[2].axhline(1/3, color='r', alpha=0.4, linestyle='--', linewidth=2)
+                ax[2].text(t_end+n_iters/20*dt, 1/3-0.02, '1/3', color='r')
+                ax[2].text(t_end+n_iters/20*dt, 1/2+0.02, '1/2', color='r')
+                ax[3].axhline(1/3, color='k', alpha=0.4, linestyle='--', linewidth=2)
+            ax[2].axhline(1/2, color='r', alpha=0.4, linestyle=':', linewidth=2)
+            ax[3].axhline(1/2, color='k', alpha=0.4, linestyle=':', linewidth=2)
             if true == '2combination':
                 title = r'$CW \longrightarrow NM \longrightarrow CW$'
             if true == 'combination':
@@ -413,13 +573,21 @@ class ring:
                 title = true
             ax[0].set_title(title)
             for dot in range(n_dots):
-                ax[1].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5)
-                ax[2].plot(time, q_mf_arr[dot, 1, :], color='k', linewidth=2.5)
-                ax[3].plot(time, q_mf_arr[dot, 2, :], color='b', linewidth=2.5)
+                if dot % 2 == 0:
+                    linestyle = ':'
+                else:
+                    linestyle = 'solid'
+                ax[2].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5,
+                           linestyle=linestyle)
+                ax[3].plot(time, q_mf_arr[dot, 1, :], color='k', linewidth=2.5,
+                           linestyle=linestyle)
+                if nstates == 3:
+                    ax[4].plot(time, q_mf_arr[dot, 2, :], color='b', linewidth=2.5,
+                               linestyle=linestyle)
             fig.suptitle(f'Coupling J = {j}', fontsize=16)
-            plt.figure()
-            plt.plot(np.max(np.abs(np.diff(stim.T, axis=0)), axis=0))
-            plt.ylim(0, 2)
+            # plt.figure()
+            # plt.plot(np.max(np.abs(np.diff(stim.T, axis=0)), axis=0))
+            # plt.ylim(0, 2)
     
     
     def mean_field_sde_ising(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=2, b=np.zeros(2),
@@ -785,8 +953,8 @@ class ring:
                       alpha=0.2)
         plt.xlabel('Signal difference')
         plt.ylabel(r'$q(z_i = NM) = 1-q(z_i=CCW)-q(z_i=CW)$')
-        
-
+    
+    
     def dummy_stim_creation(self, n_iters=100, timesteps_between=10, true='NM', coh=0):
         """
         Create stimulus given a 'true' structure. true is a string with 4 possible values:
@@ -885,6 +1053,232 @@ def plot_all():
                                         true='2combination', noise=0., plot=True)
     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1.4,
                                         true='2combination', noise=0., plot=True)
+
+
+def bifurcations_different_bias(eps=0.1, nreps=50):
+    all_s = np.arange(0.25, 0.501, 1e-2).round(4)
+    ss = np.array([[all_s[i], 1-all_s[i]] for i in range(len(all_s))]).round(4)
+    true_diffs = np.diff(ss, axis=1)
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, 3))
+    filenames = ['bifurcations_difference_stim_def_eps01_bias_025.npy',
+                 'bifurcations_difference_stim_def_eps01_bias.npy',
+                 'bifurcations_difference_stim_def_eps01_bias_075.npy']
+    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(4, 12))
+    biases = [0.25, 0.5, 0.75]
+    col_labels = [r'$q(z_i = CW)$', r'$ q(z_i=NM)$', r'$q(z_i=CCW)$']
+    for i_f, file in enumerate(filenames):
+        path = DATA_FOLDER + file
+        data = np.load(path)
+        for row in range(3):
+            for n in range(nreps):
+                ax[row].plot(true_diffs, data[:, 0, n, row], color=colormap[i_f],
+                             marker='o', linestyle='', markersize=2, label=biases[i_f])
+            ax[row].set_xlabel('Signal difference')
+            ax[row].set_ylabel(col_labels[row])
+    ax[0].set_title(fr'$\varepsilon = ${eps}')
+    legendelements = [Line2D([0], [0], color=colormap[0], lw=2, label=biases[0], marker='o'),
+                      Line2D([0], [0], color=colormap[1], lw=2, label=biases[1], marker='o'),
+                      Line2D([0], [0], color=colormap[2], lw=2, label=biases[2], marker='o')]
+    ax[0].legend(title='NM prior', frameon=False, handles=legendelements)
+    for a in ax.flatten():
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_ylim(-0.02, 1.02)
+    fig.tight_layout()
+
+
+def plot_bifurcations_all_bias(eps=0.1, nreps=30, biases=np.arange(0., 0.6, 0.1).round(4),
+                               smallds=False, j=0):
+    if smallds:
+        ds = 1e-3
+        if j == 0:
+            extra_lab = '_small_ds'
+        else:
+            extra_lab = '_small_ds_coupling_' + str(j)
+    else:
+        ds = 2.5e-3
+        if j == 0:
+            extra_lab = ''
+        else:
+            extra_lab = '_coupling_' + str(j)
+    all_s = np.arange(0.25, 0.502, ds).round(4)
+    ss = np.array([[all_s[i], 1-all_s[i]] for i in range(len(all_s))]).round(4)
+    true_diffs = np.diff(ss, axis=1)
+    fig, ax = plt.subplots(ncols=3, figsize=(12, 4.))
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(biases)))
+    col_labels = [r'$q(z_i = CW)$', r'$ q(z_i=NM)$', r'$q(z_i=CCW)$']
+    for i_b, biasval in enumerate(biases):
+        path = DATA_FOLDER + 'bifurcations_difference_stim_def_eps01_bias_' + str(biasval) + extra_lab + '.npy'
+        data = np.load(path)
+        for row in range(3):
+            for n in range(nreps):
+                ax[row].plot(true_diffs, data[:, 0, n, row], color=colormap[i_b],
+                             marker='o', linestyle='', markersize=2)
+            ax[row].set_xlabel('Signal difference')
+            ax[row].set_ylabel(col_labels[row])
+            # noise = 0.1
+            # d_sq = -2*noise**2*np.log(noise*eps*np.sqrt(2*np.pi))
+            # biasterm = biasval*2*noise**2
+            # dist_sq = np.sqrt((2*noise**2 * np.log(2) + biasterm + d_sq*0.6944444444444444)/1.777777777777778)
+            # ax[row].axvline(dist_sq, color=colormap[i_b])
+    ax[0].set_title(fr'$\varepsilon = ${eps}')
+    ax[1].set_title(fr'Coupling $ J = ${j}')
+    legendelements = [Line2D([0], [0], color=colormap[i], lw=2, label=biases[i], marker='o', linestyle='')
+                      for i in range(len(biases))]
+    ax[0].legend(title='NM prior', frameon=False, handles=legendelements)
+    for a in ax.flatten():
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_ylim(-0.02, 1.02)
+    fig.tight_layout()
+
+
+def bifurcations_difference_stim_epsilon(nreps=100, resimulate=False, epslist=[0.1],
+                                         biasval=0, j=0, smallds=False):
+    if smallds:
+        ds = 1e-3
+        if j == 0:
+            extra_lab = '_small_ds'
+        else:
+            extra_lab = '_small_ds_coupling_' + str(j)
+    else:
+        ds = 2.5e-3
+        if j == 0:
+            extra_lab = ''
+        else:
+            extra_lab = '_coupling_' + str(j)
+    all_s = np.arange(0.25, 0.502, ds).round(4)
+    ss = np.array([[all_s[i], 1-all_s[i]] for i in range(len(all_s))]).round(4)
+    true_diffs = np.diff(ss, axis=1)
+    path = DATA_FOLDER + 'bifurcations_difference_stim_def_eps01_bias_' + str(biasval) + extra_lab + '.npy'
+    print(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path) and not resimulate:
+        q_mns_vs_diff = np.load(path)
+    else:
+        q_mns_vs_diff = np.zeros((len(ss), len(epslist), nreps, 3))
+        for i_e, eps in enumerate(epslist):
+            print('Epsilon: ' + str(eps))
+            for i in range(len(ss)):
+                if i % 10 == 0:
+                    print(str(i/len(ss)*100) + ' %')
+                for n in range(nreps):
+                    q = ring(epsilon=eps).mean_field_sde(dt=0.1, tau=0.2, n_iters=210, j=j,
+                                                         true='CW', noise=0., plot=False,
+                                                         discrete_stim=False, s=ss[i],
+                                                         b=[0., biasval, 0.], noise_stim=0.,
+                                                         noise_gaussian=0.1)
+                    q_mns_vs_diff[i, i_e, n, :] = q[1]
+        np.save(path, q_mns_vs_diff)
+    fig, ax = plt.subplots(nrows=3, ncols=len(epslist), figsize=(len(epslist)*4, 12))
+    col_labels = [r'$q(z_i = CW)$', r'$ q(z_i=NM)$', r'$q(z_i=CCW)$']
+    for i_e, eps in enumerate(epslist):
+        if len(epslist) > 2:
+            for row in range(3):
+                for n in range(nreps):
+                    ax[row, i_e].plot(true_diffs, q_mns_vs_diff[:, i_e, n, row], color='k',
+                                      marker='o', linestyle='', markersize=1)
+                ax[row, i_e].set_xlabel('Signal difference')
+                ax[row, i_e].set_ylabel(col_labels[row])
+            ax[0, i_e].set_title(fr'$\varepsilon = ${eps}')
+        else:
+            for row in range(3):
+                for n in range(nreps):
+                    ax[row].plot(true_diffs, q_mns_vs_diff[:, i_e, n, row], color='k',
+                                 marker='o', linestyle='', markersize=1)
+                ax[row].set_xlabel('Signal difference')
+                ax[row].set_ylabel(col_labels[row])
+        ax[0].set_title(fr'$\varepsilon = ${eps}')
+    for a in ax.flatten():
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_ylim(-0.02, 1.02)
+    fig.tight_layout()
+
+
+def n_objects_ring_stim_epsilon(nreps=100, resimulate=False):
+    all_s = np.arange(0, 0.2501, 1e-2).round(4)
+    epslist = np.logspace(-5, -1, 25)
+    ss = np.array([[all_s[i], 1-all_s[i]] for i in range(len(all_s))]).round(4)
+    true_diffs = np.diff(ss, axis=1)
+    path = DATA_FOLDER + 'n_objects_ring_stim_eps.npy'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path) and not resimulate:
+        nfps = np.load(path)
+    else:
+        nfps = np.zeros((len(epslist), len(all_s), 3))
+        for i_e, eps in enumerate(epslist):
+            print('Epsilon: ' + str(eps))
+            for i in range(len(ss)):
+                for n in range(nreps):
+                    q = ring(epsilon=eps).mean_field_sde(dt=0.1, tau=0.2, n_iters=110, j=0.,
+                                                         true='CW', noise=0., plot=False,
+                                                         discrete_stim=False, s=ss[i],
+                                                         b=[0., 0., 0.], noise_stim=0.)
+                    for v in range(3):
+                        nvals = len(np.unique(q[:, v].round(4)))
+                        nfps[i_e, i, v] += nvals
+        nfps = nfps/nreps
+        np.save(path, nfps)
+    fig, ax = plt.subplots(ncols=3, figsize=(14, 5))
+    titles = [r'$q(z_i = CW)$', r'$ q(z_i=NM)$', r'$q(z_i=CCW)$']
+    X, Y = np.meshgrid(true_diffs, epslist)
+    for v in range(3):
+        im = ax[v].pcolormesh(X, Y, np.flipud((nfps[:, :, v])), cmap='gist_stern',
+                              vmin=1, vmax=8)
+        ax[v].set_yscale('log')
+        ax[v].set_title(titles[v])
+        ax[v].set_xlabel('a')
+        ax[v].set_ylabel('Epsilon')
+        plt.colorbar(im, ax=ax[v], label='Average # FPs')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_ring_stim_eps.png', dpi=200,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_stim_eps.svg', dpi=200,
+                bbox_inches='tight')
+
+
+def n_objects_ring_stim_eps01_bias(nreps=100, resimulate=False, eps=0.1):
+    all_s = np.arange(0.25, 0.501, 1e-2).round(4)
+    biaslist = np.arange(0, 1.04, 4e-2)
+    ss = np.array([[all_s[i], 1-all_s[i]] for i in range(len(all_s))]).round(4)
+    true_diffs = np.diff(ss, axis=1)
+    path = DATA_FOLDER + 'n_objects_ring_stim_blist.npy'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path) and not resimulate:
+        nfps = np.load(path)
+    else:
+        nfps = np.zeros((len(biaslist), len(all_s), 3))
+        for i_b, bias in enumerate(biaslist):
+            print('Bias: ' + str(bias))
+            for i in range(len(ss)):
+                for n in range(nreps):
+                    q = ring(epsilon=eps).mean_field_sde(dt=0.1, tau=0.2, n_iters=150, j=0.,
+                                                         true='CW', noise=0., plot=False,
+                                                         discrete_stim=False, s=ss[i],
+                                                         b=[0., bias, 0.], noise_stim=0.)
+                    for v in range(3):
+                        nvals = len(np.unique(q[:, v].round(4)))
+                        nfps[i_b, i, v] += nvals
+        nfps = nfps/nreps
+        np.save(path, nfps)
+    fig, ax = plt.subplots(ncols=3, figsize=(14, 5))
+    titles = [r'$q(z_i = CW)$', r'$ q(z_i=NM)$', r'$q(z_i=CCW)$']
+    X, Y = np.meshgrid(biaslist, true_diffs)
+    for v in range(3):
+        im = ax[v].imshow(np.fliplr(np.flipud(nfps[:, :, v])), cmap='gist_stern',
+                          vmin=1, vmax=8, extent=[np.min(true_diffs), np.max(true_diffs),
+                                                  np.min(biaslist), np.max(biaslist)],
+                          aspect='auto')
+        ax[v].set_title(titles[v])
+        ax[v].set_xlabel('Signal difference')
+        ax[v].set_ylabel('Bias towards NM')
+        plt.colorbar(im, ax=ax[v], label='Average # FPs')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_ring_stim_bias.png', dpi=200,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'number_fixed_points_per_simulation_stim_bias.svg', dpi=200,
+                bbox_inches='tight')
 
 
 def print_jstim_biases(include_m11=False, logm11=False, a=None, sigma=None):
@@ -1328,20 +1722,33 @@ def fractional_belief_prop(j, b, theta, num_iter=100, thr=1e-10,
 
 
 if __name__ == '__main__':
-    number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
-                            jlist=np.arange(0, 1.05, 0.05).round(4),
-                            nreps=20, dt=0.05, tau=0.1, n_iters=2500, true='CW', noise_stim=0.1,
-                            load_data=True)
+    # number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
+    #                         jlist=np.arange(0, 1.05, 0.05).round(4),
+    #                         nreps=20, dt=0.05, tau=0.1, n_iters=2500, true='CW', noise_stim=0.1,
+    #                         load_data=True)
     # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='CW', j=0.4, b=[0., 0., 0.], plot=True,
     #                                               n_iters=100, noise=0)
     # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='NM', j=0.4, b=[0., 0., 0.], plot=True,
     #                                               n_iters=100, noise=0)
-    # ss = [[0.8, 0.2], [0.5, 0.5], [0.9, 0.9]]
-    # for i in range(len(ss)):
-    #     ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.38,
-    #                                         true='CW', noise=0., plot=True,
-    #                                         discrete_stim=False, s=ss[i],
-    #                                         b=[0., 0., 0.], noise_stim=0.01)
+    # bifurcations_difference_stim_epsilon(nreps=100, resimulate=False, epslist=[0.1])
+    # n_objects_ring_stim_epsilon(nreps=50, resimulate=False)
+    # n_objects_ring_stim_eps01_bias(nreps=100, resimulate=False, eps=0.1)
+    # plot_bifurcations_all_bias(eps=0.1, nreps=30, biases=np.arange(0., 0.11, 0.02).round(4),
+    #                             smallds=False)
+    # plot_bifurcations_all_bias(eps=0.1, nreps=30, biases=np.arange(0., 0.6, 0.1).round(4),
+    #                             smallds=False, j=0.)
+    # for b in np.arange(0, 1.2, 0.2).round(4)[::-1]:
+    #     bifurcations_difference_stim_epsilon(nreps=30, resimulate=False, epslist=[0.1],
+    #                                           biasval=b, j=0.25)
+    #     plt.close('all')
+    ss = [[0., 1.]]*2
+    # ss = [[0.47, 0.53]]*5
+    for i in range(len(ss)):
+        ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.06, tau=0.15, n_iters=150, j=0.,
+                                                    true='CW', noise=0., plot=True,
+                                                    discrete_stim=True, s=ss[i],
+                                                    b=[0, 0, 0], noise_stim=0.0,
+                                                    coh=0.1, nstates=3, stim_stamps=1)
     # sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
     #                                 nreps=50, dt=0.05, tau=0.1, n_iters=250, true='CW', noise_stim=0.1)
     # for i in range(2):
