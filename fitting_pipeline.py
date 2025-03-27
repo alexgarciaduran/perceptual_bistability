@@ -113,7 +113,7 @@ class optimization:
         b = b1par*np.array(stim_str)+biaspar
         unique_j = np.unique(j)
         unique_b = np.unique(b)
-        tfconf = (0.5*np.log(confidence / (1-confidence))-b)/n
+        tfconf = (0.5*np.log(confidence.values / (1-confidence.values))-b)/n
         combs = list(itertools.product(unique_j, unique_b))
         # log of e^{-2*V(M)/sigma^2}
         bmann_distro = lambda potential: -np.array(potential)*2 / (noise*noise)
@@ -1396,6 +1396,7 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     datastim_model0['state'] = 0
     arr_betavals = np.zeros((3, len(subjects)))
     coupvals = np.zeros((3, len(subjects)))
+    # jcritvals = np.zeros((len(subjects)))
     if method == 'BADS':
         appendix = '_BADS'
     else:
@@ -1412,10 +1413,15 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
             arr_betavals[i_c, i_s] = beta
         pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '.npy')
         if extra != 'null':
-            coup = np.unique(pars[0]*dataframe.coupling+pars[1])-1/3.92
+            b_eff = pars[3]
+            jcrit = compute_j_crit(j_list=np.arange(1/4, 0.8, 1e-4), b_list=[b_eff], num_iter=100)[0]
+            coup = np.unique(pars[0]*dataframe.coupling+pars[1])-jcrit
         else:
-            coup = np.unique(pars[0])-1/3.92
-        coupvals[:, i_s] = np.sort(coup+1/3.92)
+            b_eff = pars[2]
+            jcrit = compute_j_crit(j_list=np.arange(1/4, 0.8, 1e-4), b_list=[b_eff], num_iter=100)[0]
+            coup = np.unique(pars[0])-jcrit
+        coupvals[:, i_s] = np.sort(coup)
+        # jcritvals[i_s] = jcrit
         if (np.sign(coup) < 0).all():
             s = 0
         if (np.sign(coup) > 0).all():
@@ -1425,6 +1431,9 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
         state.append(s)
         datastim0.loc[datastim0['subject'] == sub, 'state'] = s
         datastim_model0.loc[datastim_model0['subject'] == sub, 'state'] = s
+    print('S0: monostable: ' + str(np.sum(np.array(state)==0)))
+    print('S1: change: ' + str(np.sum(np.array(state)==1)))
+    print('S2: bistable: ' + str(np.sum(np.array(state)==2)))
     fig, ax = plt.subplots(ncols=3, figsize=(13, 5))
     colormap = pl.cm.Oranges(np.linspace(0.3, 1, 3))
     cmap = [c for c in colormap]
@@ -1475,10 +1484,11 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
         [a.plot([0, 0.3, 1], coupvals[:, i], color='k', marker='o', alpha=0.2) for i in range(len(subjects))]
-        a.axhline(1/3.92, color='r', linestyle='--', alpha=0.3)
+        a.axhline(0, color='r', linestyle='--', alpha=0.3)
+        # a.axhline(1/3.92, color='r', linestyle='--', alpha=0.3)
         a.set_xlabel('J = 1-p_shuffle')
-        a.set_ylabel(r'$J \beta_1  + \beta_0$')
-    ax3[1].set_ylim(0.15, 0.35)
+        a.set_ylabel(r'$J \beta_1  + \beta_0 - J*(B_0)$')
+    ax3[1].set_ylim(-0.05, 0.05)
     fig3.tight_layout()
 
 
@@ -2509,7 +2519,7 @@ if __name__ == '__main__':
     # plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
-    #                                data_only=True)
+    #                                 data_only=True)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                data_only=False)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
@@ -2518,14 +2528,14 @@ if __name__ == '__main__':
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
     #                         variable='aligned_confidence', bw=0.7, model='MF5')
-    # plot_regression_weights(sv_folder=SV_FOLDER, load=False, model='MF5',
+    # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
     #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF', method=opt_algorithm,
     #                     band_width=0.7, sort_by_j=True)
-    plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
-                            bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30
+    # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
+    #                         bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
