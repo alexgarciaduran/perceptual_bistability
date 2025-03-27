@@ -1721,6 +1721,43 @@ def fractional_belief_prop(j, b, theta, num_iter=100, thr=1e-10,
     return q_y_1, q_y_neg1
 
 
+def funs(sigma=0.1, d=0., d0=0.25, n_iters=100, j=0, ndots=8, tau=.8, biases=np.zeros(3)):
+    x = np.arange(ndots)
+    kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
+    kernel[0] = 0
+    alpha = np.sum(kernel)
+    fun_1_nm = lambda qnm, qcw, qccw, d, d0:\
+        -d**2*(qcw*qccw + qnm + 1/4*(qcw**2 + qccw**2 + qnm*(1-qnm)) + 1/9*qcw*qccw)
+    fun_2_nm = lambda qnm, qcw, qccw, d, d0: -d0**2*(qccw+qnm*qcw) - d**2*(qnm*(1-qcw) + 1/4*qcw*qnm)
+    fun_3_nm = lambda qnm, qcw, qccw, d, d0: -d0**2*(qcw+qnm*qccw) - d**2*(qnm*(1-qccw) + 1/4*qccw*qnm)
+    fun_1_ccw = lambda qnm, qcw, qccw, d, d0: -d0**2*(qccw*qcw+qnm)
+    fun_2_ccw = lambda qnm, qcw, qccw, d, d0: - d**2*(qnm*(1-qcw)/4 + 1/9*qcw*qnm)
+    fun_3_ccw = fun_3_nm
+    fun_1_cw = lambda qnm, qcw, qccw, d, d0: -d0**2*(qccw*qcw+qnm)
+    fun_2_cw = fun_2_nm
+    fun_3_cw = lambda qnm, qcw, qccw, d, d0: - d**2*(qnm*(1-qccw)/4 + 1/9*qccw*qnm)
+    fun_nm = lambda qnm, qcw, qccw, d, d0: fun_1_nm(qnm, qcw, qccw, d, d0) +\
+        fun_2_nm(qnm, qcw, qccw, d, d0) + fun_3_nm(qnm, qcw, qccw, d, d0)
+    fun_ccw = lambda qnm, qcw, qccw, d, d0: fun_1_ccw(qnm, qcw, qccw, d, d0) +\
+        fun_2_ccw(qnm, qcw, qccw, d, d0) + fun_3_ccw(qnm, qcw, qccw, d, d0)
+    fun_cw = lambda qnm, qcw, qccw, d, d0: fun_1_cw(qnm, qcw, qccw, d, d0) +\
+        fun_2_cw(qnm, qcw, qccw, d, d0) + fun_3_cw(qnm, qcw, qccw, d, d0)
+    qnm = 1/3
+    qcw = 1/3
+    qccw = 1/3
+    bias_nm, bias_cw, bias_ccw = biases
+    for t in range(n_iters):
+        norm = np.exp(bias_nm + j*alpha*(2*qnm-1) + fun_nm(qnm, qcw, qccw, d, d0)*2*sigma**2)+\
+                np.exp(bias_cw + j*alpha*(2*qcw-1) + fun_ccw(qnm, qcw, qccw, d, d0)*2*sigma**2)+\
+                np.exp(bias_ccw + j*alpha*(2*qccw-1) + fun_cw(qnm, qcw, qccw, d, d0)*2*sigma**2)
+        qnmn = np.exp(bias_nm + j*alpha*(2*qnm-1) + fun_nm(qnm, qcw, qccw, d, d0)*2*sigma**2) / norm
+        qcwn = np.exp(bias_cw + j*alpha*(2*qcw-1) + fun_cw(qnm, qcw, qccw, d, d0)*2*sigma**2) / norm
+        qccwn = np.exp(bias_ccw + j*alpha*(2*qccw-1) + fun_ccw(qnm, qcw, qccw, d, d0)*2*sigma**2) / norm
+        qnm = qnmn
+        qcw = qcwn
+        qccw = qccwn
+
+
 if __name__ == '__main__':
     # number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
     #                         jlist=np.arange(0, 1.05, 0.05).round(4),
@@ -1737,18 +1774,18 @@ if __name__ == '__main__':
     #                             smallds=False)
     # plot_bifurcations_all_bias(eps=0.1, nreps=30, biases=np.arange(0., 0.6, 0.1).round(4),
     #                             smallds=False, j=0.)
-    # for b in np.arange(0, 1.2, 0.2).round(4)[::-1]:
-    #     bifurcations_difference_stim_epsilon(nreps=30, resimulate=False, epslist=[0.1],
-    #                                           biasval=b, j=0.25)
-    #     plt.close('all')
-    ss = [[0., 1.]]*2
+    for b in [0.4, 06.]:
+        bifurcations_difference_stim_epsilon(nreps=30, resimulate=True, epslist=[0.1],
+                                             biasval=b, j=0.25)
+        plt.close('all')
+    # ss = [[0., 1.]]*2
     # ss = [[0.47, 0.53]]*5
-    for i in range(len(ss)):
-        ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.06, tau=0.15, n_iters=150, j=0.,
-                                                    true='CW', noise=0., plot=True,
-                                                    discrete_stim=True, s=ss[i],
-                                                    b=[0, 0, 0], noise_stim=0.0,
-                                                    coh=0.1, nstates=3, stim_stamps=1)
+    # for i in range(len(ss)):
+    #     ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.06, tau=0.15, n_iters=150, j=0.,
+    #                                                 true='CW', noise=0., plot=True,
+    #                                                 discrete_stim=True, s=ss[i],
+    #                                                 b=[0, 0, 0], noise_stim=0.0,
+    #                                                 coh=0.1, nstates=3, stim_stamps=1)
     # sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
     #                                 nreps=50, dt=0.05, tau=0.1, n_iters=250, true='CW', noise_stim=0.1)
     # for i in range(2):
