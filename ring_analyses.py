@@ -14,8 +14,12 @@ import matplotlib as mpl
 import itertools
 import scipy
 import os
+from scipy.optimize import root
 import sympy
 from matplotlib.lines import Line2D
+from matplotlib.colors import ListedColormap
+import matplotlib.patches as mpatches
+
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -289,29 +293,43 @@ class ring:
         # columns: i-1
         combinations = [[1, 1], [1, -1],
                         [-1, 1], [-1, -1]]
+        idxmap = {-1:1, 1:0}  # state to index mapping
         for i in range(num_variables):  # for all dots
             # Iterate over all possible latent states z_{t-1}
             lh = 0
             mat = np.zeros((2, 2)).flatten()
-            i_prev = (i-1) % num_variables
-            i_next = (i+1) % num_variables
-            idx = (i) % num_variables
-            for ic, comb in enumerate(combinations):  # for all combinations of z_{i-1}, z_{i+1}
-                zn = np.ones(num_variables)
-                zn[i_prev] = comb[0]  # z_{i-1}
-                zn[i_next] = comb[1]  # z_{i+1}
-                idxs = [i_prev, i, i_next]
-                # Get the probability of z from q_z_prev (approx. posterior)
-                # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
-
-                # Get the CPT value for p(s_i | s, z)
-                if discrete_stim:
-                    p_s_given_z = self.compute_likelihood_vector(s_t_1, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
-                else:
-                    # based on a normal distribution centered in the expectation of the stimulus given the combination of z
-                    p_s_given_z = self.compute_likelihood_continuous_stim_ising(s_t_1[idxs], zn[idxs],
-                                                                                s_t[idxs], noise=noise)
-                mat[ic] = p_s_given_z
+            for startpoint in [-1, 1]:
+                i_prev = (i-1+startpoint) % num_variables
+                i_next = (i+1+startpoint) % num_variables
+                idx = (i) % num_variables
+                for ic, comb in enumerate(combinations):  # for all combinations of z_{i-1}, z_{i+1}
+                    if startpoint == -1:
+                        zn = np.ones(num_variables)
+                        zn[i_prev] = comb[0]  # z_{i-2}
+                        zn[idx] = comb[1]  # z_{i-1}
+                        q_z_p = q_z_prev[i_prev, idxmap[comb[0]]]  # extract q_{i-2}(z_{i-2}=comb[0])
+                        q_z_n = q_z_prev[idx, idxmap[comb[1]]]  # extract q_{i-1}(z_{i-1}=comb[1])
+                    if startpoint == 1:
+                        zn = np.ones(num_variables)
+                        zn[idx] = comb[0]  # z_{i+1}
+                        zn[i_next] = comb[1]  # z_{i+2}
+                        q_z_p = q_z_prev[idx, idxmap[comb[0]]]  # extract q_{i+1}(z_{i+1}=comb[0])
+                        q_z_n = q_z_prev[i_next, idxmap[comb[1]]]  # extract q_{i+2}(z_{i+2}=comb[1])
+                    zn = np.ones(num_variables)
+                    zn[i_prev] = comb[0]  # z_{i-1}
+                    zn[i_next] = comb[1]  # z_{i+1}
+                    idxs = [i_prev, i, i_next]
+                    # Get the probability of z from q_z_prev (approx. posterior)
+                    # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
+    
+                    # Get the CPT value for p(s_i | s, z)
+                    if discrete_stim:
+                        p_s_given_z = self.compute_likelihood_vector(s_t_1, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
+                    else:
+                        # based on a normal distribution centered in the expectation of the stimulus given the combination of z
+                        p_s_given_z = self.compute_likelihood_continuous_stim_ising(s_t_1[idxs], zn[idxs],
+                                                                                    s_t[idxs], noise=noise)
+                    mat[ic] = p_s_given_z
             mat = mat.reshape((2, 2))
             i_prev = (i-2) % num_variables
             i_next = (i+2) % num_variables
@@ -634,7 +652,7 @@ class ring:
             #                                                      discrete_stim=discrete_stim,
             #                                                      noise=noise_stim)
             if t % stim_stamps == 1 and t > stim_stamps or stim_stamps == 1:
-                jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=sigma_lh, include_m11=True, logm11=1e-2)
+                jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=sigma_lh, epsilon=self.eps)
                 jaddmat = (np.roll(np.eye(self.ndots), -2, axis=0) + np.roll(np.eye(self.ndots), 2, axis=0))*np.array(jarr, dtype=np.float64)
                 biases = np.row_stack((mum1arr, mup1arr)).T.astype(np.float64)
             if t <= stim_stamps:
@@ -734,7 +752,7 @@ class ring:
         mu_y_1 = np.multiply(np.ones((n_dots, n_dots)), np.random.rand(theta.shape[0], theta.shape[1]))*0.5
         mu_y_neg1 = np.multiply(np.ones((n_dots, n_dots)), np.random.rand(theta.shape[0], theta.shape[1]))*0.5
         for t in range(1, n_iters):
-            jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=sigma_lh, include_m11=True, logm11=1e-2)
+            jarr, mum1arr, mup1arr = compute_jstim_biases(stim[t], stim[t-1], sigma=sigma_lh, epsilon=self.eps)
             jaddmat = (np.roll(np.eye(self.ndots), -2, axis=0) + np.roll(np.eye(self.ndots), 2, axis=0))*np.array(jarr, dtype=np.float64)
             biases = np.row_stack((mum1arr, mup1arr)).astype(np.float64)
             theta = j_mat + jaddmat
@@ -985,7 +1003,7 @@ class ring:
             s = np.roll(s, roll_n)
             sv.append(s)
         return np.row_stack((sv)) 
-        
+
 
 def psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=200, j_list=[0, 0.4, 0.8],
                             noise=0.01, cohlist=np.arange(0, 0.5, 1e-2),
@@ -1328,11 +1346,12 @@ def print_jstim_biases(include_m11=False, logm11=False, a=None, sigma=None):
         print('mu_{i+1}(z_{i+1}=-1) = ' + str(sympy.simplify(mup1)))
 
 
-def compute_jstim_biases(s_t, s_tm1, sigma=0.1, include_m11=False, logm11=False):
+def compute_jstim_biases(s_t, s_tm1, sigma=0.1, epsilon=0.1):
     nd = len(s_t)
     jarr = []
     mum1arr = []
     mup1arr = []
+    logm11 = -np.log(epsilon)
     for i in range(nd):
         i_prev = (i-1) % nd
         i_post = (i+1) % nd
@@ -1340,34 +1359,18 @@ def compute_jstim_biases(s_t, s_tm1, sigma=0.1, include_m11=False, logm11=False)
             "s_im1": s_tm1[i_prev],
             "s_i": s_t[i],
             "s_ip1": s_tm1[i_post]}
-    
         s_hat_11 = s_vec['s_im1']
         s_hat_m1m1 = s_vec['s_ip1']
-        s_hat_m11 = s_vec['s_i']
+        # s_hat_m11 = s_vec['s_i']
         s_hat_1m1 = (s_vec['s_ip1']+s_vec['s_im1'])/2
         si = s_vec['s_i']
-        J_stim = 1/(4*2*sigma**2)*((si-s_hat_1m1)**2- (si-s_hat_11)**2 - (si-s_hat_m1m1)**2)
-        if include_m11:
-            if logm11:
-                J_stim += -np.log(logm11)/4
-            else:
-                J_stim +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        J_stim = 1/(4*2*sigma**2)*((si-s_hat_1m1)**2- (si-s_hat_11)**2 - (si-s_hat_m1m1)**2) + logm11/4
         jarr.append(J_stim)
     
-        mum1 = 1/(4*2*sigma**2)*(-(si-s_hat_1m1)**2  - (si-s_hat_11)**2 + (si-s_hat_m1m1)**2)
-        if include_m11:
-            if logm11:
-                mum1 += np.log(logm11)/4
-            else:
-                mum1 +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        mum1 = 1/(4*2*sigma**2)*(-(si-s_hat_1m1)**2  - (si-s_hat_11)**2 + (si-s_hat_m1m1)**2)+ logm11/4
         mum1arr.append(mum1)
     
-        mup1 = 1/(4*2*sigma**2)*(-(si-s_hat_1m1)**2  + (si-s_hat_11)**2 - (si-s_hat_m1m1)**2)
-        if include_m11:
-            if logm11:
-                mup1 += np.log(logm11)/4
-            else:
-                mup1 +=  (si-s_hat_m11)**2 /(4*2*sigma**2)
+        mup1 = 1/(4*2*sigma**2)*(-(si-s_hat_1m1)**2  + (si-s_hat_11)**2 - (si-s_hat_m1m1)**2) + logm11/4
         mup1arr.append(mup1)
     return jarr, mum1arr, mup1arr
 
@@ -1378,7 +1381,7 @@ def sigmoid(x):
 
 def plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
                             sigmalist=np.arange(0.05, 0.2, 1e-3).round(4),
-                            plot_matrix=False):
+                            plot_matrix=False, epsilon=0.2):
     true = 'CW'
     r = ring(n_dots=8)
     jlist = np.zeros((len(cohlist), len(sigmalist)))
@@ -1389,9 +1392,8 @@ def plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
             stim = r.dummy_stim_creation(n_iters=2, true=true, coh=coh,
                                          timesteps_between=1)
             j, mu_zm1, mu_zp1 = compute_jstim_biases(stim[1], stim[0],
-                                                     sigma=sigma, include_m11=True,
-                                                     logm11=1e-2)
-            jlist[icoh, i_s] = -3*coh**2/(32*sigma**2) - np.log(1e-2)/4
+                                                     sigma=sigma, epsilon=0.2)
+            jlist[icoh, i_s] = -3*coh**2/(32*sigma**2) - np.log(epsilon)/4
             mm1list[icoh, i_s] = mu_zm1[0]
             mp1list[icoh, i_s] = mu_zp1[0]
     labels = [r'Stim-induced coupling, $J_s$', r'CW bias, $\mu_i(z_{i-1}=CW)$',
@@ -1466,8 +1468,9 @@ def sols_vs_a_j0(alist=np.arange(0, 0.5, 1e-2),
 
 
 def sols_vs_j_cond_on_a(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(-1, 1.02, 4e-2).round(5),
-                        nreps=50, dt=0.01, tau=0.1, n_iters=250, true='CW', noise_stim=0.1):
-    ring_object = ring(epsilon=0.001, n_dots=8)
+                        nreps=50, dt=0.01, tau=0.1, n_iters=250, true='CW', noise_stim=0.1,
+                        eps=0.2, sigma=0.2):
+    ring_object = ring(epsilon=eps, n_dots=8)
     j = 0
     sols = np.zeros((len(alist), len(j_list), nreps))
     for icoh, coh in enumerate(alist):
@@ -1477,9 +1480,14 @@ def sols_vs_j_cond_on_a(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(-1, 1.02, 4e
                 q = ring_object.mean_field_sde_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
                                                      true=true, noise=0, plot=False,
                                                      discrete_stim=True, coh=coh,
-                                                     stim_stamps=1, noise_stim=noise_stim)
+                                                     stim_stamps=1, noise_stim=noise_stim,
+                                                     sigma_lh=sigma)
                 sols[icoh, i_j, n] = q[0, 0].round(6)
     fig, ax = plt.subplots(ncols=len(alist), figsize=(len(alist)*4, 4))
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    jcrit = 0.25*(4-d0**2/sigma**2)
+    ax[0].axvline(jcrit)
+    ax[0].axvline(-jcrit)
     # colormap = pl.cm.copper(np.linspace(0.2, 1, len(alist)))
     # legendelements = [Line2D([0], [0], color=colormap[0], lw=2, label=alist[0], marker='o'),
     #                   Line2D([0], [0], color=colormap[1], lw=2, label=alist[1], marker='o'),
@@ -1498,8 +1506,8 @@ def sols_vs_j_cond_on_a(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(-1, 1.02, 4e
     # ax.legend(handles=legendelements, title='a', frameon=False)
     ax[0].set_ylabel('q(z_i = CW)')
     fig.tight_layout()
-    fig.savefig(DATA_FOLDER + 'solutions_MF_ising_ring_diff_a_j_zoomin_a_bifur_morereps.png', dpi=200)
-    fig.savefig(DATA_FOLDER + 'solutions_MF_ising_ring_diff_a_j_zoomin_a_bifur_morereps.svg', dpi=200)
+    fig.savefig(DATA_FOLDER + 'solutions_MF_ising_ring_diff_a_j_eps02.png', dpi=200)
+    fig.savefig(DATA_FOLDER + 'solutions_MF_ising_ring_diff_a_j_eps02.svg', dpi=200)
 
 
 def sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
@@ -1537,6 +1545,38 @@ def sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'solutions_LBP_ising_ring_diff_a_j.png', dpi=200)
     fig.savefig(DATA_FOLDER + 'solutions_LBP_ising_ring_diff_a_j.svg', dpi=200)
+
+
+def ising_1d(a=0, eps=0.1, sigma=0.1, j=0, niters=50, alpha=2.76):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    variables = np.random.rand(2)
+    x, y = variables/np.sum(variables)
+    for n in range(niters):
+        f_cw = y*(x+y)*(-a**2/4-d0**2) / (2*sigma**2) + alpha*j*(2*x-1)
+        f_ccw = (-d0**2*(x**2+x*y) - a**2*(1/4*(x**2+x*y) + 2*y**2 + 2*x*y)) / (2*sigma**2) + alpha*j*(2*y-1)
+        denom = np.exp(f_cw) + np.exp(f_ccw)
+        x, y = np.exp(f_cw)/denom, np.exp(f_ccw)/denom
+    return x
+
+
+def sols_ising_1d_vs_j_cond_a(eps=0.2, sigma=0.2, niters=50, j_list=np.arange(-1.01, 1.01, 5e-3),
+                              nreps=10, alist=[0, 0.05, 0.1, 0.2]):
+    sols = np.zeros((len(j_list), len(alist), nreps))
+    alpha = kernel_alpha()
+    for i_a, a in enumerate(alist):
+        for i_j, j in enumerate(j_list):
+            for n in range(nreps):
+                sols[i_j, i_a, n] = ising_1d(a=a, eps=eps, sigma=sigma, j=j, niters=niters, alpha=alpha)
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    jcrit = 0.25*(4/alpha-d0**2/sigma**2)
+    fig, ax = plt.subplots(1)
+    colormap = pl.cm.copper(np.linspace(0.2, 1, len(alist)))
+    for i_a, a in enumerate(alist):
+        for n in range(nreps):
+            ax.plot(j_list, sols[:, i_a, n], color=colormap[i_a], linestyle='', marker='o', markersize=1.5)
+    ax.axvline(jcrit, color='r', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('q(CW)')
 
 
 def number_fps_vs_a_j(alist=np.arange(0, 0.525, 2.5e-2).round(4),
@@ -1721,11 +1761,46 @@ def fractional_belief_prop(j, b, theta, num_iter=100, thr=1e-10,
     return q_y_1, q_y_neg1
 
 
-def funs(sigma=0.1, d=0., d0=0.25, n_iters=100, j=0, ndots=8, tau=.8, biases=np.zeros(3)):
-    x = np.arange(ndots)
-    kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
-    kernel[0] = 0
-    alpha = np.sum(kernel)
+def mean_field_solutions(eps=0.1, nreps=30, sigma=0.1, j=0, dd=1e-4):
+    # epsilon = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
+    d = np.arange(0, 0.5, dd)
+    biasval = np.arange(0, 0.6, 0.1).round(4)
+    qarray = np.zeros((len(d), len(biasval), nreps, 3))
+    for i_b, bias in enumerate(biasval):
+        for i_d, dval in enumerate(d):
+            for n in range(nreps):
+                if n > nreps - 3:
+                    ini_cond = [1/3]*3
+                else:
+                    ini_cond = None
+                qcw, qnm, qccw = mean_field_1d(sigma=sigma, d=dval, epsilon=eps,
+                                               n_iters=1000, j=j, ndots=8, tau=.8,
+                                               biases=[0, bias, 0], ini_cond=ini_cond,
+                                               threshold=1e-12)
+                qarray[i_d, i_b, n, :] = [qcw, qnm, qccw]
+    fig, ax = plt.subplots(ncols=3, figsize=(12, 4.))
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(biasval)))
+    col_labels = [r'$q(z_i = CW)$', r'$ q(z_i=NM)$', r'$q(z_i=CCW)$']
+    for i_b, bias in enumerate(biasval):
+        for row in range(3):
+            for n in range(nreps):
+                ax[row].plot(d, qarray[:, i_b, n, row], color=colormap[i_b],
+                             marker='o', linestyle='', markersize=1.2)
+            ax[row].set_xlabel('Signal difference')
+            ax[row].set_ylabel(col_labels[row])
+    ax[0].set_title(fr'$\varepsilon = ${eps}')
+    ax[1].set_title(fr'Coupling $ J = ${j}')
+    legendelements = [Line2D([0], [0], color=colormap[i], lw=2, label=biasval[i], marker='o', linestyle='')
+                      for i in range(len(biasval))]
+    ax[0].legend(title='NM prior', frameon=False, handles=legendelements)
+    for a in ax.flatten():
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_ylim(-0.02, 1.02)
+    fig.tight_layout()
+
+
+def functions_mf_1d():
     fun_1_nm = lambda qnm, qcw, qccw, d, d0:\
         -d**2*(qcw*qccw + qnm + 1/4*(qcw**2 + qccw**2 + qnm*(1-qnm)) + 1/9*qcw*qccw)
     fun_2_nm = lambda qnm, qcw, qccw, d, d0: -d0**2*(qccw+qnm*qcw) - d**2*(qnm*(1-qcw) + 1/4*qcw*qnm)
@@ -1742,20 +1817,413 @@ def funs(sigma=0.1, d=0., d0=0.25, n_iters=100, j=0, ndots=8, tau=.8, biases=np.
         fun_2_ccw(qnm, qcw, qccw, d, d0) + fun_3_ccw(qnm, qcw, qccw, d, d0)
     fun_cw = lambda qnm, qcw, qccw, d, d0: fun_1_cw(qnm, qcw, qccw, d, d0) +\
         fun_2_cw(qnm, qcw, qccw, d, d0) + fun_3_cw(qnm, qcw, qccw, d, d0)
-    qnm = 1/3
-    qcw = 1/3
-    qccw = 1/3
-    bias_nm, bias_cw, bias_ccw = biases
+    return fun_cw, fun_nm, fun_ccw
+
+
+def functions_mf_1d_bias():
+    fun_1_nm = lambda qnm, qcw, qccw, d, d0, a:\
+        - 4/9*(d-a)**2*qcw*qccw - (d-a/2)**2 *qcw*qnm - (-2*d+a)**2 *(qccw*qcw+qnm)-\
+            (d-a)**2 * qccw**2 -(d-a)**2*qnm*qccw - (d-a/2)**2 *qcw*qcw
+    fun_2_nm = lambda qnm, qcw, qccw, d, d0, a: -d0**2*(qccw+qnm*qcw) - 4*(d-a)**2*(qccw*qnm+qnm*qnm) - (d-a)**2 * qcw*qnm
+    fun_3_nm = lambda qnm, qcw, qccw, d, d0, a: -d0**2*(qcw+qnm*qccw) - a**2 * (qcw*qccw + qccw*qccw) - 4*d**2 * (qnm**2 + qnm*qcw) -(d+a/2)**2*qnm*qccw
+    fun_1_ccw = lambda qnm, qcw, qccw, d, d0, a: -d0**2*(qccw*qcw+qnm) -a**2/4*qcw*qccw -a**2*qnm*qccw - a**2*qccw**2
+    fun_2_ccw = lambda qnm, qcw, qccw, d, d0, a: - 1/4*a**2 * (qcw**2+qcw*qccw)-a**2*(qccw+qnm*qcw) -(-2/3*d+a)**2 * qcw*qnm -(-d+3*a/2)**2 *(qccw*qnm+qnm**2)
+    fun_3_ccw = fun_3_nm
+    fun_1_cw = fun_1_ccw
+    fun_2_cw = fun_2_nm
+    fun_3_cw = lambda qnm, qcw, qccw, d, d0, a: - d**2*(qnm**2+qnm*qcw) - a**2/4*(qcw*qccw+qccw**2) - (2/3*d+a/3)**2*qnm*qccw
+    fun_nm = lambda qnm, qcw, qccw, d, d0, a: fun_1_nm(qnm, qcw, qccw, d, d0, a) +\
+        fun_2_nm(qnm, qcw, qccw, d, d0, a) + fun_3_nm(qnm, qcw, qccw, d, d0, a)
+    fun_ccw = lambda qnm, qcw, qccw, d, d0, a: fun_1_ccw(qnm, qcw, qccw, d, d0, a) +\
+        fun_2_ccw(qnm, qcw, qccw, d, d0, a) + fun_3_ccw(qnm, qcw, qccw, d, d0, a)
+    fun_cw = lambda qnm, qcw, qccw, d, d0, a: fun_1_cw(qnm, qcw, qccw, d, d0, a) +\
+        fun_2_cw(qnm, qcw, qccw, d, d0, a) + fun_3_cw(qnm, qcw, qccw, d, d0, a)
+    return fun_cw, fun_nm, fun_ccw
+
+
+def jacobian(q, sigma=0.1, eps=0.1):
+    fun_cw, fun_nm, fun_ccw = functions_mf_1d()
+    # qnm = sympy.symbols('qnm')
+    qcw = sympy.symbols('qcw')
+    # qccw = sympy.symbols('qccw')
+    d0 = sympy.symbols('d0')
+    # sigma = sympy.symbols('sigma')
+    d = sympy.symbols('d')
+    fun_exp_cw = sympy.exp((fun_cw(1-2*qcw, qcw, qcw, d, d0)-fun_nm(1-2*qcw, qcw, qcw, d, d0))/(2*sigma**2))
+    fun_exp_nm = 1
+    fun_exp_ccw = sympy.exp((fun_ccw(1-2*qcw, qcw, qcw, d, d0)-fun_nm(1-2*qcw, qcw, qcw, d, d0))/(2*sigma**2))
+    norm = fun_exp_ccw + fun_exp_nm + fun_exp_cw
+    fun_cw_final = (fun_exp_cw / norm).simplify()
+    # fun_nm_final = (fun_exp_nm / norm).simplify()
+    fun_ccw_final = (fun_exp_ccw / norm).simplify()
+    F = sympy.Matrix([fun_cw_final, fun_ccw_final])
+    jac = F.jacobian([qcw, qcw])
+    d0_val = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    evals = jac.subs(dict(zip([d0_val, d], [0.257, 0]))).eigenvals()
+
+
+def quiver_plots_bias_nm(biaslist=[0, 0.2, 0.4], dlist=[0., 0.1, 0.2], eps=0.2, a=0, j=0,
+                         sigma=0.2):
+    fig, ax = plt.subplots(ncols=3, nrows=3, figsize=(12, 10))
+    fig.suptitle('a = '+ str(a))
+    combs = list(itertools.product(dlist, biaslist))
+    for i_a, axi in enumerate(ax.flatten()):
+        axi.set_title('d = ' + str(combs[i_a][0]) + ', B_nm = ' + str(combs[i_a][1]))
+        axi.set_xlabel('p')
+        axi.set_ylabel('m')
+    fig.tight_layout()
+    for i_b, bias in enumerate(biaslist):
+        for i_d, d in enumerate(dlist):
+            leg = True if i_b == 0 and i_d == 0 else False
+            quiver_plots_1d_mf(eps=eps, sigma=sigma, d=d, biasnm=bias, ax=ax[i_d, i_b],
+                               legend=leg, a=a, j=j)
+
+def kernel_alpha(ndots=8, tau=.8):
+    x = np.arange(ndots)
+    kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
+    kernel[0] = 0
+    alpha = np.sum(kernel)
+    return alpha
+
+
+def ising_1d_fps(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, niters=50):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    # alpha = kernel_alpha()
+    q_cw = np.arange(0, 1.01, 5e-2)
+    q_ccw = np.arange(0, 1.01, 5e-2)
+    def system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a):
+        fun_cw, fun_nm, fun_ccw = functions_mf_1d_bias()
+        q1, q2 = q
+        q0 = 1-q1-q2
+        fcw = fun_cw(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q1
+        fccw = fun_ccw(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q2
+        fnm = fun_nm(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q0+biasnm
+        maxf = np.max([fcw, fccw, fnm])
+        norm = (np.exp(fcw-maxf) + np.exp(fccw-maxf) + np.exp(fnm - maxf))
+        f1 = np.exp(fcw - maxf)/norm
+        f2 = np.exp(fccw - maxf) / norm
+        return f1, f2
+    fps = []
+    qualitative_sol = []
+    for q1 in q_cw:
+        for q2 in q_ccw:
+            if q1+q2 > 1.25:
+                continue
+            q = [q1, q2]
+            for n in range(niters):
+                q = system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a)
+            sol = np.round(q, 4)
+            if not any(np.allclose(sol, fp) for fp in fps):
+                fps.append(sol)
+                label = np.nan
+                if sol[0] > 0.5:
+                    label = 0
+                if sol[1] > 0.5:
+                    label = 2
+                if 1-(sol[0]+sol[1]) > 0.5:
+                    label = 1
+                if sol[0] <= 0.5 and sol[1] <= 0.5 and 1-(sol[0]+sol[1]) <= 0.5:
+                    label = 7
+                qualitative_sol.append(label)
+    qualitative_sol = np.unique(np.array(qualitative_sol))
+    return qualitative_sol[~np.isnan(qualitative_sol)].astype(int)
+
+
+def find_fps(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, tol=1e-4, a=0):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    # alpha = kernel_alpha()
+    q_cw = np.arange(0, 1.01, 5e-2)
+    q_ccw = np.arange(0, 1.01, 5e-2)
+    def system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a):
+        fun_cw, fun_nm, fun_ccw = functions_mf_1d_bias()
+        q1, q2 = q
+        q0 = 1-q1-q2
+        fcw = fun_cw(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q1
+        fccw = fun_ccw(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q2
+        fnm = fun_nm(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q0+biasnm
+        maxf = np.max([fcw, fccw, fnm])
+        norm = (np.exp(fcw-maxf) + np.exp(fccw-maxf) + np.exp(fnm - maxf))
+        f1 = np.exp(fcw - maxf)/norm - q1
+        f2 = np.exp(fccw - maxf) / norm - q2
+        return f1, f2
+    fps = []
+    qualitative_sol = []
+    # bounds = [(0, 1), (0, 1)]
+    for q1 in q_cw:
+        for q2 in q_ccw:
+           solroot = root(system, [q1, q2])
+           sol = np.round(solroot.x, 5)
+           fval = solroot.fun
+           if any(np.abs(fval) > tol):
+               continue
+           if sol[0] < 0 or sol[0] > 1 or sol[1] < 0 or sol[1] > 1 or sol[0]+sol[1] > 1:
+               continue
+           if not any(np.allclose(sol, fp) for fp in fps):
+               fps.append(sol)
+               label = np.nan
+               if sol[0] > 0.5:
+                   label = 0
+               if sol[1] > 0.5:
+                   label = 2
+               if 1-(sol[0]+sol[1]) > 0.5:
+                   label = 1
+               if sol[0] <= 0.5 and sol[1] <= 0.5 and 1-(sol[0]+sol[1]) <= 0.5:
+                   label = 7
+               qualitative_sol.append(label)
+    qualitative_sol = np.unique(np.array(qualitative_sol))
+    return qualitative_sol[~np.isnan(qualitative_sol)].astype(int)
+    # vals = np.array(qualitative_sol)[np.array(qualitative_sol) != '']
+
+
+def qualbehav(sols):
+    # l = 0 --> CW
+    # l = 1 --> NM
+    # l = 2 --> CCW
+    # l = 3 --> CW & NM
+    # l = 4 --> CW & CCW
+    # l = 5 --> CCW & NM
+    # l = 6 --> NM & CW & CCW
+    # l += 0.5 --> any config + undef
+    add = 0.5 if 7 in sols and len(sols) > 1 else 0
+    if any(sols != 7):
+        sols = sols[sols != 7]
+    if len(sols) == 1:
+        val = sols[0] + add
+    if len(sols) == 2:
+        if 0 not in sols:
+            val = 5  + add
+        if 1 not in sols:
+            val = 4 + add
+        if 2 not in sols:
+            val = 3 + add
+    if len(sols) == 3:
+        val = 6 + add
+    return val
+
+
+def dict_sols():
+    d = {0: 'CW', 0.5: '+udf.', 1: 'NM', 1.5: '+udf.',
+         2: 'CCW', 2.5: '+udf.', 3: 'CW & NM', 3.5: '+udf.',
+         4: 'CW & CCW', 4.5: '+udf.', 5: 'CCW & NM', 5.5: '+udf.',
+         6: 'NM & CW & CCW', 6.5: '+udf.', 7: 'udf.'}
+    return d
+
+
+def phase_diagram_d_b(dlist=np.arange(0, 1, 1e-2),
+                      blist=np.arange(0, 10.1, 0.1),
+                      j=0):
+    if j == 0:
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_bias.npy'
+    else:
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_bias_coupling' + str(j) + '.npy'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path):
+        behav = np.load(path)
+    else:
+        behav = np.zeros((len(dlist), len(blist)))
+        for i_d, d in enumerate(dlist):
+            for i_b, b in enumerate(blist):
+                sols = find_fps(eps=0.1, sigma=0.1, j=j, d=d, biasnm=b)
+                behav[i_d, i_b] = qualbehav(sols)
+        np.save(path, behav)
+    plt.figure()
+    cmap = plt.get_cmap('Set2', 7)
+    plt.imshow(np.flipud(behav), cmap=cmap,
+               extent=[np.min(blist), np.max(blist), np.min(dlist), np.max(dlist)],
+               aspect='auto', vmin=0.5, vmax=6.5)
+    plt.text(0.7, 0.7, dict_sols()[4], color='k')
+    plt.text(6, 0.1, dict_sols()[1], color='k')
+    plt.xlabel('Bias towards NM')
+    plt.ylabel('Contrast difference d')
+
+
+def phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
+                              alist=np.arange(0, 0.505, 1e-2), biasnm=0,
+                              resimulate=False, ax=None, cbar=False, fig=None, j=0,
+                              plot=False):
+    if biasnm == 0:
+        lab = ''
+    else:
+        lab = '_bias_nm_' + str(biasnm)
+    if j == 0:
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_bias_CW' + lab + '_eps_02_simuls.npy'
+    else:
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_bias_CW' + lab + '_coupling_' + str(j) + '_eps_02_simuls.npy'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path) and not resimulate:
+        behav = np.load(path)
+    else:
+        behav = np.zeros((len(dlist), len(alist)))
+        for i_d, d in enumerate(dlist):
+            for i_a, a in enumerate(alist):
+                sols = ising_1d_fps(eps=0.2, sigma=0.2, j=j, d=d, biasnm=biasnm, a=a, niters=80)
+                behav[i_d, i_a] = qualbehav(sols)
+        np.save(path, behav)
+    if plot:
+        if ax is None:
+            fig, ax = plt.subplots(1, figsize=(7, 4))
+        cmap = plt.get_cmap('tab20', 15)
+        # Define colors for phases
+        colors = ['firebrick', 'darksalmon',
+                  'royalblue', 'lightsteelblue',
+                  'orange', 'navajowhite',
+                  'darkorchid', 'plum',
+                  'forestgreen', 'palegreen',
+                  'grey', 'lightgray',
+                  'goldenrod', 'gold',
+                  'black']
+        cmap = ListedColormap(colors)
+        extent = [np.min(alist), np.max(alist), 2*np.min(dlist), 2*np.max(dlist)]
+        im = ax.imshow(np.flipud(behav), cmap=cmap, extent=extent,
+                       aspect='auto', vmin=-0.25, vmax=7.25)
+        if cbar:
+            ax_pos = ax.get_position()
+            ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.18, ax_pos.y0-ax_pos.height*1.15,
+                                    ax_pos.width*0.15, ax_pos.height*3])
+            cb = plt.colorbar(im, cax=ax_cbar)
+            cb.ax.set_yticks(np.arange(0., 7.5, 0.5), dict_sols().values())
+        ax.set_xlabel('Bias towards CW movement, a')
+        ax.set_ylabel('Contrast difference, d')
+        ax.set_title('Bias towards NM = ' + str(biasnm), fontsize=14)
+
+
+def plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2],
+                                  jlist=[0, 0.4, 0.8, 1.2, 1.6]):
+    fig, ax = plt.subplots(ncols=len(biasnmlist), nrows=len(jlist),
+                           figsize=(4*len(biasnmlist), 3.5*len(jlist)))
+    for i_b, bias in enumerate(biasnmlist):
+        for i_j, j in enumerate(jlist):
+            phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
+                                      alist=np.arange(0, 0.505, 1e-2), biasnm=bias,
+                                      resimulate=False, ax=ax[i_j, i_b], cbar=(i_b == len(biasnmlist)-1)*(i_j == 2),
+                                      fig=fig, j=j, plot=True)
+            if i_b == len(biasnmlist)-1:
+                ax2 = ax[i_j, i_b].twinx()
+                ax2.set_yticks([])
+                ax2.set_ylabel('J = ' + str(j))
+            if i_b != 0:
+                ax[i_j, i_b].set_ylabel('')
+                # ax[i_j, i_b].set_yticks([0, 0.5, 1])
+            if i_j < len(jlist)-1:
+                ax[i_j, i_b].set_xlabel('')
+                # ax[i_j, i_b].set_xticks([0, 0.25, 0.5])
+            ax[i_j, i_b].plot([0, 0.5], [0, 1], color='white')
+            if i_j > 0:
+                ax[i_j, i_b].set_title('')
+            if i_b == len(biasnmlist)-2:
+                fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'qualitative_behavior_j0.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'qualitative_behavior_j0.svg', dpi=200, bbox_inches='tight')
+
+
+def quiver_plots_1d_mf(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, ax=None, legend=False,
+                       plot_modulo=False, prec=1e-3, a=0, plot_regions=True):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    fun_cw, fun_nm, fun_ccw = functions_mf_1d_bias()
+    q_cw = np.arange(-0.1, 1.1, 7.5e-2)
+    q_ccw = np.arange(-0.1, 1.1, 7.5e-2)
+    X, Y = np.meshgrid(q_ccw, q_cw)
+    U = fun_ccw(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*X
+    V = fun_cw(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*Y
+    NM = fun_nm(1-X-Y, Y, X, d, d0, a)/(2*sigma**2)+ biasnm + j*(1-X-Y)
+    norm = (np.exp(U) + np.exp(V) + np.exp(NM+ biasnm))
+    Up = np.exp(U) / norm - X
+    Vp = np.exp(V) / norm - Y
+    if ax is None:
+        fig, ax = plt.subplots(1)
+    ax.quiver(X, Y, Up, Vp)
+    q_cw = np.arange(-0.11, 1.11, prec)
+    q_ccw = np.arange(-0.11, 1.11, prec)
+    X, Y = np.meshgrid(q_ccw, q_cw)
+    U = fun_ccw(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*X
+    V = fun_cw(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*Y
+    NM = fun_nm(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + biasnm  + j*(1-X-Y)
+    norm = (np.exp(U) + np.exp(V) + np.exp(NM+biasnm))
+    Up = np.exp(U) / norm - X
+    Vp = np.exp(V) / norm - Y
+    ax.contour(X, Y, Up, levels=[0], colors='r', linewidths=2)
+    ax.contour(X, Y, Vp, levels=[0], colors='b', linewidths=2)
+    if plot_regions:
+        q = np.arange(0, 1, 1e-2)
+        ax.plot(q, 1-q, color='k', alpha=0.5)
+        q = np.arange(0, 0.5, 1e-2)
+        ax.plot(q, 1/2-q, color='k', alpha=0.5)
+        ax.plot([0, 0.5], [0.5, 0.5], color='k', alpha=0.5)
+        ax.plot([0.5, 0.5], [0, 0.5], color='k', alpha=0.5)
+    if legend:
+        legendelements = [Line2D([0], [0], color='r', lw=2, label=r"$\dot{q(CCW)}=0$"),
+                          Line2D([0], [0], color='b', lw=2, label=r"$\dot{q(CCW)}=0$")]
+        ax.legend(frameon=False, handles=legendelements, bbox_to_anchor=[0.4, 1.1], ncol=2)
+    ax.set_xlabel('q(CCW)')
+    ax.set_ylabel('q(CW)')
+    if plot_modulo:
+        plt.figure()
+        modulo = np.sqrt(Vp**2+Up**2)
+        im = plt.imshow(np.log(np.flipud(modulo)), extent=[np.min(q_ccw), np.max(q_ccw),
+                                                           np.min(q_ccw), np.max(q_ccw)],
+                        cmap='binary')
+        plt.colorbar(im, label=r'$\log \; ||F(q(CW), q(CCW))||$')
+        plt.contour(X, Y, Up, levels=[0], colors='r', linewidths=2)
+        plt.contour(X, Y, Vp, levels=[0], colors='b', linewidths=2)
+        idxs = np.where(modulo < 1e-3)
+        plt.plot(q_ccw[idxs[0]], q_cw[idxs[1]], marker='x', color='r',
+                  linestyle='', markersize=5)
+        plt.xlabel('q(CCW)')
+        plt.ylabel('q(CW)')
+
+
+def mean_field_1d(sigma=0.1, d=0., epsilon=0.1, n_iters=100, j=0, ndots=8, tau=.8, biases=np.zeros(3),
+                  ini_cond=None, threshold=None):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*epsilon*sigma))
+    x = np.arange(ndots)
+    kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
+    kernel[0] = 0
+    alpha = np.sum(kernel)
+    fun_cw, fun_nm, fun_ccw = functions_mf_1d()
+    # qnm = 1/3
+    # qcw = 1/3
+    # qccw = 1/3
+    if ini_cond is None:
+        qnm, qcw, qccw = np.random.rand(3)
+        norm = qnm + qcw + qccw
+        qnm /= norm
+        qcw /= norm
+        qccw /= norm
+    else:
+        qnm, qcw, qccw = ini_cond
+    bias_cw, bias_nm, bias_ccw = biases
     for t in range(n_iters):
-        norm = np.exp(bias_nm + j*alpha*(2*qnm-1) + fun_nm(qnm, qcw, qccw, d, d0)*2*sigma**2)+\
-                np.exp(bias_cw + j*alpha*(2*qcw-1) + fun_ccw(qnm, qcw, qccw, d, d0)*2*sigma**2)+\
-                np.exp(bias_ccw + j*alpha*(2*qccw-1) + fun_cw(qnm, qcw, qccw, d, d0)*2*sigma**2)
-        qnmn = np.exp(bias_nm + j*alpha*(2*qnm-1) + fun_nm(qnm, qcw, qccw, d, d0)*2*sigma**2) / norm
-        qcwn = np.exp(bias_cw + j*alpha*(2*qcw-1) + fun_cw(qnm, qcw, qccw, d, d0)*2*sigma**2) / norm
-        qccwn = np.exp(bias_ccw + j*alpha*(2*qccw-1) + fun_ccw(qnm, qcw, qccw, d, d0)*2*sigma**2) / norm
+        norm = np.exp(bias_nm + j*alpha*(2*qnm-1) + fun_nm(qnm, qcw, qccw, d, d0)/(2*sigma**2))+\
+                np.exp(bias_cw + j*alpha*(2*qcw-1) + fun_ccw(qnm, qcw, qccw, d, d0)/(2*sigma**2))+\
+                np.exp(bias_ccw + j*alpha*(2*qccw-1) + fun_cw(qnm, qcw, qccw, d, d0)/(2*sigma**2))
+        qnmn = np.exp(bias_nm + j*alpha*(2*qnm-1) + fun_nm(qnm, qcw, qccw, d, d0)/(2*sigma**2)) / norm
+        qcwn = np.exp(bias_cw + j*alpha*(2*qcw-1) + fun_cw(qnm, qcw, qccw, d, d0)/(2*sigma**2)) / norm
+        qccwn = np.exp(bias_ccw + j*alpha*(2*qccw-1) + fun_ccw(qnm, qcw, qccw, d, d0)/(2*sigma**2)) / norm
+        if threshold is not None:
+            sum_diffs = np.abs(qnmn-qnm) + np.abs(qccwn-qccw)+ np.abs(qcwn-qcw)
+            if sum_diffs < threshold:
+                break
         qnm = qnmn
         qcw = qcwn
         qccw = qccwn
+    return qcw, qnm, qccw
+
+
+def d0_sigma_maxvals(eps=0.1, sigma=0.1):
+    sigmalist = np.logspace(-5, -0.3, 150)
+    d0list = np.logspace(-3, 0, 150)
+    X, Y = np.meshgrid(sigmalist, d0list)
+    fun = (Y**2 < (2-np.log(np.sqrt(2*np.pi)*X)) * 2*X**2)*1
+    plt.figure()
+    plt.pcolormesh(X, Y, fun)
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    plt.axhline(d0)
+    plt.axvline(sigma)
+    plt.yscale('log')
+    plt.xscale('log')
+    plt.xlabel('Sigma')
+    plt.ylabel('d0')
+    plt.tight_layout()
 
 
 if __name__ == '__main__':
@@ -1774,10 +2242,15 @@ if __name__ == '__main__':
     #                             smallds=False)
     # plot_bifurcations_all_bias(eps=0.1, nreps=30, biases=np.arange(0., 0.6, 0.1).round(4),
     #                             smallds=False, j=0.)
-    for b in [0.4, 06.]:
-        bifurcations_difference_stim_epsilon(nreps=30, resimulate=True, epslist=[0.1],
-                                             biasval=b, j=0.25)
-        plt.close('all')
+    plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.25, 0.5, 0.75, 1],
+                                  jlist=[0, 0.4, 0.8, 1.2, 1.6])
+    # for biasnm in [1.5, 2]:
+    #     for j in [0., 0.4, 0.8, 1.2, 1.6]:
+    #         phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
+    #                                   alist=np.arange(0, 0.505, 1e-2),
+    #                                   biasnm=biasnm, resimulate=True,
+    #                                   ax=None, cbar=False, fig=None, j=j,
+    #                                   plot=False)
     # ss = [[0., 1.]]*2
     # ss = [[0.47, 0.53]]*5
     # for i in range(len(ss)):
