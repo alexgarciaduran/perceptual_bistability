@@ -701,8 +701,8 @@ if __name__ == '__main__':
     #                                p_shuffle=0, coh=0., sigma=0.0, noise=0.1,
     #                                lr=0., n_memory=4, plot=True, feedback=1)
     pca_different_stims(b_list=np.arange(-0.5, 0.6, 0.25).round(3),
-                        time_end=80, dt=1e-2, noise_stim=0, noise_simul=0,
-                        noise_matrix=0, p_sh=[0, 0.2, 0.5, 0.7, 1])
+                        time_end=80, dt=1e-2, noise_stim=0.0, noise_simul=0.,
+                        noise_matrix=0., p_sh=[0, 0.2, 0.5, 0.7, 1])
     # rnn_connectivity_learning_sims(time_end=400, dt=1e-2, eta=0.05, rows=6, columns=6,
     #                                p_shuffle=1, coh=0., sigma=0.0, noise=0.1,
     #                                lr=0.1, n_memory=4)
