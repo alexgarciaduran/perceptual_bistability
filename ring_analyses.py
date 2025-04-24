@@ -288,7 +288,7 @@ class ring:
         # we want to compute \sum_{i \in N(j)} E_{q_{i-1}, q_{i+1}}[\log p(s_i | z_{i-1}, z_i, z_{i+1}, s)]
         # \sum_{i \in N(j)} E_{q_{i-1}, q_{i+1}}[\log p(s_i | z, s)]: num_variables x num_states_z
         likelihood_c_all = np.zeros((num_variables, num_states_z))
-        z_states = [-1, 1]
+        z_states = [1, -1]
         # rows: i+1
         # columns: i-1
         combinations = [[1, 1], [1, -1],
@@ -296,46 +296,49 @@ class ring:
         idxmap = {-1:1, 1:0}  # state to index mapping
         for i in range(num_variables):  # for all dots
             # Iterate over all possible latent states z_{t-1}
-            lh = 0
-            mat = np.zeros((2, 2)).flatten()
-            for startpoint in [-1, 1]:
-                i_prev = (i-1+startpoint) % num_variables
-                i_next = (i+1+startpoint) % num_variables
-                idx = (i) % num_variables
-                for ic, comb in enumerate(combinations):  # for all combinations of z_{i-1}, z_{i+1}
-                    if startpoint == -1:
-                        zn = np.ones(num_variables)
-                        zn[i_prev] = comb[0]  # z_{i-2}
-                        zn[idx] = comb[1]  # z_{i-1}
-                        q_z_p = q_z_prev[i_prev, idxmap[comb[0]]]  # extract q_{i-2}(z_{i-2}=comb[0])
-                        q_z_n = q_z_prev[idx, idxmap[comb[1]]]  # extract q_{i-1}(z_{i-1}=comb[1])
-                    if startpoint == 1:
-                        zn = np.ones(num_variables)
-                        zn[idx] = comb[0]  # z_{i+1}
-                        zn[i_next] = comb[1]  # z_{i+2}
-                        q_z_p = q_z_prev[idx, idxmap[comb[0]]]  # extract q_{i+1}(z_{i+1}=comb[0])
-                        q_z_n = q_z_prev[i_next, idxmap[comb[1]]]  # extract q_{i+2}(z_{i+2}=comb[1])
-                    zn = np.ones(num_variables)
-                    zn[i_prev] = comb[0]  # z_{i-1}
-                    zn[i_next] = comb[1]  # z_{i+1}
-                    idxs = [i_prev, i, i_next]
-                    # Get the probability of z from q_z_prev (approx. posterior)
-                    # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
-    
-                    # Get the CPT value for p(s_i | s, z)
-                    if discrete_stim:
-                        p_s_given_z = self.compute_likelihood_vector(s_t_1, zn, s_t)[idx]  # CPT lookup based on s and z, takes p(s_i | s, z)
-                    else:
-                        # based on a normal distribution centered in the expectation of the stimulus given the combination of z
-                        p_s_given_z = self.compute_likelihood_continuous_stim_ising(s_t_1[idxs], zn[idxs],
-                                                                                    s_t[idxs], noise=noise)
-                    mat[ic] = p_s_given_z
-            mat = mat.reshape((2, 2))
-            i_prev = (i-2) % num_variables
-            i_next = (i+2) % num_variables
-            q_z_p = q_z_prev[i_prev, :]
-            q_z_n = q_z_prev[i_next, :]
-            likelihood_c_all[i, :] = mat @ q_z_p + mat.T @ q_z_n
+            # mat = np.zeros((2, 2)).flatten()
+            for i_z, zstate in enumerate(z_states):
+                lh = 0
+                for startpoint in [-1, 0, 1]:
+                    i_prev = (i-1+startpoint) % num_variables
+                    i_next = (i+1+startpoint) % num_variables
+                    idx = (i+startpoint) % num_variables
+                    for ic, comb in enumerate(combinations):  # for all combinations of z_{i-1}, z_{i+1}
+                        if startpoint == -1:
+                            zn = np.ones(num_variables)
+                            zn[i_prev] = comb[0]  # z_{i-2}
+                            zn[idx] = comb[1]  # z_{i-1}
+                            zn[i_next] = zstate
+                            q_z_p = q_z_prev[i_prev, idxmap[comb[0]]]  # extract q_{i-2}(z_{i-2}=comb[0])
+                            q_z_n = q_z_prev[idx, idxmap[comb[1]]]  # extract q_{i-1}(z_{i-1}=comb[1])
+                        if startpoint == 0:
+                            zn = np.ones(num_variables)
+                            zn[i_prev] = comb[0]  # z_{i-1}
+                            zn[idx] = zstate  # z_i
+                            zn[i_next] = comb[1]  # z_{i+1}
+                            q_z_p = q_z_prev[i_prev, idxmap[comb[0]]]  # extract q_{i-1}(z_{i-1}=comb[0])
+                            q_z_n = q_z_prev[i_next, idxmap[comb[1]]]  # extract q_{i+1}(z_{i+1}=comb[1])
+                        if startpoint == 1:
+                            zn = np.ones(num_variables)
+                            zn[i_prev] = zstate
+                            zn[idx] = comb[0]  # z_{i+1}
+                            zn[i_next] = comb[1]  # z_{i+2}
+                            q_z_p = q_z_prev[idx, idxmap[comb[0]]]  # extract q_{i+1}(z_{i+1}=comb[0])
+                            q_z_n = q_z_prev[i_next, idxmap[comb[1]]]  # extract q_{i+2}(z_{i+2}=comb[1])
+                        idxs = [i_prev, idx, i_next]
+                        # Get the probability of z from q_z_prev (approx. posterior)
+                        # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
+        
+                        # Get the CPT value for p(s_i | s, z)
+                        if discrete_stim:
+                            p_s_given_z = np.log(self.compute_likelihood_vector(s_t_1, zn, s_t)[idx])  # CPT lookup based on s and z, takes p(s_i | s, z)
+                        else:
+                            # based on a normal distribution centered in the expectation of the stimulus given the combination of z
+                            p_s_given_z = self.compute_likelihood_continuous_stim_ising(s_t_1[idxs], zn[idxs],
+                                                                                        s_t[idxs], noise=noise,
+                                                                                        epsilon=self.eps)
+                        lh += p_s_given_z*q_z_p*q_z_n
+                likelihood_c_all[i, i_z] = lh
         return likelihood_c_all
 
 
@@ -544,7 +547,7 @@ class ring:
                 likelihood = self.compute_expectation_log_likelihood_original(stim[t-1], q_mf, stim[t],
                                                                              discrete_stim=discrete_stim,
                                                                              noise=noise_gaussian)
-            var_m1 = np.exp(np.matmul(j_mat, q_mf*2-1) + b + likelihood*stim_weight)
+            var_m1 = np.exp(np.matmul(j_mat, q_mf) + b + likelihood*stim_weight)
             q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
             q_mf_arr[:, :, t] = q_mf
         if not plot:
@@ -564,8 +567,11 @@ class ring:
                          vmin=0, vmax=1)
             ax[0].set_ylabel('Stimulus')
             ax[1].set_ylabel('R=q(z_i=CW), G=0,\n B=q(z_i=CCW)' )
-            q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T,
-                                  q_mf_arr[:, 2, :].T)).T
+            if nstates == 3:
+                q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T,
+                                      q_mf_arr[:, 2, :].T)).T
+            else:
+                q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T)).T
             q_mf_plot[:, :, 1] = 0
             ax[1].imshow(q_mf_plot, aspect='auto', interpolation='none',
                          vmin=0, vmax=1)
@@ -658,7 +664,7 @@ class ring:
             if t <= stim_stamps:
                 biases = 0
                 jaddmat = 0
-            var_m1 = np.exp(np.matmul(j_mat+jaddmat, q_mf*2-1) + b + biases)  #  + likelihood*stim_weight
+            var_m1 = np.exp(np.matmul(j_mat+jaddmat, q_mf) + b + biases)  #  + likelihood*stim_weight
             q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
             q_mf_arr[:, :, t] = q_mf
         if not plot:
@@ -1471,23 +1477,23 @@ def sols_vs_j_cond_on_a(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(-1, 1.02, 4e
                         nreps=50, dt=0.01, tau=0.1, n_iters=250, true='CW', noise_stim=0.1,
                         eps=0.2, sigma=0.2):
     ring_object = ring(epsilon=eps, n_dots=8)
-    j = 0
     sols = np.zeros((len(alist), len(j_list), nreps))
     for icoh, coh in enumerate(alist):
         print(coh)
         for i_j, j in enumerate(j_list):
             for n in range(nreps):
-                q = ring_object.mean_field_sde_ising(dt=dt, tau=tau, n_iters=n_iters, j=j,
-                                                     true=true, noise=0, plot=False,
-                                                     discrete_stim=True, coh=coh,
-                                                     stim_stamps=1, noise_stim=noise_stim,
-                                                     sigma_lh=sigma)
+                q = ring_object.mean_field_sde(dt=dt, tau=tau, n_iters=n_iters, j=j,
+                                               true=true, noise=0, plot=False,
+                                               discrete_stim=True, coh=coh,
+                                               stim_stamps=1, noise_stim=noise_stim,
+                                               noise_gaussian=sigma, nstates=2, b=0)
                 sols[icoh, i_j, n] = q[0, 0].round(6)
     fig, ax = plt.subplots(ncols=len(alist), figsize=(len(alist)*4, 4))
     d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    alpha = kernel_alpha()
     jcrit = 0.25*(4-d0**2/sigma**2)
-    ax[0].axvline(jcrit)
     ax[0].axvline(-jcrit)
+    # ax[0].axvline(-jcrit)
     # colormap = pl.cm.copper(np.linspace(0.2, 1, len(alist)))
     # legendelements = [Line2D([0], [0], color=colormap[0], lw=2, label=alist[0], marker='o'),
     #                   Line2D([0], [0], color=colormap[1], lw=2, label=alist[1], marker='o'),
@@ -1929,6 +1935,21 @@ def ising_1d_fps(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, niters=50):
     return qualitative_sol[~np.isnan(qualitative_sol)].astype(int)
 
 
+def jacobian_matrix(d0, d, sigma, alpha, j, a, biasnm):
+    (q1, q2) = sympy.symbols('q1 q2')
+    q0 = 1-q1-q2
+    fun_cw, fun_nm, fun_ccw = functions_mf_1d_bias()
+    fcw = fun_cw(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q1
+    fccw = fun_ccw(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q2
+    fnm = fun_nm(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q0+biasnm
+    maxf = 0
+    norm = (sympy.exp(fcw-maxf) + sympy.exp(fccw-maxf) + sympy.exp(fnm - maxf))
+    f1 = sympy.exp(fcw - maxf)/norm
+    f2 = sympy.exp(fccw - maxf) / norm
+    jac = sympy.Matrix([f1, f2]).jacobian([q1, q2])
+    return jac
+
+
 def find_fps(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, tol=1e-4, a=0):
     d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
     # alpha = kernel_alpha()
@@ -1946,6 +1967,7 @@ def find_fps(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, tol=1e-4, a=0):
         f1 = np.exp(fcw - maxf)/norm - q1
         f2 = np.exp(fccw - maxf) / norm - q2
         return f1, f2
+    # jac = jacobian_matrix(d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a, biasnm=biasnm)
     fps = []
     qualitative_sol = []
     # bounds = [(0, 1), (0, 1)]
@@ -1958,6 +1980,10 @@ def find_fps(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, tol=1e-4, a=0):
                continue
            if sol[0] < 0 or sol[0] > 1 or sol[1] < 0 or sol[1] > 1 or sol[0]+sol[1] > 1:
                continue
+           # evals = np.array(list(jac.subs(dict(zip([q1, q2], sol))).eigenvals().keys()),
+           #                  dtype=np.float64)
+           # if not all(np.abs(evals) < 1):
+           #     continue
            if not any(np.allclose(sol, fp) for fp in fps):
                fps.append(sol)
                label = np.nan
@@ -2040,15 +2066,16 @@ def phase_diagram_d_b(dlist=np.arange(0, 1, 1e-2),
 def phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
                               alist=np.arange(0, 0.505, 1e-2), biasnm=0,
                               resimulate=False, ax=None, cbar=False, fig=None, j=0,
-                              plot=False):
+                              plot=False, analytical=True):
     if biasnm == 0:
         lab = ''
     else:
         lab = '_bias_nm_' + str(biasnm)
+    analytical_lab = '' if analytical else '_simuls'
     if j == 0:
-        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_bias_CW' + lab + '_eps_02_simuls.npy'
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_bias_CW' + lab + '_eps_02' + analytical_lab + '.npy'
     else:
-        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_bias_CW' + lab + '_coupling_' + str(j) + '_eps_02_simuls.npy'
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_bias_CW' + lab + '_coupling_' + str(j) + '_eps_02' + analytical_lab + '.npy'
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if os.path.exists(path) and not resimulate:
         behav = np.load(path)
@@ -2082,13 +2109,19 @@ def phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
                                     ax_pos.width*0.15, ax_pos.height*3])
             cb = plt.colorbar(im, cax=ax_cbar)
             cb.ax.set_yticks(np.arange(0., 7.5, 0.5), dict_sols().values())
+        # eps = 0.2
+        # sigma = 0.2
+        # alpha = kernel_alpha()
+        # d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+        # jcrit = (2+alist**2)/alpha - (d0**2 - 3/4*alist**2)/(2*sigma**2)/alpha*(1+alist**2/2)
+        # ax.plot(alist, jcrit, color='k')
         ax.set_xlabel('Bias towards CW movement, a')
         ax.set_ylabel('Contrast difference, d')
         ax.set_title('Bias towards NM = ' + str(biasnm), fontsize=14)
 
 
 def plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2],
-                                  jlist=[0, 0.4, 0.8, 1.2, 1.6]):
+                                  jlist=[0, 0.4, 0.8, 1.2, 1.6], analytical=True):
     fig, ax = plt.subplots(ncols=len(biasnmlist), nrows=len(jlist),
                            figsize=(4*len(biasnmlist), 3.5*len(jlist)))
     for i_b, bias in enumerate(biasnmlist):
@@ -2096,7 +2129,7 @@ def plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2],
             phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
                                       alist=np.arange(0, 0.505, 1e-2), biasnm=bias,
                                       resimulate=False, ax=ax[i_j, i_b], cbar=(i_b == len(biasnmlist)-1)*(i_j == 2),
-                                      fig=fig, j=j, plot=True)
+                                      fig=fig, j=j, plot=True, analytical=analytical)
             if i_b == len(biasnmlist)-1:
                 ax2 = ax[i_j, i_b].twinx()
                 ax2.set_yticks([])
@@ -2125,10 +2158,12 @@ def quiver_plots_1d_mf(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, ax=None, legend
     X, Y = np.meshgrid(q_ccw, q_cw)
     U = fun_ccw(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*X
     V = fun_cw(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*Y
-    NM = fun_nm(1-X-Y, Y, X, d, d0, a)/(2*sigma**2)+ biasnm + j*(1-X-Y)
-    norm = (np.exp(U) + np.exp(V) + np.exp(NM+ biasnm))
+    NM = fun_nm(1-X-Y, Y, X, d, d0, a)/(2*sigma**2)+ j*(1-X-Y) + biasnm
+    norm = (np.exp(U) + np.exp(V) + np.exp(NM))
     Up = np.exp(U) / norm - X
     Vp = np.exp(V) / norm - Y
+    # Up[X+Y > 1.05] = 0
+    # Vp[X+Y > 1.05] = 0
     if ax is None:
         fig, ax = plt.subplots(1)
     ax.quiver(X, Y, Up, Vp)
@@ -2137,8 +2172,8 @@ def quiver_plots_1d_mf(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, ax=None, legend
     X, Y = np.meshgrid(q_ccw, q_cw)
     U = fun_ccw(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*X
     V = fun_cw(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*Y
-    NM = fun_nm(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + biasnm  + j*(1-X-Y)
-    norm = (np.exp(U) + np.exp(V) + np.exp(NM+biasnm))
+    NM = fun_nm(1-X-Y, Y, X, d, d0, a)/(2*sigma**2) + j*(1-X-Y)+ biasnm
+    norm = (np.exp(U) + np.exp(V) + np.exp(NM))
     Up = np.exp(U) / norm - X
     Vp = np.exp(V) / norm - Y
     ax.contour(X, Y, Up, levels=[0], colors='r', linewidths=2)
@@ -2166,7 +2201,7 @@ def quiver_plots_1d_mf(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, ax=None, legend
         plt.contour(X, Y, Up, levels=[0], colors='r', linewidths=2)
         plt.contour(X, Y, Vp, levels=[0], colors='b', linewidths=2)
         idxs = np.where(modulo < 1e-3)
-        plt.plot(q_ccw[idxs[0]], q_cw[idxs[1]], marker='x', color='r',
+        plt.plot(q_cw[idxs[1]], q_ccw[idxs[0]], marker='x', color='r',
                   linestyle='', markersize=5)
         plt.xlabel('q(CCW)')
         plt.ylabel('q(CW)')
@@ -2210,8 +2245,8 @@ def mean_field_1d(sigma=0.1, d=0., epsilon=0.1, n_iters=100, j=0, ndots=8, tau=.
 
 
 def d0_sigma_maxvals(eps=0.1, sigma=0.1):
-    sigmalist = np.logspace(-5, -0.3, 150)
-    d0list = np.logspace(-3, 0, 150)
+    sigmalist = np.logspace(-3, -0.3, 150)
+    d0list = np.logspace(-2, 0, 150)
     X, Y = np.meshgrid(sigmalist, d0list)
     fun = (Y**2 < (2-np.log(np.sqrt(2*np.pi)*X)) * 2*X**2)*1
     plt.figure()
@@ -2224,6 +2259,88 @@ def d0_sigma_maxvals(eps=0.1, sigma=0.1):
     plt.xlabel('Sigma')
     plt.ylabel('d0')
     plt.tight_layout()
+
+
+def solution_j_se_j_o(jse=0.3, jo=0.1, ini_conds=np.arange(0, 1, 0.1), b=0):
+    s_qe = lambda q: sigmoid(2*(2*q-1)*(jse-jo) + 2*b)-q
+    fps = []
+    for q_ini in ini_conds:
+        solroot = root(s_qe, q_ini)
+        sol = np.round(solroot.x, 5)
+        # fval = solroot.fun
+        if not any(np.allclose(sol, fp) for fp in fps):
+            fps.append(sol[0])
+    st = []  # 1: stable, 2: saddle, 3: unstable
+    for q in fps:
+        lam_11 = 4*q*(1-q)*(jse+jo)
+        lam_1m1 = 4*q*(1-q)*(jse-jo)
+        if np.abs(lam_11) < 1 and np.abs(lam_1m1) < 1:
+            st.append(1)
+        if np.abs(lam_11) <= 1 and np.abs(lam_1m1) >= 1 or np.abs(lam_11) >= 1 and np.abs(lam_1m1) <= 1:
+            st.append(2)
+        if np.abs(lam_11) > 1 and np.abs(lam_1m1) > 1:
+            st.append(3)
+    return fps, st
+
+
+def phase_diagram_states(j_selist=np.arange(-3, 3.05, 5e-2),
+                         j_olist=np.arange(-3, 3.05, 5e-2)):
+    stability = np.zeros((len(j_selist), len(j_olist)))
+    for ijse, j_se in enumerate(j_selist):
+        for ijo, j_o in enumerate(j_olist):
+            sols, stab = solution_j_se_j_o(jse=j_se, jo=j_o, ini_conds=np.arange(0, 1, 0.1))
+            stability[ijse, ijo] = len(sols)
+    fig, ax = plt.subplots(1)
+    colors = ['steelblue', 'lime', 'firebrick']
+    cmap = ListedColormap(colors)
+    im = ax.imshow(np.flipud(stability), extent=[np.min(j_olist), np.max(j_olist), np.min(j_selist), np.max(j_selist)],
+                   cmap=cmap, vmin=0.5, vmax=3.5)
+    cb = plt.colorbar(im, ax=ax, label='# fixed points', shrink=0.6)
+    cb.ax.set_yticks([1, 2, 3])
+    ax.set_ylabel(r'$J_se=J_s+J_e$')
+    ax.set_xlabel(r'$J_o $')
+
+
+def solution_ising_d0_a(d0=0.3, a=0.1, ini_conds=np.arange(0, 1, 0.1), b=0, jalpha=0,
+                        sigma=0.2):
+    s_qe = lambda q: sigmoid((2*q-1)*((d0**2 - 3/4*a**2)/(2*sigma**2) + jalpha)+a**2/(2*sigma**2))-q
+    fps = []
+    for q_ini in ini_conds:
+        solroot = root(s_qe, q_ini)
+        sol = np.round(solroot.x, 5)[0]
+        # fval = solroot.fun
+        if not any(np.allclose(sol, fp) for fp in fps) and sol >= 0 and sol <= 1:
+            fps.append(sol)
+    return fps
+
+
+def diagram_critical_j_vs_bias(j_list=np.arange(0, 1, 5e-3),
+                               a_list=np.arange(0, 0.501, 5e-3),
+                               sigma=0.2, eps=0.2):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    stability = np.zeros((len(j_list), len(a_list)))
+    alpha = kernel_alpha()
+    for i_j, j in enumerate(j_list):
+        for i_a, a in enumerate(a_list):
+            sols = solution_ising_d0_a(d0=d0, a=a, jalpha=j*alpha,
+                                       sigma=sigma)
+            stability[i_j, i_a] = len(sols)
+    jcrit = (2+a_list**2)/alpha - (d0**2 - 3/4*a_list**2)/(2*sigma**2)/alpha*(1+a_list**2/2)
+    # jcrithoriz = 2/alpha - d0**2/(2*sigma**2)/alpha
+    fig, ax = plt.subplots(1)
+    colors = ['steelblue', 'lime', 'firebrick']
+    cmap = ListedColormap(colors)
+    im = ax.imshow(np.flipud(stability),
+                   extent=[np.min(a_list), np.max(a_list), np.min(j_list), np.max(j_list)],
+                   cmap=cmap, vmin=0.5, vmax=3.5, aspect='auto')
+    cb = plt.colorbar(im, ax=ax, label='# fixed points', shrink=0.6)
+    cb.ax.set_yticks([1, 2, 3])
+    ax.plot(a_list, jcrit, color='k')
+    # ax.axhline(jcrithoriz, color='k', linestyle='--')
+    ax.set_xlabel(r'$a$')
+    ax.set_ylabel(r'$J$')
+    ax.set_xlim(np.min(a_list), np.max(a_list))
+    ax.set_ylim(np.min(j_list), np.max(j_list))
 
 
 if __name__ == '__main__':
@@ -2243,22 +2360,26 @@ if __name__ == '__main__':
     # plot_bifurcations_all_bias(eps=0.1, nreps=30, biases=np.arange(0., 0.6, 0.1).round(4),
     #                             smallds=False, j=0.)
     plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.25, 0.5, 0.75, 1],
-                                  jlist=[0, 0.4, 0.8, 1.2, 1.6])
-    # for biasnm in [1.5, 2]:
-    #     for j in [0., 0.4, 0.8, 1.2, 1.6]:
-    #         phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
-    #                                   alist=np.arange(0, 0.505, 1e-2),
-    #                                   biasnm=biasnm, resimulate=True,
-    #                                   ax=None, cbar=False, fig=None, j=j,
-    #                                   plot=False)
+                                  jlist=[0, 0.4, 0.8, 1.2, 1.6], analytical=False)
+    # quiver_plots_bias_nm(biaslist=[0, 0.22, 0.24], dlist=[0, 0.05, 0.1], eps=0.2, a=0., j=.1, sigma=0.2)
+    # sols_vs_j_cond_on_a(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
+    #                     nreps=10, dt=0.1, tau=0.2, n_iters=40, true='CW', noise_stim=0.2,
+    #                     eps=0.2, sigma=0.2)
+    # diagram_critical_j_vs_bias(j_list=np.arange(-1, 1, 1e-2), a_list=np.arange(0, 0.5, 5e-3),
+    #                            sigma=0.2, eps=0.2)
+    # diagram_critical_j_vs_bias(j_list=np.arange(-1, 1, 1e-2), a_list=np.arange(0, 0.5, 5e-3),
+    #                            sigma=0.05, eps=0.1)
+    # diagram_critical_j_vs_bias(j_list=np.arange(-1, 1, 1e-2), a_list=np.arange(0, 0.5, 5e-3),
+    #                            sigma=0.1, eps=1e-2)
     # ss = [[0., 1.]]*2
-    # ss = [[0.47, 0.53]]*5
+    # # ss = [[0.47, 0.53]]*5
     # for i in range(len(ss)):
-    #     ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.06, tau=0.15, n_iters=150, j=0.,
+    #     # epsmax = np.exp(-1/2)
+    #     ring(epsilon=0.55, n_dots=8).mean_field_sde(dt=0.1, tau=0.2, n_iters=300, j=0.,
     #                                                 true='CW', noise=0., plot=True,
     #                                                 discrete_stim=True, s=ss[i],
     #                                                 b=[0, 0, 0], noise_stim=0.0,
-    #                                                 coh=0.1, nstates=3, stim_stamps=1)
+    #                                                 coh=0., nstates=3, stim_stamps=1)
     # sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
     #                                 nreps=50, dt=0.05, tau=0.1, n_iters=250, true='CW', noise_stim=0.1)
     # for i in range(2):
