@@ -768,7 +768,7 @@ def get_kernel_bootstrap(d, chi, time, nboot=100):
         if iboot % 100 == 0:
             print(iboot)
         for iframe in range(len(time)):
-            fpr,tpr,_ = roc_curve(d[indexs[iboot]], chi[indexs[iboot], iframe])
+            fpr,tpr, _ = roc_curve(d[indexs[iboot]], chi[indexs[iboot], iframe])
             aux_kernel[iframe][iboot] = auc(fpr, tpr)
     kernel = np.mean(aux_kernel, axis=1)
     return kernel
@@ -3399,7 +3399,7 @@ def mean_field_stim_change(j, b_list,
         for q in range(theta.shape[0]):
             neighbours = theta[q].astype(dtype=bool)
             # th_vals = theta[q][theta[q] != 0]
-            vec[q] = gn.sigmoid(2*(sum(j*(2*vec[neighbours]-1)+b_list[i])))
+            vec[q] = gn.sigmoid(2*(sum(j*(2*vec[neighbours]-1))+b_list[i]))
         vec_time[i, :] = vec
     return vec_time[burn_in:]
 
@@ -3506,15 +3506,22 @@ def plot_mf_hysteresis(j_list=[0.01, 0.2, 0.41],
     colormap = ['navajowhite', 'orange', 'saddlebrown']
     ax.axvline(0, color='k', alpha=0.3, linestyle='--', zorder=1)
     for i_j, j in enumerate(reversed(j_list)):
-        vec = mean_field_stim_change(j, b_list,
-                                     val_init=None, theta=theta)
-        ax.plot(b_list, vec[:, 0], color=colormap[i_j],
+        x = 0.1
+        dt = 0.1
+        tau = 0.1
+        for i in range(5):
+            x = gn.sigmoid(2*j*3*(2*x-1)+2*b_list[0])
+        vec = [x]
+        for i in range(len(b_list)-1):
+            x = x + dt*(gn.sigmoid(2*j*3*(2*x-1)+2*b_list[i])-x)/tau
+            vec.append(x)
+        ax.plot(b_list, vec, color=colormap[i_j],
                 label=np.round(j, 1), linewidth=4,
                 zorder=2)
         ax.arrow(-0.0875, 0.6, 0, -0.10,
-                 color='navajowhite', zorder=3, head_width=0.05)
+                  color='navajowhite', zorder=3, head_width=0.05)
         ax.arrow(0.0875, 0.4, 0, 0.10,
-                 color='navajowhite', zorder=3, head_width=0.05)
+                  color='navajowhite', zorder=3, head_width=0.05)
     ax.set_xlabel('Sensory evidence, B')
     ax.set_ylabel('Approximate posterior q(x=1)')
     ax.spines['right'].set_visible(False)
@@ -3589,17 +3596,56 @@ def plot_boltzmann_distro_pdf(j, noise, b=0, ax=None):
     ax.set_ylabel('p(q(x=1))')
 
 
+def plot_hysteresis_different_taus(j=0.36,
+                                   b_list=np.linspace(-0.2, 0.2, 501),
+                                   save_folder=DATA_FOLDER,
+                                   tau_list=[0.04, 0.4, 1]):
+    b_list = np.concatenate((b_list[:-1], b_list[::-1]))
+    dt = 0.1
+    fig, ax = plt.subplots(1, figsize=(5, 3.5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    colormap = pl.cm.binary(np.linspace(0.2, 1, len(tau_list)))
+    for i_t, tau in enumerate(tau_list):
+        x = 0.1
+        for i in range(5):
+            x = gn.sigmoid(2*j*3*(2*x-1)+2*b_list[0])
+        vec = [x]
+        for i in range(len(b_list)-1):
+            x = x + dt*(gn.sigmoid(2*j*3*(2*x-1)+2*b_list[i])-x)/tau
+            vec.append(x)
+        ax.plot(b_list, vec, linewidth=3, color=colormap[i_t], label=tau)
+    ax.set_xlabel('Sensory evidence, B(t)')
+    ax.legend(title=r'$\tau$', frameon=False)
+    ax.set_ylabel('Approximate posterior q(x=1)')
+    fig.tight_layout()
+    fig.savefig(save_folder + 'hysteresis_taus.png', dpi=200, bbox_inches='tight')
+    fig.savefig(save_folder + 'hysteresis_taus.svg', dpi=200, bbox_inches='tight')
+
+
 def save_images_potential_hysteresis(j=0.39,
                                      b_list=np.linspace(-0.2, 0.2, 501),
                                      theta=theta,
-                                     save_folder=DATA_FOLDER):
-    b_list = np.concatenate((b_list[:-1], b_list[::-1]))
-    vec = mean_field_stim_change(j, b_list,
-                                 val_init=None, theta=theta)
+                                     save_folder=DATA_FOLDER, tau=0.8,
+                                     sigma=0.02):
+    b_list = np.concatenate(([-0.2, -0.2], b_list[:-1], b_list[::-1]))
+    x = 0.0931
+    vec = [x]
+    dt = 0.1
+    for i in range(len(b_list)-1):
+        x = x + dt*(gn.sigmoid(2*j*3*(2*x-1)+2*b_list[i])-x)/tau +\
+            np.random.randn()*sigma*np.sqrt(dt/tau)
+        vec.append(x)
+    plt.figure()
+    plt.plot(b_list, vec)
+    if tau >= 0.5:
+        lab = '/fast/' if sigma == 0 else '/fast_noisy/'
+    else:
+        lab = '/slow/' if sigma == 0 else '/slow_noisy/'
     q = np.arange(0, 1, 0.001)
-    for i in range(vec.shape[0]):
+    for i in range(len(vec)):
         fig, ax = plt.subplots(nrows=2, figsize=(6, 10))
-        ax[0].plot(b_list[:i], vec[:i, 0], color='navajowhite',
+        ax[0].plot(b_list[:i], vec[:i], color='navajowhite',
                    linewidth=4)
         ax[0].set_ylabel('Approximate posterior, q(x=1)')
         ax[0].set_xlabel('Stimulus strength, B')
@@ -3608,10 +3654,10 @@ def save_images_potential_hysteresis(j=0.39,
         ax[0].set_xlim(-0.21, 0.21)
         ax[0].set_ylim(0, 1)
         pot = potential_mf(q, j, b_list[i])
-        val_particle = potential_mf(vec[i, 0], j, b_list[i])
+        val_particle = potential_mf(vec[i], j, b_list[i])
         ax[1].plot(q, pot-np.nanmean(pot), color='purple',
                    linewidth=4)
-        ax[1].plot(vec[i, 0], val_particle-np.nanmean(pot),
+        ax[1].plot(vec[i], val_particle-np.nanmean(pot),
                    marker='o', markersize=8, color='k')
         ax[1].set_ylabel('Potential')
         ax[1].set_xlabel('Approximate posterior, q(x=1)')
@@ -3621,13 +3667,13 @@ def save_images_potential_hysteresis(j=0.39,
         ax[1].spines['top'].set_visible(False)
         ax[1].set_yticks([])
         ax[1].set_xticks([])
-        fig.savefig(save_folder + '/images_video_hyst/' + str(i) + '.png',
+        fig.savefig(save_folder + '/images_video_hyst' + lab + str(i) + '.png',
                     dpi=100)
         plt.close(fig)
 
     
-def create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/'):
-    video_name = image_folder + 'hysteresis.mp4'
+def create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/slow_noisy/'):
+    video_name = image_folder + 'hysteresis_slow_noisy.mp4'
     images = [img for img in os.listdir(image_folder) if img.endswith(".png")]
     images = [images[i].replace('.png', '') for i in range(len(images))]
     images.sort(key=float)
@@ -4621,6 +4667,25 @@ def bifurcation_hierarchical(b=0, varchange='descending'):
     plt.ylabel('Percept')
 
 
+def bcrit(j_list=np.arange(0, 1, 1e-3), n=3.92):
+    delta = np.sqrt(1-1/(j_list*n))
+    b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_list*delta)/2
+    b_crit2 = (np.log((1+delta)/(1-delta))-2*n*j_list*delta)/2
+    plt.figure()
+    plt.plot(b_crit1, j_list, color='k')
+    plt.plot(b_crit2, j_list, color='k')
+    plt.ylabel('J')
+    plt.xlabel('B*')
+    plt.ylim(0, 1)
+    plt.xlim(-0.5, 0.5)
+    plt.figure()
+    plt.plot(j_list, b_crit1, color='k')
+    plt.plot(j_list, b_crit2, color='k')
+    plt.xlabel('J')
+    plt.xlim(0, 1)
+    plt.ylabel('B*')
+
+
 if __name__ == '__main__':
     # mf_dyn_sys_circle(n_iters=100, b=0.)
     # plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
@@ -4707,8 +4772,12 @@ if __name__ == '__main__':
     # plot_3d_solution_mf_vs_j_b(j_list=np.arange(0.01, 1.01, 0.00025),
     #                             b_list=np.arange(0, 0.125, 0.025), N=3,
     #                             num_iter=200, tol=1e-3, dim3d=False)
-    plot_adaptation_mf(j=0.6, b=0.5, theta=theta, noise=0.1, gamma_adapt=3,
-                       tau=1, time_end=100, dt=1e-2)
+    # plot_adaptation_mf(j=0.6, b=0.5, theta=theta, noise=0.1, gamma_adapt=3,
+    #                    tau=1, time_end=100, dt=1e-2)
+    save_images_potential_hysteresis(j=0.39,
+                                     b_list=np.linspace(-0.2, 0.2, 250),
+                                     theta=theta,
+                                     save_folder=DATA_FOLDER)
     # plot_adaptation_1d(j=0.5, b=0., noise=0.0, gamma_adapt=0.1,
     #                    tau=1, time_end=100, dt=1e-3)
     # for b in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]:
