@@ -2228,9 +2228,9 @@ if __name__ == '__main__':
     # C matrix:\
     c_data = DATA_FOLDER + 'c_mat.npy'
     C = np.load(c_data, allow_pickle=True)
-    necker_spiking_n_indep_neurons(j=0.7, stim=0, n_iter=12501, burn_in=1,
-                                   ron=0.0001, roff=0.00005, dt=1e-2, go=1.7,
-                                   nneurons=4, noise=0.2)
+    # necker_spiking_n_indep_neurons(j=0.7, stim=0, n_iter=12501, burn_in=1,
+    #                                ron=0.0001, roff=0.00005, dt=1e-2, go=1.7,
+    #                                nneurons=4, noise=0.2)
     # plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False,
     #               save_fig=False, n_fig=0)
     # hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
