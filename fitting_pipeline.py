@@ -25,6 +25,7 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from diptest import diptest
 from sklearn import linear_model
+from sklearn.metrics import r2_score
 import warnings
 # warnings.filterwarnings("ignore")
 
@@ -1193,7 +1194,8 @@ def compute_j_crit(j_list=np.arange(0., 1.005, 0.01),
     return first_j
 
 
-def plot_density(num_iter=100, extra='', method='BADS', model='MF'):
+def plot_density(num_iter=100, extra='', method='BADS', model='MF',
+                 n=3.92):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
     state = []
@@ -1237,16 +1239,37 @@ def plot_density(num_iter=100, extra='', method='BADS', model='MF'):
     # all_df['abs_evidence'] = np.abs(all_df.evidence)
     sns.kdeplot(all_df.loc[all_df.evidence == 0], x='confidence', hue='state',
                 alpha=1, lw=2.5, bw_adjust=0.7, common_norm=False)
-    fig, ax = plt.subplots(1)
-    b_list=np.arange(-1.5, 1.5, 0.01)
-    first_j = compute_j_crit(j_list=np.arange(0., 1.405, 0.01),
-                       b_list=b_list, num_iter=100)
-    ax.plot(b_list, first_j, color='k', linewidth=2.5, label='J*')
+    fig, ax = plt.subplots(1, figsize=(4.5, 4))
+    # b_list=np.arange(-1.5, 1.5, 0.01)
+    j_list = np.arange(0., 1.405, 0.01)
+    delta = np.sqrt(1-1/(j_list*n))
+    b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_list*delta)/2
+    b_crit2 = (np.log((1+delta)/(1-delta))-2*n*j_list*delta)/2
+    ax.plot(b_crit1, j_list, color='k', linewidth=2.5, label='J*')
     ax.legend(frameon=False)
-    sns.kdeplot(all_df, x='bstar', y='jstar', fill=True, ax=ax)
+    ax.plot(b_crit2, j_list, color='k', linewidth=2.5)
     ax.set_xlim(-1.25, 1.25)
-    ax.set_xlabel('B = B_1 * stim + B_0')
-    ax.set_ylabel('J = (1-Shuffling)*J_1')
+    ax.set_ylim(0, 2.1)
+    ax.set_yticks([0, 1, 2])
+    ax.set_xticks([-1, 0, 1])
+    ax.text(-1., 2., 'Bistable')
+    ax.text(-1., 0.1, 'Monostable')
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.set_xlabel('Sensory evidence, B')
+    ax.set_ylabel('Coupling, J')
+    fig.tight_layout()
+    sns.kdeplot(all_df, x='bstar', y='jstar', fill=True, ax=ax)
+    # cbar=True,
+    # cbar_kws={'label': 'Density of trials',
+    #           'orientation': 'horizontal',
+    #           'location': 'top'})
+    # cbar = fig.axes[-1]
+    # cbar.tick_params(left=False, labelleft=False, right=False, labelright=False,
+    #                  top=False, labeltop=False, bottom=False, labelbottom=False)
+    # cbar.set_xticklabels([])
+    fig.savefig(SV_FOLDER + 'j_vs_b_classification.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'j_vs_b_classification.svg', dpi=400, bbox_inches='tight')
 
 
 def compute_jstar_bstar(sub, dataframe, model='MF', method='BADS',
@@ -1572,7 +1595,7 @@ def plot_density_comparison(num_iter=100, method='nelder-mead',
             a.set_title(title)
     if ax0 is None:
         fig.tight_layout()
-        fig2, ax2 = plt.subplots(ncols=2, figsize=(10, 5))
+        fig2, ax2 = plt.subplots(ncols=2, figsize=(9, 4))
     else:
         ax2 = ax0
     stim = [0, 0.4, 0.8, 1]
@@ -1589,25 +1612,29 @@ def plot_density_comparison(num_iter=100, method='nelder-mead',
         sns.kdeplot(data_bist.loc[(data_orig_mf.stim_str.abs() == stim[ia])],
                     x=variable,
                     alpha=1, lw=3., common_norm=False, ax=ax2[1],
-                    legend=False, bw_adjust=0.8, color=colormap_k[ia])
+                    legend=False, bw_adjust=bw, color=colormap_k[ia])
         legendelements.append(Line2D([0], [0], color=colormap_k[ia],
-                                     lw=2, label=stim[ia]))
-    ax2[0].set_title('Monostable')
-    ax2[1].set_title('Bistable')
-    ax2[0].set_ylabel('Density')
+                                     lw=3.5, label=stim[ia]))
+    ax2[0].set_title('Monostable', fontsize=19)
+    ax2[1].set_title('Bistable', fontsize=19)
+    ax2[0].set_ylabel('Density of confidence')
     ax2[1].set_ylabel('')
     ax2[1].legend(frameon=False, title='Stimulus\nstrength', handles=legendelements,
                   bbox_to_anchor=(0.86, 0.6))
     for a2 in ax2:
         a2.spines['right'].set_visible(False)
         a2.spines['top'].set_visible(False)
+        a2.set_yticks([])
         if variable == 'aligned_confidence':
-            a2.set_xlabel('Confidence aligned with stimulus')
             a2.set_ylim(-0.05, 1.6)
+            a2.set_xlabel('')
         else:
             a2.set_xlabel('Confidence')
             a2.set_ylim(-0.05, 1.)
-    # fig2.tight_layout()
+    ax2[0].set_xlabel('                                Confidence aligned with stimulus')
+    fig2.tight_layout()
+    fig2.savefig(SV_FOLDER + 'classification_density_confidence.png', dpi=400, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + 'classification_density_confidence.svg', dpi=400, bbox_inches='tight')
 
 
 def linear_regression(data_orig, data_model_orig, data_model_null):
@@ -1615,6 +1642,8 @@ def linear_regression(data_orig, data_model_orig, data_model_null):
     weights_o = np.zeros((4, len(subjects)))
     weights_model_o = np.zeros((4, len(subjects)))
     weights_model_null = np.zeros((4, len(subjects)))
+    scores_model_o = np.zeros((len(subjects)))
+    scores_model_null = np.zeros((len(subjects)))
     for i_s, sub in enumerate(subjects):
         df_o = data_orig.loc[data_orig.subject == sub]
         df_model_o = data_model_orig.loc[data_model_orig.subject == sub]
@@ -1647,7 +1676,11 @@ def linear_regression(data_orig, data_model_orig, data_model_null):
         regr_model_null.fit(X_model_null, y_model_null)
         weights_model_null[1:, i_s] = regr_model_null.coef_
         weights_model_null[0, i_s] = regr_model_null.intercept_
-    return weights_o, weights_model_o, weights_model_null
+        y_o_predict_model_o = regr_o.predict(X_model_o)
+        y_o_predict_model_null = regr_o.predict(X_model_null)
+        scores_model_null[i_s] = r2_score(y_o_predict_model_null, regr_model_null.predict(X_model_null))
+        scores_model_o[i_s] = r2_score(y_o_predict_model_o, regr_model_o.predict(X_model_o))
+    return weights_o, weights_model_o, weights_model_null, scores_model_o, scores_model_null
 
 
 def linear_mixed_model(data_orig, data_model_orig, data_model_null):
@@ -1656,13 +1689,15 @@ def linear_mixed_model(data_orig, data_model_orig, data_model_null):
                           re_formula='~coupling*stim_ev_cong')
     md_orig = md_orig.fit()
     print(md_orig.summary())
+    data_mode_orig_no_nans = data_model_orig.dropna()
     md_model_orig = smf.mixedlm("abs_confidence ~ coupling*stim_ev_cong",
-                          data_model_orig, groups="subject",
+                          data_mode_orig_no_nans, groups="subject",
                           re_formula='~coupling*stim_ev_cong')
     md_model_orig = md_model_orig.fit()
     print(md_model_orig.summary())
+    data_mode_null_no_nans = data_model_null.dropna()
     md_model_null = smf.mixedlm("abs_confidence ~ coupling*stim_ev_cong",
-                                data_model_null, groups="subject",
+                                data_mode_null_no_nans, groups="subject",
                                 re_formula='~coupling*stim_ev_cong')
     md_model_null = md_model_null.fit()
     print(md_model_null.summary())
@@ -1749,53 +1784,67 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
     # for df in ([data_orig, data_model_orig, data_model_null]):
     #     df['congruent_confidence'] = df.confidence*df.decision
     # sub by sub lienar regression
-    weights_o, weights_model_o, weights_model_null =\
+    weights_o, weights_model_o, weights_model_null, scores_model_o, scores_model_null =\
         linear_regression(data_orig, data_model_orig, data_model_null)
     savefig = False
+    fig3, ax3 = plt.subplots(1)
+    ax3.spines['right'].set_visible(False)
+    ax3.spines['top'].set_visible(False)
+    sns.kdeplot(scores_model_o, color='k', linewidth=3, label='Full', bw_adjust=0.5,
+                cumulative=True)
+    sns.kdeplot(scores_model_null, color='r', linewidth=3, label='Null', bw_adjust=0.5,
+                cumulative=True)
+    ax3.set_xlabel('Score from linear regression')
+    ax3.set_ylabel('Cumulative density')
+    ax3.legend(frameon=False)
+    fig3.tight_layout()
     if ax is None:
         fig, ax = plt.subplots(ncols=4, figsize=(16, 4))
         savefig = True
     for a in ax:
         a.axhline(0, color='k', linestyle='--')
+    colors = ['midnightblue', 'royalblue', 'cornflowerblue']
+    # colors = []
     xlabs = ['Data', 'Model', 'Null']
     ylabs = ['Intercept', 'Coupling', 'Stim. congr.', 'Coupling:stim. congr.']
     for j in range(4):
         ax[j].spines['right'].set_visible(False)
         ax[j].spines['top'].set_visible(False)
-        sns.boxplot([weights_o[j], weights_model_o[j], weights_model_null[j]], ax=ax[j])
+        sns.boxplot([weights_o[j], weights_model_o[j], weights_model_null[j]], ax=ax[j],
+                    palette=colors, flierprops={"marker": ""}, linecolor='grey', linewidth=1.4)
         ax[j].set_ylabel(ylabs[j])
         ax[j].set_xticks([0, 1, 2], xlabs, rotation=45)
     for i_s in range(len(subjects)):
         jitter = np.random.randn(3)*0.05
-        ax[0].plot([0+jitter[0], 1+jitter[1], 2+jitter[2]],
-                   [weights_o[0][i_s], weights_model_o[0][i_s], weights_model_null[0][i_s]],
-                   color='gray', alpha=0.5)
-        ax[1].plot([0+jitter[0], 1+jitter[1], 2+jitter[2]],
-                   [weights_o[1][i_s], weights_model_o[1][i_s], weights_model_null[1][i_s]],
-                   color='gray', alpha=0.5)
-        ax[2].plot([0+jitter[0], 1+jitter[1], 2+jitter[2]],
-                   [weights_o[2][i_s], weights_model_o[2][i_s], weights_model_null[2][i_s]],
-                   color='gray', alpha=0.5)
-        ax[3].plot([0+jitter[0], 1+jitter[1], 2+jitter[2]],
-                   [weights_o[3][i_s], weights_model_o[3][i_s], weights_model_null[3][i_s]],
-                   color='gray', alpha=0.5)
+        # ax[0].plot([0+jitter[0], 1+jitter[1], 2+jitter[2]],
+        #            [weights_o[0][i_s], weights_model_o[0][i_s], weights_model_null[0][i_s]],
+        #            color='gray', alpha=0.5)
+        # ax[1].plot([0+jitter[0], 1+jitter[1], 2+jitter[2]],
+        #            [weights_o[1][i_s], weights_model_o[1][i_s], weights_model_null[1][i_s]],
+        #            color='gray', alpha=0.5)
+        # ax[2].plot([0+jitter[0], 1+jitter[1], 2+jitter[2]],
+        #            [weights_o[2][i_s], weights_model_o[2][i_s], weights_model_null[2][i_s]],
+        #            color='gray', alpha=0.5)
+        # ax[3].plot([0+jitter[0], 1+jitter[1], 2+jitter[2]],
+        #            [weights_o[3][i_s], weights_model_o[3][i_s], weights_model_null[3][i_s]],
+        #            color='gray', alpha=0.5)
         for t in range(3):
             ax[0].plot([t+jitter[t]],
                        [weights_o[0][i_s], weights_model_o[0][i_s], weights_model_null[0][i_s]][t],
-                       marker='o', color=['tab:blue', 'tab:orange', 'tab:green'][t], linestyle='',
-                       markersize=5, markeredgewidth=1, markeredgecolor='grey')
+                       marker='o', color=colors[t], linestyle='',
+                       markersize=5, markeredgewidth=1, markeredgecolor='white')
             ax[1].plot([t+jitter[t]],
                        [weights_o[1][i_s], weights_model_o[1][i_s], weights_model_null[1][i_s]][t],
-                       marker='o', color=['tab:blue', 'tab:orange', 'tab:green'][t], linestyle='',
-                       markersize=5, markeredgewidth=1, markeredgecolor='grey')
+                       marker='o', color=colors[t], linestyle='',
+                       markersize=5, markeredgewidth=1, markeredgecolor='white')
             ax[2].plot([t+jitter[t]],
                        [weights_o[2][i_s], weights_model_o[2][i_s], weights_model_null[2][i_s]][t],
-                       marker='o', color=['tab:blue', 'tab:orange', 'tab:green'][t], linestyle='',
-                       markersize=5, markeredgewidth=1, markeredgecolor='grey')
+                       marker='o', color=colors[t], linestyle='',
+                       markersize=5, markeredgewidth=1, markeredgecolor='white')
             ax[3].plot([t+jitter[t]],
                        [weights_o[3][i_s], weights_model_o[3][i_s], weights_model_null[3][i_s]][t],
-                       marker='o', color=['tab:blue', 'tab:orange', 'tab:green'][t], linestyle='',
-                       markersize=5, markeredgewidth=1, markeredgecolor='grey')
+                       marker='o', color=colors[t], linestyle='',
+                       markersize=5, markeredgewidth=1, markeredgecolor='white')
     if savefig:
         fig.tight_layout()
     pvals_o = []
@@ -1837,8 +1886,8 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
                    fontsize=12)
     if savefig:
-        fig.savefig(SV_FOLDER + 'linear_regression_analysis.png', dpi=100, bbox_inches='tight')
-        fig.savefig(SV_FOLDER + 'linear_regression_analysis.svg', dpi=100, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + 'linear_regression_analysis.png', dpi=400, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + 'linear_regression_analysis.svg', dpi=400, bbox_inches='tight')
 
 
 def stars_pval(pval):
@@ -2512,8 +2561,8 @@ if __name__ == '__main__':
     # simulate_subjects(sv_folder=SV_FOLDER, model='MF', resimulate=True,
     #                   extra='null', mcmc=False, method=opt_algorithm, data_augment=False,
     #                   plot_subs=False)
-    # plot_fitted_params(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
-    #                    subjects='separated')
+    # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+    #                     subjects='separated')
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
     #                                bic=True)
     # plot_all_subjects()
@@ -2523,13 +2572,13 @@ if __name__ == '__main__':
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=False)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
-    # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
+    plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
     #                         variable='aligned_confidence', bw=0.7, model='MF5')
-    plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
-                            method=opt_algorithm)
+    # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
+    #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF', method=opt_algorithm,
