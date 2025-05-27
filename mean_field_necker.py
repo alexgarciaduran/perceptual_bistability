@@ -182,9 +182,7 @@ def plot_mean_field_neg_stim_fixed_points(j_list, b=0, theta=theta, num_iter=100
     ax[0].legend()
     
     
-
-
-def mean_field_fixed_points(j_list, stim, num_iter=100):
+def mean_field_fixed_points(j_list=np.arange(0., 1.005, 0.001), stim=0, num_iter=100):
     qvls_01 = []
     qvls_07 = []
     qvls_bckw = []
@@ -386,18 +384,22 @@ def plot_stim_effect(stim_list=np.linspace(0, 0.04, 4), j=0.4, N=3):
     plt.ylabel('f(q)')
 
 
-def plot_solutions_mfield(j_list, stim=0, N=3, plot_approx=False):
-    fig = plt.figure(figsize=(6, 4))
+def plot_solutions_mfield(j_list=np.arange(0., 1.005, 0.001), stim=0, N=3, plot_approx=False):
+    fig, ax = plt.subplots(1, figsize=(5, 4))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
     l = []
+    plt.axvline(1/N, color='r', alpha=0.2, linewidth=2)
+    plt.text(1/N-0.085, 0.12,  r'$J^{\ast}=1/3$', rotation='vertical')
     for j in j_list:
         q = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ stim*2*N) - q 
         l.append(np.clip(fsolve(q, 0.9), 0, 1))
     plt.plot([1/3, 1], [0.5, 0.5], color='grey', alpha=1, linestyle='--',
-             label='Unstable FP')
-    plt.plot(j_list, 1-np.array(l), color='k')
-    plt.plot(j_list, l, color='k', label='Stable FP')
+             label='Unstable FP', linewidth=3)
+    plt.plot(j_list, 1-np.array(l), color='k', linewidth=3)
+    plt.plot(j_list, l, color='k', label='Stable FP', linewidth=3)
     plt.xlabel(r'Coupling $J$')
-    plt.ylabel(r'Posterior $q$')
+    plt.ylabel(r'Approximate posterior $q(x=1)$')
     # plt.title('Solutions of the dynamical system')
     if plot_approx:
         j_list1 = np.arange(1/N, 1, 0.001)
@@ -407,16 +409,16 @@ def plot_solutions_mfield(j_list, stim=0, N=3, plot_approx=False):
                  color='b', linestyle='--')
         plt.plot([0, 1/N], [0.5, 0.5], color='r', label=r'$q=0.5$',
                  linestyle='--')
-    plt.axvline(1/N, color='r', alpha=0.2)
-    plt.text(1/N-0.065, 0.12,  r'$J^{\ast}=1/3$', rotation='vertical')
     # xtcks = [0, 0.2, 0.4, 0.6, 0.8, 1]
     # xtcks = np.sort(np.unique([0, 0.2, 0.4, 1/N, 0.6, 0.8, 1]))
     # labs = [x for x in xtcks]
     # pos = np.where(xtcks == 1/N)[0][0]
     # labs[pos] = r'$J^{\ast}$'  # '1/'+str(N)
     # plt.xticks(xtcks, labs)
-    plt.legend()
-    plt.tight_layout()
+    # ax.text(0.0, 0.8, 'Monostable')
+    # ax.text(0.55, 0.8, 'Bistable')
+    plt.legend(frameon=False, bbox_to_anchor=[0.4, 0.8])
+    fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'mf_solutions.png', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'mf_solutions.svg', dpi=400, bbox_inches='tight')
 
@@ -495,7 +497,6 @@ def plot_q_bifurcation_vs_JB(j_list, stim_list=np.arange(-0.5, 0.5, 0.001)):
 
 
 def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
-                           beta_list=np.arange(-0.5, 0.5, 0.001),
                            neigh_list=np.arange(3, 11),
                            dim3=False):
     if dim3:
@@ -505,23 +506,18 @@ def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
         colormap = pl.cm.Blues(np.linspace(0.2, 1, len(neigh_list)))
     for n_neigh in neigh_list:
         print(n_neigh)
-        first_j = []
-        for i_b, beta in enumerate(beta_list):
-            for j in j_list:
-                q_fin = 0.65
-                for i in range(num_iter):
-                    q_fin = backwards(q_fin, j, beta, n_neigh)
-                if ~np.isnan(q_fin):
-                    first_j.append(j)
-                    break
-            if len(first_j) != (i_b+1):
-                first_j.append(np.nan)
-        z = np.repeat(n_neigh, len(first_j))
+        delta = np.sqrt(1-1/(j_list*n_neigh))
+        b_crit1 = (np.log((1-delta)/(1+delta))+2*n_neigh*j_list*delta)/2
+        b_crit2 = (np.log((1+delta)/(1-delta))-2*n_neigh*j_list*delta)/2
+        beta_list = b_crit1
+        z = np.repeat(n_neigh, len(j_list))
         if dim3:
-            ax.plot3D(z, beta_list, first_j, color='k')
+            ax.plot3D(z, beta_list, j_list, color='k')
         else:
-            ax.plot(beta_list, first_j, color=colormap[int(n_neigh-min(neigh_list))],
-                    label=n_neigh)
+            ax.plot(b_crit2, j_list, color=colormap[int(n_neigh-min(neigh_list))],
+                    label=n_neigh, linewidth=3.5)
+            ax.plot(b_crit1, j_list, color=colormap[int(n_neigh-min(neigh_list))],
+                    label=n_neigh, linewidth=3.5)
     vals_b0 = 1 / neigh_list
     if dim3:
         ax.plot3D(neigh_list, np.repeat(0, len(neigh_list)), vals_b0,
@@ -532,12 +528,20 @@ def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
     else:
         ax.set_xlabel(r'Sensory evidence $B$')
         ax.set_ylabel(r'Critical coupling $J^{\ast}$')
+        ax.set_xlim(-1.05, 1.05)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        # ax.text()
+        fig.tight_layout()
         ax_pos = ax.get_position()
-        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
-                                ax_pos.width*0.06, ax_pos.height*0.5])
+        # ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
+        #                         ax_pos.width*0.06, ax_pos.height*0.5])
+        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.3, ax_pos.y0+ax_pos.height*0.9,
+                                ax_pos.width*0.4, ax_pos.height*0.05])
         newcmp = mpl.colors.ListedColormap(colormap)
-        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label='Neighbors N')
-        ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
+        mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label='Neighbors N',
+                                  orientation='horizontal')
+        ax_cbar.set_xticks([0, 0.5, 1], [np.min(neigh_list),
                                          int(np.mean(neigh_list)),
                                          np.max(neigh_list)])
         fig.savefig(DATA_FOLDER+'/J_vs_NB_MF_vf.png', dpi=400, bbox_inches='tight')
@@ -803,7 +807,7 @@ def potential_mf(q, j, bias=0):
 
 
 def potential_mf_neighs(q, j, bias=0, neighs=3):
-    return q*q/2 - np.log(1+np.exp(2*neighs*(j*(2*q-1)+bias)))/(4*neighs*j)
+    return q*q/2 - np.log(1+np.exp(2*neighs*(j*(2*q-1))+bias*2))/(4*neighs*j)
 
 
 def plot_potentials_different_beta(j=0.5, beta_list=[-0.1, -0.05, 0, 0.05, 0.1]):
@@ -1920,21 +1924,143 @@ def projection_mf_plot(theta, j=1, b=0, noise=0, tau=0.01):
     ax.set_zlabel('D3')
     ax.plot3D(val_act[0, 0], val_act[0, 1], val_act[0, 2], color='r', marker='o')
     ax.plot3D(val_act[-1, 0], val_act[-1, 1], val_act[-1, 2], color='r', marker='x')
+
+
+def predictions_boltzmann_distro(j_list=[0.15, 0.5], n=3.92, noise=0.15,
+                                 b_list=[0, 0.4, 0.8, 1],
+                                 ntrials=1000, tmax=1, dt=0.01, tau=0.1, bw=0.8):
+    time = np.arange(0, tmax, dt)
+    signed_confidence_array = np.zeros((ntrials, len(b_list), len(j_list)))
+    for i_j, j in enumerate(j_list):
+        for i_b, b in enumerate(b_list):
+            for trial in range(ntrials):
+                weight_stim = 2*np.abs(np.random.rand()-0.5)
+                j_eff = j+np.random.rand()*0.1
+                b_signed = b*np.random.choice([-1, 1])*weight_stim
+                bias = np.random.randn()*0.1*2
+                x = np.random.rand()
+                for i in range(len(time)):
+                    x = x + dt*(gn.sigmoid(2*j_eff*n*(2*x-1)+2*b_signed + bias)-x)/tau + np.random.randn()*noise*np.sqrt(dt/tau)
+                signed_confidence_array[trial, i_b, i_j] = (2*x-1)*np.sign(b_signed+1e-6*np.random.randn())
+    colormap = pl.cm.gist_gray_r(np.linspace(0.3, 1, len(b_list)))
+    fig, ax = plt.subplots(ncols=2, figsize=(8, 4))
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_xlim(-1.7, 1.7)
+        a.set_xticks([-1, 0, 1])
+        a.set_ylim(-0.05, 1.6)
+        a.set_xlabel('')
+    legendelements = []
+    for ia in range(4):
+        sns.kdeplot(signed_confidence_array[:, ia, 0],
+                    alpha=1, lw=3., common_norm=False, ax=ax[0],
+                    legend=False, bw_adjust=bw, color=colormap[ia])
+        sns.kdeplot(signed_confidence_array[:, ia, 1],
+                    alpha=1, lw=3., common_norm=False, ax=ax[1],
+                    legend=False, bw_adjust=bw, color=colormap[ia])
+        legendelements.append(Line2D([0], [0], color=colormap[ia],
+                                     lw=3.5, label=b_list[ia]))
+    ax[0].legend(frameon=False, title='Stimulus\nstrength', handles=legendelements,
+                 bbox_to_anchor=(0.4, 0.4))
+    ax[1].set_ylabel('')
+    ax[0].set_ylabel('Density of confidence', fontsize=19)
+    ax[0].set_xlabel('                                                 Confidence aligned with stimulus',
+                     fontsize=19)
+    ax[0].set_yticks([])
+    ax[1].set_yticks([])
+    ax[0].set_title('Monostable', fontsize=19)
+    ax[1].set_title('Bistable', fontsize=19)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'density_stim_str_prediction.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'density_stim_str_prediction.svg', dpi=400, bbox_inches='tight')
+
+
+def potential_stim_str(stims=[0, 0.4, 0.8, 1], j_list=[0.15, 0.5]):
+    q = np.arange(-0.3, 1.3, 1e-3)
+    fig, ax = plt.subplots(ncols=2, figsize=(8, 4))
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_xlim(-1.7, 1.7)
+        a.set_xticks([-1, 0, 1])
+        a.set_xlabel('')
+        a.set_yticks([])
+    colormap = pl.cm.gist_gray_r(np.linspace(0.3, 1, len(stims)))
+    for i_j, j in enumerate(j_list):
+        for i_s, s in enumerate(stims):
+            pot = potential_mf_neighs(q, j, bias=s*0.5, neighs=3.92)
+            ax[i_j].plot(q*2-1, pot-np.mean(pot), color=colormap[i_s], linewidth=3.5, label=s)
+    ax[0].legend(frameon=False, title='Stimulus\nstrength')
+    ax[0].set_ylabel(r'Potential $V(q)$', fontsize=19)
+    ax[0].set_title('Monostable', fontsize=19)
+    ax[1].set_title('Bistable', fontsize=19)
+    ax[0].set_xlabel('                                                 Confidence aligned with stimulus',
+                     fontsize=19)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'potentials_stim_str_prediction.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'potentials_stim_str_prediction.svg', dpi=400, bbox_inches='tight')
+            
     
 
-def plot_boltzmann_distro(j, noise, b=0, ax=None):
+def mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.2,
+                       skip=25):
+    x1, x2 = 0.5, 0.5
+    x1l = []
+    x2l = []
+    dt = 0.05/tau
+    time = np.arange(0, n_its+1, skip)*dt
+    for i in range(n_its+skip+1):
+        x1 += dt*(-x1 + gn.sigmoid(exc*x1 - inh*x2)) + np.random.randn()*np.sqrt(dt)*noise
+        x2 += dt*(-x2 + gn.sigmoid(exc*x2 - inh*x1)) + np.random.randn()*np.sqrt(dt)*noise
+        if i % skip == 0 and i > 0:
+            x1l.append(x1)
+            x2l.append(x2)
+    fig, ax = plt.subplots(ncols=1, nrows=2, figsize=(7, 6))
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    ax[0].plot(time, x1l, color='firebrick', label=r'$r_A (t)$',
+               linewidth=2.4)
+    ax[0].set_ylim(0.1, 1.0)
+    ax[0].plot(time, x2l, color='navy', label=r'$r_B (t)$',
+               linewidth=2.4)
+    ax[0].set_ylabel('Firing rate')
+    ax[0].legend(frameon=False, ncol=2, loc='upper center')
+    for y in [-0.375, 0, 0.375]:
+        ax[1].axhline(y, color='grey', linestyle='--', alpha=0.7)
+    ax[1].text(time[-1]+90, -0.52, 'Vase', color='gray')
+    ax[1].text(time[-1]+90, 0.45, 'Faces', color='gray')
+    ax[1].set_ylim(-0.6, 0.6)
+    ax[1].set_xlim(0, np.max(time)+150)
+    ax[0].set_xlim(0, np.max(time)+150)
+    ax[1].plot(time, np.array(x1l)-np.array(x2l), color='grey',
+               linewidth=2.4)
+    ax[1].set_ylabel(r'$\Delta r (t)= r_A (t) - r_B (t)$')
+    ax[1].set_xlabel('Time (s)')
+    fig.tight_layout()
+    # plt.ylim(0, 1)
+
+
+
+def plot_boltzmann_distro(j, noise, b=0, ax=None, color='r', cumsum=False,
+                          n=3):
     if ax is None:
         fig, ax = plt.subplots(1)
     q = np.arange(0, 1.001, 0.001)
-    pot = potential_mf(q, j, bias=b)
+    pot = potential_mf_neighs(q, j, bias=b, neighs=n)
     distro = np.exp(-2*pot/noise**2)
-    ax.plot(q, np.cumsum(distro) / np.sum(distro),
-            color='r', label='analytical')
+    if cumsum:
+        yvals = np.cumsum(distro)
+    else:
+        yvals = distro
+    ax.plot(q,  yvals / np.sum(distro),
+            color=color, label='analytical')
 
 
-def second_derivative_potential(q, j, b=0):
-    expo = 6*(j*(2*q-1))+2*b
-    return 1 - 12*j*gn.sigmoid(expo)*(1-gn.sigmoid(expo))
+def second_derivative_potential(q, j, b=0, n=3.):
+    expo = 2*n*(j*(2*q-1))+2*b
+    return 1 - 4*n*j*gn.sigmoid(expo)*(1-gn.sigmoid(expo))
 
 
 def k_i_to_j(j, xi, xj, noise, b=0):
@@ -3322,8 +3448,6 @@ def plot_peak_noise_vs_j(j_list=np.arange(0.34, 0.45, 5e-3),
 def plot_noise_before_switch(j, b, theta=theta, noise=0.1,
                              tau=0.01, time_end=1000, dt=1e-3, p_thr=0.5,
                              steps_back=2000, steps_front=500, gibbs=False):
-    fig, ax = plt.subplots(1)
-    ax.set_xlabel('Time to switch (s)')
     if not gibbs:
         if j is None:
             j = 0.39
@@ -3334,7 +3458,7 @@ def plot_noise_before_switch(j, b, theta=theta, noise=0.1,
         mean_ou = np.mean(ou_vals, axis=1)
         conv_window = 50
         mean_states = np.convolve(mean_states, np.ones(1000)/1000, mode='same')
-        ax.set_ylabel(r'Noise $n(t)$')
+        lab = r'Noise $n(t)$'
     if gibbs:
         if j is None:
             j = 0.8
@@ -3350,7 +3474,7 @@ def plot_noise_before_switch(j, b, theta=theta, noise=0.1,
         # mean_ou = np.exp(-np.gradient(mean_ou))
         conv_window = 1
         # ax.set_ylabel(r'$e^{\Delta k(\vec{x})}$')
-        ax.set_ylabel(r'$k(\vec{x})$')
+        lab = r'$k(\vec{x})$'
         steps_back = steps_front =  100
     mean_states[mean_states > p_thr] = 1
     mean_states[mean_states < (1-p_thr)] = 0
@@ -3377,10 +3501,19 @@ def plot_noise_before_switch(j, b, theta=theta, noise=0.1,
     ou_vals_mean = np.nanmean(ou_vals_all, axis=0)
     # ou_vals_std = np.nanstd(ou_vals_all, axis=0)
     time = np.arange(-steps_back, steps_front)*dt
+    fig, ax = plt.subplots(1, figsize=(5, 4))
+    ax.set_xlabel('Time to switch (s)')
+    ax.set_ylabel(lab)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
     # ou_vals_mean_filt = np.convolve(ou_vals_mean, np.ones(50)/50, mode='same')
+    ax.axvline(0, color='gray', linestyle='--', alpha=0.6)
     ax.plot(time, ou_vals_mean, color='k', linewidth=2.5)
     # ax.fill_between(time, ou_vals_mean-ou_vals_std, ou_vals_mean+ou_vals_std,
     #                 color='gray', alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'noise_before_switch.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'noise_before_switch.svg', dpi=400, bbox_inches='tight')
 
 
 def mean_field_stim_change(j, b_list,
@@ -3498,17 +3631,18 @@ def mean_nodes_simulation_comparison(b, j, theta=theta):
     plt.plot(np.abs(mean_vec_time-vec_hyp))
 
 
-def plot_mf_hysteresis(j_list=[0.01, 0.2, 0.41],
-                       b_list=np.linspace(-0.5, 0.5, 1001),
-                       theta=theta):
+def plot_mf_hysteresis(j_list=[0.1, 0.25, 0.41],
+                       b_list=np.linspace(-0.5, 0.5, 1001)):
     b_list = np.concatenate((b_list[:-1], b_list[::-1]))
-    fig, ax = plt.subplots(1)
+    fig, ax = plt.subplots(1, figsize=(5., 3.5))
     colormap = ['navajowhite', 'orange', 'saddlebrown']
+    colormap = pl.cm.binary(np.linspace(0.2, 1, len(j_list)))[::-1]
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     ax.axvline(0, color='k', alpha=0.3, linestyle='--', zorder=1)
-    for i_j, j in enumerate(reversed(j_list)):
+    for i_j, j in enumerate(j_list):
         x = 0.1
         dt = 0.1
-        tau = 0.1
+        tau = 0.6
         for i in range(5):
             x = gn.sigmoid(2*j*3*(2*x-1)+2*b_list[0])
         vec = [x]
@@ -3518,14 +3652,17 @@ def plot_mf_hysteresis(j_list=[0.01, 0.2, 0.41],
         ax.plot(b_list, vec, color=colormap[i_j],
                 label=np.round(j, 1), linewidth=4,
                 zorder=2)
-        ax.arrow(-0.0875, 0.6, 0, -0.10,
-                  color='navajowhite', zorder=3, head_width=0.05)
-        ax.arrow(0.0875, 0.4, 0, 0.10,
-                  color='navajowhite', zorder=3, head_width=0.05)
-    ax.set_xlabel('Sensory evidence, B')
+    ax.arrow(-0.145, 0.6, -0.005, -0.13,
+              color=colormap[-1], zorder=3, head_width=0.05)
+    ax.arrow(0.145, 0.4, 0.005, 0.13,
+              color=colormap[-1], zorder=3, head_width=0.05)
+    ax.set_xlabel('Sensory evidence, B(t)')
     ax.set_ylabel('Approximate posterior q(x=1)')
+    ax.set_ylim(-0.05, 1.05)
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
+    ax.legend(title='Coupling, J', frameon=False)
+    fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'hysteresis_cartoon.png', dpi=400,
                 bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'hysteresis_cartoon.svg', dpi=400,
@@ -3597,37 +3734,73 @@ def plot_boltzmann_distro_pdf(j, noise, b=0, ax=None):
 
 
 def plot_hysteresis_different_taus(j=0.36,
-                                   b_list=np.linspace(-0.2, 0.2, 501),
+                                   b_list=np.linspace(-0.53, 0.53, 501),
                                    save_folder=DATA_FOLDER,
-                                   tau_list=[0.04, 0.4, 1]):
+                                   tau_list=[0.1,  1], sigma=0,
+                                   dt=0.1):
     b_list = np.concatenate((b_list[:-1], b_list[::-1]))
-    dt = 0.1
     fig, ax = plt.subplots(1, figsize=(5, 3.5))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
-    colormap = pl.cm.binary(np.linspace(0.2, 1, len(tau_list)))
+    # colormap = pl.cm.binary(np.linspace(0.2, 1, len(tau_list)))
+    # colormap = ['midnightblue', 'midnightblue']
+    lsts = ['solid', '--']
+    fig2, ax2 = plt.subplots(1, figsize=(4.5, 4))
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
     for i_t, tau in enumerate(tau_list):
         x = 0.1
         for i in range(5):
             x = gn.sigmoid(2*j*3*(2*x-1)+2*b_list[0])
         vec = [x]
         for i in range(len(b_list)-1):
-            x = x + dt*(gn.sigmoid(2*j*3*(2*x-1)+2*b_list[i])-x)/tau
+            x = x + dt*(gn.sigmoid(2*j*3*(2*x-1)+2*b_list[i])-x)/tau + sigma*np.random.randn()*np.sqrt(dt/tau)
             vec.append(x)
-        ax.plot(b_list, vec, linewidth=3, color=colormap[i_t], label=tau)
+        ax.plot(b_list, vec, linewidth=4, color='midnightblue', label=tau,
+                linestyle=lsts[i_t])
+    taulist_2 = [0.2, 1]
+    # hyst_dist_analytic = []
+    # n = 3
+    # delta = np.sqrt(1-1/(j*n))
+    # b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j*delta)/2
+    # b_crit2 = (np.log((1+delta)/(1-delta))-2*n*j*delta)/2
+    j_list = np.arange(0, 0.4, 1e-2)
+    for i_t, tau in enumerate(taulist_2):
+        hyst_dist_simul = []
+        for j in j_list:
+            x = 0.1
+            for i in range(5):
+                x = gn.sigmoid(2*j*3*(2*x-1)+2*b_list[0])
+            vec = [x]
+            for i in range(len(b_list)-1):
+                x = x + dt*(gn.sigmoid(2*j*3*(2*x-1)+2*b_list[i])-x)/tau + sigma*np.random.randn()*np.sqrt(dt/tau)
+                vec.append(x)
+            idx_asc = np.argmin(np.abs(np.array(vec)[:len(vec)//2]-0.5))
+            idx_desc = np.argmin(np.abs(np.array(vec)[len(vec)//2:]-0.5))
+            hystval = b_list[:len(vec)//2][idx_asc]-b_list[len(vec)//2:][idx_desc]
+            hyst_dist_simul.append(hystval)
+        ax2.plot(j_list, hyst_dist_simul, color='k', linewidth=3,
+                 linestyle=['--', 'solid'][i_t], label=['Slow', 'Fast'][i_t])
     ax.set_xlabel('Sensory evidence, B(t)')
     ax.legend(title=r'$\tau$', frameon=False)
+    ax.set_ylim(-0.05, 1.05)
     ax.set_ylabel('Approximate posterior q(x=1)')
+    ax2.set_xlabel('Coupling, J')
+    ax2.legend(title=r'$\tau$', frameon=False)
+    ax2.set_ylabel('Hysteresis width')
+    # ax2.set_yscale('log')
     fig.tight_layout()
     fig.savefig(save_folder + 'hysteresis_taus.png', dpi=200, bbox_inches='tight')
     fig.savefig(save_folder + 'hysteresis_taus.svg', dpi=200, bbox_inches='tight')
+    fig2.tight_layout()
+    fig2.savefig(save_folder + 'hysteresis_distance_taus.png', dpi=200, bbox_inches='tight')
+    fig2.savefig(save_folder + 'hysteresis_distance_taus.svg', dpi=200, bbox_inches='tight')
 
 
 def save_images_potential_hysteresis(j=0.39,
                                      b_list=np.linspace(-0.2, 0.2, 501),
-                                     theta=theta,
                                      save_folder=DATA_FOLDER, tau=0.8,
-                                     sigma=0.02):
+                                     sigma=0.):
     b_list = np.concatenate(([-0.2, -0.2], b_list[:-1], b_list[::-1]))
     x = 0.0931
     vec = [x]
@@ -3636,8 +3809,8 @@ def save_images_potential_hysteresis(j=0.39,
         x = x + dt*(gn.sigmoid(2*j*3*(2*x-1)+2*b_list[i])-x)/tau +\
             np.random.randn()*sigma*np.sqrt(dt/tau)
         vec.append(x)
-    plt.figure()
-    plt.plot(b_list, vec)
+    # plt.figure()
+    # plt.plot(b_list, vec)
     if tau >= 0.5:
         lab = '/fast/' if sigma == 0 else '/fast_noisy/'
     else:
@@ -3647,6 +3820,8 @@ def save_images_potential_hysteresis(j=0.39,
         fig, ax = plt.subplots(nrows=2, figsize=(6, 10))
         ax[0].plot(b_list[:i], vec[:i], color='navajowhite',
                    linewidth=4)
+        ax[0].plot(b_list[i], vec[i],
+                   marker='o', markersize=8, color='k')
         ax[0].set_ylabel('Approximate posterior, q(x=1)')
         ax[0].set_xlabel('Stimulus strength, B')
         ax[0].spines['right'].set_visible(False)
@@ -3672,8 +3847,8 @@ def save_images_potential_hysteresis(j=0.39,
         plt.close(fig)
 
     
-def create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/slow_noisy/'):
-    video_name = image_folder + 'hysteresis_slow_noisy.mp4'
+def create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast/'):
+    video_name = image_folder + 'hysteresis_fast.mp4'
     images = [img for img in os.listdir(image_folder) if img.endswith(".png")]
     images = [images[i].replace('.png', '') for i in range(len(images))]
     images.sort(key=float)
@@ -4687,6 +4862,7 @@ def bcrit(j_list=np.arange(0, 1, 1e-3), n=3.92):
 
 
 if __name__ == '__main__':
+    print('Mean-Field inference')
     # mf_dyn_sys_circle(n_iters=100, b=0.)
     # plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
     # plot_density_map_2d_mf(j=5, b=0, noise=0.1, tau=0.02, time_end=3000, dt=5e-3)
@@ -4711,13 +4887,13 @@ if __name__ == '__main__':
     # plot_3_examples_mf_evolution(avg=True)
     # examples_pot()
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0., 1.005, 0.001),
-    #                         num_iter=200,
-    #                         beta_list=np.arange(-1, 1, 0.001),
-    #                         neigh_list=np.arange(3, 12),
-    #                         dim3=False)
+    #                        num_iter=200, neigh_list=np.arange(3, 11),
+    #                        dim3=False)
     # plot_noise_before_switch(j=0.395, b=0, theta=theta, noise=0.15,
-    #                          tau=0.1, time_end=50000, dt=5e-3, p_thr=0.5,
-    #                          steps_back=2000, steps_front=500, gibbs=False)
+    #                          tau=0.1, time_end=120000, dt=5e-3, p_thr=0.5,
+    #                          steps_back=2000, steps_front=1000, gibbs=False)
+    mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.15,
+                       skip=25)
     # plt.title('J=0.395')
     # plot_peak_noise_vs_j(j_list=np.arange(0.34, 0.55, 5e-3),
     #                      b=0, theta=theta, noise=0.12,
@@ -4774,10 +4950,14 @@ if __name__ == '__main__':
     #                             num_iter=200, tol=1e-3, dim3d=False)
     # plot_adaptation_mf(j=0.6, b=0.5, theta=theta, noise=0.1, gamma_adapt=3,
     #                    tau=1, time_end=100, dt=1e-2)
-    save_images_potential_hysteresis(j=0.39,
-                                     b_list=np.linspace(-0.2, 0.2, 250),
-                                     theta=theta,
-                                     save_folder=DATA_FOLDER)
+    # save_images_potential_hysteresis(j=0.39,
+    #                                  b_list=np.linspace(-0.2, 0.2, 501),
+    #                                  save_folder=DATA_FOLDER, tau=0.8,
+    #                                  sigma=0.)
+    # save_images_potential_hysteresis(j=0.39,
+    #                                  b_list=np.linspace(-0.2, 0.2, 501),
+    #                                  save_folder=DATA_FOLDER, tau=0.1,
+    #                                  sigma=0.)
     # plot_adaptation_1d(j=0.5, b=0., noise=0.0, gamma_adapt=0.1,
     #                    tau=1, time_end=100, dt=1e-3)
     # for b in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]:
