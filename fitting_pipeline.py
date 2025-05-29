@@ -2572,11 +2572,13 @@ if __name__ == '__main__':
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=False)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
-    plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
+    # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
-    # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
-    #                         variable='aligned_confidence', bw=0.7, model='MF5')
+    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
+                            variable='aligned_confidence', bw=0.6, model='LBP5')
+    plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
+                            variable='aligned_confidence', bw=0.7, model='MF5')
     # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
     #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='LBP5', method=opt_algorithm,
