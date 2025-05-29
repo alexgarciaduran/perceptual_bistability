@@ -1146,7 +1146,7 @@ def plot_diagnostics_training(theta_np, summary_statistics):
     fig.tight_layout()
 
 
-def sbi_training(n_simuls=10000, fps=60, tFrame=20, data_folder=DATA_FOLDER,
+def sbi_training(n_simuls=10000, fps=60, tFrame=26, data_folder=DATA_FOLDER,
                 load_net=False, plot_posterior=True, coupling_offset=False,
                 stim_offset=False, plot_diagnostics=True,
                 summary_statistics_fitting=False):
@@ -1199,7 +1199,7 @@ def sbi_training(n_simuls=10000, fps=60, tFrame=20, data_folder=DATA_FOLDER,
         time_ini = time.time()
         density_estimator = inference.append_simulations(theta, sims_tensor).train()
         print('Training finished.\nIt took:' + str(round((time.time()-time_ini)/60)) + ' min.')
-        posterior = inference.build_posterior(density_estimator)
+        posterior = inference.build_posterior(density_estimator, prior=prior)
         with open(data_folder + f"/nle_{n_simuls}.p", "wb") as fh:
             pickle.dump(dict(estimator=density_estimator,
                              num_simulations=n_simuls), fh)
@@ -1238,7 +1238,7 @@ def sbi_training(n_simuls=10000, fps=60, tFrame=20, data_folder=DATA_FOLDER,
                                   labels=labels, points=theta_example,
                                   points_offdiag={"markersize": 6}, points_colors="r")
     if load_net:
-        with open(data_folder + f"/snpe_{n_simuls}.p", 'rb') as f:
+        with open(data_folder + f"/nle_{n_simuls}.p", 'rb') as f:
             density_estimator = pickle.load(f)
         with open(data_folder + f"/posterior_{n_simuls}.p", 'rb') as f:
             posterior = pickle.load(f)
@@ -1267,6 +1267,138 @@ def get_likelihood_data(params, data_folder=DATA_FOLDER, tFrame=20, fps=60, ntra
         theta = torch.reshape(torch.tensor(params),
                               (1, len(params))).to(torch.float32)
         llh = estimator.log_prob(theta.repeat(len(data_all), 1), torch.tensor(data_all))
+
+
+def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER,
+                         i_ini=0, model='MF'):
+    for i in range(i_ini, n_pars):
+        if model in ['LBP', 'FBP']:
+            j0 = np.random.uniform(0.1, 1.2)
+            b10 = np.random.uniform(0.15, 0.9)
+            bias0 = np.random.uniform(-0.4, 0.4)
+            noise0 = np.random.uniform(0.05, 0.35)
+            alpha0 = np.random.uniform(0.3, 1.4)
+            params = [j0, b10, bias0, noise0, alpha0]
+            np.save(sv_folder + 'param_recovery/pars_prt' + str(i) + '.npy',
+                    np.array(params))
+        else:
+            j0 = np.random.uniform(0.1, 1.2)
+            b10 = np.random.uniform(0.15, 0.9)
+            bias0 = np.random.uniform(-0.4, 0.4)
+            noise0 = np.random.uniform(0.05, 0.35)
+            if model == 'MF5':
+                jbias0 = np.random.uniform(0.2, 0.8)
+                params = [j0, jbias0, b10, bias0, noise0]
+            else:
+                params = [j0, bias0, b10, noise0]
+            np.save(sv_folder + 'param_recovery/pars_prt' + str(i) + model + '.npy',
+                    np.array(params))
+
+
+def fun_get_neg_log_likelihood(theta, x, result, density_estimator):
+    params_repeated = np.column_stack(np.repeat(theta.reshape(-1, 1), result.shape[0], 1))
+    condition = torch.tensor(np.column_stack((params_repeated, result))).to(torch.float32)
+    return -torch.nansum(density_estimator.log_prob(x, condition)).detach().numpy()
+
+
+def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
+                       n_pars_to_fit=50, n_sims_per_par=120,
+                       model='MF', sv_folder=SV_FOLDER, simulate=False,
+                       load_net=True):
+    density_estimator, _ = sbi_training(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame, data_folder=DATA_FOLDER,
+                                        load_net=load_net, plot_posterior=False, coupling_offset=False,
+                                        stim_offset=True, plot_diagnostics=False,
+                                        summary_statistics_fitting=False)    
+    lb = [0, -1, -0.2, 0.05]
+    ub = [4., 1, 1.5, 0.8]
+    plb = [0.1, -0.5, 0.1, 0.1]
+    pub = [1.4, 0.5, 0.9, 0.3]
+    x0 = [0.3, 0, 0.5, 0.15]
+    nFrame = fps*tFrame
+    orig_params = np.zeros((n_pars_to_fit, 4))
+    recovered_params = np.zeros((n_pars_to_fit, 4))
+    for par in range(n_pars_to_fit):
+        # simulate
+        theta = np.load(sv_folder + 'param_recovery/pars_prt' + str(par) + model + '.npy')
+        if simulate:
+            freq = np.random.choice([2, 4, -2, -4], n_sims_per_par)
+            training_input_set = np.zeros((theta.shape[0]+3), dtype=np.float32)
+            training_output_set = np.empty((2), dtype=np.float32)
+            for i in range(n_sims_per_par):
+                input_net, output_net = simulator(theta, coupling=1,
+                                                  freq=freq[i], nFrame=nFrame,
+                                                  fps=fps, n=3.92, coupling_offset=False,
+                                                  stim_offset=True, summary_stats=False)
+                training_input_set = np.row_stack((training_input_set, input_net))
+                training_output_set = np.row_stack((training_output_set, output_net))
+            condition = training_input_set[1:].astype(np.float32)
+            x = training_output_set[1:].astype(np.float32)
+            x = torch.tensor(x).unsqueeze(0).to(torch.float32)
+            condition = torch.tensor(condition).to(torch.float32)
+            fun_to_minimize = lambda parameters: fun_get_neg_log_likelihood(parameters, x, condition[:, -3:], density_estimator)
+            optimizer = BADS(fun_to_minimize, x0,  # theta+np.random.randn()*0.02
+                             lb, ub, plb, pub).optimize()
+            pars = optimizer.x
+            np.save(sv_folder + 'param_recovery/pars_prt_recovered' + str(par) + model + '.npy',
+                    np.array(pars))
+        else:
+            pars = np.load(sv_folder + 'param_recovery/pars_prt_recovered' + str(par) + model + '.npy')
+        orig_params[par] = theta
+        recovered_params[par] = pars
+    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(15, 9))
+    numpars = 4
+    ax = ax.flatten()
+    if model in ['LBP', 'FBP']:
+        labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha'][:numpars]
+        xylims = [[0, 3], [0, 0.5], [0, 0.5], [0, 0.3], [0, 2]]
+    if model == 'MF':
+        labels = ['Coupling, J', 'Bias, B0', 'Stimulus weight, B1', 'noise']
+        xylims = [[0, 2], [-0.5, 0.5], [0, 1.2], [0, 0.6]]
+    if model == 'MF5':
+        labels = ['Coupling, J1', 'Coupling bias, J0',  'Bias, B0', 'Stimulus weight, B1', 'noise']
+        xylims = [[0, 3], [0, 0.8], [0, 0.7], [0, 0.5], [0, 0.5]]
+    for i_a in range(numpars):
+        a = ax[i_a]
+        a.plot(orig_params[:, i_a], recovered_params[:, i_a], color='k', marker='o',
+               markersize=5, linestyle='')
+        a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
+        a.set_title(labels[i_a])
+        a.set_xlabel('Original parameters')
+        a.set_ylabel('Recovered parameters')
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    ax[-1].axis('off')
+    if model == 'LBP':
+        ax[-2].axis('off')
+    fig.tight_layout()
+    fig2, ax2 = plt.subplots(ncols=2)
+    ax2, ax = ax2
+    # define correlation matrix
+    corr_mat = np.empty((numpars, numpars))
+    corr_mat[:] = np.nan
+    for i in range(numpars):
+        for j in range(numpars):
+            # compute cross-correlation matrix
+            corr_mat[i, j] = np.corrcoef(orig_params[:, i], recovered_params[:, j])[1][0]
+    # plot cross-correlation matrix
+    im = ax.imshow(corr_mat.T, cmap='bwr', vmin=-1, vmax=1)
+    # tune panels
+    plt.colorbar(im, ax=ax, label='Correlation')
+    labels_reduced = ['J', 'B1', 'B0', r'$\sigma$', r'$\alpha$'][:numpars]
+    ax.set_xticks(np.arange(numpars), labels, rotation='270', fontsize=12)
+    ax.set_yticks(np.arange(numpars), labels_reduced, fontsize=12)
+    ax.set_xlabel('Original parameters', fontsize=14)
+    # compute correlation matrix
+    mat_corr = np.corrcoef(recovered_params.T, rowvar=True)
+    mat_corr *= np.tri(*mat_corr.shape, k=-1)
+    # plot correlation matrix
+    im = ax2.imshow(mat_corr, cmap='bwr', vmin=-1, vmax=1)
+    ax2.step(np.arange(0, numpars)-0.5, np.arange(0, numpars)-0.5, color='k',
+             linewidth=.7)
+    ax2.set_xticks(np.arange(numpars), labels, rotation='270', fontsize=12)
+    ax2.set_yticks(np.arange(numpars), labels, fontsize=12)
+    ax2.set_xlabel('Inferred parameters', fontsize=14)
+    ax2.set_ylabel('Inferred parameters', fontsize=14)
 
 
 def simulator(params, coupling, freq, nFrame=1200, fps=60, n=3.92, coupling_offset=False,
@@ -1387,12 +1519,16 @@ if __name__ == '__main__':
     # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
     #              fps=60, tFrame=18, model='MF', prob_flux=False,
     #              freq=4, idx=2)
-    hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
-                          fps=60, tFrame=18, data_folder=DATA_FOLDER,
-                          nbins=9, ntraining=8, arrows=True)
-    plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
-                             steps_back=120, steps_front=20,
-                             shuffle_vals=[1, 0.7, 0])
+    # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
+    #                       fps=60, tFrame=18, data_folder=DATA_FOLDER,
+    #                       nbins=9, ntraining=8, arrows=True)
+    # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
+    #                          steps_back=120, steps_front=20,
+    #                          shuffle_vals=[1, 0.7, 0])
+    parameter_recovery(n_simuls_network=2000000, fps=60, tFrame=26,
+                       n_pars_to_fit=200, n_sims_per_par=120,
+                       model='MF', sv_folder=SV_FOLDER, simulate=True,
+                       load_net=False)
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
     #                       fps=60, tFrame=20, freq=2, idx=5, n=3.92, theta=0.5,
     #                       tol=1e-3, pshuffle=0)
