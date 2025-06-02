@@ -64,10 +64,12 @@ plt.rcParams['xtick.labelsize']= 18
 plt.rcParams['ytick.labelsize']= 18
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/gibbs_sampling_necker/data_folder/'  # Alex
-
+    # C matrix:\
+    c_data = DATA_FOLDER + 'c_mat.npy'
+    C = np.load(c_data, allow_pickle=True)
 elif pc_name == 'alex_CRM':
     DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/'  # Alex CRM
 
@@ -2225,9 +2227,7 @@ def necker_spiking_n_indep_neurons(j=0.7, stim=0, n_iter=12501, burn_in=1,
 
 
 if __name__ == '__main__':
-    # C matrix:\
-    c_data = DATA_FOLDER + 'c_mat.npy'
-    C = np.load(c_data, allow_pickle=True)
+    print('Gibbs sampling')
     # necker_spiking_n_indep_neurons(j=0.7, stim=0, n_iter=12501, burn_in=1,
     #                                ron=0.0001, roff=0.00005, dt=1e-2, go=1.7,
     #                                nneurons=4, noise=0.2)
