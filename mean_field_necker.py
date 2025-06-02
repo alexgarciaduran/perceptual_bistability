@@ -36,18 +36,15 @@ plt.rcParams['ytick.labelsize']= 14
 
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/mean_field_necker/data_folder/'  # Alex
-
+    # C matrix:
+    c_data = DATA_FOLDER + 'c_mat.npy'
+    C = np.load(c_data, allow_pickle=True)
 elif pc_name == 'alex_CRM':
     DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/'  # Alex CRM
 
-
-
-# C matrix:
-c_data = DATA_FOLDER + 'c_mat.npy'
-C = np.load(c_data, allow_pickle=True)
 
 
 # theta matrix

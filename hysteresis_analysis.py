@@ -33,9 +33,13 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-
-DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
-SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
+pc_name = 'alex_CRM'
+if pc_name == 'alex':
+    DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
+    SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
+elif pc_name == 'alex_CRM':
+    DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/hysteresis/'  # Alex CRM
+    SV_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/hysteresis/'  # Alex CRM
 
 
 def load_data(data_folder, n_participants='all'):
@@ -1273,7 +1277,7 @@ def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER,
                          i_ini=0, model='MF'):
     for i in range(i_ini, n_pars):
         if model in ['LBP', 'FBP']:
-            j0 = np.random.uniform(0.1, 1.2)
+            j0 = np.random.uniform(0.1, 1.)
             b10 = np.random.uniform(0.15, 0.9)
             bias0 = np.random.uniform(-0.4, 0.4)
             noise0 = np.random.uniform(0.05, 0.35)
@@ -1282,7 +1286,7 @@ def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER,
             np.save(sv_folder + 'param_recovery/pars_prt' + str(i) + '.npy',
                     np.array(params))
         else:
-            j0 = np.random.uniform(0.1, 1.2)
+            j0 = np.random.uniform(0.1, 1.)
             b10 = np.random.uniform(0.15, 0.9)
             bias0 = np.random.uniform(-0.4, 0.4)
             noise0 = np.random.uniform(0.05, 0.35)
@@ -1310,10 +1314,10 @@ def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
                                         stim_offset=True, plot_diagnostics=False,
                                         summary_statistics_fitting=False)    
     lb = [0, -1, -0.2, 0.05]
-    ub = [4., 1, 1.5, 0.8]
+    ub = [2., 1, 1.5, 0.8]
     plb = [0.1, -0.5, 0.1, 0.1]
-    pub = [1.4, 0.5, 0.9, 0.3]
-    x0 = [0.3, 0, 0.5, 0.15]
+    pub = [1.1, 0.5, 0.9, 0.3]
+    x0 = [0.55, 0.01, 0.6, 0.15]
     nFrame = fps*tFrame
     orig_params = np.zeros((n_pars_to_fit, 4))
     recovered_params = np.zeros((n_pars_to_fit, 4))
@@ -1353,7 +1357,7 @@ def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
         xylims = [[0, 3], [0, 0.5], [0, 0.5], [0, 0.3], [0, 2]]
     if model == 'MF':
         labels = ['Coupling, J', 'Bias, B0', 'Stimulus weight, B1', 'noise']
-        xylims = [[0, 2], [-0.5, 0.5], [0, 1.2], [0, 0.6]]
+        xylims = [[-0.5, 1.5], [-0.85, 0.85], [-0.2, 1.2], [0, 0.6]]
     if model == 'MF5':
         labels = ['Coupling, J1', 'Coupling bias, J0',  'Bias, B0', 'Stimulus weight, B1', 'noise']
         xylims = [[0, 3], [0, 0.8], [0, 0.7], [0, 0.5], [0, 0.5]]
@@ -1385,7 +1389,7 @@ def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
     # tune panels
     plt.colorbar(im, ax=ax, label='Correlation')
     labels_reduced = ['J', 'B1', 'B0', r'$\sigma$', r'$\alpha$'][:numpars]
-    ax.set_xticks(np.arange(numpars), labels, rotation='270', fontsize=12)
+    ax.set_xticks(np.arange(numpars), labels, fontsize=12)  # , rotation='270'
     ax.set_yticks(np.arange(numpars), labels_reduced, fontsize=12)
     ax.set_xlabel('Original parameters', fontsize=14)
     # compute correlation matrix
@@ -1395,10 +1399,15 @@ def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
     im = ax2.imshow(mat_corr, cmap='bwr', vmin=-1, vmax=1)
     ax2.step(np.arange(0, numpars)-0.5, np.arange(0, numpars)-0.5, color='k',
              linewidth=.7)
-    ax2.set_xticks(np.arange(numpars), labels, rotation='270', fontsize=12)
+    ax2.set_xticks(np.arange(numpars), labels, fontsize=12)  # , rotation='270'
     ax2.set_yticks(np.arange(numpars), labels, fontsize=12)
     ax2.set_xlabel('Inferred parameters', fontsize=14)
     ax2.set_ylabel('Inferred parameters', fontsize=14)
+    fig2.tight_layout()
+    fig.savefig(SV_FOLDER + 'param_recovery_all.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'param_recovery_all.svg', dpi=400, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + 'param_recovery_correlations.png', dpi=400, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + 'param_recovery_correlations.svg', dpi=400, bbox_inches='tight')
 
 
 def simulator(params, coupling, freq, nFrame=1200, fps=60, n=3.92, coupling_offset=False,
@@ -1525,7 +1534,7 @@ if __name__ == '__main__':
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
-    parameter_recovery(n_simuls_network=2000000, fps=60, tFrame=26,
+    parameter_recovery(n_simuls_network=3000000, fps=60, tFrame=26,
                        n_pars_to_fit=200, n_sims_per_par=120,
                        model='MF', sv_folder=SV_FOLDER, simulate=True,
                        load_net=False)
