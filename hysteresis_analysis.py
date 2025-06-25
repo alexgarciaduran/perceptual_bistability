@@ -33,7 +33,7 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
     SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
@@ -64,7 +64,8 @@ def load_data(data_folder, n_participants='all'):
         return df_0
 
 
-def get_response_and_blist_array(df, fps=60, tFrame=20):
+def get_response_and_blist_array(df, fps=60, tFrame=20,
+                                 flip_responses=True):
     nFrame = fps*tFrame
     stimulus_times = np.arange(0, nFrame)
     trial_index = df.trial_index.unique()
@@ -83,8 +84,9 @@ def get_response_and_blist_array(df, fps=60, tFrame=20):
         switch_times = np.concatenate((times_onset, [nFrame]))
         responses = df_filt.response.values
         responses = [map_resps[r] for r in responses]
-        if df_filt.loc[df.trial_index == ti, 'initial_side'].unique()[0] > 0:
-            responses = responses[::-1]
+        if flip_responses:
+            if df_filt.loc[df.trial_index == ti, 'initial_side'].unique()[0] > 0:
+                responses = responses[::-1]
         response_array[idx_ti, :] = responses[0] if len(responses) > 1 else responses
         if len(times_onset) > 1:
             response_series = np.array(())
@@ -694,7 +696,8 @@ def fitting_transitions(data_folder=DATA_FOLDER, fps=60, tFrame=20):
     subjects = df.subject.unique()
     for i_s, subject in enumerate(subjects):
         df_sub = df.loc[df.subject == subject]
-        responses_2, responses_4, stim_values_2, stim_values_4, coupling_2, coupling_4 =\
+        responses_2, responses_4, stim_values_2, stim_values_4, coupling_2, coupling_4, \
+            signed_freq_2, signed_freq_4 =\
             prepare_data_for_fitting(df_sub, tFrame=tFrame, fps=fps)
         responses_2 = responses_clean(responses_2)
         responses_4 = responses_clean(responses_4)
@@ -900,13 +903,18 @@ def get_negative_log_likelihood_all_data(theta, data, tFrame=18, fps=60,  #, dx=
 def prepare_data_for_fitting(df, tFrame=18, fps=60):
     df_freq = df.loc[df.freq == 2]
     # get response_array and stimulus values
-    responses_2, stim_values_2 = get_response_and_blist_array(df_freq, fps=fps, tFrame=tFrame)
-    coupling_2 = np.round(1-df_freq.groupby('trial_index').pShuffle.mean().values, 2)
+    responses_2, stim_values_2 = get_response_and_blist_array(df_freq, fps=fps, tFrame=tFrame,
+                                                              flip_responses=False)
+    coupling_2 = np.round(1-df_freq.sort_values('trial_index').groupby('trial_index').pShuffle.mean().values, 2)
+    signed_freq_2 = df_freq.sort_values('trial_index').groupby('trial_index').initial_side.mean().values*2
     df_freq = df.loc[df.freq == 4]
     # get response_array and stimulus values
-    responses_4, stim_values_4 = get_response_and_blist_array(df_freq, fps=fps, tFrame=tFrame)
-    coupling_4 = np.round(1-df_freq.groupby('trial_index').pShuffle.mean().values, 2)
-    return [responses_2, responses_4, stim_values_2, stim_values_4, coupling_2, coupling_4]
+    responses_4, stim_values_4 = get_response_and_blist_array(df_freq, fps=fps, tFrame=tFrame,
+                                                              flip_responses=False)
+    coupling_4 = np.round(1-df_freq.sort_values('trial_index').groupby('trial_index').pShuffle.mean().values, 2)
+    signed_freq_4 = df_freq.sort_values('trial_index').groupby('trial_index').initial_side.mean().values*4
+    return [responses_2, responses_4, stim_values_2, stim_values_4, coupling_2, coupling_4,
+            signed_freq_2, signed_freq_4]
 
 
 def plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
@@ -1251,28 +1259,6 @@ def sbi_training(n_simuls=10000, fps=60, tFrame=26, data_folder=DATA_FOLDER,
     return density_estimator, posterior
 
 
-def get_likelihood_data(params, data_folder=DATA_FOLDER, tFrame=20, fps=60, ntraining=8,
-                        n_simuls=500000):
-    df = load_data(data_folder, n_participants='all')
-    subjects = df.subject.unique()
-    for i_s, subject in enumerate(subjects):
-        df_sub = df.loc[(df.subject == subject) & (df.trial_index > ntraining)]
-        responses_2, responses_4, stim_values_2, stim_values_4, coupling_2, coupling_4 =\
-            prepare_data_for_fitting(df_sub, tFrame=tFrame, fps=fps)
-        responses_2 = responses_clean(responses_2)
-        responses_4 = responses_clean(responses_4)
-        responses_all = np.concatenate((responses_2, responses_4))
-        coupling_all = np.concatenate((coupling_2, coupling_4))
-        freqs = np.concatenate((np.repeat(2, len(coupling_2)), np.repeat(4, len(coupling_4))))
-        data_all = np.column_stack((responses_all, freqs))
-        estimator, posterior = sbi_training(n_simuls=n_simuls, fps=fps, tFrame=tFrame,
-                                            data_folder=DATA_FOLDER, load_net=True, plot_posterior=False)
-        
-        theta = torch.reshape(torch.tensor(params),
-                              (1, len(params))).to(torch.float32)
-        llh = estimator.log_prob(theta.repeat(len(data_all), 1), torch.tensor(data_all))
-
-
 def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER,
                          i_ini=0, model='MF'):
     for i in range(i_ini, n_pars):
@@ -1299,10 +1285,87 @@ def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER,
                     np.array(params))
 
 
-def fun_get_neg_log_likelihood(theta, x, result, density_estimator):
+def fun_get_neg_log_likelihood(theta, x, result, density_estimator, coupling=1,
+                               epsilon=1e-3, ct_distro=1):
     params_repeated = np.column_stack(np.repeat(theta.reshape(-1, 1), result.shape[0], 1))
+    if len(theta) == 5:
+        params_repeated[:, 1] = params_repeated[:, 0] + params_repeated[:, 1]*coupling
+        params_repeated = params_repeated[:, 1:]
+    if len(theta) == 4:
+        params_repeated[:, 0] *= coupling
     condition = torch.tensor(np.column_stack((params_repeated, result))).to(torch.float32)
-    return -torch.nansum(density_estimator.log_prob(x, condition)).detach().numpy()
+    likelihood_nle = torch.exp(density_estimator.log_prob(x, condition))
+    full_likelihood_with_contaminant = likelihood_nle*(1-epsilon)+epsilon*ct_distro
+    log_likelihood_full = torch.log(full_likelihood_with_contaminant)
+    return -torch.nansum(log_likelihood_full).detach().numpy()
+
+
+def prepare_data_for_sbi(x0, df, tFrame=26):
+    map_resps = {1:1, 0:0, 2:-1}
+    times_onset = df.keypress_seconds_onset.values/tFrame
+    times_offset = df.keypress_seconds_offset.values/tFrame
+    responses = df.response.values
+    responses = [map_resps[r] for r in responses]
+    responses_output = np.roll(responses, 1)
+
+def fit_data(data_folder=DATA_FOLDER, n_simuls_network=2000000,
+             tFrame=26, fps=60, ntraining=10, model='MF',
+             sv_folder=SV_FOLDER, npars=4):
+    density_estimator, _ = sbi_training(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame, data_folder=DATA_FOLDER,
+                                        load_net=True, plot_posterior=False, coupling_offset=False,
+                                        stim_offset=True, plot_diagnostics=False,
+                                        summary_statistics_fitting=False)    
+    lb = [0.0, -0.1, -0.2, 0.05]
+    ub = [1., 0.1, 1.5, 0.35]
+    plb = [0.05, -0.05, 0.3, 0.1]
+    pub = [0.8, 0.05, 0.9, 0.25]
+    x0 = np.array([0.75, 0., 0.7, 0.2])
+    if npars == 5:
+        lb = [-0.3] + lb
+        ub = [0.5] + ub
+        plb = [0] + plb
+        pub = [0.2] + pub
+        x0 = np.concatenate(([0.05], x0))
+    nFrame = fps*tFrame
+    df = load_data(data_folder, n_participants='all')
+    subjects = df.subject.unique()
+    for i_s, subject in enumerate(subjects):
+        df_sub = df.loc[(df.subject == subject) & (df.trial_index > ntraining)]
+        # simulate
+        responses_2, responses_4, _, _, coupling_2, coupling_4,\
+            signed_freq_2, signed_freq_4 =\
+            prepare_data_for_fitting(df_sub, tFrame=tFrame, fps=fps)
+        responses_2 = responses_clean(responses_2)
+        responses_4 = responses_clean(responses_4)
+        responses_all = np.concatenate((responses_2, responses_4))
+        coupling_all = np.concatenate((coupling_2, coupling_4))
+        freqs = -np.concatenate((signed_freq_2, signed_freq_4))
+        # freqs negative bc the stim starts by definition at negative
+        # therefore initial side is the other way around
+        training_input_set = np.zeros((4+3), dtype=np.float32)
+        training_output_set = np.empty((2), dtype=np.float32)
+        coupling_per_trials = np.empty((1))
+        for i in range(len(freqs)):
+            input_net, output_net, coupling = return_input_output_for_network_data(x0, responses_all[i], freqs[i],
+                                                                                   nFrame=nFrame, fps=fps,
+                                                                                   coupling=coupling_all[i],
+                                                                                   coupling_return=True)
+            training_input_set = np.row_stack((training_input_set, input_net))
+            training_output_set = np.row_stack((training_output_set, output_net))
+            coupling_per_trials = np.concatenate((coupling_per_trials, np.array(coupling)))
+        coupling_per_trials = coupling_per_trials[1:]
+        condition = training_input_set[1:].astype(np.float32)
+        x = training_output_set[1:].astype(np.float32)
+        x = torch.tensor(x).unsqueeze(0).to(torch.float32)
+        condition = torch.tensor(condition).to(torch.float32)
+        fun_to_minimize = lambda parameters: fun_get_neg_log_likelihood(parameters, x, condition[:, -3:], density_estimator,
+                                                                        coupling=coupling_per_trials)
+        optimizer = BADS(fun_to_minimize, x0,
+                         lb, ub, plb, pub).optimize()
+        pars = optimizer.x
+        print(pars)
+        np.save(sv_folder + 'fitted_params/fitted_params_BADS_' + model + '.npy',
+                np.array(pars))
 
 
 def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
@@ -1460,7 +1523,7 @@ def simulator(params, coupling, freq, nFrame=1200, fps=60, n=3.92, coupling_offs
 
 
 def return_input_output_for_network(params, choice, freq, nFrame=1200, fps=60,
-                                    max_number=10):
+                                    max_number=10, coupling=1, coupling_return=False):
     dt = 1/fps
     tFrame = nFrame*dt
     # Find the indices where the value changes
@@ -1477,10 +1540,49 @@ def return_input_output_for_network(params, choice, freq, nFrame=1200, fps=60,
     
     # If you want it as a list of [response, time] pairs:
     output_network_0 = np.concatenate((change_indices, [nFrame]))/nFrame
-    output_network = np.column_stack((output_network_0, np.roll(responses, -1)))
+    output_network = np.column_stack((output_network_0, np.roll(responses, 1)))
     params_repeated = np.column_stack(np.repeat(params.reshape(-1, 1), result.shape[0], 1))
+    params_repeated[:, 0] *= coupling
     input_network = np.column_stack((params_repeated, result, np.repeat(freq, result.shape[0])))
-    return input_network[:-1], output_network[:-1]
+    if coupling_return:
+        coup_all = np.repeat(coupling, result.shape[0])
+        return input_network[1:], output_network[1:], coup_all[1:]
+    else:
+        return input_network[1:], output_network[1:]
+
+
+def return_input_output_for_network_data(params, choice, freq, nFrame=1200, fps=60,
+                                         max_number=10, coupling=1, coupling_return=False):
+    dt = 1/fps
+    tFrame = nFrame*dt
+    # Find the indices where the value changes
+    change_indices = np.where(choice[1:] != choice[:-1])[0] + 1
+    
+    # Start indices of epochs (always include 0)
+    start_indices = np.concatenate(([0], change_indices))
+    
+    # Corresponding response values at those start indices
+    responses = choice[start_indices]
+    mask = np.where((responses != 0) + (start_indices == 0))[0]
+    # for data, we discard responses=0 (no press) when time > 0
+
+    # Combine into array of [response, start_index]
+    result = np.column_stack((responses[mask], start_indices[mask]/nFrame))
+    # If you want it as a list of [response, time] pairs:
+    output_network_0 = np.concatenate((change_indices[mask[:-1]], [nFrame]))/nFrame
+    output_network = np.column_stack((output_network_0, np.roll(responses[mask], 1)))
+    params_repeated = np.column_stack(np.repeat(params.reshape(-1, 1), result.shape[0], 1))
+    if len(params) == 5:
+        params_repeated[:, 1] = params_repeated[:, 0] + params_repeated[:, 1]*coupling
+        params_repeated = params_repeated[:, 1:]
+    if len(params) == 4:
+        params_repeated[:, 0] *= coupling
+    input_network = np.column_stack((params_repeated, result, np.repeat(freq, result.shape[0])))
+    if coupling_return:
+        coup_all = np.repeat(coupling, result.shape[0])
+        return input_network[1:], output_network[1:], coup_all[1:]
+    else:
+        return input_network[1:], output_network[1:]
 
 
 def normalized_percept_entropy(resp_t):
@@ -1534,10 +1636,13 @@ if __name__ == '__main__':
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
-    parameter_recovery(n_simuls_network=3000000, fps=60, tFrame=26,
-                       n_pars_to_fit=200, n_sims_per_par=120,
-                       model='MF', sv_folder=SV_FOLDER, simulate=True,
-                       load_net=False)
+    # parameter_recovery(n_simuls_network=2000000, fps=60, tFrame=26,
+    #                     n_pars_to_fit=200, n_sims_per_par=120,
+    #                     model='MF', sv_folder=SV_FOLDER, simulate=True,
+    #                     load_net=True)
+    fit_data(data_folder=DATA_FOLDER, n_simuls_network=2000000,
+             tFrame=18, fps=60, ntraining=10, model='MF',
+             sv_folder=SV_FOLDER, npars=5)
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
     #                       fps=60, tFrame=20, freq=2, idx=5, n=3.92, theta=0.5,
     #                       tol=1e-3, pshuffle=0)
