@@ -77,8 +77,8 @@ theta = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [0, 0, 1, 0, 1, 0, 0, 1], [0, 0, 0, 1, 0, 1, 1, 0]])
 
 x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(J, B)
-x0 = np.concatenate((np.ones(d) * x_stable_1, np.zeros(d)))  # Initial state
-xf = np.concatenate((np.ones(d) * x_stable_2, np.zeros(d))) # Final state
+x0 = np.concatenate((np.ones(d) * x_stable_1 + np.random.randn(d)*0.02, np.zeros(d))) # Initial state
+xf = np.concatenate((np.ones(d) * x_stable_2 + np.random.randn(d)*0.02, np.zeros(d))) # Final state
 t_end = 10.0            # End time
 N = 1000             # Number of time points for discretization
 
