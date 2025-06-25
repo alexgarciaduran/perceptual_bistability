@@ -20,8 +20,10 @@ from matplotlib.transforms import Affine2D
 from matplotlib.markers import MarkerStyle
 import sympy
 from matplotlib.lines import Line2D
-from sklearn.metrics import roc_curve, auc
+from sklearn.metrics import roc_curve, auc, roc_auc_score
 from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
 import seaborn as sns
 import pandas as pd
 import cv2
@@ -36,7 +38,7 @@ plt.rcParams['ytick.labelsize']= 14
 
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/mean_field_necker/data_folder/'  # Alex
     # C matrix:
@@ -1532,10 +1534,10 @@ def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2,
     x_vec = np.empty((len(time), theta.shape[0]))
     x_vec[:] = np.nan
     x_vec[0, :] = x
+    noise_vec = np.random.randn(time.shape[0], theta.shape[0])*noise*np.sqrt(dt/tau)
     for t in range(1, time.shape[0]):
-        x = x + (dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1)) + 2*b) - x)/ tau +\
-            np.random.randn(theta.shape[0])*noise*np.sqrt(dt/tau)) 
-        # x = np.clip(x, 0, 1)
+        x = x + dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1)) + 2*b) - x)/ tau +\
+            noise_vec[t] + np.random.randn()*0.015        # x = np.clip(x, 0, 1)
         x_vec[t, :] = x  # np.clip(x, 0, 1)
     return time, x_vec
 
@@ -1997,8 +1999,7 @@ def potential_stim_str(stims=[0, 0.4, 0.8, 1], j_list=[0.15, 0.5]):
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'potentials_stim_str_prediction.png', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'potentials_stim_str_prediction.svg', dpi=400, bbox_inches='tight')
-            
-    
+
 
 def mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.2,
                        skip=25):
@@ -4858,6 +4859,598 @@ def bcrit(j_list=np.arange(0, 1, 1e-3), n=3.92):
     plt.ylabel('B*')
 
 
+def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 0.15, 0.2],
+                         nsimuls=10000, load_sims=True, inset=True, cylinder=False):
+    if cylinder:
+        theta = gn.return_theta()
+        lab_cylin = 'cylinder'
+        j_list = np.arange(0, 0.5, 0.05)
+        jcrit = 1/3.92
+    else:
+        lab_cylin = ''
+        jcrit = 1/3
+    if not load_sims:
+        cp_matrix = np.zeros((len(j_list), len(noise_list)))
+        for i_n, noise in enumerate(noise_list):
+            for i_j, j in enumerate(j_list):
+                print(str(round(i_j / len(j_list)*100, 2))+' %')
+                mean_CP = choice_probability_mean_field(j=j, b=0, theta=theta,
+                                                        noise=noise, tau=0.1,
+                                                        time_end=1.5,
+                                                        nsimuls=nsimuls, ou_noise=False)
+                cp_matrix[i_j, i_n] = mean_CP
+        np.save(DATA_FOLDER + f'mean_CP_vs_coupling_sigma{lab_cylin}.npy', cp_matrix)
+    else:
+        cp_matrix = np.load(DATA_FOLDER + f'mean_CP_vs_coupling_sigma{lab_cylin}.npy')
+    fig, ax = plt.subplots(figsize=(6, 4.2))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    # colors = ['k', 'firebrick', 'forestgreen']
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(noise_list)))[::-1]
+    if not inset:
+        ax.axhline(0.67, color='k', linestyle='--', alpha=1, zorder=1)
+        ax.axhline(0.56, color='k', linestyle='--', alpha=0.4, zorder=1)
+        if not cylinder:
+            ax.text(0.42, 0.69, 'SFM (Dodd 2001)', fontsize=12)
+            ax.text(0.42, 0.57, 'RDM (Britten 1996)', fontsize=12, alpha=0.4)
+            ax.text(0.4, 0.75, 'Experiments (MT/V5)', fontsize=13)
+        if cylinder:
+            ax.text(0.32, 0.69, 'SFM (Dodd 2001)', fontsize=12)
+            ax.text(0.32, 0.57, 'RDM (Britten 1996)', fontsize=12, alpha=0.4)
+            ax.text(0.29, 0.75, 'Experiments (MT/V5)', fontsize=13)
+    if len(noise_list) == 1:
+        colormap = ['k']
+    for i_n, noise in enumerate(noise_list):
+        if len(noise_list) == 1:
+            ax.plot(j_list, cp_matrix[:, i_n], color='gray', alpha=0.7,
+                    linewidth=4, zorder=2)
+        else:
+            ax.plot(j_list, cp_matrix[:, i_n], color=colormap[i_n], alpha=0.7,
+                    linewidth=4, zorder=2)
+        ax.scatter(j_list[j_list <= jcrit], cp_matrix[j_list <= jcrit, i_n], color=colormap[i_n],
+                marker='o', label=noise, s=80,
+                facecolor='white', zorder=10)
+        ax.scatter(j_list[j_list > jcrit], cp_matrix[j_list > jcrit, i_n], color=colormap[i_n],
+                   marker='o', label=noise, s=80, zorder=10)
+    legendelements = [Line2D([0], [0], color='k', lw=2, label='Monostable', marker='s', linestyle='',
+                             mfc='white', markersize=9),
+                      Line2D([0], [0], color='k', lw=2, label='Bistable', linestyle='', marker='s', markersize=9)]
+    ax.legend(handles=legendelements, frameon=False, ncol=1, fontsize=12)
+    if cylinder:
+        ax.axvline(jcrit, linestyle=':', color='gray')
+    else:
+        ax.axvline(jcrit, linestyle=':', color='gray')
+    # ax.text(0.25, 0.55, 'Monostable', rotation='vertical', color='gray')
+    # ax.text(0.36, 0.55, 'Bistable', rotation='vertical', color='gray')
+    if len(noise_list) > 1:
+        ax.legend(title=r'$\sigma$', frameon=False)
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('Choice probability (CP)')
+    ax.axhline(0.5, color='gray', linestyle=':')
+    fig.tight_layout()
+    if inset:
+        pos = ax.get_position()
+        ax2 = fig.add_axes([pos.x0+pos.width/1.3, pos.y0+pos.height/3, pos.width/3, pos.height/3])
+        ax2.spines['right'].set_visible(False)
+        ax2.spines['top'].set_visible(False)
+        ax2.plot(1, 0.67, '^', color='k', markersize=12)
+        ax2.plot(0, 0.56, '^', color='k', mfc='none', markersize=12)
+        ax2.set_ylim(0.49, 0.73)
+        ax2.set_xlim(-0.8, 1.8)
+        ax2.set_title('Experiments (V5/MT)', fontsize=12)
+        # ax.plot(0.9, 0.67, '^', color='k', markersize=10)
+        # ax.plot(0.8, 0.56, '^', color='k', mfc='none', markersize=10)
+        # ax.text(0.6, 0.38, 'Data - Bistable', fontsize=12)
+        # ax.text(0.6, 0.19, 'Data - Monostable', fontsize=12)
+        ax2.text(-0.6, 0.6, 'Britten 1996', fontsize=10)
+        ax2.text(0.4, 0.71, 'Dodd 2001', fontsize=10)
+        ax2.set_xticks([0, 1], ['RDM', 'SFM'], fontsize=12, rotation=45)
+        ax2.set_ylabel('CP')
+    # ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 0.9], [0, 0.2, 0.4, 0.6, '', ''])
+    # ax.text(0.47, 0.655, 'Data - Bistable', fontsize=12)
+    # ax.text(0.47, 0.545, 'Data - Monostable', fontsize=12)
+    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise.svg', dpi=400, bbox_inches='tight')
+
+
+def cp_vs_coupling_random_neurons(j_list=np.arange(0, 0.6, 0.05), rand_neur_list=[False, 2, 4, 8],
+                                  nsimuls=1000, noise=0.15, load_sims=False):
+    if not load_sims:
+        cp_matrix = np.zeros((len(j_list), len(rand_neur_list)))
+        for i_n, rand_neurons in enumerate(rand_neur_list):
+            for i_j, j in enumerate(j_list):
+                mean_CP = choice_probability_mean_field(j=j, b=0, theta=theta,
+                                                        noise=noise, tau=0.1,
+                                                        time_end=2,
+                                                        nsimuls=nsimuls, ou_noise=False,
+                                                        add_random_neurons=rand_neurons)
+                cp_matrix[i_j, i_n] = mean_CP
+        np.save(DATA_FOLDER + 'mean_CP_vs_coupling_random_neurons.npy', cp_matrix)
+    else:
+        cp_matrix = np.load(DATA_FOLDER + 'mean_CP_vs_coupling_random_neurons.npy')
+    fig, ax = plt.subplots()
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    # colors = ['k', 'firebrick', 'forestgreen']
+    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(rand_neur_list)))[::-1]
+    if len(rand_neur_list) == 1:
+        colormap = ['k']
+    for i_n, noise in enumerate(rand_neur_list):
+        ax.plot(j_list, cp_matrix[:, i_n], color=colormap[i_n],
+                linewidth=3, marker='o', label=noise)
+    ax.axvline(1/3, linestyle='--', color='gray')
+    if len(rand_neur_list) > 1:
+        ax.legend(title='# of random neurons', frameon=False)
+    ax.set_xlabel('Coupling, J')
+    # ax.set_ylabel('CPs')
+    ax.axhline(0.5, color='gray', linestyle='--')
+    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_number_of_random_neurons.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_number_of_random_neurons.svg', dpi=400, bbox_inches='tight')
+
+
+def compute_time_resolved_cp(X, y, time_axis=2, cv_splits=10):
+    """
+    Compute CP across time from neural activity: shape (trials, neurons, time)
+
+    Returns:
+    - cp_time: (n_timepoints,) CP at each time point
+    """
+    n_trials, n_neurons, n_timepoints = X.shape
+    cp_time = np.zeros(n_timepoints)
+
+    for t in range(n_timepoints):
+        X_t = X[:, :, t]  # (n_trials, n_neurons) at time t
+        cp_t, _ = compute_choice_probability(X_t, y, cv_splits=cv_splits)
+        cp_time[t] = cp_t
+
+    return cp_time
+
+
+def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
+                                           j_list=np.arange(0, 1.01, 0.02),
+                                           nsims=50, load_data=True, sigma=0.1, long=True,
+                                           cylinder=False, theta=theta, inset=True):
+    if cylinder:
+        theta = get_regular_graph(d=4, n=100)
+        lab_cylin = 'cylinder'
+        b_list=np.arange(0, 0.2, 0.1)
+        # j_list=np.arange(0, 0.62, 0.02)
+        # j_list=np.arange(0, 0.55, 0.02)
+        j_list=np.arange(0, 0.42, 0.02)
+    else:
+        lab_cylin = ''
+    if long:
+        print('Long stim.')
+        if cylinder:
+            time_end = 20
+        else:
+            time_end = 20
+        tau = 0.1
+        label = ''
+    else:
+        print('Short stim.')
+        time_end = 2
+        tau = 0.05
+        label = 'short'
+    if load_data:
+        rsc_matrix = np.load(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}_v2.npy')
+    else:
+        rsc_matrix = np.zeros((len(j_list), len(b_list), nsims))
+        for i_j, j in enumerate(j_list):
+            print(str(round(i_j / len(j_list)*100, 2))+' %')
+            for i_b, b in enumerate(b_list):
+                for n in range(nsims):
+                    rsc = local_correlation_across_time(j=j, b=b, theta=theta,
+                                                        noise=sigma, tau=tau,
+                                                        time_end=time_end, ou_noise=False,
+                                                        cylinder=cylinder)
+                    rsc_matrix[i_j, i_b, n] = rsc
+        np.save(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}_v2.npy', rsc_matrix)
+    # fig, ax = plt.subplots(1)
+    # im = ax.imshow(np.flipud(np.nanmean(rsc_matrix, axis=-1)), cmap='Reds', interpolation='gaussian',
+    #                extent=[0, np.max(b_list), 0, np.max(j_list)], vmax=1)
+    # plt.colorbar(im, ax=ax, label='<rSC>')
+    # n = 3
+    # delta = np.sqrt(1-1/(j_list*n))
+    # b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_list*delta)/2
+    # ax.plot(b_crit1, j_list, linewidth=3, color='k')
+    # ax.set_ylabel('Coupling, J')
+    # ax.set_xlim(0,  b_list[-1])
+    # ax.set_xlabel('Sensory evidence, B')
+    
+    B_targets = [0.0, 0.1]
+    B_indices = [np.argmin(np.abs(b_list - B)) for B in B_targets]
+    
+    # Plot correlation vs J for the selected B values
+    fig, ax = plt.subplots(figsize=(5.5, 4.2))
+    colormap = pl.cm.Greens(np.linspace(0.3, 1, 2))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    if not cylinder:
+        ax.axvline(1/3, color=colormap[0], alpha=0.9, linestyle='--', linewidth=3)
+    if cylinder:
+        ax.axvline(1/3.92, color=colormap[0], alpha=0.9, linestyle='--', linewidth=3)
+    p = 0
+    if not inset:
+        ax.axhline(0.42, color=colormap[0], linestyle='--', alpha=1)
+        ax.axhline(0.28, color=colormap[1], linestyle='--', alpha=0.9)
+        ax.axhline(0.23, color='k', linestyle='--', alpha=0.7)
+        ax.text(0.02, 0.44, 'SFM (B=0)', fontsize=12, color=colormap[0])
+        ax.text(0.02, 0.30, 'SFM (B>0)', fontsize=12, color=colormap[1])
+        ax.text(0.02, 0.16, 'RDM', fontsize=12)
+        ax.text(0.02, 0.52, 'Experiments (MT/V5)\nWashmut et al. 2019', fontsize=12)
+    for B_val, idxB in zip(B_targets, B_indices):
+        plt.plot(j_list[j_list < 0.6], np.nanmean(rsc_matrix, axis=-1)[:, idxB][j_list < 0.6], label=f'{B_val}',
+                 color=colormap[p], linewidth=4)
+        p += 1
+    plt.xlabel('Coupling, J')
+    plt.legend(frameon=False, title='B', loc='lower right')
+    # ax.text(0.25, 0.02, 'Monostable', rotation='vertical', color='gray')
+    # ax.text(0.36, 0.02, 'Bistable', rotation='vertical', color='gray')
+    plt.ylabel('Interneuronal correlation (IC)')
+    if not long:
+        plt.ylim(-0.05, 0.7)
+    if long:
+        plt.ylim(-0.05, 0.6)
+    fig.tight_layout()
+    if inset:
+        pos = ax.get_position()
+        ax2 = fig.add_axes([pos.x0+pos.width/1.4, pos.y0+pos.height/1.6, pos.width/3, pos.height/3])
+        ax2.spines['right'].set_visible(False)
+        ax2.spines['top'].set_visible(False)
+        ax2.set_ylim(0.15, 0.45)
+        ax2.set_xlim(-0.3, 2.3)
+        ax2.set_title('Experiments (V5/MT)\n Washmut 2019', fontsize=13)
+        ax2.plot(2, 0.42, '^', color=colormap[0], markersize=10)
+        ax2.plot(1, 0.28, '^', color=colormap[1], markersize=10)
+        ax2.plot(0, 0.23, '^', color='k', mfc='none', markersize=10)
+        ax2.set_xticks([0, 1, 2], ['RDM', 'SFM (B>0)', 'SFM (B=0)'], rotation=45, fontsize=12)
+        ax2.set_ylabel('IC')
+    # ax.text(0.6, 0.38, 'Data - Bistable', fontsize=12)
+    # ax.text(0.6, 0.19, 'Data - Monostable', fontsize=12)
+    # ax2.set_xticks([0, 1], ['Monostable', 'Bistable'], fontsize=12, rotation=45)
+    fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.svg', dpi=400, bbox_inches='tight')
+
+
+def analytical_correlation_rsc(sigma=0.15, theta=theta):
+    from scipy.linalg import solve_continuous_lyapunov
+    def find_fixed_point(J, B, theta, max_iter=500, tol=1e-9):
+        n = theta.shape[0]
+        x = np.full(n, 0.9)
+        for _ in range(max_iter):
+            z = 2*J * theta @ (2*x - 1) + 2*B
+            x_new = gn.sigmoid(z)
+            if np.linalg.norm(x_new - x) < tol:
+                return x_new
+            x = x_new
+        raise RuntimeError("Fixed point did not converge")
+
+
+    def compute_correlation(J, B, theta, sigma=0.1, i=0):
+        n = theta.shape[0]
+        x_bar = find_fixed_point(J, B, theta)
+        D = np.diag(x_bar * (1 - x_bar))
+        A = 4 * J * D @ theta - np.eye(n)
+        Q = sigma**2 * np.eye(n)
+        C = solve_continuous_lyapunov(A, -Q)
+        # C = -scipy.linalg.inv(A)*sigma**2/ 2
+        var_i = C[i, i]
+        cov_i_sum_others = (np.sum(C[i, :]) - C[i, i])
+        var_sum_others = (np.sum(C) - np.sum(C[i, :]) - np.sum(C[:, i]) + C[i, i])
+        corr = cov_i_sum_others / np.sqrt(var_i * var_sum_others)
+        return corr
+
+    # Parameters
+    i = 0
+    
+    J_values = np.arange(0, 1, 0.01)
+    B_values = np.arange(0, 1, 0.01)
+    
+    corr_grid = np.zeros((len(J_values), len(B_values)))
+    for idxJ, J in enumerate(J_values):
+        for idxB, B in enumerate(B_values):
+            try:
+                corr_grid[idxJ, idxB] = compute_correlation(J, B, theta, sigma=sigma, i=i)
+            except RuntimeError:
+                corr_grid[idxJ, idxB] = np.nan
+
+    # Plot heatmap of correlation vs J and B
+    fig, ax = plt.subplots(figsize=(8,6))
+    im = plt.imshow(corr_grid, origin='lower', aspect='auto', 
+                    extent=[B_values[0], B_values[-1], J_values[0], J_values[-1]],
+                    cmap='Reds')
+    plt.colorbar(im, label='Correlation ρ')
+    plt.xlabel('Bias B')
+    plt.ylabel('Coupling J')
+    n = 3
+    j_list = J_values
+    delta = np.sqrt(1-1/(j_list*n))
+    b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_list*delta)/2
+    plt.plot(b_crit1, j_list, linewidth=3, color='k')
+    plt.tight_layout()
+    plt.xlim(0,  B_values[-1])
+    plt.show()
+
+    # Indices for B = 0, 0.1, 0.2
+    B_targets = [0.0, 0.1, 0.2]
+    B_indices = [np.argmin(np.abs(B_values - B)) for B in B_targets]
+
+    # Plot correlation vs J for the selected B values
+    fig, ax = plt.subplots(figsize=(5, 4))
+    colormap = pl.cm.Greens(np.linspace(0.3, 1, 3))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.axvline(1/3, color=colormap[0], alpha=0.9, linestyle='--', linewidth=3)
+    p = 0
+    for B_val, idxB in zip(B_targets, B_indices):
+        plt.plot(J_values, corr_grid[:, idxB], label=f'B = {B_val}',
+                 color=colormap[p], linewidth=4)
+        p += 1
+    plt.xlabel('Coupling J')
+    plt.ylabel('Correlation ρ')
+    # ax.text(0.25, 0.05, 'Monostable', rotation='vertical', color='gray', alpha=0.9)
+    # ax.text(0.36, 0.05, 'Bistable', rotation='vertical', color='gray', alpha=0.9)
+    plt.ylim(0, 1)
+    plt.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_analytical.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_analytical.svg', dpi=400, bbox_inches='tight')
+
+
+def plot_rsc_vs_b_list_and_coupling(b_list=[0, 0.025, 0.05, 0.075],
+                                    j_list=[0.1, 0.4],
+                                    nsims=500):
+    rsc_matrix = np.zeros((len(j_list), len(b_list), nsims))
+    for i_j, j in enumerate(j_list):
+        for i_b, b in enumerate(b_list):
+            for n in range(nsims):
+                rsc = local_correlation_across_time(j=j, b=b, theta=theta,
+                                                    noise=0.1, tau=0.1,
+                                                    time_end=20, ou_noise=False)
+                rsc_matrix[i_j, i_b, n] = rsc
+    fig, ax = plt.subplots(ncols=len(j_list), figsize=(4*len(j_list), 4))
+    ax_iter = ax if len(j_list) > 1 else [ax]
+    for i_ax, a in enumerate(ax_iter):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        if len(b_list) > 10:
+            mean_rsc_mat =  np.nanmean(rsc_matrix[i_ax], axis=1)
+            err_rsc_mat =  np.nanstd(rsc_matrix[i_ax], axis=1)
+            a.plot(b_list, mean_rsc_mat, color='k', linewidth=4)
+            a.fill_between(b_list, mean_rsc_mat-err_rsc_mat, mean_rsc_mat+err_rsc_mat,
+                           color='k', alpha=0.1)
+        else:
+            sns.violinplot(rsc_matrix[i_ax].T, ax=a, palette='coolwarm')
+            a.set_xticks(np.arange(len(b_list)), b_list)
+        a.set_ylim(0., 1.1)
+        a.set_xlabel('Disparity (B)')
+        a.set_title(f'J = {j_list[i_ax]}')
+    if len(j_list) > 1:
+        ax[0].set_ylabel('rSC')
+    else:
+        ax.set_ylabel('rSC')
+    fig.tight_layout()
+    if len(b_list) > 10:
+        fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity.svg', dpi=400, bbox_inches='tight')
+    else:
+        fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity_mono_bistable_stim.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity_mono_bistable_stim.svg', dpi=400, bbox_inches='tight')
+
+
+def local_correlation_across_time(j=0.5, b=0, theta=theta,
+                                  noise=0.15, tau=0.1, time_end=20,
+                                  ou_noise=True, cylinder=False):
+    if ou_noise:
+        time, x_vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                        time_end=time_end, dt=1e-2)
+    else:
+        time, x_vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
+                                            time_end=time_end, dt=1e-2)
+    correlation_array = np.zeros(theta.shape[0])
+    for i in range(theta.shape[0]):
+        su_activity = x_vec[:, i]
+        if not cylinder:  # MU: all neurons except SU
+            mu_activity = x_vec[:, np.arange(theta.shape[0]) != i].sum(axis=1)  # [:, np.arange(theta.shape[0]) != i]
+        if cylinder:  # MU: all neighbors of SU
+            mu_activity = np.matmul(x_vec, theta).T
+            # mu_activity = 
+        correlation_array[i] = np.corrcoef(su_activity, mu_activity)[0][1]
+    # counts, vals = np.histogram(correlation_array, 20)
+    # overall_corr = vals[np.argmax(counts)]
+    return np.median(correlation_array)
+
+
+def get_analytical_correlation(theta=theta):
+    # from scipy.linalg import eigh
+    # Parameters
+    j = 0.4
+    sigma = 0.15
+    b = 0.
+    N = 8
+    q = lambda q: gn.sigmoid(2*N*j*(2*q-1)+ b*2) - q
+    x_bar = np.clip(fsolve(q, 0.9), 0, 1)
+    x_bar = np.eye(N)*x_bar
+
+    # Linearization
+    a = 4 * j * x_bar * (1 - x_bar)
+    A = np.matmul(a, theta) - np.eye(N)
+    Ainv = np.linalg.inv(A)
+    # Solve Lyapunov equation: AC + CAᵀ = σ² I
+    # Since A is symmetric, use C = (σ²/2) * A⁻¹
+    C = Ainv*(sigma**2 / 2)
+
+    v = np.diag(C)[0]
+    c = (np.sum(C) - np.trace(C)) / (N * (N - 1))  # average off-diagonal
+    
+    # Correlation
+    rho = 7 * c / np.sqrt(v * (7 * v + 42 * c))
+    print("Correlation ρ:", rho)
+
+
+def choice_probability_mean_field(j=0.5, b=0, theta=theta,
+                                  noise=0.05, tau=0.1, time_end=20,
+                                  nsimuls=1000, ou_noise=True,
+                                  add_random_neurons=False):
+    X = np.zeros((nsimuls, theta.shape[0]+add_random_neurons))
+    y = np.zeros(nsimuls)
+    for n in range(nsimuls):
+        if ou_noise:
+            time, x_vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
+                                                            time_end=time_end, dt=1e-2)
+        else:
+            time, x_vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
+                                                time_end=time_end, dt=1e-2)
+        choice = (np.sign(np.nanmean(x_vec, axis=1)-0.5)+1)[-1]/2
+        if add_random_neurons:
+            x_vec = np.column_stack((x_vec, 0.5+np.random.randn(x_vec.shape[0], add_random_neurons)*noise))
+        X[n] = np.mean(x_vec, axis=0)
+        y[n] = choice
+
+    mean_CP, _ = compute_choice_probability(X, y, cv_splits=10, random_state=0)
+    return mean_CP
+
+
+def compute_choice_probability(X, y, cv_splits=5, random_state=0):
+    """
+    Compute choice probability (CP) from neural activity.
+
+    Parameters:
+    - X: (n_trials, n_neurons) numpy array of neural activity
+    - y: (n_trials,) numpy array of binary choices (0 or 1)
+    - cv_splits: Number of cross-validation folds
+    - random_state: Random seed for reproducibility
+
+    Returns:
+    - mean_cp: Choice probability (area under ROC curve)
+    - all_cps: CP from each fold
+    """
+    skf = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=random_state)
+    cps = []
+
+    for train_idx, test_idx in skf.split(X, y):
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        clf = LogisticRegression(solver='liblinear')  # Use linear decoder
+        clf.fit(X_train, y_train)
+
+        s_test = clf.decision_function(X_test)  # Linear projection
+        cp = roc_auc_score(y_test, s_test)
+        cps.append(cp)
+
+    return np.mean(cps), cps
+
+
+def coordinate_ascent_cartoon():
+    # Define the objective function
+    def f(x, y):
+        return (x - 2)**2 + 1.1*(y - 2)**2 + x*2
+    
+    def grad_f(x, y):
+        df_dx = 2 * (x - 2) + 2
+        df_dy = 2 * (y - 2) * 1.1
+        return df_dx, df_dy
+
+    # Coordinate descent parameters
+    x0, y0 = 1, 1.6
+    step_size = 0.3
+    n_steps = 7
+    
+    # Store path
+    path = [(x0, y0)]
+    x, y = x0, y0
+    
+    for i in range(n_steps):
+        df_dx, df_dy = grad_f(x, y)
+    
+        if i % 2 == 0:
+            # Step in x-direction
+            x -= step_size * df_dx
+        else:
+            # Step in y-direction
+            y -= step_size * df_dy
+    
+        path.append((x, y))
+    
+    # Extract path
+    xs, ys = zip(*path)
+    
+    # Grid for contour plot
+    xgrid = np.linspace(0.8, 2.2, 400)
+    ygrid = np.linspace(1.4, 2.6, 400)
+    X, Y = np.meshgrid(xgrid, ygrid)
+    Z = f(X, Y)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(4, 3.5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    contours = plt.contour(X, Y, Z, levels=10, cmap='binary_r')
+    # plt.clabel(contours, inline=True, fontsize=8)
+    
+    # Plot path
+    plt.plot(xs, ys, 'ro-', label='Coordinate Descent Path')
+    # plt.scatter([xs[0]], [ys[0]], color='green', s=80, label='Start')
+    # plt.scatter([xs[-1]], [ys[-1]], color='red', s=80, label='End')
+    
+    # Final touches
+    plt.xlabel(r"$q_i$")
+    plt.ylabel(r"$q_j$")
+    plt.yticks([])
+    plt.xticks([])
+    # plt.legend()
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'cartoon_descent.png', dpi=400)
+
+
+def cartoon_j_velocity_q():
+    jl=[0.2, 0.4, 0.6]
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, 3))
+    fig, ax = plt.subplots(1, figsize=(4, 3.5))
+    ax.axhline(0, color='gray', linestyle='--', alpha=0.4)
+    ax.plot([0, 1], [0, 1], color='gray', linewidth=3, alpha=1, linestyle='--')
+    ax.set_xlabel(r'$q$')
+    ax.set_ylabel(r'$f(q)$')
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.set_ylim(0, 1)
+    ax.set_xlim(-0.05, 1.05)
+    q = np.arange(0, 1, 1e-3)
+    for i_j, j in enumerate(jl):
+        ax.plot(q, gn.sigmoid(2*3*j*(2*q-1)),
+    color=colormap[i_j], linewidth=2, label=j)
+    ax.legend(frameon=False, title='J')
+    fig.tight_layout()
+
+
+def cartoon_b_velocity_q():
+    bl=[0., 0.1, 0.2]
+    colormap = pl.cm.Reds(np.linspace(0.2, 1, 3))
+    fig, ax = plt.subplots(1, figsize=(4, 3.5))
+    ax.axhline(0, color='gray', linestyle='--', alpha=0.4)
+    ax.plot([0, 1], [0, 1], color='gray', linewidth=3, alpha=1, linestyle='--')
+    ax.set_xlabel(r'$q$')
+    ax.set_ylabel(r'$f(q)$')
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.set_ylim(0, 1)
+    ax.set_xlim(-0.05, 1.05)
+    q = np.arange(0, 1, 1e-3)
+    j = 0.2
+    for i_b, b in enumerate(bl):
+        ax.plot(q, gn.sigmoid(2*3*j*(2*q-1)+2*b),
+    color=colormap[i_b], linewidth=2, label=b)
+    ax.legend(frameon=False, title='B')
+    fig.tight_layout()
+
+
+def get_regular_graph(d=4, n=100):
+    G = gn.nx.random_regular_graph(d, n)
+    A = gn.nx.to_numpy_array(G, dtype=int)
+    return A
+
 if __name__ == '__main__':
     print('Mean-Field inference')
     # mf_dyn_sys_circle(n_iters=100, b=0.)
@@ -4889,8 +5482,8 @@ if __name__ == '__main__':
     # plot_noise_before_switch(j=0.395, b=0, theta=theta, noise=0.15,
     #                          tau=0.1, time_end=120000, dt=5e-3, p_thr=0.5,
     #                          steps_back=2000, steps_front=1000, gibbs=False)
-    mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.15,
-                       skip=25)
+    # mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.15,
+    #                    skip=25)
     # plt.title('J=0.395')
     # plot_peak_noise_vs_j(j_list=np.arange(0.34, 0.55, 5e-3),
     #                      b=0, theta=theta, noise=0.12,
@@ -4960,3 +5553,12 @@ if __name__ == '__main__':
     # for b in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]:
     #     plot_mean_field_neg_stim_fixed_points(j_list=np.arange(0, 1, 0.005),
     #                                           b=b, theta=theta, num_iter=20)
+    # cp_vs_coupling_random_neurons(j_list=np.arange(0, 0.6, 0.05), rand_neur_list=[False, 8, 16, 32],
+    #                               nsimuls=2000, noise=0.15, load_sims=True)
+    # cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.15],
+    #                      nsimuls=7000, load_sims=False, inset=False, cylinder=True)
+    plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
+                                           j_list=np.arange(0, 1.01, 0.02),
+                                           nsims=20, load_data=False, sigma=0.2,
+                                           long=True, cylinder=True, inset=False)
+    # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
