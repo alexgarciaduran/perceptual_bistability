@@ -19,7 +19,7 @@ import sympy
 from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
 import matplotlib.patches as mpatches
-
+from gibbs_necker import rle
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -1937,9 +1937,9 @@ def kernel_alpha(ndots=8, tau=.8):
 def ising_1d_fps(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, niters=50):
     d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
     # alpha = kernel_alpha()
-    q_cw = np.arange(0, 1.01, 5e-2)
-    q_ccw = np.arange(0, 1.01, 5e-2)
-    def system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a):
+    q_cw = np.arange(0, 1.01, 1e-1)
+    q_ccw = np.arange(0, 1.01, 1e-1)
+    def system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a, biasnm=biasnm):
         fun_cw, fun_nm, fun_ccw = functions_mf_1d_bias()
         q1, q2 = q
         q0 = 1-q1-q2
@@ -1964,13 +1964,13 @@ def ising_1d_fps(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, niters=50):
             if not any(np.allclose(sol, fp) for fp in fps):
                 fps.append(sol)
                 label = np.nan
-                if sol[0] > 0.5:
+                if sol[0] > 0.5:  # CW
                     label = 0
-                if sol[1] > 0.5:
+                if sol[1] > 0.5:  # CCW
                     label = 2
-                if 1-(sol[0]+sol[1]) > 0.5:
+                if 1-(sol[0]+sol[1]) > 0.5:  # NM
                     label = 1
-                if sol[0] <= 0.5 and sol[1] <= 0.5 and 1-(sol[0]+sol[1]) <= 0.5:
+                if sol[0] <= 0.5 and sol[1] <= 0.5 and 1-(sol[0]+sol[1]) <= 0.5:  # Udf.
                     label = 7
                 qualitative_sol.append(label)
     qualitative_sol = np.unique(np.array(qualitative_sol))
@@ -2081,9 +2081,9 @@ def phase_diagram_d_b(dlist=np.arange(0, 1, 1e-2),
                       blist=np.arange(0, 10.1, 0.1),
                       j=0):
     if j == 0:
-        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_bias.npy'
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_new_bias.npy'
     else:
-        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_bias_coupling' + str(j) + '.npy'
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_new_bias_coupling' + str(j) + '.npy'
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if os.path.exists(path):
         behav = np.load(path)
@@ -2106,7 +2106,7 @@ def phase_diagram_d_b(dlist=np.arange(0, 1, 1e-2),
 
 
 def phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
-                              alist=np.arange(0, 0.505, 1e-2), biasnm=0,
+                              alist=np.arange(0, 1.02, 2e-2), biasnm=0,
                               resimulate=False, ax=None, cbar=False, fig=None, j=0,
                               plot=False, analytical=True):
     if biasnm == 0:
@@ -2115,9 +2115,9 @@ def phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
         lab = '_bias_nm_' + str(biasnm)
     analytical_lab = '' if analytical else '_simuls'
     if j == 0:
-        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_bias_CW' + lab + '_eps_02' + analytical_lab + '.npy'
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_new_bias_CW' + lab + '_eps_02' + analytical_lab + '.npy'
     else:
-        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_bias_CW' + lab + '_coupling_' + str(j) + '_eps_02' + analytical_lab + '.npy'
+        path = DATA_FOLDER + 'qual_behavior_vs_contrast_prior_contrast_new_bias_CW' + lab + '_coupling_' + str(j) + '_eps_02' + analytical_lab + '.npy'
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if os.path.exists(path) and not resimulate:
         behav = np.load(path)
@@ -2125,7 +2125,7 @@ def phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
         behav = np.zeros((len(dlist), len(alist)))
         for i_d, d in enumerate(dlist):
             for i_a, a in enumerate(alist):
-                sols = ising_1d_fps(eps=0.2, sigma=0.2, j=j, d=d, biasnm=biasnm, a=a, niters=80)
+                sols = ising_1d_fps(eps=0.2, sigma=0.2, j=j, d=d, biasnm=biasnm, a=a*d, niters=70)
                 behav[i_d, i_a] = qualbehav(sols)
         np.save(path, behav)
     if plot:
@@ -2142,7 +2142,7 @@ def phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
                   'goldenrod', 'gold',
                   'black']
         cmap = ListedColormap(colors)
-        extent = [np.min(alist), np.max(alist), 2*np.min(dlist), 2*np.max(dlist)]
+        extent = [np.min(alist), np.max(alist), np.min(dlist), np.max(dlist)]
         im = ax.imshow(np.flipud(behav), cmap=cmap, extent=extent,
                        aspect='auto', vmin=-0.25, vmax=7.25)
         if cbar:
@@ -2163,13 +2163,15 @@ def phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
 
 
 def plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2],
-                                  jlist=[0, 0.4, 0.8, 1.2, 1.6], analytical=True):
+                                  jlist=[0, 0.4, 0.8, 1.2, 1.6], analytical=False):
     fig, ax = plt.subplots(ncols=len(biasnmlist), nrows=len(jlist),
                            figsize=(4*len(biasnmlist), 3.5*len(jlist)))
     for i_b, bias in enumerate(biasnmlist):
+        print('Bias:' + str(bias))
         for i_j, j in enumerate(jlist):
+            print('Coupling: ' + str(j))
             phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
-                                      alist=np.arange(0, 0.505, 1e-2), biasnm=bias,
+                                      alist=np.arange(0, 1.02, 2e-2), biasnm=bias,
                                       resimulate=False, ax=ax[i_j, i_b], cbar=(i_b == len(biasnmlist)-1)*(i_j == 2),
                                       fig=fig, j=j, plot=True, analytical=analytical)
             if i_b == len(biasnmlist)-1:
@@ -2182,13 +2184,13 @@ def plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2],
             if i_j < len(jlist)-1:
                 ax[i_j, i_b].set_xlabel('')
                 # ax[i_j, i_b].set_xticks([0, 0.25, 0.5])
-            ax[i_j, i_b].plot([0, 0.5], [0, 1], color='white')
+            # ax[i_j, i_b].plot([0, 0.5], [0, 1], color='white')
             if i_j > 0:
                 ax[i_j, i_b].set_title('')
             if i_b == len(biasnmlist)-2:
                 fig.tight_layout()
-    fig.savefig(DATA_FOLDER + 'qualitative_behavior_j0.png', dpi=200, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'qualitative_behavior_j0.svg', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'qualitative_behavior_j0_new_bias.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'qualitative_behavior_j0_new_bias.svg', dpi=200, bbox_inches='tight')
 
 
 def quiver_plots_1d_mf(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, ax=None, legend=False,
@@ -2228,8 +2230,8 @@ def quiver_plots_1d_mf(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, ax=None, legend
         ax.plot([0, 0.5], [0.5, 0.5], color='k', alpha=0.5)
         ax.plot([0.5, 0.5], [0, 0.5], color='k', alpha=0.5)
     if legend:
-        legendelements = [Line2D([0], [0], color='r', lw=2, label=r"$\dot{q(CCW)}=0$"),
-                          Line2D([0], [0], color='b', lw=2, label=r"$\dot{q(CCW)}=0$")]
+        legendelements = [Line2D([0], [0], color='r', lw=2, label=r"$\dot{q}(CCW)=0$"),
+                          Line2D([0], [0], color='b', lw=2, label=r"$\dot{q}(CCW)=0$")]
         ax.legend(frameon=False, handles=legendelements, bbox_to_anchor=[0.4, 1.1], ncol=2)
     ax.set_xlabel('q(CCW)')
     ax.set_ylabel('q(CW)')
@@ -2386,13 +2388,13 @@ def diagram_critical_j_vs_bias(j_list=np.arange(0, 1, 5e-3),
 
 
 def simulate_reduced_version(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, niters=300, dt=0.01,
-                             true='CW'):
+                             true='CW', noise_system=0.05, tau=1):
     d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
     # alpha = kernel_alpha()
-    def system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a, true='CW'):
+    def system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a, true='CW', biasnm=biasnm):
         fun_cw, fun_nm, fun_ccw = functions_mf_1d_bias()
-        q1, q2 = q
-        q0 = 1-q1-q2
+        q1, q2, q0 = q
+        # q0 = 1-q1-q2
         if true == 'CW':
             fcw = fun_cw(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q1
             fccw = fun_ccw(q0, q1, q2, d, d0, a)/(2*sigma**2)+j*alpha*q2
@@ -2401,6 +2403,7 @@ def simulate_reduced_version(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, nite
             norm = (np.exp(fcw-maxf) + np.exp(fccw-maxf) + np.exp(fnm - maxf))
             f1 = np.exp(fcw - maxf)/norm
             f2 = np.exp(fccw - maxf) / norm
+            f3 = np.exp(fnm - maxf) / norm
         if true == 'CCW':
             fcw = fun_ccw(q0, q2, q1, d, d0, a)/(2*sigma**2)+j*alpha*q1
             fccw = fun_cw(q0, q2, q1, d, d0, a)/(2*sigma**2)+j*alpha*q2
@@ -2409,25 +2412,35 @@ def simulate_reduced_version(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, nite
             norm = (np.exp(fcw-maxf) + np.exp(fccw-maxf) + np.exp(fnm - maxf))
             f1 = np.exp(fcw - maxf)/norm
             f2 = np.exp(fccw - maxf) / norm
-        return f1, f2
-    q1, q2 = np.random.rand(2)
-    q = np.array([q1, q2])/(q1+q2)
-    qarr = np.zeros((niters, 2))
+            f3 = np.exp(fnm - maxf) / norm
+        return f1, f2, f3
+    q1, q2, q3 = np.random.rand(3)
+    q = np.array([q1, q2, q3])/(q1+q2+q3)
+    qarr = np.zeros((niters, 3))
+    noise_vals = np.random.randn(niters, 3)*noise_system*np.sqrt(dt/tau)
     for n in range(niters):
         qarr[n] = q
-        q = q+(system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a, true=true)-q)*dt+np.random.randn(2)*sigma*np.sqrt(dt)
-    return qarr[50:, 0], qarr[50:, 1], 1-qarr[50:].sum(axis=1)
+        q = q+(system(q, d0=d0, d=d, sigma=sigma, alpha=1, j=j, a=a, true=true)-q)*dt/tau+noise_vals[n]
+    return qarr[:, 0], qarr[:, 1], qarr[:, 2]
 
 
-def experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                                   eps=0.1, sigma=0.1, j=0, biasnm=0, niters=300, dt=0.01, nsimuls=50):
+def experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
+                                   bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+                                   eps=0.2, sigma=0.2, j=0, biasnm=0, niters=300,
+                                   dt=0.01, nsimuls=50, tau=0.2):
     p_choices = np.zeros((len(contrast), len(bias), nsimuls, 3))
+    average_timing = np.zeros((len(contrast), len(bias), 3))
+    average_reaction_time = np.zeros((len(contrast), len(bias)))
     for i_c, cont in enumerate(contrast):
         print('Contrast')
         print(cont)
         for i_b, b in enumerate(bias):
             print('Stimulus bias')
             print(b)
+            average_timing_across_sims_cw = []
+            average_timing_across_sims_ccw = []
+            average_timing_across_sims_nm = []
+            rts = []
             for sim in range(nsimuls):
                 b_final = np.abs(b)
                 if b < 0:
@@ -2437,17 +2450,26 @@ def experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5
                 if b == 0:
                     ini_cond = ['CW', 'CCW'][np.random.choice([0, 1])]
                 cw, ccw, nm = simulate_reduced_version(eps=eps, sigma=sigma, j=j, d=cont, biasnm=biasnm, a=b_final*cont,
-                                                       niters=niters, dt=dt, true=ini_cond)
-                cw[cw > 0.5] = 1
-                cw[cw < 0.5] = 0
+                                                       niters=niters, dt=dt, true=ini_cond, noise_system=sigma, tau=tau)
+                ccw = np.where(ccw >= 1/2, 1, 0)
+                cw = np.where(cw >= 1/2, 1, 0)
+                nm = np.where(nm >= 1/2, 1, 0)
                 p_cw = np.mean(cw)
-                ccw[ccw > 0.5] = 1
-                ccw[ccw < 0.5] = 0
                 p_ccw = np.mean(ccw)
-                nm[nm > 0.5] = 1
-                nm[nm < 0.5] = 0
                 p_nm = np.mean(nm)
                 p_choices[i_c, i_b, sim, :] = [p_cw, p_ccw, p_nm]
+                cw_timings = rle(cw)
+                ccw_timings = rle(ccw)
+                nm_timings = rle(nm)
+                average_timing_across_sims_cw.append(np.nanmean(cw_timings[0][cw_timings[2] == 1])*dt)
+                average_timing_across_sims_ccw.append(np.nanmean(ccw_timings[0][ccw_timings[2] == 1])*dt)
+                average_timing_across_sims_nm.append(np.nanmean(nm_timings[0][nm_timings[2] == 1])*dt)
+                rt_0 = np.min([cw_timings[0][0], nm_timings[0][0], ccw_timings[0][0]])*dt
+                rts.append(rt_0)
+            average_reaction_time[i_c, i_b] = np.nanmean(rts)
+            average_timing[i_c, i_b, :] = [np.nanmean(average_timing_across_sims_cw),
+                                           np.nanmean(average_timing_across_sims_ccw),
+                                           np.nanmean(average_timing_across_sims_nm)]
     fig, ax = plt.subplots(ncols=len(contrast), figsize=(16, 5))
     percepts = ['CW', 'CCW', 'NM', 'no-resp']
     for i_c, cont in enumerate(contrast):
@@ -2455,19 +2477,45 @@ def experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5
         ax[i_c].spines['right'].set_visible(False)
         ax[i_c].set_ylim(-0.02, 1.02)
         p_choices_mean = np.nanmean(p_choices[i_c], axis=1)
+        no_resp = np.clip(1-np.sum(p_choices_mean, axis=1), 0, 1)
+        # p_choices_mean[:, 2] += no_resp
         for i in range(3):
             ax[i_c].plot(bias, p_choices_mean[:, i], marker='o', label=percepts[i])
-        no_resp = np.clip(1-np.sum(p_choices_mean, axis=1), 0, 1)
         ax[i_c].plot(bias, no_resp, marker='o', label=percepts[-1])
         ax[i_c].set_title('Contrast = ' + str(cont), fontsize=13)
         ax[i_c].set_xlabel('Signed bias')
     ax[0].set_ylabel('Proportion')
     ax[0].legend()
     fig.tight_layout()
+    fig, ax = plt.subplots(ncols=3, figsize=(16, 5))
+    percepts = ['CW', 'CCW', 'NM', 'no-resp']
+    for i in range(3):
+        ax[i].spines['top'].set_visible(False)
+        ax[i].spines['right'].set_visible(False)
+        # ax[i_c].set_ylim(-0.02, 1.02)
+        avg_timing = average_timing[:, :, i]
+        for i_c, cont in enumerate(contrast):
+            ax[i].plot(bias, avg_timing[i_c], marker='o', label=cont)
+        ax[i].set_title('Contrast = ' + str(cont), fontsize=13)
+        ax[i].set_xlabel('Signed bias')
+        ax[i].set_title(percepts[i], fontsize=14)
+    ax[0].set_ylabel('Average time (s)')
+    ax[0].legend(title='Contrast')
+    fig.tight_layout()
+    fig, ax = plt.subplots(ncols=1, figsize=(6, 5))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    percepts = ['CW', 'CCW', 'NM', 'no-resp']
+    for i_b, b in enumerate(bias[3:]):
+        ax.plot(contrast, average_reaction_time[:, i_b+3], marker='o', label=b)
+    ax.set_xlabel('Contrast')
+    ax.set_ylabel('Reaction time (s)')
+    ax.legend(title='Bias')
+    fig.tight_layout()
 
 
 def experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                           nsims=100, simulate=True, biasnm=0, j=0):
+                           nsims=100, simulate=False, biasnm=0., j=0.):
     if simulate:
         p_choices = np.zeros((len(contrast), len(bias), nsims, 3))
         for i_c, cont in enumerate(contrast):
@@ -2484,24 +2532,24 @@ def experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25,
                         ini_cond = 'CW'
                     if b == 0:
                         ini_cond = ['CW', 'CCW'][np.random.choice([0, 1])]
-                    mf_sims = ring(epsilon=0.01, n_dots=8).mean_field_sde(dt=0.1, tau=0.2,
-                                                                          n_iters=300, j=j,
-                                                                          true=ini_cond,
-                                                                          noise=0.1, plot=False,
-                                                                          discrete_stim=True, s=cont,
-                                                                          b=[0, biasnm, 0.], noise_stim=0.0,
-                                                                          coh=b_final, nstates=3,
-                                                                          stim_stamps=1, return_all=True)
+                    mf_sims = ring(epsilon=0.1, n_dots=8).mean_field_sde(dt=0.1, tau=0.2,
+                                                                         n_iters=300, j=j,
+                                                                         true=ini_cond,
+                                                                         noise=0.1, plot=False,
+                                                                         discrete_stim=True, s=cont,
+                                                                         b=[0, biasnm, 0.], noise_stim=0.0,
+                                                                         coh=b_final, nstates=3,
+                                                                         stim_stamps=1, return_all=True)
                     # p(CW), p(CCW), p(NM)
                     cw = np.mean(mf_sims[:, 0, :], axis=0)
                     cw[cw > 0.5] = 1
                     cw[cw < 0.5] = 0
                     p_cw = np.mean(cw)
-                    ccw = np.mean(mf_sims[:, 1, :], axis=0)
+                    ccw = np.mean(mf_sims[:, 2, :], axis=0)
                     ccw[ccw > 0.5] = 1
                     ccw[ccw < 0.5] = 0
                     p_ccw = np.mean(ccw)
-                    nm = np.mean(mf_sims[:, 2, :], axis=0)
+                    nm = np.mean(mf_sims[:, 1, :], axis=0)
                     nm[nm > 0.5] = 1
                     nm[nm < 0.5] = 0
                     p_nm = np.mean(nm)
@@ -2511,13 +2559,14 @@ def experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25,
         p_choices = np.load(DATA_FOLDER + f'simulations_choices_experiment_j_{j}_biasnm_{biasnm}.npy')
     fig, ax = plt.subplots(ncols=len(contrast), figsize=(16, 5))
     percepts = ['CW', 'CCW', 'NM', 'no-resp']
+    order = [0, 2, 1, 3]
     for i_c, cont in enumerate(contrast):
         ax[i_c].spines['top'].set_visible(False)
         ax[i_c].spines['right'].set_visible(False)
         ax[i_c].set_ylim(-0.02, 1.02)
         p_choices_mean = np.nanmean(p_choices[i_c], axis=1)
         for i in range(3):
-            ax[i_c].plot(bias, p_choices_mean[:, i], marker='o', label=percepts[i])
+            ax[i_c].plot(bias, p_choices_mean[:, order[i]], marker='o', label=percepts[i])
         no_resp = np.clip(1-np.sum(p_choices_mean, axis=1), 0, 1)
         ax[i_c].plot(bias, no_resp, marker='o', label=percepts[-1])
         ax[i_c].set_title('Contrast = ' + str(cont), fontsize=13)
@@ -2525,6 +2574,43 @@ def experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25,
     ax[0].set_ylabel('Proportion')
     ax[0].legend()
     fig.tight_layout()
+
+
+def analysis_simplification(sigma=0.1, eps=0.1, biasnm=0, j=0, d=0, a=0):
+    # qcw, qccw, qnm, d0, d, a = sympy.symbols('qcw qccw qnm d0 d a')
+    q_nm_vals = np.arange(-0.2, 1.4, 1e-1)
+    q_cw_vals = np.arange(-0.2, 1.4, 1e-1)
+    qnm, qcw = np.meshgrid(q_nm_vals, q_cw_vals)
+    # 1st constraint
+    # d = a
+    # 2nd constraint
+    qccw = 0
+    # define d0
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    fun_cw, fun_nm, fun_ccw = functions_mf_1d_bias()
+    fnm = fun_nm(qnm, qcw, qccw, d, d0, a)/(2*sigma**2)
+    fcw = fun_cw(qnm, qcw, qccw, d, d0, a)/(2*sigma**2) + qcw*j
+    fccw = fun_ccw(qnm, qcw, qccw, d, d0, a)/(2*sigma**2) + qnm*j + biasnm
+    norm = (np.exp(fcw) + np.exp(fccw) + np.exp(fnm))
+    f1 = np.exp(fcw) / norm - qcw
+    f2 = np.exp(fccw) / norm - (1-qcw-qnm)
+    f3 = np.exp(fnm) / norm - qnm
+
+    # velocity_nm = f3
+    fig, ax = plt.subplots(1)
+    ax.quiver(qnm, qcw, f3, f1)
+    prec = 1e-3
+    qcw = np.arange(-0.11, 1.11, prec)
+    qnm = np.arange(-0.11, 1.11, prec)
+    X, Y = np.meshgrid(qnm, qcw)
+    U = fun_ccw(X, Y, qccw, d, d0, a)/(2*sigma**2) + j*(1-X-Y)
+    V = fun_cw(X, Y, qccw, d, d0, a)/(2*sigma**2) + j*Y
+    NM = fun_nm(X, Y, qccw, d, d0, a)/(2*sigma**2) + j*X+ biasnm
+    norm = (np.exp(U) + np.exp(V) + np.exp(NM))
+    Up = np.exp(NM) / norm - X
+    Vp = np.exp(V) / norm - Y
+    ax.contour(X, Y, Up, levels=[0], colors='r', linewidths=2)
+    ax.contour(X, Y, Vp, levels=[0], colors='b', linewidths=2)
 
 
 if __name__ == '__main__':
@@ -2565,16 +2651,16 @@ if __name__ == '__main__':
     #                                                 discrete_stim=True, s=ss[i],
     #                                                 b=[0, 0.5, 0], noise_stim=0.0,
     #                                                 coh=0., nstates=3, stim_stamps=1)
-    ring(epsilon=0.01, n_dots=8).mean_field_sde(dt=0.1, tau=0.2, n_iters=200, j=0.,
-                                                true='CW', noise=0., plot=True,
-                                                discrete_stim=True, s=0.1,
-                                                b=[0, 1, 0], noise_stim=0.0,
-                                                coh=0., nstates=3, stim_stamps=1)
-    ring(epsilon=0.01, n_dots=8).mean_field_sde(dt=0.1, tau=0.2, n_iters=200, j=0.,
-                                                true='CW', noise=0., plot=True,
-                                                discrete_stim=True, s=0.1,
-                                                b=[0, 1, 0], noise_stim=0.0,
-                                                coh=0.5, nstates=3, stim_stamps=1)
+    # ring(epsilon=0.2, n_dots=8).mean_field_sde(dt=0.1, tau=0.2, n_iters=200, j=0.,
+    #                                            true='CW', noise=0.1, plot=True,
+    #                                            discrete_stim=True, s=0.1,
+    #                                            b=[0, 1, 0], noise_stim=0.0,
+    #                                            coh=0.25, nstates=3, stim_stamps=1)
+    # ring(epsilon=0.2, n_dots=8).mean_field_sde(dt=0.1, tau=0.2, n_iters=200, j=0.,
+    #                                            true='CW', noise=0.1, plot=True,
+    #                                            discrete_stim=True, s=0.1,
+    #                                            b=[0, 1, 0], noise_stim=0.0,
+    #                                            coh=0.5, nstates=3, stim_stamps=1)
     # sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
     #                                 nreps=50, dt=0.05, tau=0.1, n_iters=250, true='CW', noise_stim=0.1)
     # for i in range(2):
@@ -2611,10 +2697,19 @@ if __name__ == '__main__':
     # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j_list=[0., 4],
     #                         noise=0.1, cohlist=np.arange(0, 0.22, 2e-2),
     #                         nreps=1000, noise_stim=0.2)
-    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                            nsims=50, simulate=False, biasnm=0., j=0.4)
-    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                            nsims=50, simulate=False, biasnm=0.5, j=0.4)
-    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                            nsims=50, simulate=False, biasnm=1, j=0.4)
-
+    # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+    #                         nsims=50, simulate=False, biasnm=0., j=0.4)
+    # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+    #                         nsims=50, simulate=False, biasnm=0.5, j=0.4)
+    # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+    #                         nsims=50, simulate=False, biasnm=1, j=0.4)
+    # plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2, 2.5, 3],
+    #                               jlist=[0, 0.4, 0.8, 1.2, 1.6, 1.8, 2], analytical=False)
+    experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
+                                   bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+                                   eps=0.2, sigma=0.2, j=0.4, biasnm=1, niters=500,
+                                   dt=0.01, nsimuls=50, tau=0.2)
+    # phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
+    #                           alist=np.arange(0, 1.02, 2e-2), biasnm=1,
+    #                           resimulate=False, ax=None, cbar=False, fig=None, j=0.8,
+    #                           plot=True, analytical=False)
