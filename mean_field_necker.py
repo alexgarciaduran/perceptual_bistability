@@ -1534,10 +1534,11 @@ def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2,
     x_vec = np.empty((len(time), theta.shape[0]))
     x_vec[:] = np.nan
     x_vec[0, :] = x
-    noise_vec = np.random.randn(time.shape[0], theta.shape[0])*noise*np.sqrt(dt/tau)
+    t_cte_noise = np.sqrt(dt/tau)
+    noise_vec = np.random.randn(time.shape[0], theta.shape[0])*t_cte_noise*noise
     for t in range(1, time.shape[0]):
         x = x + dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1)) + 2*b) - x)/ tau +\
-            noise_vec[t] + np.random.randn()*0.015        # x = np.clip(x, 0, 1)
+            noise_vec[t] + np.random.randn()*0.05*t_cte_noise        # x = np.clip(x, 0, 1)
         x_vec[t, :] = x  # np.clip(x, 0, 1)
     return time, x_vec
 
@@ -4862,7 +4863,9 @@ def bcrit(j_list=np.arange(0, 1, 1e-3), n=3.92):
 def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 0.15, 0.2],
                          nsimuls=10000, load_sims=True, inset=True, cylinder=False):
     if cylinder:
-        theta = gn.return_theta()
+        theta = get_regular_graph()
+        add_theta = np.random.randn(theta.shape[0], theta.shape[1])*0.25
+        theta = theta + add_theta
         lab_cylin = 'cylinder'
         j_list = np.arange(0, 0.5, 0.05)
         jcrit = 1/3.92
@@ -4879,9 +4882,9 @@ def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 
                                                         time_end=1.5,
                                                         nsimuls=nsimuls, ou_noise=False)
                 cp_matrix[i_j, i_n] = mean_CP
-        np.save(DATA_FOLDER + f'mean_CP_vs_coupling_sigma{lab_cylin}.npy', cp_matrix)
+        np.save(DATA_FOLDER + f'mean_CP_vs_coupling_sigma{lab_cylin}_common_noise.npy', cp_matrix)
     else:
-        cp_matrix = np.load(DATA_FOLDER + f'mean_CP_vs_coupling_sigma{lab_cylin}.npy')
+        cp_matrix = np.load(DATA_FOLDER + f'mean_CP_vs_coupling_sigma{lab_cylin}_common_noise.npy')
     fig, ax = plt.subplots(figsize=(6, 4.2))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
@@ -4915,7 +4918,7 @@ def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 
     legendelements = [Line2D([0], [0], color='k', lw=2, label='Monostable', marker='s', linestyle='',
                              mfc='white', markersize=9),
                       Line2D([0], [0], color='k', lw=2, label='Bistable', linestyle='', marker='s', markersize=9)]
-    ax.legend(handles=legendelements, frameon=False, ncol=1, fontsize=12)
+    ax.legend(handles=legendelements, frameon=False, ncol=1, fontsize=12, loc='upper left')
     if cylinder:
         ax.axvline(jcrit, linestyle=':', color='gray')
     else:
@@ -4927,6 +4930,7 @@ def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 
     ax.set_xlabel('Coupling, J')
     ax.set_ylabel('Choice probability (CP)')
     ax.axhline(0.5, color='gray', linestyle=':')
+    ax.set_ylim(0.45, 0.8)
     fig.tight_layout()
     if inset:
         pos = ax.get_position()
@@ -4949,8 +4953,8 @@ def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 
     # ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 0.9], [0, 0.2, 0.4, 0.6, '', ''])
     # ax.text(0.47, 0.655, 'Data - Bistable', fontsize=12)
     # ax.text(0.47, 0.545, 'Data - Monostable', fontsize=12)
-    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.svg', dpi=400, bbox_inches='tight')
 
 
 def cp_vs_coupling_random_neurons(j_list=np.arange(0, 0.6, 0.05), rand_neur_list=[False, 2, 4, 8],
@@ -5033,7 +5037,7 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
         tau = 0.05
         label = 'short'
     if load_data:
-        rsc_matrix = np.load(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}_v2.npy')
+        rsc_matrix = np.load(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}.npy')
     else:
         rsc_matrix = np.zeros((len(j_list), len(b_list), nsims))
         for i_j, j in enumerate(j_list):
@@ -5045,7 +5049,7 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
                                                         time_end=time_end, ou_noise=False,
                                                         cylinder=cylinder)
                     rsc_matrix[i_j, i_b, n] = rsc
-        np.save(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}_v2.npy', rsc_matrix)
+        np.save(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}.npy', rsc_matrix)
     # fig, ax = plt.subplots(1)
     # im = ax.imshow(np.flipud(np.nanmean(rsc_matrix, axis=-1)), cmap='Reds', interpolation='gaussian',
     #                extent=[0, np.max(b_list), 0, np.max(j_list)], vmax=1)
@@ -5064,24 +5068,26 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
     # Plot correlation vs J for the selected B values
     fig, ax = plt.subplots(figsize=(5.5, 4.2))
     colormap = pl.cm.Greens(np.linspace(0.3, 1, 2))
+    colormap = ['mediumvioletred', 'dimgrey', 'green']
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
     if not cylinder:
-        ax.axvline(1/3, color=colormap[0], alpha=0.9, linestyle='--', linewidth=3)
+        ax.axvline(1/3, color='mediumblue', alpha=0.6, linestyle='--', linewidth=2)
     if cylinder:
-        ax.axvline(1/3.92, color=colormap[0], alpha=0.9, linestyle='--', linewidth=3)
+        ax.axvline(1/3.92, color='mediumblue', alpha=0.6, linestyle='--', linewidth=2)
     p = 0
     if not inset:
-        ax.axhline(0.42, color=colormap[0], linestyle='--', alpha=1)
-        ax.axhline(0.28, color=colormap[1], linestyle='--', alpha=0.9)
-        ax.axhline(0.23, color='k', linestyle='--', alpha=0.7)
+        ax.axhline(0.42, color=colormap[0], linestyle='--', alpha=1, linewidth=3)
+        ax.axhline(0.28, color=colormap[1], linestyle='--', alpha=1, linewidth=3)
+        ax.axhline(0.23, color=colormap[2], linestyle='--', alpha=0.7, linewidth=3)
         ax.text(0.02, 0.44, 'SFM (B=0)', fontsize=12, color=colormap[0])
         ax.text(0.02, 0.30, 'SFM (B>0)', fontsize=12, color=colormap[1])
-        ax.text(0.02, 0.16, 'RDM', fontsize=12)
+        ax.text(0.02, 0.16, 'RDM', fontsize=12, color=colormap[2])
         ax.text(0.02, 0.52, 'Experiments (MT/V5)\nWashmut et al. 2019', fontsize=12)
+    colors_lines = ['mediumblue', 'lightskyblue']
     for B_val, idxB in zip(B_targets, B_indices):
         plt.plot(j_list[j_list < 0.6], np.nanmean(rsc_matrix, axis=-1)[:, idxB][j_list < 0.6], label=f'{B_val}',
-                 color=colormap[p], linewidth=4)
+                 color=colors_lines[p], linewidth=4)
         p += 1
     plt.xlabel('Coupling, J')
     plt.legend(frameon=False, title='B', loc='lower right')
@@ -5091,7 +5097,7 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
     if not long:
         plt.ylim(-0.05, 0.7)
     if long:
-        plt.ylim(-0.05, 0.6)
+        plt.ylim(-0.05, 0.7)
     fig.tight_layout()
     if inset:
         pos = ax.get_position()
@@ -5293,8 +5299,11 @@ def choice_probability_mean_field(j=0.5, b=0, theta=theta,
                                   noise=0.05, tau=0.1, time_end=20,
                                   nsimuls=1000, ou_noise=True,
                                   add_random_neurons=False):
+    from sklearn.metrics import roc_auc_score
     X = np.zeros((nsimuls, theta.shape[0]+add_random_neurons))
     y = np.zeros(nsimuls)
+    # cps = np.zeros(nsimuls)
+    rates_all = np.zeros((theta.shape[0], int(time_end/1e-2)+1, nsimuls))
     for n in range(nsimuls):
         if ou_noise:
             time, x_vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
@@ -5305,11 +5314,19 @@ def choice_probability_mean_field(j=0.5, b=0, theta=theta,
         choice = (np.sign(np.nanmean(x_vec, axis=1)-0.5)+1)[-1]/2
         if add_random_neurons:
             x_vec = np.column_stack((x_vec, 0.5+np.random.randn(x_vec.shape[0], add_random_neurons)*noise))
-        X[n] = np.mean(x_vec, axis=0)
+        # r_vec = x_vec*(1+np.random.randn(theta.shape[0])) + np.random.rand(x_vec.shape[0], x_vec.shape[1])*0.5
+        rates_all[:, :, n] = x_vec.T
+        # X[n] = np.mean(x_vec, axis=0)
         y[n] = choice
+    CPs = []
+    for i in range(theta.shape[0]):
+        r = rates_all[i, :, :]  # shape: (T, K)
+        r_mean = np.mean(r, axis=0)  # average over time: shape (K,)
 
-    mean_CP, _ = compute_choice_probability(X, y, cv_splits=10, random_state=0)
-    return mean_CP
+        cp = roc_auc_score(y, r_mean)
+        CPs.append(cp)
+    # mean_CP, _ = compute_choice_probability(X, y, cv_splits=5, random_state=0)
+    return np.nanmean(CPs)
 
 
 def compute_choice_probability(X, y, cv_splits=5, random_state=0):
@@ -5451,6 +5468,46 @@ def get_regular_graph(d=4, n=100):
     A = gn.nx.to_numpy_array(G, dtype=int)
     return A
 
+
+def pca_cylinder_predictions(j=0.29, b=0, noise=0.08, tau=0.1, dt=0.01):
+    theta = get_regular_graph()
+    t, vec = solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=1000,
+                                   dt=dt, ini_cond=None)
+    pca_vals = PCA(n_components=2)
+    # pca_vals.explained_variance_ratio_
+    components = pca_vals.fit_transform(vec)
+    plt.figure()
+    plt.plot(t[::50], components[::50, 0] / np.max(components[::50, 0]))
+    plt.plot(t[::50], np.nanmean(vec[::50], axis=1)/np.max(vec))
+    fig, ax = plt.subplots(ncols=1, figsize=(6, 5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.plot(components[200:, 0][::10], components[200:, 1][::10], color='k')
+    ax.set_xlabel('PC 1')
+    ax.set_ylabel('PC 2')
+    fig.tight_layout()
+
+
+def neuron_activity_cylinder_predictions(j=0.29, b=0, noise=0.08, tau=0.1, dt=0.01):
+    theta = get_regular_graph()
+    theta = theta + np.random.randn(theta.shape[0], theta.shape[1])*0.05
+    # theta = (theta + theta.T)/2
+    t, vec = solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=1000,
+                                   dt=dt, ini_cond=None)
+    idxs = np.random.choice(np.arange(theta.shape[0]), 2, replace=False)
+    components = vec[:, idxs]
+    plt.figure()
+    plt.plot(t[::50], components[::50, 0] / np.max(components[::50, 0]))
+    plt.plot(t[::50], np.nanmean(vec[::50], axis=1)/np.max(vec))
+    fig, ax = plt.subplots(ncols=1, figsize=(6, 5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.plot(components[200:, 0][::5], components[200:, 1][::5], color='k')
+    ax.set_xlabel('Neuron 1')
+    ax.set_ylabel('Neuron 2')
+    fig.tight_layout()
+
+
 if __name__ == '__main__':
     print('Mean-Field inference')
     # mf_dyn_sys_circle(n_iters=100, b=0.)
@@ -5556,9 +5613,9 @@ if __name__ == '__main__':
     # cp_vs_coupling_random_neurons(j_list=np.arange(0, 0.6, 0.05), rand_neur_list=[False, 8, 16, 32],
     #                               nsimuls=2000, noise=0.15, load_sims=True)
     # cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.15],
-    #                      nsimuls=7000, load_sims=False, inset=False, cylinder=True)
-    plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
-                                           j_list=np.arange(0, 1.01, 0.02),
-                                           nsims=20, load_data=False, sigma=0.2,
-                                           long=True, cylinder=True, inset=False)
+    #                      nsimuls=200, load_sims=True, inset=False, cylinder=True)
+    # plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
+    #                                         j_list=np.arange(0, 1.01, 0.02),
+    #                                         nsims=20, load_data=False, sigma=0.11,
+    #                                         long=True, cylinder=True, inset=False)
     # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
