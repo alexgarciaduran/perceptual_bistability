@@ -5508,6 +5508,138 @@ def neuron_activity_cylinder_predictions(j=0.29, b=0, noise=0.08, tau=0.1, dt=0.
     fig.tight_layout()
 
 
+def matrix_permutation_to_get_blockwise(M):
+    # Column permutation: normalization column first (26), then params 0 to 25
+    col_perm = [26] + list(range(26))
+    
+    # Then rows corresponding to each parameter index 0..25, i.e. configuration rows
+    # where only that parameter is 1 (we find them by scanning)
+    
+    param_rows = []
+    for param_idx in range(26):
+        for r in range(M.shape[0]):
+            # Row has a 1 in param_idx column, zero in normalization column
+            if M[r, param_idx] == 1 and M[r, 26] == -1:
+                param_rows.append(r)
+                break
+    
+    # Compose row permutation: normalization row first, then param rows
+    row_perm = [0] + param_rows
+    
+    # Permute M
+    M_perm = M[np.ix_(row_perm, col_perm)]
+    return M_perm, row_perm
+
+
+def matrix_ring():
+    # State encoding: x=0 (reference), y=1, z=2
+    # Map states to indices
+    state_to_idx = {'x':0, 'y':1, 'z':2}
+    
+    # Number of configurations
+    n_states = 3
+    n_config = n_states ** 3  # 27
+    
+    # Parameter indices as per your table:
+    param_indices = {
+        'singleton': {
+            'v_i-1': { 'y': 0, 'z': 1 },
+            'v_i':   { 'y': 2, 'z': 3 },
+            'v_i+1': { 'y': 4, 'z': 5 }
+        },
+        'pairwise': {
+            '(v_i-1,v_i)': { ('y','y'): 6,  ('y','z'): 7,  ('z','y'): 8,  ('z','z'): 9 },
+            '(v_i,v_i+1)': { ('y','y'): 10, ('y','z'): 11, ('z','y'): 12, ('z','z'): 13 },
+            '(v_i-1,v_i+1)': { ('y','y'): 14, ('y','z'): 15, ('z','y'): 16, ('z','z'): 17 }
+        },
+        'triplet': {  # All 8 triplet combos in {y,z}^3, lex order:
+            ('y','y','y'): 18, ('y','y','z'): 19, ('y','z','y'): 20, ('y','z','z'): 21,
+            ('z','y','y'): 22, ('z','y','z'): 23, ('z','z','y'): 24, ('z','z','z'): 25
+        },
+        'normalization': 26
+    }
+    
+    # Enumerate all configurations in lexicographic order:
+    # v_{i-1} varies fastest, then v_i, then v_{i+1}
+    configs = list(itertools.product(['x','y','z'], repeat=3))  # tuples (v_{i-1}, v_i, v_{i+1})
+    
+    # Initialize design matrix M (27 rows × 27 params)
+    M = np.zeros((n_config, 27), dtype=float)
+    
+    for row_idx, (v_im1, v_i, v_ip1) in enumerate(configs):
+        # 1) Singleton terms
+        for var, state in zip(['v_i-1', 'v_i', 'v_i+1'], [v_im1, v_i, v_ip1]):
+            if state in ['y', 'z']:
+                col_idx = param_indices['singleton'][var][state]
+                M[row_idx, col_idx] = 1
+        
+        # 2) Pairwise terms
+        pairs = [
+            ('(v_i-1,v_i)', (v_im1, v_i)),
+            ('(v_i,v_i+1)', (v_i, v_ip1)),
+            ('(v_i-1,v_i+1)', (v_im1, v_ip1))
+        ]
+        for pair_name, (s1, s2) in pairs:
+            if s1 in ['y','z'] and s2 in ['y','z']:
+                col_idx = param_indices['pairwise'][pair_name][(s1, s2)]
+                M[row_idx, col_idx] = 1
+    
+        # 3) Triplet terms
+        triplet = (v_im1, v_i, v_ip1)
+        if all(s in ['y','z'] for s in triplet):
+            col_idx = param_indices['triplet'][triplet]
+            M[row_idx, col_idx] = 1
+    
+        # 4) Normalization constant
+        M[row_idx, param_indices['normalization']] = -1
+
+    # M is now your design matrix mapping params -> log p(s|v)
+    # Given vector log p(s|v), you solve: x = M^{-1} @ log_p
+    M_perm, row_permutation = matrix_permutation_to_get_blockwise(M)
+    configs_perm = tuple(map(tuple, np.array(configs)[row_permutation]))
+    M_inv = np.linalg.inv(M_perm)
+    plt.figure()
+    plt.imshow(M_perm, cmap='bwr')
+    plt.title(r'$M$')
+    plt.figure()
+    plt.imshow(M_inv, cmap='bwr')
+    plt.title(r'$M^{-1}$')
+
+
+def compute_M_ising():
+    # 2 variables, each with 2 states: 0 (reference), 1
+    states = [0, 1]
+    M_2vars = np.zeros((4, 4))  # 2 singleton terms, 1 pairwise term, 1 normalization term
+    
+    def singleton_idx_2v(pos):  # pos in [0,1]
+        return pos  # index 0 or 1
+    
+    def pairwise_idx_2v():
+        return 2  # fixed index for pairwise term
+    
+    # Build matrix
+    for row_idx, (s1, s2) in enumerate([(0, 0), (1, 1), (0, 1), (1, 0)]):
+        if s1 != 0:
+            M_2vars[row_idx, singleton_idx_2v(0)] = 1
+        if s2 != 0:
+            M_2vars[row_idx, singleton_idx_2v(1)] = 1
+        if s1 != 0 and s2 != 0:
+            M_2vars[row_idx, pairwise_idx_2v()] = 1
+        M_2vars[row_idx, 3] = -1  # log-normalizer term
+
+    # M_2vars = np.array([[1, 1, 1, -1],
+    #                     [-1, -1, 1, -1],
+    #                     [1, -1, -1, -1],
+    #                     [-1, 1, -1, -1]])
+    M_2vars_inv = np.linalg.pinv(M_2vars)
+    plt.figure()
+    plt.imshow(M_2vars, cmap='bwr')
+    plt.title(r'$M$')
+    plt.figure()
+    plt.imshow(M_2vars_inv, cmap='bwr')
+    plt.title(r'$M^{-1}$')
+
+
 if __name__ == '__main__':
     print('Mean-Field inference')
     # mf_dyn_sys_circle(n_iters=100, b=0.)
