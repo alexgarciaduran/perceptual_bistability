@@ -20,6 +20,7 @@ from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
 import matplotlib.patches as mpatches
 from gibbs_necker import rle
+from collections import defaultdict
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -724,6 +725,89 @@ class ring:
             plt.plot(np.max(np.abs(np.diff(stim.T, axis=0)), axis=0))
             # plt.plot(q_mf_arr[:, 0, :], q_mf_arr[:, 1, :], color='k', linewidth=2.5)
             plt.ylim(0, 2)
+
+    
+    def run_belief_propagation_triplet_likelihood(self, J=1.0, alpha=0.5, n_iters=10, tol=1e-3,
+                                                  num_states=3, true='CW', coh=0, d=0):
+        """
+        Loopy BP where likelihood depends on (z_{i-1}, z_i, z_{i+1})
+        Args:
+            s_obs: shape (N,), observed variables
+        Returns:
+            beliefs: shape (N, num_states), marginal distributions
+        """
+        s_obs = self.stim_creation_ctrast_coh(n_iters=n_iters, timesteps_between=1,
+                                              true=true, coh=coh, d=d)
+        N = s_obs.shape[1]
+        T = s_obs.shape[0]
+        messages = np.ones((T, N, N, num_states)) / num_states
+    
+        distances = np.minimum(np.abs(np.arange(N)[:, None] - np.arange(N)[None, :]),
+                               N - np.abs(np.arange(N)[:, None] - np.arange(N)[None, :]))
+        J_matrix = J * np.exp(-alpha * distances)
+        np.fill_diagonal(J_matrix, 0)
+    
+        for iteration in range(n_iters):
+            new_messages = np.zeros_like(messages[iteration])
+            for i in range(N):
+                for j in range(N):
+                    if i == j or J_matrix[i, j] < 1e-4:
+                        continue
+    
+                    msg = np.zeros(num_states)
+                    for z_j in range(num_states):
+                        total = 0.0
+                        for z_i in range(num_states):
+                            for z_k in range(num_states):
+                                # z_k is a dummy for one neighbor of i (other than j)
+                                incoming = 1.0
+                                for k in range(N):
+                                    if k != j and k != i and J_matrix[k, i] > 1e-4:
+                                        incoming *= messages[iteration, k, i, z_k]
+                                # wrap-around
+                                i_left = (i - 1) % N
+                                i_right = (i + 1) % N
+                                z_triplet = (
+                                    z_j if i_left == j else z_k,
+                                    z_i,
+                                    z_j if i_right == j else z_k
+                                )
+                                psi = self.compute_likelihood_continuous_stim(s_obs[i], z_triplet)
+                                potts = np.exp(J_matrix[i, j] if z_i == z_j else 0.0)
+                                total += psi * potts * incoming
+                        msg[z_j] = total
+    
+                    msg /= np.sum(msg)
+                    new_messages[i, j] = msg
+    
+            delta = np.sum(np.abs(new_messages - messages[iteration]))
+            messages[iteration] = new_messages
+            if delta < tol:
+                break
+    
+        # Compute beliefs
+        beliefs = np.zeros((T, N, num_states))
+        for iteration in range(T):
+            for i in range(N):
+                b = np.zeros(num_states)
+                for z_i in range(num_states):
+                    prod = 1.0
+                    for j in range(N):
+                        if J_matrix[j, i] > 1e-4:
+                            prod *= messages[iteration, j, i, z_i]
+                    # approximate by assuming neighbors are in mode z_i
+                    z_triplet = (
+                        z_i,
+                        z_i,
+                        z_i
+                    )
+                    psi = self.compute_likelihood_continuous_stim(s_obs[i], z_triplet)
+                    b[z_i] = psi * prod
+                b /= np.sum(b)
+                beliefs[iteration, i] = b
+    
+        return beliefs
+
 
 
     def compute_likelihood_contribution_BP(self, s, messages, stim_i):
@@ -2424,6 +2508,81 @@ def simulate_reduced_version(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, nite
     return qarr[:, 0], qarr[:, 1], qarr[:, 2]
 
 
+def p_switch_back_vs_timings(biasnm=0, contrast=[0.1, 0.2, 0.3, 0.4], eps=0.1, sigma=0.1, dt=0.01,
+                             niters=10000, nsimuls=10, j=0, tau=0.2):
+    # since there is no adaptation, this will look just flat :)
+    average_nm_duration_intermediate = np.zeros((len(contrast), nsimuls))
+    average_cw_ccw_duration_pre_state = np.zeros((len(contrast), nsimuls))
+    average_switch_back_probability = np.zeros((len(contrast), nsimuls))
+    cont = 0.1
+    average_nm_duration = []
+    average_cw_ccw_duration = []
+    probability_switch_back = []
+    for sim in range(nsimuls):
+        ini_cond = ['CW', 'CCW'][np.random.choice([0, 1])]
+        cw, ccw, nm = simulate_reduced_version(eps=eps, sigma=sigma, j=j, d=cont, biasnm=biasnm, a=0,
+                                               niters=niters, dt=dt, true=ini_cond, noise_system=sigma, tau=tau)
+        ccw = np.where(ccw >= 1/2, 1, 0)
+        cw = np.where(cw >= 1/2, 1, 0)
+        nm = np.where(nm >= 1/2, 1, 0)
+        ccw[ccw == 1] = 3
+        cw[cw == 1] = 1
+        nm[nm == 1] = 2
+        final_percept = cw+ccw+nm
+        final_percept = final_percept[(final_percept > 0)*(final_percept <= 3)]
+        lengths, positions, values = rle(final_percept)
+        
+        # Collect durations and count switch-backs
+        def get_avg_duration_and_prob(values, lengths):
+            durations_cw_ccw = []
+            durations_nm = []
+            switchback_count = 0
+            total_count = 0
+            for i in range(len(values) - 2):
+                if values[i] == 1 and values[i+1] == 2 and lengths[i] > 5:
+                    total_count += 1
+                    durations_cw_ccw.append(lengths[i])
+                    if values[i+2] == 1:
+                        switchback_count += 1
+                    durations_nm.append(lengths[i+1])
+                if values[i] == 3 and values[i+1] == 2 and lengths[i] > 5:
+                    total_count += 1
+                    durations_cw_ccw.append(lengths[i])
+                    if values[i+2] == 3:
+                        switchback_count += 1  
+                    durations_nm.append(lengths[i+1])
+            if total_count > 0:
+                avg_duration = np.mean(durations_cw_ccw)
+                avg_duration_nm = np.mean(durations_nm)
+                prob = switchback_count / total_count
+                return avg_duration*dt, avg_duration_nm*dt, prob
+            else:
+                return np.nan, np.nan, np.nan
+        # get durations and probabilities
+        avg_dur1, avg_duration_nm, p1 = get_avg_duration_and_prob(values, lengths)
+        average_nm_duration.append(avg_duration_nm)
+        average_cw_ccw_duration.append(avg_dur1)
+        probability_switch_back.append(p1)
+    average_cw_ccw_duration_pre_state = average_cw_ccw_duration
+    average_nm_duration_intermediate = average_nm_duration
+    average_switch_back_probability = probability_switch_back
+    # plotting
+    fig, ax = plt.subplots(ncols=2, nrows=1, figsize=(8, 4.5))
+    for i_a, a in enumerate(ax.flatten()):
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_ylim(0, 1)
+    ax[0].plot(np.log(average_nm_duration_intermediate), average_switch_back_probability,
+                    marker='o', color='k', linestyle='')
+    ax[1].plot(np.log(average_cw_ccw_duration_pre_state), average_switch_back_probability,
+                    marker='o', color='k', linestyle='')
+    ax[0].set_title(f'd : {cont}')
+    ax[1].set_xlabel('log (T(previous CW))')
+    ax[0].set_xlabel('log (T(NM))')
+    ax[0].set_ylabel('p (switch back)')
+    fig.tight_layout()
+
+
 def experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
                                    bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
                                    eps=0.2, sigma=0.2, j=0, biasnm=0, niters=300,
@@ -2449,7 +2608,7 @@ def experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
                     ini_cond = 'CW'
                 if b == 0:
                     ini_cond = ['CW', 'CCW'][np.random.choice([0, 1])]
-                cw, ccw, nm = simulate_reduced_version(eps=eps, sigma=sigma, j=j, d=cont, biasnm=biasnm, a=b_final*cont,
+                cw, ccw, nm = simulate_reduced_version(eps=eps, sigma=sigma, j=j, d=cont, biasnm=biasnm, a=b_final*cont,  # a=-b_final*cont if good relationship...
                                                        niters=niters, dt=dt, true=ini_cond, noise_system=sigma, tau=tau)
                 ccw = np.where(ccw >= 1/2, 1, 0)
                 cw = np.where(cw >= 1/2, 1, 0)
@@ -2506,8 +2665,13 @@ def experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     percepts = ['CW', 'CCW', 'NM', 'no-resp']
-    for i_b, b in enumerate(bias[3:]):
-        ax.plot(contrast, average_reaction_time[:, i_b+3], marker='o', label=b)
+    for i_b, b in enumerate(np.sort(np.unique(np.abs(bias)))):
+        idxs = np.where(np.abs(bias) == b)[0]
+        if len(idxs) > 1:
+            rt = np.nanmean(average_reaction_time[:, idxs], axis=1)
+        else:
+            rt = average_reaction_time[:, idxs]
+        ax.plot(contrast, rt, marker='o', label=b)
     ax.set_xlabel('Contrast')
     ax.set_ylabel('Reaction time (s)')
     ax.legend(title='Bias')
@@ -2613,6 +2777,182 @@ def analysis_simplification(sigma=0.1, eps=0.1, biasnm=0, j=0, d=0, a=0):
     ax.contour(X, Y, Vp, levels=[0], colors='b', linewidths=2)
 
 
+def functions_mf_ising_cw_nm():
+    # y: q(cw)
+    # z: q(nm)
+    fun_nm = lambda y, z, d, d0, a: -3*(y+4*z)*(d-a/2)**2
+    fun_cw = lambda y, z, d, d0, a: -3*z*d0**2
+    return fun_cw, fun_nm
+
+
+def quiver_ising_cw_nm(d=0, a=0, biasnm=0, j=0, sigma=0.1, eps=0.1, ax=None):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    fun_cw, fun_nm = functions_mf_ising_cw_nm()
+    y = np.arange(-0.1, 1.1, 7.5e-2)  # NM
+    z = np.arange(-0.1, 1.1, 7.5e-2)  # CW
+    Z, Y = np.meshgrid(z, y)
+    U = fun_cw(Y, Z, d, d0, a)/(2*sigma**2) + j*Z  # CW
+    V = fun_nm(Y, Z, d, d0, a)/(2*sigma**2) + j*Y + biasnm # NM
+    norm = (np.exp(U) + np.exp(V))
+    Up = np.exp(U) / norm - Z
+    Vp = np.exp(V) / norm - Y
+    if ax is None:
+        fig, ax = plt.subplots(1)
+    ax.quiver(Z, Y, Up, Vp)
+    ax.set_xlabel('q(CW)')
+    ax.set_ylabel('q(NM)')
+    y = np.arange(-0.1, 1.1, 1e-3)  # NM
+    z = np.arange(-0.1, 1.1, 1e-3)  # CW
+    Z, Y = np.meshgrid(z, y)
+    U = fun_cw(Y, Z, d, d0, a)/(2*sigma**2) + j*Z  # CW
+    V = fun_nm(Y, Z, d, d0, a)/(2*sigma**2) + j*Y + biasnm # NM
+    norm = (np.exp(U) + np.exp(V))
+    Up = np.exp(U) / norm - Z
+    Vp = np.exp(V) / norm - Y
+    ax.contour(Z, Y, Up, levels=[0], colors='r', linewidths=2)
+    ax.contour(Z, Y, Vp, levels=[0], colors='b', linewidths=2)
+    plt.show()
+
+
+def bifurcation_diagram_ising_cw_nm(j=0, sigma=0.1, eps=0.1, niters=50, nstarts=10, var_to_plot_against='d'):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    if var_to_plot_against == 'd':
+        alist = np.arange(0, 1.1, 5e-1).round(3)
+        dlist = np.arange(0, 0.4, 5e-4).round(3)
+        var_to_loop = dlist
+        lab_other_var = 'a'
+        var_less_loops = alist
+        n_cols = len(alist)
+    if var_to_plot_against == 'a':
+        alist = np.arange(0, 1.001, 1e-3).round(3)
+        dlist = np.arange(0, 0.5, 2e-1).round(3)
+        lab_other_var = 'd'
+        var_to_loop = alist
+        var_less_loops = dlist
+        n_cols = len(dlist)
+    biasnmlist = [0, 0.5, 1, 2]
+    fig, ax = plt.subplots(ncols=n_cols, nrows=len(biasnmlist), figsize=(15, 13))
+    # ax = ax.flatten()
+    for i_b, biasnm in enumerate(biasnmlist):
+        for i_a, var_0 in enumerate(var_less_loops):
+            ax[i_b, i_a].spines['top'].set_visible(False)
+            ax[i_b, i_a].spines['right'].set_visible(False)
+            for i_d, var_1 in enumerate(var_to_loop):
+                if var_to_plot_against == 'a':
+                    a, d = var_1, var_0
+                if var_to_plot_against == 'd':
+                    d, a = var_1, var_0    
+                fun_cw, fun_nm = functions_mf_ising_cw_nm()
+                for _ in range(nstarts):
+                    variables = np.random.rand(2)
+                    y, z = variables/np.sum(variables)
+                    for n in range(niters):
+                        U = fun_cw(y, z, d, d0, a*d)/(2*sigma**2) + j*y  # CW
+                        V = fun_nm(y, z, d, d0, a*d)/(2*sigma**2) + j*z + biasnm # NM
+                        norm = (np.exp(U) + np.exp(V))
+                        zn = np.exp(V) / norm
+                        yn = np.exp(U) / norm
+                        if np.abs(zn-z) < 1e-3 and n > 20:
+                            break
+                        z = zn
+                        y = yn
+                    ax[i_b, i_a].plot(var_1, z, color='k', marker='o', markersize=2)
+            ax[i_b, i_a].set_title(f'{lab_other_var}: ' + str(var_0) + ', B_NM: ' + str(biasnm))
+            ax[i_b, i_a].set_ylim(-0.05, 1.05)
+    ax[n_cols-1, 0].set_xlabel(var_to_plot_against)
+    ax[n_cols-1, 1].set_xlabel(var_to_plot_against)
+    ax[n_cols-1, 2].set_xlabel(var_to_plot_against)
+    ax[0, 0].set_ylabel('q(NM)')
+    ax[1, 0].set_ylabel('q(NM)')
+    ax[2, 0].set_ylabel('q(NM)')
+    fig.tight_layout()
+    if var_to_plot_against == 'd':
+        fig.savefig(DATA_FOLDER + f'fps_ising_cw_nm_j{int(j)}_sigma_01_eps_01.png', dpi=80, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + f'fps_ising_cw_nm_j{int(j)}_sigma_01_eps_01.svg', dpi=80, bbox_inches='tight')
+    if var_to_plot_against == 'a':
+        fig.savefig(DATA_FOLDER + f'fps_ising_cw_nm_j{int(j)}_sigma_01_eps_01_vs_a.png', dpi=80, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + f'fps_ising_cw_nm_j{int(j)}_sigma_01_eps_01_vs_a.svg', dpi=80, bbox_inches='tight')
+
+
+def quiver_plots_ising_cw_nm(biaslist=[0, 0.2, 0.4], dlist=[0., 0.1, 0.2], eps=0.1, a=0, j=0,
+                             sigma=0.1):
+    fig, ax = plt.subplots(ncols=3, nrows=3, figsize=(12, 10))
+    fig.suptitle('a = '+ str(a))
+    combs = list(itertools.product(dlist, biaslist))
+    for i_a, axi in enumerate(ax.flatten()):
+        axi.set_title('d = ' + str(combs[i_a][0]) + ', B_nm = ' + str(combs[i_a][1]))
+        axi.set_xlabel('q(CW)')
+        axi.set_ylabel('q(NM)')
+    fig.tight_layout()
+    for i_b, bias in enumerate(biaslist):
+        for i_d, d in enumerate(dlist):
+            # bias = 3*(d-a/2)**2
+            # leg = True if i_b == 0 and i_d == 0 else False
+            quiver_ising_cw_nm(eps=eps, sigma=sigma, d=d, biasnm=bias,
+                               ax=ax[i_d, i_b], a=a, j=j)
+
+
+def ising_cw_nm_fixed_points_constant_k(biasnmlist=[0, 1, 2], jlist=[0, 1, 2],
+                                        eps=0.1, sigma=0.1, nstarts=20, niters=200):
+    d0 = np.sqrt(-2*sigma**2 * np.log(np.sqrt(2*np.pi)*eps*sigma))
+    klist = np.arange(0, 0.35, 5e-5)
+    all_nm_sims = np.zeros((len(biasnmlist), len(jlist), len(klist), nstarts))
+    for i_b, biasnm in enumerate(biasnmlist):
+        for i_j, j in enumerate(jlist):
+            for i_k, k in enumerate(klist):
+                fun_nm = lambda z: -(1+3*z)*k
+                fun_cw = lambda z, d0: -3*z*d0**2
+                for ini_cond in range(nstarts):
+                    variables = np.random.rand(2)
+                    y, z = variables/np.sum(variables)
+                    for n in range(niters):
+                        U = fun_cw(z, d0)/(2*sigma**2) + j*y  # CW
+                        V = fun_nm(z)/(2*sigma**2) + j*z + biasnm # NM
+                        norm = (np.exp(U) + np.exp(V))
+                        zn = np.exp(V) / norm
+                        yn = np.exp(U) / norm
+                        if np.abs(zn-z) < 1e-3 and n > 20:
+                            break
+                        z = zn
+                        y = yn
+                    all_nm_sims[i_b, i_j, i_k, ini_cond] = z
+    fig, ax = plt.subplots(ncols=len(biasnmlist), nrows=len(jlist),
+                           figsize=(12, 11))
+    for i_a, a in enumerate(ax.flatten()):
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_ylim(-0.05, 1.05)
+    for i_b, biasnm in enumerate(biasnmlist):
+        for i_j, j in enumerate(jlist):
+            for i_n in range(nstarts):
+                ax[i_j, i_b].plot(klist, all_nm_sims[i_b, i_j, :, i_n], color='k',
+                                  marker='o', linestyle='', markersize=2)
+            ax[i_j, i_b].set_title(f'B_NM : {biasnm}, J: {j}')
+    for i in range(3):
+        ax[-1, i].set_xlabel(r'$k = 3(d-\frac{a}{2})^2 = 3d^2(1-\frac{a^*}{2})$')
+        ax[i, 0].set_ylabel('q(NM)')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'fps_ising_cw_nm_vs_k.png', dpi=100, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'fps_ising_cw_nm_vs_k.svg', dpi=100, bbox_inches='tight')
+    alist = np.arange(0, 1, 1e-3)
+    dlist = np.arange(0, 0.5, 1e-3)
+    A, D = np.meshgrid(alist, dlist)
+    K = 3*D**2*(1-A/2)**2
+    f2 = plt.figure()
+    im = plt.imshow(np.flipud(K), extent=[0, 1, 0, 0.5], cmap='jet', aspect='auto')
+    plt.xlabel('Bias, a')
+    plt.ylabel('Contrast, d')
+    plt.colorbar(im, label=r'$k=3(d-\frac{a}{2})^2$', aspect=10, shrink=0.5)
+    f2.tight_layout()
+    K = 3*D**2*(1+A/2)**2
+    f2 = plt.figure()
+    im = plt.imshow(np.flipud(K), extent=[0, 1, 0, 0.5], cmap='jet', aspect='auto')
+    plt.xlabel('Bias, a')
+    plt.ylabel('Contrast, d')
+    plt.colorbar(im, label=r'$k=3(d+\frac{a}{2})^2$', aspect=10, shrink=0.5)
+    f2.tight_layout()
+
+
 if __name__ == '__main__':
     # number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
     #                         jlist=np.arange(0, 1.05, 0.05).round(4),
@@ -2707,8 +3047,10 @@ if __name__ == '__main__':
     #                               jlist=[0, 0.4, 0.8, 1.2, 1.6, 1.8, 2], analytical=False)
     experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
                                    bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                                   eps=0.2, sigma=0.2, j=0.4, biasnm=1, niters=500,
-                                   dt=0.01, nsimuls=50, tau=0.2)
+                                   eps=0.1, sigma=0.1, j=1, biasnm=1.5, niters=500,
+                                   dt=0.01, nsimuls=100, tau=2)
+    # beliefs = ring(epsilon=0.1, n_dots=8).run_belief_propagation_triplet_likelihood(J=.2, alpha=0.5, n_iters=100, tol=1e-3,
+    #                                                                                 num_states=3, true='CW', coh=0, d=0)
     # phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
     #                           alist=np.arange(0, 1.02, 2e-2), biasnm=1,
     #                           resimulate=False, ax=None, cbar=False, fig=None, j=0.8,
