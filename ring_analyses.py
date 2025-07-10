@@ -2510,11 +2510,16 @@ def simulate_reduced_version(eps=0.1, sigma=0.1, j=0, d=0.1, biasnm=0, a=0, nite
 
 def p_switch_back_vs_timings(biasnm=0, contrast=[0.1, 0.2, 0.3, 0.4], eps=0.1, sigma=0.1, dt=0.01,
                              niters=10000, nsimuls=10, j=0, tau=0.2):
+    """
+    Plots probability of doing S -> NM -> S (p(switch back), where S is CW and CCW),
+    against average duration time of S and average duration time of NM.
+    """
     # since there is no adaptation, this will look just flat :)
+    # it is slightly above 0.5, meaning that it is easier to jump back rather than jump to the other side
     average_nm_duration_intermediate = np.zeros((len(contrast), nsimuls))
     average_cw_ccw_duration_pre_state = np.zeros((len(contrast), nsimuls))
     average_switch_back_probability = np.zeros((len(contrast), nsimuls))
-    cont = 0.1
+    cont = 0.05
     average_nm_duration = []
     average_cw_ccw_duration = []
     probability_switch_back = []
@@ -2572,15 +2577,22 @@ def p_switch_back_vs_timings(biasnm=0, contrast=[0.1, 0.2, 0.3, 0.4], eps=0.1, s
         a.spines['top'].set_visible(False)
         a.spines['right'].set_visible(False)
         a.set_ylim(0, 1)
+        a.axhline(0.5, color='r', alpha=0.4)
+    rho_1 = np.round(np.corrcoef(np.log(average_nm_duration_intermediate), average_switch_back_probability)[0, 1], 3)
+    rho_2 = np.round(np.corrcoef(np.log(average_cw_ccw_duration_pre_state), average_switch_back_probability)[0, 1], 3)
     ax[0].plot(np.log(average_nm_duration_intermediate), average_switch_back_probability,
-                    marker='o', color='k', linestyle='')
+               marker='o', color='k', linestyle='', markersize=3)
     ax[1].plot(np.log(average_cw_ccw_duration_pre_state), average_switch_back_probability,
-                    marker='o', color='k', linestyle='')
-    ax[0].set_title(f'd : {cont}')
-    ax[1].set_xlabel('log (T(previous CW))')
+               marker='o', color='k', linestyle='', markersize=3)
+    ax[0].set_title(rf'$\rho = {rho_1}$')
+    ax[1].set_title(rf'$\rho = {rho_2}$')
+    fig.suptitle(f'd : {cont}')
+    ax[1].set_xlabel('log (T(previous CW or CCW))')
     ax[0].set_xlabel('log (T(NM))')
     ax[0].set_ylabel('p (switch back)')
     fig.tight_layout()
+    fig.savefig(DATA_FOLDER + f'p_switch_back_vs_duration_times_contrast_{cont}.png', dpi=80, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + f'p_switch_back_vs_duration_times_contrast_{cont}.svg', dpi=80, bbox_inches='tight')
 
 
 def experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
