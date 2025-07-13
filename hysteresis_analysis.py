@@ -7,6 +7,7 @@ Created on Mon Apr 21 20:07:39 2025
 
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 import pandas as pd
 import scipy
 import matplotlib as mpl
@@ -64,7 +65,7 @@ def load_data(data_folder, n_participants='all'):
         return df_0
 
 
-def get_response_and_blist_array(df, fps=60, tFrame=20,
+def get_response_and_blist_array(df, fps=60, tFrame=26,
                                  flip_responses=True):
     nFrame = fps*tFrame
     stimulus_times = np.arange(0, nFrame)
@@ -153,11 +154,13 @@ def bin_average_response(stim_time, response_array, nbins=11):
 
 
 def hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
-                          fps=60, tFrame=18, data_folder=DATA_FOLDER,
+                          fps=60, tFrame=26, data_folder=DATA_FOLDER,
                           nbins=13, ntraining=4, arrows=False):
     nFrame = fps*tFrame
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
+    df['response'] = df.prev_response
+    # print(len(df.trial_index.unique()))
     subjects = df.subject.unique()
     fig, ax = plt.subplots(ncols=2, nrows=len(subjects), figsize=(7.5, 4.))
     fig2, ax2 = plt.subplots(1, figsize=(4.5, 4))
@@ -181,7 +184,7 @@ def hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
             df_freq_2 = df_filt.loc[df.freq == 2]
             response_array_2, barray_2 = get_response_and_blist_array(df_freq_2, fps=fps,
                                                                       tFrame=tFrame)
-            # response_array_2 = np.roll(response_array_2, -120, axis=1)
+            # response_array_2 = np.roll(response_array_2, -50, axis=1)
             # mean_response_2 = np.nanmean(response_array_2, axis=0)
             ascending = np.sign(np.gradient(barray_2))
             df_to_plot = pd.DataFrame(response_array_2.T)
@@ -198,13 +201,18 @@ def hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
             hvals_2.append(hist_val_2)
             ax2.plot(coupling, hist_val_2, marker='o', markersize=8, color=colormap[i_c],
                      zorder=5)
-            ax[0].plot(xvals_2[len(xvals_2)//2:], yvals_2[len(xvals_2)//2:], color=colormap[i_c], linewidth=4,
-                       label=1-coupling)
-            ax[0].plot(xvals_2[:len(xvals_2)//2], yvals_2[:len(xvals_2)//2], color=colormap[i_c], linewidth=4)
+            # ax[0].plot(xvals_2[len(xvals_2)//2:], yvals_2[len(xvals_2)//2:], color=colormap[i_c], linewidth=4,
+            #            label=1-coupling)
+            # ax[0].plot(xvals_2[:len(xvals_2)//2], yvals_2[:len(xvals_2)//2], color=colormap[i_c], linewidth=4)
+            x_vals2 = barray_2
+            r2 = np.nanmean(response_array_2, axis=0)
+            y_vals2 = np.convolve(r2, np.ones(200)/200, mode='same')
+            ax[0].plot(x_vals2, y_vals2, color=colormap[i_c], linewidth=4,
+                       linestyle='--' if arrows else 'solid', label=1-coupling)
             df_freq_4 = df_filt.loc[df.freq == 4]
             response_array_4, barray_4 = get_response_and_blist_array(df_freq_4, fps=fps,
                                                                       tFrame=tFrame)
-            # response_array_4 = np.roll(response_array_4, -30, axis=1)
+            # response_array_4 = np.roll(response_array_4, -50, axis=1)
             # mean_response_4 = np.nanmean(response_array_4, axis=0)
             # response_array_4_1st = response_array_4[:, :len(barray_4)//4]
             # mean_1st = np.nanmean(response_array_4_1st, axis=1)
@@ -227,12 +235,19 @@ def hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
             idx_close_descending = np.argmin(np.abs(yvals_4[:len(xvals_4)//2]-0.5))
             hist_val_4 = xvals_4[len(xvals_4)//2:][idx_close_ascending]-xvals_4[:len(xvals_4)//2][idx_close_descending]
             hvals_4.append(hist_val_4)
-            ax[1].plot(xvals_4[len(xvals_4)//2:], yvals_4[len(xvals_4)//2:],
-                       color=colormap[i_c], linewidth=4, label=1-coupling,
-                       linestyle='--')
-            ax[1].plot(xvals_4[:len(xvals_4)//2],
-                       yvals_4[:len(xvals_4)//2], color=colormap[i_c], linewidth=4,
-                       linestyle='--')
+            r4 = np.row_stack((response_array_4[:, :len(barray_4)//2],
+                               response_array_4[:, len(barray_4)//2:]))
+            r4 = np.nanmean(r4, axis=0)
+            # ax[1].plot(xvals_4[len(xvals_4)//2:], yvals_4[len(xvals_4)//2:],
+            #            color=colormap[i_c], linewidth=4, label=1-coupling,
+            #            linestyle='--' if arrows else 'solid')
+            # ax[1].plot(xvals_4[:len(xvals_4)//2],
+            #            yvals_4[:len(xvals_4)//2], color=colormap[i_c], linewidth=4,
+            #            linestyle='--' if arrows else 'solid')
+            x_vals4 = barray_4[:len(barray_4)//2]
+            y_vals4 = np.convolve(r4, np.ones(50)/50, mode='same')
+            ax[1].plot(x_vals4, y_vals4, color=colormap[i_c], linewidth=4,
+                       linestyle='--' if arrows else 'solid')
             ax2.plot(coupling, hist_val_4, marker='o', markersize=8, color=colormap[i_c],
                      zorder=5)
             if coupling == 1 and arrows:
@@ -452,17 +467,30 @@ def plot_psych_kernels(data_folder=DATA_FOLDER, fps=60, tFrame=15,
     fig.tight_layout()
 
 
+def stars_pval(pval):
+    s = 'ns'
+    if pval < 0.05 and pval >= 0.01:
+        s = '*'
+    if pval < 0.01 and pval >= 0.001:
+        s = '**'
+    if pval < 0.001:
+        s = '***'
+    return s
+
+
 def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
                              steps_back=60, steps_front=20,
-                             shuffle_vals=[1, 0.7, 0]):
+                             shuffle_vals=[1, 0.7, 0], violin=False):
     nFrame = fps*tFrame
     df = load_data(data_folder + '/noisy/', n_participants='all')
+    # print(len(df.trial_index.unique()))
     colormap = pl.cm.Oranges(np.linspace(0.3, 1, 3))[::-1]
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     mean_vals_noise_switch_coupling = np.empty((len(shuffle_vals), steps_back+steps_front))
     mean_vals_noise_switch_coupling[:] = np.nan
     err_vals_noise_switch_coupling = np.empty((len(shuffle_vals), steps_back+steps_front))
     err_vals_noise_switch_coupling[:] = np.nan
+    # all_noises = [[], [], []]
     for i_sh, pshuffle in enumerate(shuffle_vals):
         df_coupling = df.loc[df.pShuffle == pshuffle]
         trial_index = df_coupling.trial_index.unique()
@@ -488,12 +516,16 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
                     chi[idx - steps_back:idx+steps_front]*-1
             mean_vals_noise_switch_all_trials[i_trial, :] =\
                 np.nanmean(mean_vals_noise_switch, axis=0)
+        # all_noises[i_sh] = mean_vals_noise_switch_all_trials[:, steps_back-20:-steps_front]
         mean_vals_noise_switch_coupling[i_sh, :] = np.convolve(np.nanmean(mean_vals_noise_switch_all_trials, axis=0), np.ones(20)/20,
                                                                'same')
         err_vals_noise_switch_coupling[i_sh, :] = np.nanstd(mean_vals_noise_switch_all_trials, axis=0) / np.sqrt(len(trial_index))
     fig, ax = plt.subplots(1, figsize=(5.5, 4))
+    fig2, ax2 = plt.subplots(1, figsize=(5.5, 4))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
     for i_sh, pshuffle in enumerate(shuffle_vals):
         x_plot = np.arange(-steps_back, steps_front, 1)/fps
         y_plot = mean_vals_noise_switch_coupling[i_sh, :]
@@ -502,10 +534,38 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
                 label=pshuffle, linewidth=3)
         ax.fill_between(x_plot, y_plot-err_plot, y_plot+err_plot, color=colormap[i_sh],
                         alpha=0.3)
+    # mean_vals_noise_switch_coupling[:, steps_back-20:-steps_front].T
+    # a, b, c = all_noises
+    a, b, c = mean_vals_noise_switch_coupling[:, steps_back-20:-steps_front]
+    # all_noises = [a.flatten(), b.flatten(), c.flatten()]
+    pv_sh1 = stars_pval(scipy.stats.ttest_1samp(a.flatten(), 0).pvalue)
+    pv_sh07 = stars_pval(scipy.stats.ttest_1samp(b.flatten(), 0).pvalue)
+    pv_sh0 = stars_pval(scipy.stats.ttest_1samp(c.flatten(), 0).pvalue)
+    pvs = [pv_sh1, pv_sh07, pv_sh0]
+    if violin:
+        sns.violinplot(mean_vals_noise_switch_coupling[:, steps_back-20:-steps_front].T, palette=colormap, ax=ax2)
+        h_1, h_07, h_0 = np.nanmax(a), np.nanmax(b), np.nanmax(c)
+    else:
+        sns.barplot(mean_vals_noise_switch_coupling[:, steps_back-20:-steps_front].T, palette=colormap, ax=ax2)
+        # a, b, c = mean_vals_noise_switch_coupling
+        # scipy.stats.ttest_rel(a, b)
+        # scipy.stats.ttest_rel(a, c)
+        # scipy.stats.ttest_rel(b, c)
+        h_1, h_07, h_0 = np.nanmean(a), np.nanmean(b), np.nanmean(c)
+    heights = [h_1, h_07, h_0]
+    offset = 0.1 if violin else 0.05
+    for a in range(3):
+        ax2.text(a, heights[a]+offset, f"{pvs[a]}", ha='center', va='bottom', color='k',
+                 fontsize=12)
+    ax2.set_xticks([0, 1, 2], [1, 0.7, 0])
+    ax2.set_xlabel('p(Shuffle)')
+    ax2.set_ylabel('Noise before switch')
     ax.legend(title='p(shuffle)', frameon=False)
     ax.set_xlabel('Time from switch (s)')
     ax.set_ylabel('Noise')
+    ax.axhline(0, color='k', linestyle='--', alpha=0.5)
     fig.tight_layout()
+    fig2.tight_layout()
     fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.png', dpi=400, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.svg', dpi=400, bbox_inches='tight')
 
@@ -1630,19 +1690,19 @@ if __name__ == '__main__':
     # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
     #              fps=60, tFrame=18, model='MF', prob_flux=False,
     #              freq=4, idx=2)
-    # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
-    #                       fps=60, tFrame=18, data_folder=DATA_FOLDER,
-    #                       nbins=9, ntraining=8, arrows=True)
-    # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
-    #                          steps_back=120, steps_front=20,
-    #                          shuffle_vals=[1, 0.7, 0])
+    hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
+                          fps=60, tFrame=26, data_folder=DATA_FOLDER,
+                          nbins=5, ntraining=8, arrows=False)
+    plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+                              steps_back=45, steps_front=20,
+                              shuffle_vals=[1, 0.7, 0], violin=False)
     # parameter_recovery(n_simuls_network=2000000, fps=60, tFrame=26,
     #                     n_pars_to_fit=200, n_sims_per_par=120,
     #                     model='MF', sv_folder=SV_FOLDER, simulate=True,
     #                     load_net=True)
-    fit_data(data_folder=DATA_FOLDER, n_simuls_network=2000000,
-             tFrame=18, fps=60, ntraining=10, model='MF',
-             sv_folder=SV_FOLDER, npars=5)
+    # fit_data(data_folder=DATA_FOLDER, n_simuls_network=2000000,
+    #          tFrame=18, fps=60, ntraining=10, model='MF',
+    #          sv_folder=SV_FOLDER, npars=5)
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
     #                       fps=60, tFrame=20, freq=2, idx=5, n=3.92, theta=0.5,
     #                       tol=1e-3, pshuffle=0)
