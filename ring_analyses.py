@@ -3060,7 +3060,7 @@ if __name__ == '__main__':
     experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
                                    bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
                                    eps=0.1, sigma=0.1, j=1, biasnm=1.5, niters=500,
-                                   dt=0.01, nsimuls=100, tau=2)
+                                   dt=0.01, nsimuls=30, tau=2)
     # beliefs = ring(epsilon=0.1, n_dots=8).run_belief_propagation_triplet_likelihood(J=.2, alpha=0.5, n_iters=100, tol=1e-3,
     #                                                                                 num_states=3, true='CW', coh=0, d=0)
     # phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
