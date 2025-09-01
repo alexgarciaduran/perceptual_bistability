@@ -574,9 +574,21 @@ class ring:
                 if i_a > 1:
                     a.set_ylim(-0.15, 1.15)
             ax[nstates].set_xlabel('Time (s)')
+            fig5, ax5 = plt.subplots(figsize=(8, 3))
+            ax5.imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
+                         vmin=0, vmax=1)
+            ax5.set_yticks(np.arange(self.ndots), np.arange(self.ndots)+1)
+            ax5.set_ylabel('Dots')
+            ax5.set_xlabel('Time')
+            fig5.savefig(DATA_FOLDER + f'{true}_d_{s[0]}_stimulus_{coh}.png', dpi=200,
+                         bbox_inches='tight')
+            fig5.savefig(DATA_FOLDER + f'{true}_d_{s[0]}_stimulus_{coh}.svg', dpi=200,
+                         bbox_inches='tight')
             ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
                          vmin=0, vmax=1)
-            ax[0].set_ylabel('Stimulus')
+            ax[0].set_yticks(np.arange(self.ndots), np.arange(self.ndots)+1)
+            ax[0].set_ylabel('Dots')
+            ax[0].set_xlabel('Time (s)')
             ax[1].set_ylabel('R=q(z_i=CW), G=0,\n B=q(z_i=CCW)' )
             if nstates == 3:
                 q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T,
@@ -3022,10 +3034,22 @@ if __name__ == '__main__':
     #                                                                       noise_stim=0.1, s=[0.5, 0.5],
     #                                                                       stim_stamps=1, sigma_lh=0.1,
     #                                                                       coh=0.)
-    # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=200, j=0.5,
-    #                                               true='CCW', noise=0.01, plot=True,
-    #                                               discrete_stim=True, s=[0.55, 0.45],
-    #                                               b=[0., 0., 0.], noise_stim=0.0, coh=0)
+    ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
+                                                  true='CCW', noise=0.01, plot=True,
+                                                  discrete_stim=True, s=[0., 1],
+                                                  b=[0., 0., 0.], noise_stim=0.0, coh=0.)
+    ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
+                                                  true='CCW', noise=0.01, plot=True,
+                                                  discrete_stim=True, s=[0.45, 0.55],
+                                                  b=[0., 0., 0.], noise_stim=0.0, coh=None)
+    ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
+                                                  true='CCW', noise=0.01, plot=True,
+                                                  discrete_stim=True, s=[0., 1],
+                                                  b=[0., 0., 0.], noise_stim=0.0, coh=0.2)
+    ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
+                                                  true='CW', noise=0.01, plot=True,
+                                                  discrete_stim=True, s=[0., 1],
+                                                  b=[0., 0., 0.], noise_stim=0.0, coh=0.2)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
     # # #                                     true='CW', noise=0.01, plot=True,
     # # #                                     discrete_stim=False, s=[0.9, 0.9],
@@ -3057,10 +3081,10 @@ if __name__ == '__main__':
     #                         nsims=50, simulate=False, biasnm=1, j=0.4)
     # plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2, 2.5, 3],
     #                               jlist=[0, 0.4, 0.8, 1.2, 1.6, 1.8, 2], analytical=False)
-    experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
-                                   bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                                   eps=0.1, sigma=0.1, j=1, biasnm=1.5, niters=500,
-                                   dt=0.01, nsimuls=30, tau=2)
+    # experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
+    #                                bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+    #                                eps=0.1, sigma=0.1, j=1, biasnm=1.5, niters=500,
+    #                                dt=0.01, nsimuls=30, tau=2)
     # beliefs = ring(epsilon=0.1, n_dots=8).run_belief_propagation_triplet_likelihood(J=.2, alpha=0.5, n_iters=100, tol=1e-3,
     #                                                                                 num_states=3, true='CW', coh=0, d=0)
     # phase_diagram_d_biasccw_a(dlist=np.arange(0, 0.505, 1e-2),
