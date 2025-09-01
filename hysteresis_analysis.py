@@ -270,10 +270,10 @@ def hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
                 ax[1].plot([hist_val_4-0.53]*2,
                            [0.5, 1.06], color=colormap[i_c], alpha=0.7, linestyle='--')
             # ax[1].plot(barray_4, mean_response_4, color=colormap[i_c], linewidth=3)
-        ax2.plot(coupling_levels, hvals_2, color='k', linewidth=3,
-                 linestyle='--', zorder=1, label='Freq = 2')
+        ax2.plot(coupling_levels, hvals_2, color='k', linewidth=3, zorder=1,
+                 label='Freq = 2')
         ax2.plot(coupling_levels, hvals_4, color='k', linewidth=3,
-                 zorder=1, label='Freq = 4')
+                 linestyle='--', zorder=1, label='Freq = 4')
     ax2.legend(frameon=False)
     ax2.set_xlabel('Coupling, J')
     ax2.set_ylabel('Hysteresis width')
@@ -542,11 +542,14 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     pv_sh07 = stars_pval(scipy.stats.ttest_1samp(b.flatten(), 0).pvalue)
     pv_sh0 = stars_pval(scipy.stats.ttest_1samp(c.flatten(), 0).pvalue)
     pvs = [pv_sh1, pv_sh07, pv_sh0]
+    ax2.axhline(0, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
     if violin:
-        sns.violinplot(mean_vals_noise_switch_coupling[:, steps_back-20:-steps_front].T, palette=colormap, ax=ax2)
+        sns.violinplot(mean_vals_noise_switch_coupling[:, steps_back-20:-steps_front].T, palette=colormap, ax=ax2,
+                       zorder=2)
         h_1, h_07, h_0 = np.nanmax(a), np.nanmax(b), np.nanmax(c)
     else:
-        sns.barplot(mean_vals_noise_switch_coupling[:, steps_back-20:-steps_front].T, palette=colormap, ax=ax2)
+        sns.barplot(mean_vals_noise_switch_coupling[:, steps_back-20:-steps_front].T, palette=colormap, ax=ax2,
+                    zorder=2)
         # a, b, c = mean_vals_noise_switch_coupling
         # scipy.stats.ttest_rel(a, b)
         # scipy.stats.ttest_rel(a, c)
@@ -1692,10 +1695,10 @@ if __name__ == '__main__':
     #              freq=4, idx=2)
     hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
                           fps=60, tFrame=26, data_folder=DATA_FOLDER,
-                          nbins=5, ntraining=8, arrows=False)
+                          nbins=10, ntraining=8, arrows=False)
     plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
                               steps_back=45, steps_front=20,
-                              shuffle_vals=[1, 0.7, 0], violin=False)
+                              shuffle_vals=[1, 0.7, 0], violin=True)
     # parameter_recovery(n_simuls_network=2000000, fps=60, tFrame=26,
     #                     n_pars_to_fit=200, n_sims_per_par=120,
     #                     model='MF', sv_folder=SV_FOLDER, simulate=True,
