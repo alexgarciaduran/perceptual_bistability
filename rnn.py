@@ -54,38 +54,39 @@ class Net(nn.Module):
         self.output_size = output_size
 
         # Initialize weights and biases for RNN
-        self.W_ih = nn.Parameter(torch.randn(hidden_size, input_size) * 0.05+0.4)
-        self.W_hh = nn.Parameter((torch.randn(hidden_size, hidden_size) * 0.2))
-        # self.m_1 = nn.Parameter(torch.randn(hidden_size) * 0.1+0.3)
-        # self.m_2 = nn.Parameter(torch.randn(hidden_size) * 0.1+0.3)
+        self.W_ih = nn.Parameter(torch.randn(hidden_size, input_size) * 0.1 + 0.5)
+        self.W_hh = nn.Parameter((torch.randn(hidden_size, hidden_size) * 0.4))
+        # self.m_1 = nn.Parameter(torch.randn(hidden_size) * 0.1)
+        # self.m_2 = nn.Parameter(torch.randn(hidden_size) * 0.1)
+        # self.m_3 = nn.Parameter(torch.randn(hidden_size) * 0.1)
+        # self.m_4 = nn.Parameter(torch.randn(hidden_size) * 0.1)
+        # self.W_hh = torch.outer(self.m_1, self.m_2)+torch.outer(self.m_3, self.m_4)
         # self.W_hh = nn.Parameter(torch.outer(self.m_1, self.m_2) + torch.randn(hidden_size, hidden_size)*0.1)
-        self.W_hh_bias = nn.Parameter(torch.randn(hidden_size, hidden_size) * 0.01+0.5)
+        self.W_hh_bias = nn.Parameter(torch.randn(hidden_size, hidden_size) * 0.1 + 0.1)
+        # self.b_ctext_bias = nn.Parameter(torch.randn(hidden_size) * 0.1)
         self.b_h = nn.Parameter(torch.zeros(hidden_size))
+        # self.noise = torch.tensor([0.1]*hidden_size)  # nn.Parameter(torch.rand(hidden_size)*0.1)
 
         # Initialize weights and biases for Linear layer
-        self.W = nn.Parameter(torch.randn(output_size, hidden_size) * 0.1+0.5)
+        self.W = nn.Parameter(torch.randn(output_size, hidden_size) * 0.3)
         self.b = nn.Parameter(torch.zeros(output_size))
 
     def forward(self, x, context=0):
         seq_len, batch_size = x.size()
-        h = torch.randn(batch_size, self.hidden_size)*0.01 + 0.5 # Initial hidden state
-
+        h = torch.randn(batch_size, self.hidden_size)*0.1 # Initial hidden state
+        # self.W_hh = torch.outer(self.m_1, self.m_2)+torch.outer(self.m_3, self.m_4)
         # Apply the RNN step by step
         out = torch.zeros((batch_size, seq_len, self.hidden_size))
         for t in range(seq_len):
             x_t = x[t, :]
             x_t = x_t.unsqueeze(-1)
-            # shape_mtmul = (torch.matmul(x_t, self.W_ih[:, 0, context].T)).shape
             c0 = torch.matmul(x_t, self.W_ih.T)
-            # c1 = torch.bmm(h.unsqueeze(1), self.W_hh[:, :, context].T).squeeze(1)
-            c1 = torch.matmul(2*h-1, self.W_hh.T)
-            c2 = (context*torch.matmul(2*h-1, self.W_hh_bias.T).T).T
-            h =  nn.functional.sigmoid(c0 +\
-                 c1 + c2 +  self.b_h)  #   + torch.randn(self.hidden_size)*0.05
+            c1 = (context*torch.matmul(h, self.W_hh_bias.T).T).T
+            h = torch.tanh(torch.matmul(h, self.W_hh.T) + c0 + c1 + self.b_h)
             out[:, t, :] = h
 
         # Apply the linear layer
-        x = torch.matmul(out, self.W.T) + self.b
+        x = nn.functional.sigmoid(torch.matmul(out, self.W.T) + self.b)
         return x[:, :, 0], out
 
 
@@ -97,65 +98,80 @@ def create_stim(evidence, sigma=0.03, dt=0.1, trial_len=4):
     return evvals.T
 
 
+def quick_simul_mf(dataset, ctext, num_simuls, dt=0.1):
+    sims = np.zeros_like(dataset)
+    for i in range(num_simuls):
+        x = np.random.rand()
+        xl = [x]
+        for n in range(dataset.shape[0]-1):
+            x = x+dt*(sigmoid(2*ctext[i]*3*(2*x-1)+2*dataset[n, i])-x)/0.5 + np.random.randn()*np.sqrt(dt/0.5)*0.025
+            xl.append(x)
+        sims[:, i] = xl
+    labs = np.clip(sims, 0, 1)
+    return labs
+
+
 def training(hidden_size=8, training_kwargs={'dt': 0.1,
                                              'lr': 1e-2,
                                              'n_epochs': 8000,
-                                             'batch_size': 540,
-                                             'seq_len': 100}):
+                                             'batch_size': 200,
+                                             'seq_len': 10},
+             num_simuls=5000):
     # Define network instance from the Net class
     net = Net(input_size=1,
               hidden_size=hidden_size,
               output_size=1)
     # Define loss: instance of the CrossEntropyLoss class
     criterion = nn.MSELoss()
+    # criterion = nn.KLDivLoss()
+    # criterion = torch.nn.CrossEntropyLoss()
 
     # Define optimizer
-    optimizer = torch.optim.Adam(net.parameters(), lr=training_kwargs['lr'])
+    optimizer = torch.optim.Adam(net.parameters(), lr=training_kwargs['lr'],
+                                 weight_decay=1e-4)
     num_epochs = training_kwargs['n_epochs']
     batch_size = training_kwargs['batch_size']
 
     # It is initialized to zero and then monitored over training interations
     running_loss = 0.0
-    df = load_data(data_folder=DATA_FOLDER, sub='s_11')
-    df['coupling'] = df['pShuffle'].replace(to_replace=[0, 70, 100],
-                                            value= [1, 0.3, 0])
-    evidence = df.evidence.values/10
+    # df = load_data(data_folder=DATA_FOLDER, sub='s_11')
+    # df['coupling'] = df['pShuffle'].replace(to_replace=[0, 70, 100],
+    #                                         value= [1, 0.3, 0])
+    # evidence = df.evidence.values/10
+    dt = training_kwargs['dt']
+    seqlen = training_kwargs['seq_len']
+    evidence = np.random.choice([-1, -0.5, -0.25, 0, 0.25, 0.5, 1], num_simuls)
     dataset = create_stim(evidence, sigma=0.05, dt=training_kwargs['dt'],
                           trial_len=training_kwargs['seq_len'])
-    ctext = df.coupling.values
+    ctext = np.random.choice(np.arange(0, 0.8, 0.05), num_simuls)
     # conf = np.clip((df.confidence.values+1)/2, 0.001, 0.999)
     # labs = 0.5*np.log(conf / (1-conf))
-    labs = (df.confidence.values+1)/2
+    labs = quick_simul_mf(dataset, ctext, num_simuls, dt=dt)
     losslist = []
-    plt.figure()
-    plt.yscale('log')
-    plt.ylabel('Loss')
-    plt.xlabel('Epoch')
+    mat_ctx_list = []
+    mat_hidden_list = []
+    mat_input_list = []
     # net.W_m2.requires_grad = False
     # net.W_m1.requires_grad = False
     # net.W_hh.requires_grad = False
+    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(11.5, 8))
+    ax = ax.flatten()
+    ax[0].set_xlabel('Epoch'); ax[1].set_xlabel('Epoch')
+    ax[0].set_ylabel('Loss'); ax[1].set_ylabel('<W_ctext>')
+    ax[2].set_xlabel('Loss'); ax[2].set_ylabel('<W_ctext>')
+    ax[3].set_xlabel('Epoch'); ax[4].set_xlabel('Epoch')
+    ax[3].set_ylabel('<W_input>'); ax[4].set_ylabel('<W_hidden>')
+    ax[5].set_xlabel('Loss'); ax[5].set_ylabel('<W_input>')
+    ax[5].set_title('Correlation'); ax[2].set_title('Correlation')
+    fig.tight_layout()
     for i in range(num_epochs):
-        # if i < 4000:
-        #     idx = np.random.choice(np.where(ctext != 1)[0], batch_size)
-        #     net.W_hh_bias.requires_grad = False
-        # else:
-        #     # idx = np.random.choice(np.arange(0, len(labs), 1), batch_size)
-        #     idx = np.random.choice(np.where(ctext != 0)[0], batch_size)
-        #     net.W_hh_bias.requires_grad = True
-        #     net.W_hh.requires_grad = False
-        idx = np.random.choice(np.arange(0, len(labs), 1), batch_size)
+        idx = np.random.choice(np.arange(0, len(labs), 1), batch_size, replace=True)
         # get inputs and labels and pass them to the GPU
         inputs = dataset[:, idx]
         inputs = torch.from_numpy(inputs).type(torch.float)
         # inputs = inputs.view(-1, len(labels))
-        if i > -1:
-            # context = torch.from_numpy(ctext[idx]).type(torch.int)
-            context = torch.from_numpy(ctext[idx]).type(torch.float)
-        # else:
-        #     context = torch.from_numpy(np.repeat(0, batch_size)).type(torch.int)
-        labels = torch.from_numpy(labs[idx] + np.random.randn(batch_size)*0.02).type(torch.float)
-        # labels = (labels.view(-1, 1) + torch.randn(inputs.shape[0]).view(-1, inputs.shape[0])*0.05).T
-        # print shapes of inputs and labels
+        context = torch.from_numpy(ctext[idx]).type(torch.float)
+        labels = torch.from_numpy(labs[:, idx]).type(torch.float).T
         if i == 0:
             print('inputs shape: ', inputs.shape)
             print('labels shape: ', labels.shape)
@@ -164,10 +180,15 @@ def training(hidden_size=8, training_kwargs={'dt': 0.1,
         optimizer.zero_grad()
 
         # FORWARD PASS: get the output of the network for a given input
-        outputs, _ = net(inputs, context)
-
+        outputs, _ = net.forward(inputs, context)
         # compute loss with respect to the labels
-        loss = criterion(outputs[:, -1], labels)
+        loss = criterion(outputs, labels)
+        l1_lambda = 1e-4*0
+        l1_norm = torch.sum(torch.abs(net.W_hh))/hidden_size**2
+        l2_lambda = 1e-4*0
+        l2_norm = torch.sum(net.W_ih**2)/hidden_size
+
+        loss = loss + l1_lambda * l1_norm + l2_lambda * l2_norm
 
         # compute gradients
         loss.backward()
@@ -176,16 +197,113 @@ def training(hidden_size=8, training_kwargs={'dt': 0.1,
         optimizer.step()
         # print average loss over last 200 training iterations and save the current network
         running_loss += loss.item()
+        mat_ctx_list.append(net.W_hh_bias.detach().numpy().mean())
+        mat_input_list.append(net.W_ih.detach().numpy().mean())
+        mat_hidden_list.append(net.W_hh.detach().numpy().mean())
         losslist.append(loss.item())
         if i % 200 == 199:
             print('{:d} loss: {:0.5f}'.format(i + 1, running_loss / 200))
             running_loss = 0.0
-            plt.plot(losslist, color='k')
+            ax[0].plot(losslist, color='k')
+            ax[1].plot(mat_ctx_list, color='k')
+            ax[3].plot(mat_input_list, color='k')
+            ax[4].plot(mat_hidden_list, color='k')
+            ax[5].plot(losslist, mat_input_list, color='k', marker='o', linestyle='', alpha=0.3)
+            ax[2].plot(losslist, mat_ctx_list, color='k', marker='o', linestyle='', alpha=0.3)
+            corr = np.corrcoef(losslist, mat_ctx_list)[0][1]
+            ax[2].set_title('Correlation: ' + f'{corr: .3f}')
+            ax[0].set_yscale('log')
+            ax[2].set_xscale('log')
+            ax[5].set_xscale('log')
+            corr = np.corrcoef(losslist, mat_input_list)[0][1]
+            ax[5].set_title('Correlation: ' + f'{corr: .3f}')
             plt.pause(0.05)
             # save current state of network's parameters
             torch.save(net.state_dict(), SV_FOLDER + 'net.pth')
     np.save(SV_FOLDER + 'stimulus.npy', dataset)
     print('Finished Training')
+
+
+def test_network_simulations(sv_folder=SV_FOLDER, hidden_size=12,
+                             training_kwargs={'dt': 0.1, 'lr': 1e-2,
+                                              'n_epochs': 8000,
+                                              'batch_size': 200,
+                                              'seq_len': 10},
+                             num_simuls=2000):
+    # load configuration file - we might have run the training on the cloud and might now open the results locally
+    with torch.no_grad():
+        net = Net(input_size=1,
+                  hidden_size=hidden_size,
+                  output_size=1)
+    
+        # load the trained network's weights from the saved file
+        net.load_state_dict(torch.load(sv_folder + 'net.pth', weights_only=True))
+        dt = training_kwargs['dt']
+        seqlen = training_kwargs['seq_len']
+        evidence = np.random.choice([-1, -0.5, -0.25, 0, 0.25, 0.5, 1], num_simuls)
+        dataset = create_stim(evidence, sigma=0.05, dt=training_kwargs['dt'],
+                              trial_len=training_kwargs['seq_len'])
+        ctext = np.random.choice([0.05, 0.3, 0.5], num_simuls)
+        # conf = np.clip((df.confidence.values+1)/2, 0.001, 0.999)
+        labs = quick_simul_mf(dataset, ctext, num_simuls, dt=dt)
+        activity = []
+        conf_rnn = []
+        accuracy = []
+        for i in range(num_simuls):
+            inputs = dataset[:, i]
+            inputs = torch.from_numpy(inputs).type(torch.float)
+            # context = torch.from_numpy(np.array(ctext[i])).type(torch.int)
+            context = torch.from_numpy(np.array(ctext[i])).type(torch.float)
+            h = torch.randn(1, net.hidden_size)*0.1  # Initial hidden state
+
+            # Apply the RNN step by step
+            outputs = []
+            for t in range(len(inputs)):
+                x_t = inputs[t]
+                h = torch.tanh(x_t*net.W_ih.T + torch.matmul(h, net.W_hh.T)+
+                    torch.matmul(h, net.W_hh_bias.T)*context + net.b_h)  #  + torch.randn(hidden_size)*0.05  # + torch.matmul(h, net.W_hh_bias.T)*context
+                outputs.append(h.unsqueeze(0))
+
+            out = torch.cat(outputs, dim=0)
+
+            # Apply the linear layer
+            x = nn.functional.sigmoid(torch.matmul(out[-1], net.W.T) + net.b)
+            action_pred, hidden = x[0].detach().numpy()[0], out.detach().numpy()[:, 0]
+            activity.append(np.array(hidden))
+            conf_rnn.append(action_pred)
+            accuracy.append(np.sign(action_pred-0.5) == np.sign(labs[-1, i]-0.5))
+        activity = np.array(activity)
+        plt.figure(); plt.xlabel('Conf. data'); plt.ylabel('Conf. RNN'); plt.ylim(0, 1); plt.xlim(0, 1)
+        plt.plot(labs[-1], conf_rnn, marker='o', color='k', linestyle='')
+        ax = plt.figure().add_subplot(projection='3d')
+        # fig, ax = plt.subplots(1)
+        colors = ['k', 'b', 'r']
+        fig3, ax3 = plt.subplots(ncols=3, figsize=(12, 4))
+        for i_ct, ctx in enumerate(np.sort(np.unique(ctext))):
+            sns.kdeplot(x=np.array(conf_rnn)[evidence == 0], hue=ctext[evidence == 0], ax=ax3[i_ct], linestyle='--')
+            sns.kdeplot(x=labs[-1, evidence == 0], hue=ctext[evidence == 0], ax=ax3[i_ct])
+            idx_ctext = (ctext == ctx)*(evidence == 0)  # *(np.sign(labs[i]-0.5) != 0)
+            print(sum(idx_ctext))
+            activity_reshape = np.reshape(activity[idx_ctext], (-1, activity[idx_ctext].shape[1]))
+            pca = PCA(n_components=3)
+            pca.fit(activity_reshape)
+            # a = activity[info[condition] == value].mean(axis=0)
+            a = pca.transform(activity_reshape)  # (N_time, N_PC)
+            print(a.shape)
+            ax.plot(a[5:, 0], a[5:, 1], a[5:, 2], color=colors[i_ct], alpha=0.3)
+            ax.plot(a[5, 0], a[5, 1], a[5, 2], color=colors[i_ct], alpha=0.3,
+                    marker='o')
+            ax.plot(a[-1, 0], a[-1, 1], a[-1, 2], color=colors[i_ct], alpha=0.3,
+                    marker='x')
+        plt.figure()
+        sns.lineplot(x=evidence, y=accuracy, hue=ctext, color='k', marker='o')
+        plt.xlabel('Sensory evidence')
+        plt.ylabel('Accuracy')
+        fig, ax = plt.subplots(ncols=2)
+        im0 = ax[0].imshow(net.W_hh.detach().numpy())
+        plt.colorbar(im0, ax=ax[0])
+        im1 = ax[1].imshow(net.W_hh_bias.detach().numpy())
+        plt.colorbar(im1, ax=ax[1])
 
 
 def load_network(sv_folder=SV_FOLDER, hidden_size=12, plot_coup=1):
@@ -222,23 +340,23 @@ def load_network(sv_folder=SV_FOLDER, hidden_size=12, plot_coup=1):
             outputs = []
             for t in range(len(inputs)):
                 x_t = inputs[t]
-                h = nn.functional.sigmoid(x_t*net.W_ih.T + torch.matmul(2*h-1, net.W_hh_bias.T)*context +
-                    torch.matmul(2*h-1, net.W_hh.T) + net.b_h
-                    + torch.randn(hidden_size)*0.0)  # + torch.matmul(h, net.W_hh_bias.T)*context
+                h = nn.functional.relu(
+                    nn.functional.relu(x_t*net.W_ih.T + torch.matmul(h, net.W_hh.T))+
+                    torch.matmul(h, net.W_hh_bias.T)*context + net.b_h
+                    + torch.randn(hidden_size)*0.05)  # + torch.matmul(h, net.W_hh_bias.T)*context
                 outputs.append(h.unsqueeze(0))
 
             out = torch.cat(outputs, dim=0)
 
             # Apply the linear layer
-            x = torch.matmul(out, net.W.T) + net.b
+            x = nn.functional.sigmoid(torch.matmul(out, net.W.T) + net.b)
             action_pred, hidden = x.T.detach().numpy()[0, 0], out.detach().numpy()[:, 0]
             activity.append(np.array(hidden))
             conf_rnn.append(action_pred[-1])
             accuracy.append(np.sign(action_pred[-1]-0.5) == gt[i])
         activity = np.array(activity)
         plt.figure()
-        plt.xlabel('Conf. data')
-        plt.ylabel('Conf. RNN')
+        plt.xlabel('Conf. data'); plt.ylabel('Conf. RNN'); plt.ylim(0, 1); plt.xlim(0, 1)
         plt.plot(labs, conf_rnn, marker='o', color='k', linestyle='')
         idx_ctext = np.where((ctext == plot_coup)*(evidence != 0))[0]
         plt.plot(labs[idx_ctext], np.array(conf_rnn)[idx_ctext], marker='o', color='r', linestyle='')
@@ -258,12 +376,14 @@ def load_network(sv_folder=SV_FOLDER, hidden_size=12, plot_coup=1):
                 ax.plot(a[:, 0], a[:, 1], a[:, 2], color=colors[i_ev], alpha=0.3)
                 ax.plot(a[0, 0], a[0, 1], a[0, 2], color=colors[i_ev], alpha=0.3,
                         marker='o')
+                ax.plot(a[-1, 0], a[-1, 1], a[-1, 2], color=colors[i_ev], alpha=0.3,
+                        marker='x')
         plt.figure()
         sns.lineplot(x=evidence, y=accuracy, color='k', marker='o')
         fig, ax = plt.subplots(ncols=2)
-        im0 = ax[0].imshow(net.W_hh)
+        im0 = ax[0].imshow(net.W_hh.detach().numpy())
         plt.colorbar(im0, ax=ax[0])
-        im1 = ax[1].imshow(net.W_hh_bias)
+        im1 = ax[1].imshow(net.W_hh_bias.detach().numpy())
         plt.colorbar(im1, ax=ax[1])
 
 
@@ -682,13 +802,16 @@ def pca_different_stims(b_list=np.arange(-0.5, 0.6, 0.25).round(3), p_sh = [0, 1
 
 
 if __name__ == '__main__':
-    # training(hidden_size=8, training_kwargs={'dt': 1e-1,
-    #                                          'lr': 1e-3,
-    #                                          'n_epochs': 10000,
-    #                                          'batch_size': 10,
-    #                                          'seq_len': 4})
+    training_dict = {'dt': 1e-1, 'lr': 1e-3,
+                      'n_epochs': 10000, 'batch_size': 100, 'seq_len': 4}
+    # training(hidden_size=40, training_kwargs=training_dict,
+    #           num_simuls=50000)
+    test_network_simulations(sv_folder=SV_FOLDER, hidden_size=40,
+                                 training_kwargs=training_dict,
+                                 num_simuls=10000)
     # load_network(sv_folder=SV_FOLDER, hidden_size=8)
-    # load_network(sv_folder=SV_FOLDER, hidden_size=8, plot_coup=0)
+    # load_network(sv_folder=SV_FOLDER, hidden_size=40, plot_coup=0)
+    # load_network(sv_folder=SV_FOLDER, hidden_size=40, plot_coup=1)
     # low_rank_rnn_sims(time_end=400, dt=1e-2, eta=0.0, gain=np.random.randn(8, 8)*0.1+4,
     #                   coh=0., sigma=0.0, noise=0., random_matrix=False, lr=0.1)
     # low_rank_rnn_sims(time_end=400, dt=1e-2, eta=0.0, gain=np.random.randn(8, 8)*0.1+0.1,
@@ -700,9 +823,9 @@ if __name__ == '__main__':
     # rnn_connectivity_learning_sims(time_end=100, dt=1e-2, eta=0., rows=8, columns=7,
     #                                p_shuffle=0, coh=0., sigma=0.0, noise=0.1,
     #                                lr=0., n_memory=4, plot=True, feedback=1)
-    pca_different_stims(b_list=np.arange(-0.5, 0.6, 0.25).round(3),
-                        time_end=80, dt=1e-2, noise_stim=0.0, noise_simul=0.,
-                        noise_matrix=0., p_sh=[0, 0.2, 0.5, 0.7, 1])
+    # pca_different_stims(b_list=np.arange(-0.5, 0.6, 0.25).round(3),
+    #                     time_end=80, dt=1e-2, noise_stim=0.0, noise_simul=0.,
+    #                     noise_matrix=0., p_sh=[0, 0.2, 0.5, 0.7, 1])
     # rnn_connectivity_learning_sims(time_end=400, dt=1e-2, eta=0.05, rows=6, columns=6,
     #                                p_shuffle=1, coh=0., sigma=0.0, noise=0.1,
     #                                lr=0.1, n_memory=4)
