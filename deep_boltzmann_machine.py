@@ -6,6 +6,7 @@ Created on Thu Sep 19 14:41:19 2024
 """
 
 import numpy as np
+import seaborn as sns
 import glob
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -237,6 +238,14 @@ def data_load(dataset_path, batch_size=10):
     return train_data
 
 
+def jaccard(digit_0, digit_1):
+    overlap = np.logical_and(digit_0, digit_1)
+    overlap_sum = np.sum(overlap)
+    union = np.logical_or(digit_0, digit_1)
+    union_sum = np.sum(union)
+    return overlap_sum / union_sum
+
+
 def data_digits(batch_size=10):
     dig = [str(i) for i in range(10)]
     combs = list(itertools.combinations(dig, 2))
@@ -245,20 +254,24 @@ def data_digits(batch_size=10):
     train_data = np.zeros((batch_size, 35))
     test_data = np.zeros((batch_size, 35))
     truelabs_train = np.zeros((batch_size), dtype=np.int32)
+    overlap_test = []
+    truelabs_test = np.zeros((2, len(digits)))
     for i_p, digit_pair in enumerate(digits):
         digit_0 = np.array(get_digit(digit_pair[0]))
         digit_1 = np.array(get_digit(digit_pair[1]))
         combination = np.clip(digit_0 + digit_1, 0, 1)
+        overlap_test.append(jaccard(digit_0, digit_1))
         idx_pair = np.random.choice([0, 1])
         digs = [digit_0.flatten(), digit_1.flatten()][idx_pair]
         train_data[i_p] = digs
         test_data[i_p] = combination.flatten()
         truelabs_train[i_p] = int(digit_pair[idx_pair])
-    return train_data, test_data, truelabs_train
+        truelabs_test[:, i_p] = digit_pair
+    return train_data, test_data, truelabs_train, overlap_test, truelabs_test
 
 #%% Get data
 # train_data = data_load(dataset_path, batch_size=100)
-train_data, test_data, ground_truth = data_digits(batch_size=500)
+train_data, test_data, ground_truth, overlap_test, truelabs_test = data_digits(batch_size=1000)
 print(f'Train data shape (# batches, batch size, x, y): {train_data.shape}')
 
 #%% Train RBM
@@ -316,6 +329,47 @@ plt.colorbar(im, label='Weights')
 plt.ylabel('Hidden variable index')
 plt.xlabel('Input pixel index')
 
+
+#%% Test_error vs overlap
+# overlap_test_prediction = []
+test_per_sim = []
+overlap_per_sim = []
+overlap_test_vs_pred = []
+# overlap_bins = np.linspace(0.15, 0.9, test_simuls)
+train_data, test_data, ground_truth, overlap_test, truelabs_test = data_digits(batch_size=20000)
+overlap_vals = np.sort(np.unique(overlap_test))
+for n in range(len(overlap_vals)):
+    train_data, test_data, ground_truth, overlap_test, truelabs_test = data_digits(batch_size=5000)
+    overlap_test = np.array(overlap_test)
+    test_err = []
+    overlap_test_pred = []
+    visible, hidden_probs, weights = rbm.gibbs_sampling(test_data, k=1)
+    predictions = classifier.predict(hidden_probs)
+    idxs = overlap_test == overlap_vals[n]
+    print(sum(idxs))
+    if sum(idxs) == 0:
+        continue
+    for i_im, image in enumerate(test_data[idxs]):
+        if i_im == 50:
+            break
+        test_err.append(predictions[i_im] in truelabs_test[:, i_im])
+        overlap_test_pred.append(jaccard(image, visible[idxs][i_im]))
+    overlap_test_vs_pred.append(np.nanmean(overlap_test_pred))
+    test_per_sim.append(np.nanmean(test_err))
+    overlap_per_sim.append(np.nanmean(overlap_test[idxs]))
+
+fig, ax = plt.subplots(ncols=3, figsize=(15, 4.5))
+ax[0].plot(overlap_per_sim, test_per_sim, color='k', marker='o', linestyle='')
+ax[1].plot(overlap_test_vs_pred, test_per_sim, color='k', marker='o', linestyle='')
+ax[2].plot(overlap_test_vs_pred, overlap_per_sim, color='k', marker='o', linestyle='')
+ax[0].set_ylabel('Test accuracy')
+corr = np.corrcoef(overlap_per_sim, test_per_sim)[0, 1]
+ax[0].set_title(f'Correlation: {corr: .3f}')
+corr = np.corrcoef(overlap_test_vs_pred, test_per_sim)[0, 1]
+ax[1].set_title(f'Correlation: {corr: .3f}')
+corr = np.corrcoef(overlap_test_vs_pred, overlap_per_sim)[0, 1]
+ax[2].set_title(f'Correlation: {corr: .3f}')
+fig.tight_layout()
 #%% Sample across time
 # change across time
 fig, ax = plt.subplots(ncols=1)
