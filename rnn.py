@@ -82,7 +82,7 @@ class Net(nn.Module):
             x_t = x_t.unsqueeze(-1)
             c0 = torch.matmul(x_t, self.W_ih.T)
             c1 = (context*torch.matmul(h, self.W_hh_bias.T).T).T
-            h = torch.tanh(torch.matmul(h, self.W_hh.T) + c0 + c1 + self.b_h)
+            h = torch.tanh(torch.matmul(h, self.W_hh.T) + c0 + c1 + self.b_h) + torch.randn(batch_size, self.hidden_size)*0.1
             out[:, t, :] = h
 
         # Apply the linear layer
@@ -183,9 +183,9 @@ def training(hidden_size=8, training_kwargs={'dt': 0.1,
         outputs, _ = net.forward(inputs, context)
         # compute loss with respect to the labels
         loss = criterion(outputs, labels)
-        l1_lambda = 1e-4*0
+        l1_lambda = 1e-4
         l1_norm = torch.sum(torch.abs(net.W_hh))/hidden_size**2
-        l2_lambda = 1e-4*0
+        l2_lambda = 1e-4
         l2_norm = torch.sum(net.W_ih**2)/hidden_size
 
         loss = loss + l1_lambda * l1_norm + l2_lambda * l2_norm
@@ -261,7 +261,7 @@ def test_network_simulations(sv_folder=SV_FOLDER, hidden_size=12,
             for t in range(len(inputs)):
                 x_t = inputs[t]
                 h = torch.tanh(x_t*net.W_ih.T + torch.matmul(h, net.W_hh.T)+
-                    torch.matmul(h, net.W_hh_bias.T)*context + net.b_h)  #  + torch.randn(hidden_size)*0.05  # + torch.matmul(h, net.W_hh_bias.T)*context
+                    torch.matmul(h, net.W_hh_bias.T)*context + net.b_h) + torch.randn(hidden_size)*0.1  # + torch.matmul(h, net.W_hh_bias.T)*context
                 outputs.append(h.unsqueeze(0))
 
             out = torch.cat(outputs, dim=0)
@@ -768,7 +768,7 @@ def pca_different_stims(b_list=np.arange(-0.5, 0.6, 0.25).round(3), p_sh = [0, 1
                 arr_act = X_centered
             else:
                 arr_act = np.column_stack((arr_act, X_centered))
-        # Perform PCA using SVD
+        # Perform PCA
         pca = PCA(n_components=10)  # Keep 10 principal components
         X_pca = pca.fit_transform(arr_act.T).T  # Projected data
         X_pca_conditions = np.split(X_pca, K, axis=1)
@@ -803,9 +803,9 @@ def pca_different_stims(b_list=np.arange(-0.5, 0.6, 0.25).round(3), p_sh = [0, 1
 
 if __name__ == '__main__':
     training_dict = {'dt': 1e-1, 'lr': 1e-3,
-                      'n_epochs': 10000, 'batch_size': 100, 'seq_len': 4}
-    # training(hidden_size=40, training_kwargs=training_dict,
-    #           num_simuls=50000)
+                      'n_epochs': 5000, 'batch_size': 100, 'seq_len': 4}
+    training(hidden_size=40, training_kwargs=training_dict,
+              num_simuls=50000)
     test_network_simulations(sv_folder=SV_FOLDER, hidden_size=40,
                                  training_kwargs=training_dict,
                                  num_simuls=10000)
