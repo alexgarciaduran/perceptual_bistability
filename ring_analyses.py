@@ -100,22 +100,81 @@ class ring:
         else:
             likelihood = self.eps
         return likelihood
+    
+    
+    def compute_likelihood_continuous_stim_mixed(self, s_t_1, z, s_t=np.ones(6), noise=0.1):
+        likelihood = 0
+        if z[0] == 1:
+            likelihood += 1/(noise*np.sqrt(2*np.pi))*np.exp(-(s_t[1]-s_t_1[0])**2/noise**2/2)
+        if z[1] == 0:
+            likelihood += 1/(noise*np.sqrt(2*np.pi))*np.exp(-(s_t[1]-s_t_1[1])**2/noise**2/2)
+        if z[2] == -1:
+            likelihood += 1/(noise*np.sqrt(2*np.pi))*np.exp(-(s_t[1]-s_t_1[2])**2/noise**2/2)
+        likelihood = np.max((self.eps, likelihood))
+        return likelihood
+
+    
+    def compute_likelihood_continuous_stim_exponential_decay(self, s_t_1, z, s_t=np.ones(6), gamma=0.1, noise=0.1):
+        # s_t_1_transform 
+        phi = np.sum(1*(z[0] == 1)*s_t_1[0] + 1*(z[1] == 0)*s_t_1[1] + 1*(z[2] == -1)*s_t_1[2])
+        norms = np.sum((z[0] == 1)*1 + 1*(z[1] == 0) + (z[2] == -1)*1)
+        if norms != 0:
+            likelihood = 1/(noise*np.sqrt(2*np.pi))*np.exp(-(s_t[1]-phi/norms)**2/noise**2/2)
+        else:
+            likelihood = self.eps
+        return likelihood
 
 
-    # def compute_likelihood_continuous_stim(self, s, z, s_t=np.ones(6), noise=0.1,
-    #                                        epsilon=1e-2):
-    #     phi = np.roll(s, -1)*(np.roll(z, -1) == -1) + np.roll(s, 1)*(np.roll(z, 1) == 1) + s*(z == 0)
-    #     norms = 1*(np.roll(z, 1) == 1) + 1*(z==0) + 1*(np.roll(z, -1) == -1)
-    #     phi[norms == 0] = penalization
-    #     norms[norms == 0] = 1
-    #     likelihood = 1/(noise*np.sqrt(2*np.pi))*np.exp(-((s_t-phi/norms)**2)/noise**2/2)
-    #     # likelihood = scipy.stats.norm.pdf(s_t, phi/3, noise)
-    #     # likelihood = np.min((likelihood, np.ones(len(likelihood))), axis=0)
-    #     return likelihood+1e-12
+    def compute_likelihood_quartet_stim_ising(self, s_t_1, z, s_t=np.ones(3), noise=0.1,
+                                                 epsilon=1e-6, ratio=1, idxs=[0, 1, 2]):
+        if idxs[0] == 0:
+            if z[0] == -1:
+                if z[2] == 1:
+                    return np.log(epsilon)
+                else:
+                    return -ratio*s_t_1[2]
+            if z[0] == 1:
+                if z[2] == 1:
+                    return -s_t_1[0]
+                else:
+                    return np.log(np.exp(-ratio*s_t_1[2])+np.exp(-s_t_1[0]))
+        if idxs[0] == 1:
+            if z[0] == -1:
+                if z[2] == 1:
+                    return np.log(np.exp(-s_t_1[2])+np.exp(-ratio*s_t_1[0]))
+                else:
+                    return -ratio*s_t_1[0]
+            if z[0] == 1:
+                if z[2] == 1:
+                    return -s_t_1[2]
+                else:
+                    return np.log(epsilon)
+        if idxs[0] == 2:
+            if z[0] == -1:
+                if z[2] == 1:
+                    return np.log(epsilon)
+                else:
+                    return -ratio*s_t_1[2]
+            if z[0] == 1:
+                if z[2] == 1:
+                    return -s_t_1[0]
+                else:
+                    return np.log(np.exp(-ratio*s_t_1[2])+np.exp(-s_t_1[0]))
+        if idxs[0] == 3:
+            if z[0] == -1:
+                if z[2] == 1:
+                    return np.log(np.exp(-s_t_1[2])+np.exp(-ratio*s_t_1[0]))
+                else:
+                    return -ratio*s_t_1[0]
+            if z[0] == 1:
+                if z[2] == 1:
+                    return -s_t_1[2]
+                else:
+                    return np.log(epsilon)
 
-
+    
     def compute_likelihood_continuous_stim_ising(self, s_t_1, z, s_t=np.ones(3), noise=0.1,
-                                                 epsilon=1e-2):
+                                              epsilon=1e-2):
         if z[0] == -1:
             if z[2] == 1:
                 return np.log(epsilon)
@@ -282,7 +341,7 @@ class ring:
 
 
     def compute_expectation_log_likelihood_ising(self, s_t_1, q_z_prev, s_t, discrete_stim=True,
-                                                 noise=0.1):
+                                                 noise=0.1, quartet=False, ratio=1):
         # Number of possible latent states (e.g., 3 for CW, NM, CCW)
         num_states_z = q_z_prev.shape[1]
         num_variables = q_z_prev.shape[0]
@@ -331,13 +390,18 @@ class ring:
                         # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
         
                         # Get the CPT value for p(s_i | s, z)
-                        if discrete_stim:
+                        if discrete_stim and not quartet:
                             p_s_given_z = np.log(self.compute_likelihood_vector(s_t_1, zn, s_t)[idx])  # CPT lookup based on s and z, takes p(s_i | s, z)
-                        else:
+                        if not discrete_stim and not quartet:
                             # based on a normal distribution centered in the expectation of the stimulus given the combination of z
                             p_s_given_z = self.compute_likelihood_continuous_stim_ising(s_t_1[idxs], zn[idxs],
                                                                                         s_t[idxs], noise=noise,
                                                                                         epsilon=self.eps)
+                        if discrete_stim and quartet:
+                            # based on a normal distribution centered in the expectation of the stimulus given the combination of z
+                            p_s_given_z = self.compute_likelihood_quartet_stim_ising(s_t_1[idxs], zn[idxs],
+                                                                                     s_t[idxs], noise=noise,
+                                                                                     epsilon=self.eps, ratio=ratio, idxs=idxs)
                         lh += p_s_given_z*q_z_p*q_z_n
                 likelihood_c_all[i, i_z] = lh
         return likelihood_c_all
@@ -509,7 +573,8 @@ class ring:
     def mean_field_sde(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=3, b=np.zeros(3),
                        true='NM', noise=0.2, plot=False, stim_weight=1, ini_cond=None,
                        discrete_stim=True, s=[1, 0], noise_stim=0.05, coh=None,
-                       stim_stamps=1, noise_gaussian=0.1, return_all=False):
+                       stim_stamps=1, noise_gaussian=0.1, return_all=False, quartet=False,
+                       ratio=1):
         t_end = n_iters*dt
         kernel = self.exp_kernel()
         n_dots = self.ndots
@@ -533,7 +598,7 @@ class ring:
         else:
             s = np.repeat(np.array(s).reshape(-1, 1), n_dots, axis=1).T.flatten()
         if ini_cond is None:
-            q_mf = np.random.rand(n_dots, nstates)
+            q_mf = np.clip(np.random.randn(n_dots, nstates)*1e-1+0.5, 0, 1)
         else:
             ini_cond = np.array(ini_cond)
             q_mf = np.repeat(ini_cond.reshape(-1, 1), self.ndots, axis=1).T
@@ -550,7 +615,8 @@ class ring:
             if nstates == 2:
                 likelihood = self.compute_expectation_log_likelihood_ising(stim[t-1], q_mf, stim[t],
                                                                            discrete_stim=discrete_stim,
-                                                                           noise=noise_stim)
+                                                                           noise=noise_stim, quartet=quartet,
+                                                                           ratio=ratio)
             if nstates > 2:
                 likelihood = self.compute_expectation_log_likelihood_original(stim[t-1], q_mf, stim[t],
                                                                              discrete_stim=discrete_stim,
@@ -574,32 +640,39 @@ class ring:
                 if i_a > 1:
                     a.set_ylim(-0.15, 1.15)
             ax[nstates].set_xlabel('Time (s)')
-            fig5, ax5 = plt.subplots(figsize=(8, 3))
-            ax5.imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
-                         vmin=0, vmax=1)
-            ax5.set_yticks(np.arange(self.ndots), np.arange(self.ndots)+1)
-            ax5.set_ylabel('Dots')
-            ax5.set_xlabel('Time')
-            fig5.savefig(DATA_FOLDER + f'{true}_d_{s[0]}_stimulus_{coh}.png', dpi=200,
-                         bbox_inches='tight')
-            fig5.savefig(DATA_FOLDER + f'{true}_d_{s[0]}_stimulus_{coh}.svg', dpi=200,
-                         bbox_inches='tight')
+            # fig5, ax5 = plt.subplots(figsize=(8, 3))
+            # ax5.imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
+            #              vmin=0, vmax=1)
+            # ax5.set_yticks(np.arange(self.ndots), np.arange(self.ndots)+1)
+            # ax5.set_ylabel('Dots')
+            # ax5.set_xlabel('Time')
+            # fig5.savefig(DATA_FOLDER + f'{true}_d_{s[0]}_stimulus_{coh}.png', dpi=200,
+            #              bbox_inches='tight')
+            # fig5.savefig(DATA_FOLDER + f'{true}_d_{s[0]}_stimulus_{coh}.svg', dpi=200,
+            #              bbox_inches='tight')
             ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
                          vmin=0, vmax=1)
             ax[0].set_yticks(np.arange(self.ndots), np.arange(self.ndots)+1)
             ax[0].set_ylabel('Dots')
             ax[0].set_xlabel('Time (s)')
-            ax[1].set_ylabel('R=q(z_i=CW), G=0,\n B=q(z_i=CCW)' )
+            if not quartet:
+                ax[1].set_ylabel('R=q(z_i=CW), G=0,\n B=q(z_i=CCW)' )
+            else:
+                ax[1].set_ylabel('R=q(z_i=vert), G=0,\n B=q(z_i=horiz)' )
             if nstates == 3:
                 q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T,
                                       q_mf_arr[:, 2, :].T)).T
+                q_mf_plot[:, :, 1] = 0
+                ax[1].imshow(q_mf_plot, aspect='auto', interpolation='none',
+                             vmin=0, vmax=1)
             else:
                 q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T)).T
-            q_mf_plot[:, :, 1] = 0
-            ax[1].imshow(q_mf_plot, aspect='auto', interpolation='none',
-                         vmin=0, vmax=1)
-            ax[2].set_ylabel('q(z_i=CW)')
-            ax[3].set_ylabel('q(z_i=NM)')
+                ax[1].imshow(q_mf_plot[:, :, 0], aspect='auto', interpolation='none',
+                             vmin=0, vmax=1)
+            if not quartet:
+                ax[2].set_ylabel('q(z_i=CW)'); ax[3].set_ylabel('q(z_i=NM)')
+            else:
+                ax[2].set_ylabel('q(z_i=⇅)'); ax[3].set_ylabel('q(z_i=⇄)')
             if nstates == 3:
                 ax[4].set_ylabel('q(z_i=CCW)')
                 ax[4].axhline(1/3, color='b', alpha=0.4, linestyle='--', linewidth=2)
@@ -2742,9 +2815,9 @@ def experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25,
                     nm[nm < 0.5] = 0
                     p_nm = np.mean(nm)
                     p_choices[i_c, i_b, sim, :] = [p_cw, p_ccw, p_nm]
-        np.save(DATA_FOLDER + f'simulations_choices_experiment_j_{j}_biasnm_{biasnm}.npy', p_choices)
+        np.save(DATA_FOLDER + f'simulations_choices_experiment_j_{j}_biasnm_{biasnm}_mixture.npy', p_choices)
     else:
-        p_choices = np.load(DATA_FOLDER + f'simulations_choices_experiment_j_{j}_biasnm_{biasnm}.npy')
+        p_choices = np.load(DATA_FOLDER + f'simulations_choices_experiment_j_{j}_biasnm_{biasnm}_mixture.npy')
     fig, ax = plt.subplots(ncols=len(contrast), figsize=(16, 5))
     percepts = ['CW', 'CCW', 'NM', 'no-resp']
     order = [0, 2, 1, 3]
@@ -2977,6 +3050,64 @@ def ising_cw_nm_fixed_points_constant_k(biasnmlist=[0, 1, 2], jlist=[0, 1, 2],
     f2.tight_layout()
 
 
+def mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
+                                           nreps=50, j_list=[0, 0.25, 0.5], simulate=False,
+                                           noisy=False):
+    noise = 0.1 if noisy else 0
+    label = 'noisy_posterior_horizontal_quartet_vs_aspect_ratio_j_list.npy' if noisy else 'posterior_horizontal_quartet_vs_aspect_ratio_j_list_v3.npy'
+    saved_j_list = [0, 0.5, 1]
+    if simulate:
+        posterior_horizontal_array = np.zeros((len(aspect_ratio_list), len(j_list), nreps, 2))
+        for i_j, j in enumerate(j_list):
+            print(f'Coupling, J = {j}')
+            if j in saved_j_list:
+                lab_prev = 'posterior_horizontal_quartet_vs_aspect_ratio_j_list_v2.npy'
+                saved_posterior_horizontal_array = np.load(DATA_FOLDER + lab_prev)
+                idx_j = np.where(np.array(saved_j_list) == j)[0][0]
+                posterior_horizontal_array[:, i_j, :, :] = saved_posterior_horizontal_array[:, idx_j, :, :]
+                continue
+            for i_r, r in enumerate(aspect_ratio_list):
+                for n in range(nreps):
+                    posterior = ring(epsilon=1e-2, n_dots=4).mean_field_sde(dt=0.01, tau=0.1, n_iters=300, j=0.,
+                                                                            true='CW', noise=noise, plot=False,
+                                                                            discrete_stim=True, s=[0., 1],
+                                                                            b=[0., 0.], noise_stim=0.0, coh=None,
+                                                                            nstates=2, quartet=True, ratio=r)
+                    posterior_horizontal_array[i_r, i_j, n, :] = posterior[:2, 0]
+        np.save(DATA_FOLDER + label, posterior_horizontal_array)
+    else:
+        posterior_horizontal_array = np.load(DATA_FOLDER + label)
+    fig, ax = plt.subplots(ncols=len(j_list), figsize=(12, 4))
+    for i_j, j in enumerate(j_list):
+        for n in range(nreps):
+            idxs = np.abs(posterior_horizontal_array[:, i_j, n, 0] - posterior_horizontal_array[:, i_j, n, 1]) < 1e-2
+            ax[i_j].plot(aspect_ratio_list[idxs], posterior_horizontal_array[idxs, i_j, n, 0],
+                         color='k', marker='o', linestyle='', markersize=3)
+            # ax[i_j].plot(aspect_ratio_list, posterior_horizontal_array[:, i_j, n, 1],
+            #              color='k', marker='o', linestyle='', markersize=3)
+        ax[i_j].set_xlabel('Aspect ratio')
+        ax[i_j].set_title(f'J = {j}')
+        if i_j > 0:
+            ax[i_j].set_yticks([])
+    ax[0].set_ylabel('q(⇄)')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'fixed_points_quartet.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'fixed_points_quartet.svg', dpi=200, bbox_inches='tight')
+    fig, ax = plt.subplots(ncols=len(j_list), figsize=(12, 4))
+    for i_j, j in enumerate(j_list):
+        vals = np.nanmean(posterior_horizontal_array[:, i_j, :, 0] > 0.5, axis=1)
+        ax[i_j].plot(aspect_ratio_list, vals,
+                     color='k', marker='o', linestyle='', markersize=3)
+        ax[i_j].set_xlabel('Aspect ratio')
+        ax[i_j].set_title(f'J = {j}')
+        if i_j > 0:
+            ax[i_j].set_yticks([])
+    ax[0].set_ylabel('Proportion horizontal responses')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'proportion_vertical_vs_aspect_ratio.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'proportion_vertical_vs_aspect_ratio.svg', dpi=200, bbox_inches='tight')
+
+
 if __name__ == '__main__':
     # number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
     #                         jlist=np.arange(0, 1.05, 0.05).round(4),
@@ -3034,22 +3165,25 @@ if __name__ == '__main__':
     #                                                                       noise_stim=0.1, s=[0.5, 0.5],
     #                                                                       stim_stamps=1, sigma_lh=0.1,
     #                                                                       coh=0.)
-    ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
-                                                  true='CCW', noise=0.01, plot=True,
-                                                  discrete_stim=True, s=[0., 1],
-                                                  b=[0., 0., 0.], noise_stim=0.0, coh=0.)
-    ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
-                                                  true='CCW', noise=0.01, plot=True,
-                                                  discrete_stim=True, s=[0.45, 0.55],
-                                                  b=[0., 0., 0.], noise_stim=0.0, coh=None)
-    ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
-                                                  true='CCW', noise=0.01, plot=True,
-                                                  discrete_stim=True, s=[0., 1],
-                                                  b=[0., 0., 0.], noise_stim=0.0, coh=0.2)
-    ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
-                                                  true='CW', noise=0.01, plot=True,
-                                                  discrete_stim=True, s=[0., 1],
-                                                  b=[0., 0., 0.], noise_stim=0.0, coh=0.2)
+    # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
+    #                                               true='CCW', noise=0.01, plot=True,
+    #                                               discrete_stim=True, s=[0., 1],
+    #                                               b=[0., 0., 0.], noise_stim=0.0, coh=0.)
+    # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
+    #                                               true='CCW', noise=0.01, plot=True,
+    #                                               discrete_stim=True, s=[0.45, 0.55],
+    #                                               b=[0., 0., 0.], noise_stim=0.0, coh=None)
+    # ring(epsilon=0.001, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=20, j=0.5,
+    #                                               true='CCW', noise=0.01, plot=True,
+    #                                               discrete_stim=True, s=[0., 1],
+    #                                               b=[0., 0., 0.], noise_stim=0.0, coh=0.2)
+    # ring(epsilon=1e-2, n_dots=4).mean_field_sde(dt=0.01, tau=0.1, n_iters=100, j=0.,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0., 0.], noise_stim=0.0, coh=None,
+    #                                             nstates=2, quartet=True, ratio=1)
+    # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
+    #                                        nreps=50, j_list=[0, 1, 2], simulate=True)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
     # # #                                     true='CW', noise=0.01, plot=True,
     # # #                                     discrete_stim=False, s=[0.9, 0.9],
@@ -3077,8 +3211,8 @@ if __name__ == '__main__':
     #                         nsims=50, simulate=False, biasnm=0., j=0.4)
     # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
     #                         nsims=50, simulate=False, biasnm=0.5, j=0.4)
-    # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-    #                         nsims=50, simulate=False, biasnm=1, j=0.4)
+    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+                            nsims=50, simulate=False, biasnm=0.5, j=0.4)
     # plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2, 2.5, 3],
     #                               jlist=[0, 0.4, 0.8, 1.2, 1.6, 1.8, 2], analytical=False)
     # experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
