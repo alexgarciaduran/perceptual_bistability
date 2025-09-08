@@ -5640,6 +5640,67 @@ def compute_M_ising():
     plt.title(r'$M^{-1}$')
 
 
+def compute_lyapunov_exponent(j_list=np.arange(0, 1, 1e-3),
+                              time_steps=1000, dt=1e-2, epsilon=4e-2,
+                              q_list=[0.25, 0.48, 0.75]):
+    total_time = time_steps*dt
+    lyapunov_exps = []
+    for j in j_list:
+        lyapunov_exps_qs = []
+        for q_1 in q_list:
+            q_2 = q_1+epsilon
+            d0 = q_1-q_2
+            distances = [epsilon]
+            l_list = []
+            for i in range(time_steps):
+                q_1 = q_1 + dt*(gn.sigmoid(6*j*(2*q_1-1))-q_1)
+                q_2 = q_2 + dt*(gn.sigmoid(6*j*(2*q_2-1))-q_2)
+                d_dt = q_1-q_2
+                distances.append(d_dt)
+                l_list.append(np.abs(d_dt)/np.abs(d0))
+                d0 = d_dt
+            lyapunov_e = 1/total_time * np.sum(np.log(l_list))
+            lyapunov_exps_qs.append(lyapunov_e)
+        lyapunov_exps.append(np.max(lyapunov_exps_qs))
+    fig = plt.figure()
+    lyapunov_exps = np.array(lyapunov_exps)
+    plt.axhline(0, color='r', linestyle='--', alpha=0.2)
+    plt.axvline(1/3, color='k', linestyle='--', alpha=0.5)
+    idx_pos = lyapunov_exps > 0
+    plt.plot(j_list[idx_pos], lyapunov_exps[idx_pos], color='r', linewidth=4)
+    plt.plot(j_list[~idx_pos], lyapunov_exps[~idx_pos], color='k', linewidth=4)
+    plt.ylabel(r'$\lambda$')
+    plt.xlabel('Coupling, J')
+    fig.tight_layout()
+
+
+def predictions_hysteresis_coupling(b_list=[0, 0.1, 0.2], sigma=0.05,
+                                    ini_cond=None):
+    j_array = np.concatenate((np.arange(0, 1, 1e-4), np.arange(0, 1, 1e-4)[::-1]))
+    q_all = np.zeros((len(b_list), len(j_array)))
+    dt = 1e-2
+    tau = 0.1
+    timescale = dt/tau
+    for i_b, b in enumerate(b_list):
+        q = ini_cond if ini_cond is not None else np.random.randn()*0.01+0.5
+        q_list = [q]
+        for t in range(len(j_array)-1):
+            q = q + (gn.sigmoid(8*j_array[t]*(2*q-1)+2*b)-q)*timescale + np.random.randn()*np.sqrt(timescale)*sigma
+            q_list.append(q)
+        q_all[i_b] = q_list
+    fig, ax = plt.subplots(ncols=3, figsize=(12, 5))
+    for i_a, a in enumerate(ax):
+        half_len = len(j_array)//2
+        a.plot(j_array[:half_len], q_all[i_a][:half_len], color='k', linewidth=4,
+               label='Ascending')
+        a.plot(j_array[half_len:], q_all[i_a][half_len:], color='r', linewidth=4,
+               label='Descending')
+        a.set_title(f'B = {b_list[i_a]}')
+        a.set_xlabel('Coupling, J(t)')
+        a.set_ylim(-0.1, 1.1)
+    ax[0].legend(frameon=False)
+    fig.tight_layout()
+
 if __name__ == '__main__':
     print('Mean-Field inference')
     # mf_dyn_sys_circle(n_iters=100, b=0.)
