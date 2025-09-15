@@ -1329,16 +1329,16 @@ def save_params_recovery(n_pars=50, sv_folder=SV_FOLDER,
             j0 = np.random.uniform(0.1, 1.)
             b10 = np.random.uniform(0.15, 0.9)
             bias0 = np.random.uniform(-0.4, 0.4)
-            noise0 = np.random.uniform(0.05, 0.35)
+            noise0 = np.random.uniform(0.05, 0.4)
             alpha0 = np.random.uniform(0.3, 1.4)
             params = [j0, b10, bias0, noise0, alpha0]
             np.save(sv_folder + 'param_recovery/pars_prt' + str(i) + '.npy',
                     np.array(params))
         else:
-            j0 = np.random.uniform(0.1, 1.)
-            b10 = np.random.uniform(0.15, 0.9)
-            bias0 = np.random.uniform(-0.4, 0.4)
-            noise0 = np.random.uniform(0.05, 0.35)
+            j0 = np.random.uniform(0.01, 1.)
+            b10 = np.random.uniform(0.01, 1.5)
+            bias0 = np.random.uniform(-0.5, 0.5)
+            noise0 = np.random.uniform(0.01, 0.4)
             if model == 'MF5':
                 jbias0 = np.random.uniform(0.2, 0.8)
                 params = [j0, jbias0, b10, bias0, noise0]
@@ -1434,15 +1434,15 @@ def fit_data(data_folder=DATA_FOLDER, n_simuls_network=2000000,
 def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
                        n_pars_to_fit=50, n_sims_per_par=120,
                        model='MF', sv_folder=SV_FOLDER, simulate=False,
-                       load_net=True):
+                       load_net=True, not_plot_and_return=False):
     density_estimator, _ = sbi_training(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame, data_folder=DATA_FOLDER,
                                         load_net=load_net, plot_posterior=False, coupling_offset=False,
                                         stim_offset=True, plot_diagnostics=False,
                                         summary_statistics_fitting=False)    
-    lb = [0, -1, -0.2, 0.05]
-    ub = [2., 1, 1.5, 0.8]
-    plb = [0.1, -0.5, 0.1, 0.1]
-    pub = [1.1, 0.5, 0.9, 0.3]
+    lb = [0, -0.6, -0.2, 0.05]
+    ub = [1.2, 0.6, 1.5, 0.5]
+    plb = [0.1, -0.45, 0.1, 0.1]
+    pub = [1.1, 0.45, 1.1, 0.3]
     x0 = [0.55, 0.01, 0.6, 0.15]
     nFrame = fps*tFrame
     orig_params = np.zeros((n_pars_to_fit, 4))
@@ -1469,71 +1469,74 @@ def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
             optimizer = BADS(fun_to_minimize, x0,  # theta+np.random.randn()*0.02
                              lb, ub, plb, pub).optimize()
             pars = optimizer.x
-            np.save(sv_folder + 'param_recovery/pars_prt_recovered' + str(par) + model + '.npy',
+            np.save(sv_folder + 'param_recovery/pars_prt_recovered' + str(par) + model + str(n_simuls_network) + '.npy',
                     np.array(pars))
         else:
-            pars = np.load(sv_folder + 'param_recovery/pars_prt_recovered' + str(par) + model + '.npy')
+            pars = np.load(sv_folder + 'param_recovery/pars_prt_recovered' + str(par) + model + str(n_simuls_network) + '.npy')
         orig_params[par] = theta
         recovered_params[par] = pars
-    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(15, 9))
-    numpars = 4
-    ax = ax.flatten()
-    if model in ['LBP', 'FBP']:
-        labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha'][:numpars]
-        xylims = [[0, 3], [0, 0.5], [0, 0.5], [0, 0.3], [0, 2]]
-    if model == 'MF':
-        labels = ['Coupling, J', 'Bias, B0', 'Stimulus weight, B1', 'noise']
-        xylims = [[-0.5, 1.5], [-0.85, 0.85], [-0.2, 1.2], [0, 0.6]]
-    if model == 'MF5':
-        labels = ['Coupling, J1', 'Coupling bias, J0',  'Bias, B0', 'Stimulus weight, B1', 'noise']
-        xylims = [[0, 3], [0, 0.8], [0, 0.7], [0, 0.5], [0, 0.5]]
-    for i_a in range(numpars):
-        a = ax[i_a]
-        a.plot(orig_params[:, i_a], recovered_params[:, i_a], color='k', marker='o',
-               markersize=5, linestyle='')
-        a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
-        a.set_title(labels[i_a])
-        a.set_xlabel('Original parameters')
-        a.set_ylabel('Recovered parameters')
-        a.spines['right'].set_visible(False)
-        a.spines['top'].set_visible(False)
-    ax[-1].axis('off')
-    if model == 'LBP':
-        ax[-2].axis('off')
-    fig.tight_layout()
-    fig2, ax2 = plt.subplots(ncols=2)
-    ax2, ax = ax2
-    # define correlation matrix
-    corr_mat = np.empty((numpars, numpars))
-    corr_mat[:] = np.nan
-    for i in range(numpars):
-        for j in range(numpars):
-            # compute cross-correlation matrix
-            corr_mat[i, j] = np.corrcoef(orig_params[:, i], recovered_params[:, j])[1][0]
-    # plot cross-correlation matrix
-    im = ax.imshow(corr_mat.T, cmap='bwr', vmin=-1, vmax=1)
-    # tune panels
-    plt.colorbar(im, ax=ax, label='Correlation')
-    labels_reduced = ['J', 'B1', 'B0', r'$\sigma$', r'$\alpha$'][:numpars]
-    ax.set_xticks(np.arange(numpars), labels, fontsize=12)  # , rotation='270'
-    ax.set_yticks(np.arange(numpars), labels_reduced, fontsize=12)
-    ax.set_xlabel('Original parameters', fontsize=14)
-    # compute correlation matrix
-    mat_corr = np.corrcoef(recovered_params.T, rowvar=True)
-    mat_corr *= np.tri(*mat_corr.shape, k=-1)
-    # plot correlation matrix
-    im = ax2.imshow(mat_corr, cmap='bwr', vmin=-1, vmax=1)
-    ax2.step(np.arange(0, numpars)-0.5, np.arange(0, numpars)-0.5, color='k',
-             linewidth=.7)
-    ax2.set_xticks(np.arange(numpars), labels, fontsize=12)  # , rotation='270'
-    ax2.set_yticks(np.arange(numpars), labels, fontsize=12)
-    ax2.set_xlabel('Inferred parameters', fontsize=14)
-    ax2.set_ylabel('Inferred parameters', fontsize=14)
-    fig2.tight_layout()
-    fig.savefig(SV_FOLDER + 'param_recovery_all.png', dpi=400, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + 'param_recovery_all.svg', dpi=400, bbox_inches='tight')
-    fig2.savefig(SV_FOLDER + 'param_recovery_correlations.png', dpi=400, bbox_inches='tight')
-    fig2.savefig(SV_FOLDER + 'param_recovery_correlations.svg', dpi=400, bbox_inches='tight')
+    if not_plot_and_return:
+        return orig_params, recovered_params
+    else:
+        fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(15, 9))
+        numpars = 4
+        ax = ax.flatten()
+        if model in ['LBP', 'FBP']:
+            labels = ['Coupling, J', 'Stimulus weight, B1', 'Bias, B0', 'noise', 'Alpha'][:numpars]
+            xylims = [[0, 3], [0, 0.5], [0, 0.5], [0, 0.3], [0, 2]]
+        if model == 'MF':
+            labels = ['Coupling, J', 'Bias, B0', 'Stimulus weight, B1', 'noise']
+            xylims = [[-0.5, 1.5], [-0.85, 0.85], [-0.2, 1.2], [0, 0.6]]
+        if model == 'MF5':
+            labels = ['Coupling, J1', 'Coupling bias, J0',  'Bias, B0', 'Stimulus weight, B1', 'noise']
+            xylims = [[0, 3], [0, 0.8], [0, 0.7], [0, 0.5], [0, 0.5]]
+        for i_a in range(numpars):
+            a = ax[i_a]
+            a.plot(orig_params[:, i_a], recovered_params[:, i_a], color='k', marker='o',
+                   markersize=5, linestyle='')
+            a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
+            a.set_title(labels[i_a])
+            a.set_xlabel('Original parameters')
+            a.set_ylabel('Recovered parameters')
+            a.spines['right'].set_visible(False)
+            a.spines['top'].set_visible(False)
+        ax[-1].axis('off')
+        if model == 'LBP':
+            ax[-2].axis('off')
+        fig.tight_layout()
+        fig2, ax2 = plt.subplots(ncols=2)
+        ax2, ax = ax2
+        # define correlation matrix
+        corr_mat = np.empty((numpars, numpars))
+        corr_mat[:] = np.nan
+        for i in range(numpars):
+            for j in range(numpars):
+                # compute cross-correlation matrix
+                corr_mat[i, j] = np.corrcoef(orig_params[:, i], recovered_params[:, j])[1][0]
+        # plot cross-correlation matrix
+        im = ax.imshow(corr_mat.T, cmap='bwr', vmin=-1, vmax=1)
+        # tune panels
+        plt.colorbar(im, ax=ax, label='Correlation')
+        labels_reduced = ['J', 'B1', 'B0', r'$\sigma$', r'$\alpha$'][:numpars]
+        ax.set_xticks(np.arange(numpars), labels, fontsize=12)  # , rotation='270'
+        ax.set_yticks(np.arange(numpars), labels_reduced, fontsize=12)
+        ax.set_xlabel('Original parameters', fontsize=14)
+        # compute correlation matrix
+        mat_corr = np.corrcoef(recovered_params.T, rowvar=True)
+        mat_corr *= np.tri(*mat_corr.shape, k=-1)
+        # plot correlation matrix
+        im = ax2.imshow(mat_corr, cmap='bwr', vmin=-1, vmax=1)
+        ax2.step(np.arange(0, numpars)-0.5, np.arange(0, numpars)-0.5, color='k',
+                 linewidth=.7)
+        ax2.set_xticks(np.arange(numpars), labels, fontsize=12)  # , rotation='270'
+        ax2.set_yticks(np.arange(numpars), labels, fontsize=12)
+        ax2.set_xlabel('Inferred parameters', fontsize=14)
+        ax2.set_ylabel('Inferred parameters', fontsize=14)
+        fig2.tight_layout()
+        fig.savefig(SV_FOLDER + 'param_recovery_all.png', dpi=400, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + 'param_recovery_all.svg', dpi=400, bbox_inches='tight')
+        fig2.savefig(SV_FOLDER + 'param_recovery_correlations.png', dpi=400, bbox_inches='tight')
+        fig2.savefig(SV_FOLDER + 'param_recovery_correlations.svg', dpi=400, bbox_inches='tight')
 
 
 def simulator(params, coupling, freq, nFrame=1200, fps=60, n=3.92, coupling_offset=False,
@@ -1689,16 +1692,58 @@ def return_summary_statistics(choice, stimulus, freq, dt=1/60, nFrame=1200):
             freq]
 
 
+def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
+                                     n_pars_to_fit=200,
+                                     n_sims_per_par=120, mse=False):
+    n_sims_list=[100, 1000, 10000, 50000, 100000, 250000,
+                 500000, 1000000, 2000000, 3000000, 5000000]
+    corr_mat = np.zeros((4, len(n_sims_list)))
+    for i_n, n_sims in enumerate(n_sims_list):
+        try:
+            orig_params, recovered_params =\
+                parameter_recovery(n_simuls_network=n_sims, fps=fps, tFrame=tFrame,
+                                   n_pars_to_fit=n_pars_to_fit, n_sims_per_par=n_sims_per_par,
+                                   model='MF', sv_folder=SV_FOLDER, simulate=False,
+                                   load_net=True, not_plot_and_return=True)
+            if not mse:
+                corr_array = np.zeros((4))
+                for i in range(4):
+                    corr_array[i] = np.corrcoef(orig_params[:, i],
+                                                recovered_params[:, i])[1][0]
+            if mse:
+                corr_array = np.nansum((orig_params-recovered_params)**2, axis=0)
+            corr_mat[:, i_n] = corr_array
+        except FileNotFoundError:
+            corr_mat[:, i_n] = np.nan
+    fig, ax = plt.subplots(ncols=4, figsize=(15, 4.5))
+    titles = ['J', 'B0', 'B1', 'Noise']
+    for i_ax, a in enumerate(ax):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.plot(n_sims_list, corr_mat[i_ax, :], color='k', linewidth=4,
+               marker='o')
+        a.set_xscale('log')
+        a.set_xlabel('# Simulations network')
+        a.set_title(titles[i_ax])
+        if not mse:
+            a.set_ylim(0, 1)
+    if not mse:
+        ax[0].set_ylabel('Correlation recovered-original')
+    if mse:
+        ax[0].set_ylabel('MSE recovered-original')
+    fig.tight_layout()
+
+
 if __name__ == '__main__':
     # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
     #              fps=60, tFrame=18, model='MF', prob_flux=False,
     #              freq=4, idx=2)
-    hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
-                          fps=60, tFrame=26, data_folder=DATA_FOLDER,
-                          nbins=10, ntraining=8, arrows=False)
-    plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-                              steps_back=45, steps_front=20,
-                              shuffle_vals=[1, 0.7, 0], violin=True)
+    # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
+    #                       fps=60, tFrame=26, data_folder=DATA_FOLDER,
+    #                       nbins=10, ntraining=8, arrows=False)
+    # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+    #                           steps_back=45, steps_front=20,
+    #                           shuffle_vals=[1, 0.7, 0], violin=True)
     # parameter_recovery(n_simuls_network=2000000, fps=60, tFrame=26,
     #                     n_pars_to_fit=200, n_sims_per_par=120,
     #                     model='MF', sv_folder=SV_FOLDER, simulate=True,
@@ -1706,6 +1751,17 @@ if __name__ == '__main__':
     # fit_data(data_folder=DATA_FOLDER, n_simuls_network=2000000,
     #          tFrame=18, fps=60, ntraining=10, model='MF',
     #          sv_folder=SV_FOLDER, npars=5)
+    # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
+    #                       fps=60, tFrame=18, data_folder=DATA_FOLDER,
+    #                       nbins=9, ntraining=8, arrows=True)
+    # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
+    #                          steps_back=120, steps_front=20,
+    #                          shuffle_vals=[1, 0.7, 0])
+    parameter_recovery(n_simuls_network=5000000, fps=60, tFrame=26,
+                       n_pars_to_fit=200, n_sims_per_par=120,
+                       model='MF', sv_folder=SV_FOLDER, simulate=False,
+                       load_net=True, not_plot_and_return=False)
+    # plt.close('all')
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
     #                       fps=60, tFrame=20, freq=2, idx=5, n=3.92, theta=0.5,
     #                       tol=1e-3, pshuffle=0)
