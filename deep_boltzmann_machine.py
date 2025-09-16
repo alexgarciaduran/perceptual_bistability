@@ -425,3 +425,6 @@ plt.xlabel('Input pixel index')
 
 plt.figure()
 plt.plot(mw)
+
+
+#%% optimization over the stimulus (?)
