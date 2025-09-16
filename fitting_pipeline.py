@@ -1488,8 +1488,13 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
     # state = np.array(state)
-    sns.barplot(arr_betavals.T, ax=ax2, palette=cmap)
+    sns.violinplot(arr_betavals.T, ax=ax2, palette=cmap, cut=0, inner=None)
     sns.swarmplot(arr_betavals.T, color='k', size=3, legend=False, alpha=0.8)
+    g = sns.lineplot(arr_betavals, color='k', alpha=0.2, legend=False, dashes=False)
+    lines = g.get_lines()
+    [l.set_color('black') for l in lines]
+    meanvals = np.nanmean(arr_betavals, axis=1)
+    ax2.plot([0, 1, 2], meanvals, linewidth=4, color='r')
     # pvals = [stars_pval(scipy.stats.ttest_1samp(arr, 5/9).pvalue) for arr in arr_betavals]
     # ax2.text(0, 1, f"{pvals[0]}", ha='center', va='bottom', color='k',
     #          fontsize=15)
@@ -2287,6 +2292,8 @@ def plot_all_subjects(xvar='stim_ev_cong'):
     fig5, ax5 = plt.subplots(ncols=8, nrows=4, figsize=(19, 12))
     ax5 = ax5.flatten()
     df_sub = pd.DataFrame({})
+    # fig6, ax6 = plt.subplots(ncols=8, nrows=4, figsize=(19, 12))
+    # ax6 = ax6.flatten()
     for i_s, sub in enumerate(subjects):
         ax[i_s].spines['right'].set_visible(False)
         ax[i_s].spines['top'].set_visible(False)
@@ -2304,6 +2311,10 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         sns.histplot(dataframe, x='confidence', legend=False, ax=ax5[i_s], bins=25)
         ax5[i_s].axvline(0.5, color='r', linestyle='--', alpha=0.4)
         ax5[i_s].set_xlabel('Confidence')
+        # for p_shuffle in [0., 0.3, 1.0]:
+        #     ax6[i_s].plot([p_shuffle]*len(dataframe.loc[(dataframe.coupling == p_shuffle) & (dataframe.stim_str == 0)]),
+        #                   dataframe.loc[(dataframe.coupling == p_shuffle) & (dataframe.stim_str == 0)].confidence,
+        #                   color='k', linestyle='', marker='o')
         if i_s > 23:
             if xvar == 'stim_ev_cong':
                 ax[i_s].set_xlabel('Stim. ev. cong.')
@@ -2324,6 +2335,7 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         ax[i_s].set_yticks([0, 0.5, 1])
     fig.tight_layout()
     fig5.tight_layout()
+    # fig6.tight_layout()
     fig4.tight_layout()
     fig.savefig(SV_FOLDER + 'all_subjects_abs_conf.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'all_subjects_abs_conf.svg', dpi=200, bbox_inches='tight')
@@ -2567,12 +2579,12 @@ if __name__ == '__main__':
     #                                bic=True)
     # plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
-    # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
-    #                                 data_only=True)
+    plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
+                                   data_only=True)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=False)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
-    plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
+    # plot_density(num_iter=100, model='MF5', extra='', method=opt_algorithm)
     # plot_density(num_iter=100, model='MF', extra='null', method=opt_algorithm)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=False)
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
