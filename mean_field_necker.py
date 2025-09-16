@@ -5701,6 +5701,7 @@ def predictions_hysteresis_coupling(b_list=[0, 0.1, 0.2], sigma=0.05,
     ax[0].legend(frameon=False)
     fig.tight_layout()
 
+
 if __name__ == '__main__':
     print('Mean-Field inference')
     # mf_dyn_sys_circle(n_iters=100, b=0.)
