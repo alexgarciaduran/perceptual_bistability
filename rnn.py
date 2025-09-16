@@ -803,9 +803,9 @@ def pca_different_stims(b_list=np.arange(-0.5, 0.6, 0.25).round(3), p_sh = [0, 1
 
 if __name__ == '__main__':
     training_dict = {'dt': 1e-1, 'lr': 1e-3,
-                      'n_epochs': 5000, 'batch_size': 100, 'seq_len': 4}
+                      'n_epochs': 10000, 'batch_size': 50, 'seq_len': 4}
     training(hidden_size=40, training_kwargs=training_dict,
-              num_simuls=50000)
+             num_simuls=50000)
     test_network_simulations(sv_folder=SV_FOLDER, hidden_size=40,
                                  training_kwargs=training_dict,
                                  num_simuls=10000)
