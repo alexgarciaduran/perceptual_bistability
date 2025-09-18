@@ -325,9 +325,9 @@ def get_analytical_approximations_areas(shuffling_levels=np.array([0., 0.7, 1]),
     return area_2, area_4
 
 
-def hysteresis_simulation_threshold(j=0.5, thres_vals=np.arange(0, 0.49, 1e-2),
-                                    n=4.):
-    for th in thres_vals:
+# def hysteresis_simulation_threshold(j=0.5, thres_vals=np.arange(0, 0.49, 1e-2),
+#                                     n=4.):
+#     for th in thres_vals:
 
 
 def plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
@@ -2488,7 +2488,6 @@ def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
     fig.tight_layout()
 
 
-<<<<<<< Updated upstream
 def plot_noise_variables_versus_hysteresis():
     mean_peak_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
     mean_peak_latency = np.load(DATA_FOLDER + 'mean_peak_latency_per_subject.npy')
@@ -2607,8 +2606,8 @@ if __name__ == '__main__':
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
     for sims in [10, 100, 1000, 10000, 50000, 100000, 1000000]:
         parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
-                                    n_pars_to_fit=100, n_sims_per_par=108,
-                                    sv_folder=SV_FOLDER, simulate=False,
+                                    n_pars_to_fit=100, n_sims_per_par=1000,
+                                    sv_folder=SV_FOLDER, simulate=True,
                                     load_net=True, not_plot_and_return=False)
         plt.close('all')
     # plt.close('all')
