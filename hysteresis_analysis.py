@@ -35,7 +35,7 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
     SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
@@ -60,7 +60,7 @@ def load_data(data_folder, n_participants='all'):
     if type(n_participants) == str:
         df_0 = pd.DataFrame()
         for i in range(len(files)):
-            if i in [4, 10, 15]:  # discard subject 5 (?)
+            if i in [4, 10, 15, 18]:  # discard subject 5 (?)
                 continue
             df = pd.read_csv(files[i])
             df['subject'] = 's_' + str(i+1)
@@ -325,9 +325,263 @@ def get_analytical_approximations_areas(shuffling_levels=np.array([0., 0.7, 1]),
     return area_2, area_4
 
 
-# def hysteresis_simulation_threshold(j=0.5, thres_vals=np.arange(0, 0.49, 1e-2),
-#                                     n=4.):
-#     for th in thres_vals:
+def noise_bf_switch_threshold(load_sims=False, thres_vals=np.arange(0, 0.5, 1e-2),
+                              j=0.4, nFrame=5000, fps=60, noisyframes=30,
+                              ntrials=100):
+    dt  = 1/fps
+    tau = 10*dt
+    label = 'Bistable' if j >= 1 else 'Monostable'
+    if not load_sims:
+        indep_noise = np.sqrt(dt/tau)*np.random.randn(nFrame, ntrials)*0.1
+        x_arr = np.zeros((len(thres_vals), nFrame, ntrials))
+        choice = np.zeros((len(thres_vals), nFrame, ntrials))
+    
+        time_interp = np.arange(0, nFrame+noisyframes, noisyframes)*dt
+        time = np.arange(0, nFrame, 1)*dt
+        noise_exp = np.random.randn(len(time_interp), ntrials)*0.2
+        noise_signal = np.array([scipy.interpolate.interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
+
+        for i_j, th in enumerate(thres_vals):
+            for trial in range(ntrials):
+                x = np.random.rand()
+                vec = [x]
+                for t in range(1, nFrame):
+                    x = x + dt*(sigmoid(2*j*(2*x-1)+2*noise_signal[t, trial])-x)/tau + indep_noise[t, trial]
+                    vec.append(x)
+                    if x < 0.5-th:
+                        ch = -1.
+                    if x >= 0.5+th:
+                        ch = 1.
+                    if 0.5-th <= x <= 0.5+th:
+                        ch = choice[i_j, t-1, trial]
+                    choice[i_j, t, trial] = ch
+                x_arr[i_j, :, trial] = vec
+        np.save(DATA_FOLDER + label +  '_noise_signal_experiment_threshold.npy', noise_signal)
+        np.save(DATA_FOLDER + label + '_choice_noise_threshold.npy', choice)
+        np.save(DATA_FOLDER + label + '_posterior_noise_threshold.npy', x_arr)
+    else:
+        noise_signal = np.load(DATA_FOLDER + label + '_noise_signal_experiment_threshold.npy')
+        choice = np.load(DATA_FOLDER + label + '_choice_noise_threshold.npy')
+        x_arr = np.load(DATA_FOLDER + label + '_posterior_noise_threshold.npy')
+    return noise_signal, choice, x_arr
+
+
+def plot_noise_threshold(load_sims=False, thres_vals=np.arange(0, 0.5, 1e-2),
+                         j=0.4, nFrame=5000, fps=60, noisyframes=30,
+                         n=4., steps_back=120, steps_front=20,
+                         ntrials=100, zscore_number_switches=False, hysteresis_width=False):
+    noise, choice, x_arr = noise_bf_switch_threshold(load_sims=load_sims,
+                                                     thres_vals=thres_vals,
+                                                     j=j, nFrame=nFrame, fps=fps,
+                                                     noisyframes=noisyframes,
+                                                     ntrials=ntrials)
+    # return x_arr, choice, noise_signal  
+    mean_peak_latency = np.empty((len(thres_vals), ntrials))
+    mean_peak_latency[:] = np.nan
+    mean_peak_amplitude = np.empty((len(thres_vals), ntrials))
+    mean_peak_amplitude[:] = np.nan
+    mean_number_switchs_coupling = np.empty((len(thres_vals), ntrials))
+    mean_number_switchs_coupling[:] = np.nan
+    mean_vals_noise_switch_coupling = np.empty((len(thres_vals), steps_back+steps_front))
+    mean_vals_noise_switch_coupling[:] = np.nan
+    err_vals_noise_switch_coupling = np.empty((len(thres_vals), steps_back+steps_front))
+    err_vals_noise_switch_coupling[:] = np.nan
+    for i_j, threshold in enumerate(thres_vals):
+        mean_vals_noise_switch_all_trials = np.empty((ntrials, steps_back+steps_front))
+        mean_vals_noise_switch_all_trials[:] = np.nan
+        number_switches = []
+        latency = []
+        height = []
+        for trial in range(ntrials):
+            responses = choice[i_j, :, trial]
+            chi = noise[:, trial]
+            # chi = chi-np.nanmean(chi)
+            orders = rle(responses)
+            idx_1 = orders[1][orders[2] == 1]
+            idx_0 = orders[1][orders[2] == -1]
+            idx_1 = idx_1[(idx_1 > steps_back) & (idx_1 < (len(responses))-steps_front)]
+            idx_0 = idx_0[(idx_0 > steps_back) & (idx_0 < (len(responses))-steps_front)]
+            number_switches.append(len(idx_1)+len(idx_0))
+            # original order
+            mean_vals_noise_switch = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
+            mean_vals_noise_switch[:] = np.nan
+            for i, idx in enumerate(idx_1):
+                mean_vals_noise_switch[i, :] = chi[idx - steps_back:idx+steps_front]
+            for i, idx in enumerate(idx_0):
+                mean_vals_noise_switch[i+len(idx_1), :] =\
+                    chi[idx - steps_back:idx+steps_front]*-1
+            mean_vals_noise_switch_all_trials[trial, :] = np.nanmean(mean_vals_noise_switch, axis=0)
+            if len(idx_0) == 0 and len(idx_1) == 0:
+                continue
+            else:
+                # take max values and latencies across time (axis=1) and then average across trials
+                latency.append(np.nanmean(np.argmax(mean_vals_noise_switch, axis=1)))
+                height.append(np.nanmean(np.nanmax(mean_vals_noise_switch, axis=1)))
+        mean_number_switchs_coupling[i_j, :] = nFrame / np.array(number_switches)
+        mean_peak_latency[i_j, :] = (np.array(latency) - steps_back)/fps
+        mean_peak_amplitude[i_j, :] = height
+        mean_vals_noise_switch_coupling[i_j, :] = np.nanmean(mean_vals_noise_switch_all_trials, axis=0)
+        err_vals_noise_switch_coupling[i_j, :] = np.nanstd(mean_vals_noise_switch_all_trials, axis=0) / np.sqrt(ntrials)
+    colormap = pl.cm.Oranges(np.linspace(0.3, 1, len(thres_vals)))
+    fig, ax = plt.subplots(1, figsize=(5.5, 4))
+    ax.set_xlabel('Time from switch (s)')
+    ax.set_ylabel('Noise')
+    fig3, ax34567 = plt.subplots(ncols=3, nrows=2, figsize=(12.5, 8))
+    ax34567= ax34567.flatten()
+    ax3, ax4, ax5, ax6, ax7, ax8 = ax34567
+    mean_number_switchs_coupling = np.log(mean_number_switchs_coupling)
+    if hysteresis_width:
+        hyst_width_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2_simul_threshold.npy')
+        hyst_width_4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4_simul_threshold.npy')
+        datframe = pd.DataFrame({'Amplitude': np.nanmean(mean_peak_amplitude, axis=1).flatten(),
+                                 'Latency': np.nanmean(mean_peak_latency, axis=1).flatten(),
+                                 'Dominance': np.nanmean(mean_number_switchs_coupling, axis=1).flatten(),
+                                 'Width f=2': hyst_width_2.flatten(),
+                                 'Width f=4': hyst_width_4.flatten()})
+    else:
+        datframe = pd.DataFrame({'Amplitude': mean_peak_amplitude.flatten(),
+                                 'Latency': mean_peak_latency.flatten(),
+                                 'log Dominance': mean_number_switchs_coupling.flatten()})
+    g = sns.pairplot(datframe)
+    g.map_lower(corrfunc)
+    for a in [ax, ax3, ax4, ax5, ax6, ax7, ax8]:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    latency = mean_peak_latency.copy()
+    switches = mean_number_switchs_coupling.copy()
+    amplitude = mean_peak_amplitude.copy()
+    zscor = scipy.stats.zscore
+    if zscore_number_switches:
+        # zscore with respect to every p(shuffle), across subjects
+        latency = zscor(latency, axis=0)
+        switches = zscor(switches, axis=0)
+        amplitude = zscor(amplitude, axis=0)
+        ax3.plot(thres_vals, switches, color='k', linewidth=4)
+        ax4.plot(thres_vals, latency, color='k', linewidth=4)
+        ax5.plot(thres_vals, amplitude, color='k', linewidth=4)
+    corr = np.corrcoef(mean_peak_latency.flatten(), mean_number_switchs_coupling.flatten())[0][1]
+    ax6.set_title(f'r = {corr :.3f}')
+    for i_sh, th in enumerate(thres_vals):
+        ax6.plot(mean_peak_latency[i_sh, :], mean_number_switchs_coupling[i_sh, :],
+                 color=colormap[i_sh], marker='o', linestyle='')
+        ax7.plot(mean_peak_latency[i_sh, :], mean_peak_amplitude[i_sh, :],
+                 color=colormap[i_sh], marker='o', linestyle='')
+        ax8.plot(mean_number_switchs_coupling[i_sh, :], mean_peak_amplitude[i_sh, :],
+                 color=colormap[i_sh], marker='o', linestyle='')
+    corr = np.corrcoef(mean_peak_latency.flatten(), mean_peak_amplitude.flatten())[0][1]
+    ax7.set_title(f'r = {corr :.3f}')
+    corr = np.corrcoef(mean_number_switchs_coupling.flatten(), mean_peak_amplitude.flatten())[0][1]
+    ax8.set_title(f'r = {corr :.3f}')
+    for n in range(ntrials):
+        ax3.plot(thres_vals, switches[:, n], color='k', linewidth=1, alpha=0.3)
+        ax4.plot(thres_vals, latency[:, n], color='k', linewidth=1, alpha=0.3)
+        ax5.plot(thres_vals, amplitude[:, n], color='k', linewidth=1, alpha=0.3)
+    # ax3.set_yscale('')
+    mean = np.nanmean(switches, axis=-1)
+    # err = np.nanstd(switches, axis=-1)
+    ax3.plot(thres_vals, mean, color='k', linewidth=5)
+    mean = np.nanmean(latency, axis=-1)
+    # err = np.nanstd(latency, axis=-1)
+    ax4.plot(thres_vals, mean, color='k', linewidth=5)
+    mean = np.nanmean(amplitude, axis=-1)
+    # err = np.nanstd(amplitude, axis=-1)
+    ax5.plot(thres_vals, mean, color='k', linewidth=5)
+    # ax5twin = ax5.twinx()
+    # ax5twin.spines['top'].set_visible(False)
+    # ax5twin.plot(shuffle_vals, np.exp(barriers), color='r', linewidth=4)
+    label = ''
+    ax3.set_xlabel('Threshold'); ax3.set_ylabel(label + 'log Dominance duration'); ax4.set_xlabel('Threshold'); ax4.set_ylabel(label + 'Peak latency')
+    ax6.set_xlabel('Peak latency'); ax6.set_ylabel('log Dominance duration'); ax7.set_xlabel('Peak latency'); ax7.set_ylabel('Peak amplitude')
+    ax8.set_xlabel('log Dominance duration'); ax8.set_ylabel('Peak amplitude'); ax5.set_xlabel('Threshold'); ax5.set_ylabel(label + 'Peak amplitude')
+    for i_sh, threshold in enumerate(thres_vals):
+        x_plot = np.arange(-steps_back, steps_front, 1)/fps
+        y_plot = mean_vals_noise_switch_coupling[i_sh, :]
+        ax.plot(x_plot, y_plot, color=colormap[i_sh],
+                label=threshold, linewidth=3)
+    fig.tight_layout()
+    fig3.tight_layout()
+
+
+def hysteresis_simulation_threshold(j=1.2, thres_vals=np.arange(0, 0.5, 1e-2),
+                                    n=4., tau=0.1, sigma=0.1, b1=0.15,
+                                    tFrame=26, fps=60, nreps=500,
+                                    simulate=False):
+    nFrame = fps*tFrame
+    n_th = len(thres_vals)
+    label = 'Bistable' if j >= 1 else 'Monostable'
+    if simulate:
+        choice_all = np.zeros((2, nFrame, n_th, nreps))
+        for freq, freqval in enumerate([2, 4]):
+            for i_th, th in enumerate(thres_vals):
+                for i in range(nreps):
+                    params = [j, b1, tau, th, sigma]
+                    # sign = (-1)**(i > nreps//2)
+                    choice, x = simulator_5_params(params=params, freq=freqval, nFrame=nFrame,
+                                                   fps=fps, return_choice=True)
+                    choice_all[freq, :, i_th, i] = choice
+        np.save(DATA_FOLDER + label + '_hysteresis_choices_changing_threshold.npy', choice_all)
+    else:
+        choice_all= np.load(DATA_FOLDER + label + '_hysteresis_choices_changing_threshold.npy')
+    hyst_width_2 = np.zeros((n_th))
+    hyst_width_4 = np.zeros((n_th))
+    f2, ax2 = plt.subplots(ncols=2, figsize=(9, 4.5))
+    colormap = pl.cm.Oranges(np.linspace(0.3, 1, 3))
+    for freq, freqval in enumerate([2, 4]):
+        color = 0
+        for i_th, th in enumerate(thres_vals):
+            stimulus = get_blist(freq=freqval, nFrame=nFrame)
+            response_raw = choice_all[freq, :, i_th, :]
+            response_raw[response_raw == 0] = np.nan
+            response_raw = (response_raw+1)/2
+            if freq > 0:
+                choice_aligned = np.column_stack((response_raw[:nFrame//2],
+                                                  response_raw[nFrame//2:]))
+                response_raw = choice_aligned
+                stimulus = stimulus[:nFrame//2]
+            dx = np.diff(stimulus)[0]
+            asc_mask = np.sign(np.gradient(stimulus)) > 0
+            ascending = np.nanmean(response_raw, axis=1)[asc_mask]
+            descending = np.nanmean(response_raw, axis=1)[~asc_mask]
+            width = np.nansum(np.abs(descending[::-1] - ascending))*dx
+            [hyst_width_2, hyst_width_4][freq][i_th] = width
+            if i_th in [0, n_th//3, n_th*2//3]:
+                ax2[freq].plot(stimulus[asc_mask], ascending, color=colormap[color], linewidth=4,
+                               label=f'{thres_vals[i_th]}')
+                ax2[freq].plot(stimulus[~asc_mask], descending, color=colormap[color], linewidth=4)
+                color += 1
+    np.save(DATA_FOLDER + 'hysteresis_width_freq_2_simul_threshold.npy', hyst_width_2)
+    np.save(DATA_FOLDER + 'hysteresis_width_freq_4_simul_threshold.npy', hyst_width_4)
+    for a in ax2:
+        a.set_xlabel('Sensory evidence B(t)')
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    ax2[0].set_ylabel('P(choice = R)')
+    ax2[0].legend(frameon=False, title=r'$\theta$')
+    fig, ax = plt.subplots()
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    colormap = pl.cm.Oranges(np.linspace(0.3, 1, n_th))
+    ax.plot([0, 3], [0, 3], color='k', alpha=0.2, linestyle='--', linewidth=4)
+    for i_c in range(n_th):
+        ax.plot(hyst_width_2[i_c], hyst_width_4[i_c],
+                color=colormap[i_c], marker='o', linestyle='')
+    ax.set_ylabel('Width freq = 4')
+    ax.set_xlabel('Width freq = 2')
+    fig.tight_layout()
+    f2.tight_layout()
+
+
+def get_blist(freq, nFrame):
+    if abs(freq) == 2:
+        difficulty_time_ref_2 = np.linspace(-2, 2, nFrame//2)
+        stimulus = np.concatenate(([difficulty_time_ref_2, -difficulty_time_ref_2]))
+    if abs(freq) == 4:
+        difficulty_time_ref_4 = np.linspace(-2, 2, nFrame//4)
+        stimulus = np.concatenate(([difficulty_time_ref_4, -difficulty_time_ref_4,
+                                    difficulty_time_ref_4, -difficulty_time_ref_4]))
+    if freq < 0:
+        stimulus = -stimulus
+    return stimulus
 
 
 def plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
@@ -1715,7 +1969,8 @@ def prior_parameters(n_simuls=100):
     return theta_all, prior
 
 
-def simulator_5_params(params, freq, nFrame=1560, fps=60):
+def simulator_5_params(params, freq, nFrame=1560, fps=60,
+                       return_choice=False):
     """
     Simulator. Takes set of `params` and simulates the system, returning summary statistics.
     Params: J_eff, B_eff, tau, threshold distance, noise
@@ -1744,7 +1999,10 @@ def simulator_5_params(params, freq, nFrame=1560, fps=60):
     mid_mask = (x >= (0.5-th)) & (x <= (0.5+th))
     for t in np.where(mid_mask)[0]:
         choice[t] = choice[t - 1] if t > 0 else 0.
-    return return_input_output_for_network(params, choice, freq, nFrame=nFrame, fps=fps)
+    if return_choice:
+        return choice, x
+    else:
+        return return_input_output_for_network(params, choice, freq, nFrame=nFrame, fps=fps)
 
 
 def sbi_training_5_params(n_simuls=10000, fps=60, tFrame=26, data_folder=DATA_FOLDER,
@@ -2578,15 +2836,31 @@ if __name__ == '__main__':
     # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
     #                         window_conv=1)
+    hysteresis_simulation_threshold(j=1.2, thres_vals=np.arange(0, 0.5, 1e-2),
+                                    n=4., tau=0.07, sigma=0.1, b1=0.15,
+                                    tFrame=26, fps=60, nreps=1000,
+                                    simulate=False)
+    hysteresis_simulation_threshold(j=0.4, thres_vals=np.arange(0, 0.5, 1e-2),
+                                    n=4., tau=0.07, sigma=0.1, b1=0.15,
+                                    tFrame=26, fps=60, nreps=1000,
+                                    simulate=False)
+    plot_noise_threshold(load_sims=True, thres_vals=np.arange(0, 0.5, 1e-2),
+                          j=1.2, nFrame=100000, fps=60, noisyframes=30,
+                          n=4., steps_back=90, steps_front=20,
+                          ntrials=20, zscore_number_switches=False, hysteresis_width=True)
+    plot_noise_threshold(load_sims=True, thres_vals=np.arange(0, 0.5, 1e-2),
+                          j=0.4, nFrame=100000, fps=60, noisyframes=30,
+                          n=4., steps_back=90, steps_front=20,
+                          ntrials=20, zscore_number_switches=False, hysteresis_width=True)
     # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
     #                       fps=60, tFrame=26, data_folder=DATA_FOLDER,
-    #                       nbins=10, ntraining=8, arrows=False, subjects=['s_16'],
+    #                       nbins=10, ntraining=8, arrows=False, subjects=['s_17'],
     #                       window_conv=None)
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                          steps_back=45, steps_front=10,
-    #                          shuffle_vals=[1, 0.7, 0], violin=True, sub=None, avoid_first=True,
-    #                          window_conv=1, zscore_number_switches=False,
-    #                          normalize_variables=True, hysteresis_area=True)
+    #                           steps_back=45, steps_front=10,
+    #                           shuffle_vals=[1, 0.7, 0], violin=True, sub=None, avoid_first=True,
+    #                           window_conv=1, zscore_number_switches=False,
+    #                           normalize_variables=True, hysteresis_area=True)
     # hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
     #                                     fps=60, tFrame=26, data_folder=DATA_FOLDER,
     #                                     ntraining=8, arrows=False)
@@ -2604,12 +2878,12 @@ if __name__ == '__main__':
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
-    for sims in [10, 100, 1000, 10000, 50000, 100000, 1000000]:
-        parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
-                                    n_pars_to_fit=100, n_sims_per_par=1000,
-                                    sv_folder=SV_FOLDER, simulate=True,
-                                    load_net=True, not_plot_and_return=False)
-        plt.close('all')
+    # for sims in [10, 100, 1000, 10000, 50000, 100000, 1000000]:
+    #     parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
+    #                                 n_pars_to_fit=100, n_sims_per_par=1000,
+    #                                 sv_folder=SV_FOLDER, simulate=True,
+    #                                 load_net=True, not_plot_and_return=False)
+    #     plt.close('all')
     # plt.close('all')
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
     #                       fps=60, tFrame=20, freq=2, idx=5, n=3.92, theta=0.5,
