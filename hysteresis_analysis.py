@@ -1701,11 +1701,11 @@ def prior_parameters(n_simuls=100):
     prior =\
         MultipleIndependent([
             Uniform(torch.tensor([0.]),
-                    torch.tensor([2.])),  # J_eff = J_0 + J_1*coupling
-            Uniform(torch.tensor([-1.]),
-                    torch.tensor([1.])),  # B1
-            Uniform(torch.tensor([0.05]),
-                    torch.tensor([5])),  # tau
+                    torch.tensor([2.])),  # J_eff / N = (J_0 + J_1*coupling) (N=4)
+            Uniform(torch.tensor([-0.4]),
+                    torch.tensor([0.4])),  # B1
+            # Uniform(torch.tensor([0.05]),
+            #         torch.tensor([5])),  # tau
             Uniform(torch.tensor([0.]),
                     torch.tensor([0.45])),  # threshold distance
             Uniform(torch.tensor([0.0]),
@@ -1729,7 +1729,8 @@ def simulator_5_params(params, freq, nFrame=1560, fps=60):
                                     difficulty_time_ref_4, -difficulty_time_ref_4]))
     if freq < 0:
         stimulus = -stimulus
-    j_eff, b_par, tau, th, sigma = params
+    j_eff, b_par, th, sigma = params
+    tau = 0.5
     dt = 1/fps
     b_eff = stimulus*b_par
     noise = np.random.randn(nFrame)*sigma*np.sqrt(dt/tau)
@@ -1802,11 +1803,11 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
                                 load_net=True, not_plot_and_return=False):
     density_estimator, _ = sbi_training_5_params(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame,
                                                  data_folder=DATA_FOLDER, load_net=load_net)
-    lb = np.array([0., -1.1, 0.0, 0.0, 0.0])
-    ub = np.array([2.2, 1.2, 5.2, 0.5, 0.4])
-    plb = np.array([0.01, -1., 0.05, 0.01, 0.05])
-    pub = np.array([2., 1., 5, 0.45, 0.35])
-    x0 = np.array([0.2, 0.6, 0.2, 0.2, 0.15])
+    lb = np.array([0., -0.5, 0.0, 0.0])
+    ub = np.array([2.2, 0.5, 0.5, 0.4])
+    plb = np.array([0.01, -0.1, 0.01, 0.05])
+    pub = np.array([1.6, 0.4, 0.45, 0.35])
+    x0 = np.array([0.2, 0.1, 0.2, 0.15])
     nFrame = fps*tFrame
     orig_params = np.zeros((n_pars_to_fit, len(x0)))
     recovered_params = np.zeros((n_pars_to_fit, len(x0)))
@@ -1822,8 +1823,8 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
                                                            nFrame=nFrame, fps=fps)
                 training_input_set = np.row_stack((training_input_set, input_net))
                 training_output_set = np.row_stack((training_output_set, output_net))
-            condition = training_input_set.astype(np.float32)
-            x = training_output_set.astype(np.float32)
+            condition = training_input_set[1:].astype(np.float32)
+            x = training_output_set[1:].astype(np.float32)
             x = torch.tensor(x).unsqueeze(0).to(torch.float32)
             condition = torch.tensor(condition).to(torch.float32)
             fun_to_minimize = lambda parameters: \
@@ -1852,22 +1853,30 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
     if not_plot_and_return:
         return orig_params, recovered_params
     else:
-        fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(15, 9))
-        numpars = 5
+        fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(10, 9))
+        numpars = 4
         ax = ax.flatten()
-        labels = ['Jeff', ' B1',  'Tau', 'Thres.', 'sigma']
+        # labels = ['Jeff', ' B1',  'Tau', 'Thres.', 'sigma']
+        labels = ['Jeff', ' B1', 'Thres.', 'sigma']
         # xylims = [[0, 3], [0, 0.8], [0, 0.7], [0, 0.5], [0, 0.5]]
         for i_a in range(numpars):
             a = ax[i_a]
             a.plot(orig_params[:, i_a], recovered_params[:, i_a], color='k', marker='o',
                    markersize=5, linestyle='')
+            maxval = np.max([orig_params[:, i_a], recovered_params[:, i_a]])
+            minval = np.min([orig_params[:, i_a], recovered_params[:, i_a]])
+            a.set_xlim(minval-1e-2, maxval+1e-2)
+            a.set_ylim(minval-1e-2, maxval+1e-2)
+            a.plot([minval, maxval], [minval, maxval],
+                   color='k', linestyle='--',
+                   alpha=0.3, linewidth=4)
             # a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
             a.set_title(labels[i_a])
             a.set_xlabel('Original parameters')
             a.set_ylabel('Recovered parameters')
             a.spines['right'].set_visible(False)
             a.spines['top'].set_visible(False)
-        ax[-1].axis('off')
+        # ax[-1].axis('off')
         fig.tight_layout()
         fig2, ax2 = plt.subplots(ncols=2)
         ax2, ax = ax2
@@ -2085,25 +2094,26 @@ def save_5_params_recovery(n_pars=50, sv_folder=SV_FOLDER, i_ini=0):
     Saves samples of 5 params: J_eff, B_1, tau, threshold distance, noise
     """
     for i in range(i_ini, n_pars):
-        j0 = np.random.uniform(0.01, 2.)
-        b10 = np.random.uniform(-1., 1.)
-        tau0 = np.random.uniform(0.05, 5)
-        threshold0 = np.random.uniform(0., 0.45)
+        j0 = np.random.uniform(0.01, 1.6)
+        b10 = np.random.uniform(-0.1, 0.4)
+        # tau0 = np.random.uniform(0.05, 5)
+        threshold0 = np.random.uniform(0., 0.25)
         noise0 = np.random.uniform(0.05, 0.34)
-        params = [j0, b10, tau0, threshold0, noise0]
+        params = [j0, b10, threshold0, noise0]
         np.save(sv_folder + 'param_recovery/pars_5_prt' + str(i) + '.npy',
                 np.array(params))
 
 
 def fun_get_neg_log_likelihood_5pars(theta, x, result, density_estimator,
-                                     epsilon=1e-3, ct_distro=1):
+                                     epsilon=1e-4, ct_distro=1):
+    theta = np.atleast_2d(theta); result = torch.atleast_2d(result)
+    x = torch.atleast_2d(x)
     params_repeated = np.column_stack(np.repeat(theta.reshape(-1, 1), result.shape[0], 1))
     condition = torch.tensor(np.column_stack((params_repeated, result))).to(torch.float32)
-    # likelihood_nle = torch.exp(density_estimator.log_prob(x, condition))
-    # full_likelihood_with_contaminant = likelihood_nle*(1-epsilon)+epsilon*ct_distro
-    # log_likelihood_full = torch.log(full_likelihood_with_contaminant)
-    return -torch.nansum(density_estimator.log_prob(x, condition)).detach().numpy()
-
+    likelihood_nle = torch.exp(density_estimator.log_prob(x, condition))
+    full_likelihood_with_contaminant = likelihood_nle*(1-epsilon)+epsilon*ct_distro
+    log_likelihood_full = torch.log(full_likelihood_with_contaminant)
+    return -torch.nansum(log_likelihood_full).detach().numpy()
 
 
 def fun_get_neg_log_likelihood(theta, x, result, density_estimator, coupling=1,
@@ -2348,7 +2358,7 @@ def simulator(params, coupling, freq, nFrame=1200, fps=60, n=3.92, coupling_offs
 
 
 def return_input_output_for_network(params, choice, freq, nFrame=1200, fps=60,
-                                    max_number=5):
+                                    max_number=10):
     dt = 1/fps
     tFrame = nFrame*dt
     # Find the indices where the value changes
@@ -2525,9 +2535,9 @@ def plot_noise_variables_versus_hysteresis():
 def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
                                      n_pars_to_fit=100,
                                      n_sims_per_par=120, mse=False):
-    n_sims_list=[100, 1000, 10000, 50000, 100000, 250000,
-                 500000, 1000000, 2000000, 3000000, 5000000]
-    corr_mat = np.zeros((5, len(n_sims_list)))
+    n_sims_list=[100, 1000, 10000, 50000, 100000, 500000,
+                 1000000, 2000000, 5000000]
+    corr_mat = np.zeros((4, len(n_sims_list)))
     for i_n, n_sims in enumerate(n_sims_list):
         try:
             orig_params, recovered_params =\
@@ -2536,8 +2546,8 @@ def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
                                    sv_folder=SV_FOLDER, simulate=False,
                                    load_net=True, not_plot_and_return=True)
             if not mse:
-                corr_array = np.zeros((5))
-                for i in range(5):
+                corr_array = np.zeros((4))
+                for i in range(4):
                     corr_array[i] = np.corrcoef(orig_params[:, i],
                                                 recovered_params[:, i])[1][0]
             if mse:
@@ -2546,7 +2556,7 @@ def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
         except FileNotFoundError:
             corr_mat[:, i_n] = np.nan
     fig, ax = plt.subplots(ncols=4, figsize=(15, 4.5))
-    titles = ['J', 'B1', 'Tau', 'Thresh', 'Sigma']
+    titles = ['J', 'B1', 'Thresh', 'Sigma']
     for i_ax, a in enumerate(ax):
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
@@ -2599,16 +2609,16 @@ if __name__ == '__main__':
     #          sv_folder=SV_FOLDER, npars=5)
     # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
     #                       fps=60, tFrame=18, data_folder=DATA_FOLDER,
-    #                       nbins=9, ntraining=8, arrows=True)
+    #                       nbins=9, ntraining=8, arrows=True)*
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
-    for sims in [10, 100, 1000, 10000, 50000, 100000, 1000000]:
+    for sims in [500000]:
         parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
-                                    n_pars_to_fit=100, n_sims_per_par=1000,
+                                    n_pars_to_fit=100, n_sims_per_par=100,
                                     sv_folder=SV_FOLDER, simulate=True,
-                                    load_net=True, not_plot_and_return=False)
+                                    load_net=False, not_plot_and_return=False)
         plt.close('all')
     # plt.close('all')
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
