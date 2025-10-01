@@ -876,7 +876,6 @@ def plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                           ndt_list=ndt_list)
 
 
-
 def plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                               ntraining=8, coupling_levels=[0, 0.3, 1],
                               window_conv=None, ndt_list=np.arange(100)):
@@ -892,13 +891,13 @@ def plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                                         tFrame=tFrame, fps=fps, window_conv=window_conv,
                                         ndtlist=ndt_list)
     hysteresis_across_coupling = np.mean(hysteresis, axis=0)
-    plt.figure()
+    f = plt.figure()
     for i in range(hysteresis_across_coupling.shape[0]):
         plt.plot(ndt_list/fps, hysteresis_across_coupling[i], color='k',
                  alpha=0.3)
     hysteresis_across_coupling_subjects = np.mean(hysteresis_across_coupling, axis=0)
     plt.plot(ndt_list/fps, hysteresis_across_coupling_subjects, color='k', linewidth=3)
-    plt.ylabel('Hysteresis area'); plt.xlabel('Delay (s)')
+    plt.ylabel('Hysteresis area'); plt.xlabel('Delay (s)'); f.tight_layout()
 
 
 def hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
@@ -3121,41 +3120,79 @@ def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
     fig.tight_layout()
 
 
-def lmm_hysteresis_dominance(freq=2, plot_summary=False):
-    x2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
-    x4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
-    y = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
-    N, M = y.shape
+def lmm_hysteresis_dominance(freq=2, plot_summary=False,
+                             slope_random_effect=False, plot_individual=False):
+    y2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
+    y4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
+    x = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+    N, M = x.shape
     if freq == 2:
-        x = x2
+        y = y2
     if freq == 4:
-        x = x4
-    df = pd.DataFrame({
-                        "x": x.flatten(),
-                        "y": y.flatten(),
-                        "subject": np.repeat(np.arange(M), N),
-                        "condition": np.tile(np.arange(N), M)
-                        })
-    model = smf.mixedlm("x ~ y", df, groups=df["subject"], re_formula="1")  # ~y
+        y = y4
+    df = pd.DataFrame({"x": x.flatten(),
+                       "y": y.flatten(),
+                       "subject": np.repeat(np.arange(M), N),
+                       "condition": np.tile(np.arange(N), M)})
+    re_formula = "~x" if slope_random_effect else "1"
+    model = smf.mixedlm("y ~ x", df, groups=df["subject"],
+                        re_formula=re_formula)
     result = model.fit()
     fe = result.fe_params
     re = result.random_effects
     # get intercepts/slopes per subject
     intercepts = [fe["Intercept"] + eff.get("Group", 0) for subj, eff in re.items()]
-    slopes = [fe["y"] + eff.get("y", 0) for subj, eff in re.items()]
+    slopes = [fe["x"] + eff.get("x", 0) for subj, eff in re.items()]
     if plot_summary:
         print(result.summary())
         # fixed effects
         intercept = result.fe_params["Intercept"]
-        slope = result.fe_params["y"]
+        slope = result.fe_params["x"]
         
-        x_range = np.linspace(np.min(y), np.max(y), 100)
+        x_range = np.linspace(np.min(x), np.max(x), 100)
         y_pred = intercept + slope * x_range
         fig = plt.figure()
         plt.xlabel('Dominance')
-        plt.ylabel('Hysteresis')
-        plt.plot(x_range, y_pred, color="black", linewidth=2, label="Fixed effect")
-        plt.plot(y, x, color='k', marker='o', linestyle='')
+        plt.ylabel('Hysteresis area')
+        plt.plot(x_range, y_pred, color="black", linewidth=4, label="Fixed effect")
+        if plot_individual:
+            random_effects = result.random_effects
+            s = 0
+            for subj, re in random_effects.items():
+                subj_intercept = intercepts[s]
+                subj_slope = slopes[s]
+                plt.plot(x_range, subj_intercept + subj_slope * x_range,
+                          alpha=0.3, color='k')
+                s += 1
+        else:
+            cov = result.cov_params()
+        
+            var_intercept = cov.loc["Intercept", "Intercept"]
+            var_slope = cov.loc["x", "x"]
+            cov_intercept_slope = cov.loc["Intercept", "x"]
+            
+            y_range = np.linspace(min(df["x"]), max(df["x"]), 100)
+            
+            intercept = result.params["Intercept"]
+            slope = result.params["x"]
+            
+            y_pred = intercept + slope * y_range
+            
+            z_val = 1.96  # for 95% CI
+            
+            SE = np.sqrt(
+                var_intercept +
+                (y_range ** 2) * var_slope +
+                2 * y_range * cov_intercept_slope
+            )
+            
+            y_pred_lower = y_pred - z_val * SE
+            y_pred_upper = y_pred + z_val * SE
+    
+            
+            plt.fill_between(x_range, y_pred_lower, y_pred_upper, alpha=0.3,
+                             color='k')
+        plt.plot(x, y, color='k', marker='o', linestyle='')
         fig.tight_layout()
     else:
         return intercepts, slopes, result
@@ -3238,6 +3275,7 @@ def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
 
 
 if __name__ == '__main__':
+    print('Running hysteresis_analysis.py')
     # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
     #              fps=60, tFrame=18, model='MF', prob_flux=False,
     #              freq=4, idx=2)
@@ -3270,7 +3308,7 @@ if __name__ == '__main__':
     #                       window_conv=None)
     # plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                           ntraining=8, coupling_levels=[0, 0.3, 1],
-    #                           window_conv=None, ndt_list=np.arange(-20, 20))
+    #                           window_conv=None, ndt_list=np.arange(-20, 200))
     # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
     #                         window_conv=None, ndt_list=None)
@@ -3303,8 +3341,7 @@ if __name__ == '__main__':
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
-    # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
-    
+    save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
     for sims in [1000000]:
         parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
                                     n_pars_to_fit=100, n_sims_per_par=100,
@@ -3317,3 +3354,7 @@ if __name__ == '__main__':
     #                       tol=1e-3, pshuffle=0)
     # fitting_transitions(data_folder=DATA_FOLDER, fps=60, tFrame=18)
     # fitting_fokker_planck(data_folder=DATA_FOLDER, model='MF')
+    # lmm_hysteresis_dominance(freq=2, plot_summary=True,
+    #                          slope_random_effect=False, plot_individual=False)
+    # lmm_hysteresis_dominance(freq=2, plot_summary=True,
+    #                          slope_random_effect=True, plot_individual=True)
