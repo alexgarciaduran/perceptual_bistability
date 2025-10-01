@@ -2381,7 +2381,7 @@ def sbi_training_5_params(n_simuls=10000, fps=60, tFrame=26, data_folder=DATA_FO
         freq = np.random.choice([2, 4, -2, -4], n_simuls)
         # sample prior
         theta, prior = prior_parameters(n_simuls=n_simuls)
-        inference = sbi.inference.NLE(prior=prior)
+        inference = sbi.inference.MNLE(prior=prior)
         theta_np = theta.detach().numpy()
         # simulate
         print(f'Starting {n_simuls} simulations')
@@ -2716,7 +2716,7 @@ def save_5_params_recovery(n_pars=50, sv_folder=SV_FOLDER, i_ini=0):
     Saves samples of 5 params: J_eff, B_1, tau, threshold distance, noise
     """
     for i in range(i_ini, n_pars):
-        j0 = np.random.uniform(-0.3, 1.8)
+        j0 = np.random.uniform(-0.3, 1.5)
         b10 = np.random.uniform(-0.1, 0.8)
         # tau0 = np.random.uniform(0.05, 5)
         threshold0 = np.random.uniform(0., 0.25)
@@ -2997,7 +2997,7 @@ def return_input_output_for_network(params, choice, freq, nFrame=1200, fps=60,
     
     # If you want it as a list of [response, time] pairs:
     output_network_0 = np.concatenate((change_indices, [nFrame]))/nFrame
-    output_network = np.column_stack((output_network_0, np.roll(responses, 1)))
+    output_network = np.column_stack((np.roll(responses, 1), output_network_0))
     params_repeated = np.column_stack(np.repeat(params.reshape(-1, 1), result.shape[0], 1))
     input_network = np.column_stack((params_repeated, result, np.repeat(freq, result.shape[0])))
     return input_network[1:max_number], output_network[1:max_number]
@@ -3341,7 +3341,7 @@ if __name__ == '__main__':
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
-    save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
+    # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
     for sims in [1000000]:
         parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
                                     n_pars_to_fit=100, n_sims_per_par=100,
