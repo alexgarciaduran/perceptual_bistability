@@ -37,7 +37,7 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
     SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
@@ -3572,14 +3572,14 @@ def plot_dist_metrics(n_simuls_network=100000):
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
-    # fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
-    #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    # fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
-    #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    # fitting_pipeline(n_simuls_network=50000, use_j0=False, contaminants=True,
-    #                  fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    # fitting_pipeline(n_simuls_network=50000, use_j0=True, contaminants=True,
-    #                  fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
+                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
+                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    fitting_pipeline(n_simuls_network=50000, use_j0=False, contaminants=True,
+                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    fitting_pipeline(n_simuls_network=50000, use_j0=True, contaminants=True,
+                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
     # plot_dist_metrics(n_simuls_network=100000)
     # plot_dist_metrics(n_simuls_network=50000)
     # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
@@ -3641,12 +3641,12 @@ if __name__ == '__main__':
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
-    for sims in [1000000]:
-        parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
-                                    n_pars_to_fit=100, n_sims_per_par=100,
-                                    sv_folder=SV_FOLDER, simulate=True,
-                                    load_net=False, not_plot_and_return=False)
-        plt.close('all')
+    # for sims in [1000000]:
+    #     parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
+    #                                 n_pars_to_fit=100, n_sims_per_par=100,
+    #                                 sv_folder=SV_FOLDER, simulate=True,
+    #                                 load_net=False, not_plot_and_return=False)
+    #     plt.close('all')
     # plt.close('all')
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
     #                       fps=60, tFrame=26, freq=2, idx=1, n=3.92, theta=0.5,
