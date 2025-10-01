@@ -2129,7 +2129,7 @@ def get_negative_log_likelihood_all_data(theta, data, tFrame=18, fps=60,  #, dx=
     return negative_log_likelihood_all
 
 
-def prepare_data_for_fitting(df, tFrame=18, fps=60):
+def prepare_data_for_fitting_deprecated(df, tFrame=18, fps=60):
     df_freq = df.loc[df.freq == 2]
     # get response_array and stimulus values
     responses_2, stim_values_2 = get_response_and_blist_array(df_freq, fps=fps, tFrame=tFrame,
@@ -2727,7 +2727,7 @@ def save_5_params_recovery(n_pars=50, sv_folder=SV_FOLDER, i_ini=0):
 
 
 def fun_get_neg_log_likelihood_5pars(theta, x, result, density_estimator,
-                                     epsilon=1e-4, ct_distro=1):
+                                     epsilon=1e-4, ct_distro=1/(26*60)):
     theta = np.atleast_2d(theta); result = torch.atleast_2d(result)
     x = torch.atleast_2d(x)
     params_repeated = np.column_stack(np.repeat(theta.reshape(-1, 1), result.shape[0], 1))
@@ -2751,75 +2751,6 @@ def fun_get_neg_log_likelihood(theta, x, result, density_estimator, coupling=1,
     full_likelihood_with_contaminant = likelihood_nle*(1-epsilon)+epsilon*ct_distro
     log_likelihood_full = torch.log(full_likelihood_with_contaminant)
     return -torch.nansum(log_likelihood_full).detach().numpy()
-
-
-def prepare_data_for_sbi(x0, df, tFrame=26):
-    map_resps = {1:1, 0:0, 2:-1}
-    times_onset = df.keypress_seconds_onset.values/tFrame
-    times_offset = df.keypress_seconds_offset.values/tFrame
-    responses = df.response.values
-    responses = [map_resps[r] for r in responses]
-    responses_output = np.roll(responses, 1)
-
-
-def fit_data(data_folder=DATA_FOLDER, n_simuls_network=2000000,
-             tFrame=26, fps=60, ntraining=10, model='MF',
-             sv_folder=SV_FOLDER, npars=4):
-    density_estimator, _ = sbi_training(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame, data_folder=DATA_FOLDER,
-                                        load_net=True, plot_posterior=False, coupling_offset=False,
-                                        stim_offset=True, plot_diagnostics=False,
-                                        summary_statistics_fitting=False)    
-    lb = [0.0, -0.1, -0.2, 0.05]
-    ub = [1., 0.1, 1.5, 0.35]
-    plb = [0.05, -0.05, 0.3, 0.1]
-    pub = [0.8, 0.05, 0.9, 0.25]
-    x0 = np.array([0.75, 0., 0.7, 0.2])
-    if npars == 5:
-        lb = [-0.3] + lb
-        ub = [0.5] + ub
-        plb = [0] + plb
-        pub = [0.2] + pub
-        x0 = np.concatenate(([0.05], x0))
-    nFrame = fps*tFrame
-    df = load_data(data_folder, n_participants='all')
-    subjects = df.subject.unique()
-    for i_s, subject in enumerate(subjects):
-        df_sub = df.loc[(df.subject == subject) & (df.trial_index > ntraining)]
-        # simulate
-        responses_2, responses_4, _, _, coupling_2, coupling_4,\
-            signed_freq_2, signed_freq_4 =\
-            prepare_data_for_fitting(df_sub, tFrame=tFrame, fps=fps)
-        responses_2 = responses_clean(responses_2)
-        responses_4 = responses_clean(responses_4)
-        responses_all = np.concatenate((responses_2, responses_4))
-        coupling_all = np.concatenate((coupling_2, coupling_4))
-        freqs = -np.concatenate((signed_freq_2, signed_freq_4))
-        # freqs negative bc the stim starts by definition at negative
-        # therefore initial side is the other way around
-        training_input_set = np.zeros((4+3), dtype=np.float32)
-        training_output_set = np.empty((2), dtype=np.float32)
-        coupling_per_trials = np.empty((1))
-        for i in range(len(freqs)):
-            input_net, output_net, coupling = return_input_output_for_network_data(x0, responses_all[i], freqs[i],
-                                                                                   nFrame=nFrame, fps=fps,
-                                                                                   coupling=coupling_all[i],
-                                                                                   coupling_return=True)
-            training_input_set = np.row_stack((training_input_set, input_net))
-            training_output_set = np.row_stack((training_output_set, output_net))
-            coupling_per_trials = np.concatenate((coupling_per_trials, np.array(coupling)))
-        coupling_per_trials = coupling_per_trials[1:]
-        condition = training_input_set[1:].astype(np.float32)
-        x = training_output_set[1:].astype(np.float32)
-        x = torch.tensor(x).unsqueeze(0).to(torch.float32)
-        condition = torch.tensor(condition).to(torch.float32)
-        fun_to_minimize = lambda parameters: fun_get_neg_log_likelihood(parameters, x, condition[:, -3:], density_estimator,
-                                                                        coupling=coupling_per_trials)
-        optimizer = BADS(fun_to_minimize, x0,
-                         lb, ub, plb, pub).optimize()
-        pars = optimizer.x
-        print(pars)
-        np.save(sv_folder + 'fitted_params/fitted_params_BADS_' + model + '.npy',
-                np.array(pars))
 
 
 def parameter_recovery(n_simuls_network=100000, fps=60, tFrame=26,
@@ -3274,8 +3205,383 @@ def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
     fig.tight_layout()
 
 
+def fun_get_neg_log_likelihood_data(theta, x, result, density_estimator, pShuffle,
+                                    epsilon=1e-3, ct_distro=1/(26*60), use_j0=False,
+                                    contaminants=True):
+    result = torch.atleast_2d(result); x = torch.atleast_2d(x)
+    if not use_j0 and theta.shape[0] < 5:
+        theta = np.concatenate(([np.random.rand()], theta))
+    j_eff = (1-pShuffle)*theta[1] + theta[0]*use_j0
+    params_repeated = np.column_stack(np.repeat(theta[1:].reshape(-1, 1), result.shape[0], 1))
+    params_repeated[:, 0] = j_eff
+    condition = torch.tensor(np.column_stack((params_repeated, result))).to(torch.float32)
+    if contaminants:
+        likelihood_nle = torch.exp(density_estimator.log_prob(x, condition))
+        full_likelihood_with_contaminant = likelihood_nle*(1-epsilon)+epsilon*ct_distro
+        log_likelihood_full = torch.log(full_likelihood_with_contaminant)
+    else:
+        log_likelihood_full = density_estimator.log_prob(x, condition)
+    return -torch.nansum(log_likelihood_full).detach().numpy()
+
+
+def fit_data(data_folder=DATA_FOLDER, ntraining=8,
+             n_simuls_network=50000, fps=60, tFrame=26,
+             sv_folder=SV_FOLDER, load_net=True, use_j0=True, contaminants=True):
+    """
+    Fits data. Parameters:
+        1. J0
+        2. J1
+        3. B1
+        4. Threshold
+        5. Sigma
+    """
+    density_estimator, _ = sbi_training_5_params(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame,
+                                                 data_folder=DATA_FOLDER, load_net=load_net)
+    lb = np.array([-1, -0.5, -0.5, 0.0, 0.02])
+    ub = np.array([2., 2.2, 1., 0.3, 0.4])
+    plb = np.array([-0.15, 0.3, 0.05, 0.01, 0.04])
+    pub = np.array([0.7, 1.8, 0.9, 0.25, 0.35])
+    x0 = np.array([0.01, 1.2, 0.1, 0.05, 0.15])
+    nFrame = fps*tFrame
+    df = load_data(data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+    label_j0 = '_with_j0' if use_j0 else ''
+    for i_s, subject in enumerate(subjects):
+        print('Fitting subject', subject)
+        df_subject = df.loc[df.subject == subject]
+        tensor_input, tensor_output, idx_filt = prepare_data_for_fitting(df_subject, fps=fps, tFrame=tFrame)
+        pshuffle = df_subject.pShuffle.values[~idx_filt][1:]
+        condition = tensor_input[1:].astype(np.float32)
+        x = tensor_output[1:].astype(np.float32)
+        x = torch.tensor(x).unsqueeze(0).to(torch.float32)
+        condition = torch.tensor(condition).to(torch.float32)
+        fun_to_minimize = lambda parameters: \
+            fun_get_neg_log_likelihood_data(parameters, x, condition, density_estimator, pshuffle,
+                                            use_j0=use_j0, contaminants=contaminants)
+        options = {"display" : 'off',
+                   "uncertainty_handling": False}
+        if use_j0:
+            optimizer = BADS(fun_to_minimize, x0=x0,
+                             lower_bounds=lb,
+                             upper_bounds=ub,
+                             plausible_lower_bounds=plb,
+                             plausible_upper_bounds=pub,
+                             options=options).optimize()
+        else:
+            optimizer = BADS(fun_to_minimize, x0=x0[1:],
+                             lower_bounds=lb[1:],
+                             upper_bounds=ub[1:],
+                             plausible_lower_bounds=plb[1:],
+                             plausible_upper_bounds=pub[1:],
+                             options=options).optimize()
+        pars = optimizer.x
+        if not use_j0:
+            pars = np.concatenate(([np.random.rand()], pars))
+        print('Pars.: ', np.round(pars, 2), 'f_val:', np.round(optimizer.fval, 2))
+        np.save(sv_folder + '/pars_5_subject_' + subject + str(n_simuls_network) + label_j0 + '.npy',
+                np.array(pars))
+
+
+def get_log_likelihood_all_data(data_folder=DATA_FOLDER,
+                                sv_folder=SV_FOLDER, use_j0=False,
+                                n_simuls_network=100000, ntraining=8,
+                                fps=60, tFrame=26):
+    density_estimator, _ = sbi_training_5_params(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame,
+                                                 data_folder=DATA_FOLDER, load_net=True)
+    df = load_data(data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+    label_j0 = '_with_j0' if use_j0 else ''
+    numpars = 4 + use_j0*1.
+    bics = []; aics = []; nllh = []
+    for i_s, subject in enumerate(subjects):
+        df_subject = df.loc[df.subject == subject]
+        tensor_input, tensor_output, idx_filt = prepare_data_for_fitting(df_subject, fps=fps, tFrame=tFrame)
+        condition = tensor_input[1:].astype(np.float32)
+        pshuffle = df_subject.pShuffle.values[~idx_filt][1:]
+        x = tensor_output[1:].astype(np.float32)
+        x = torch.tensor(x).unsqueeze(0).to(torch.float32)
+        condition = torch.tensor(condition).to(torch.float32)
+        params = np.load(sv_folder + '/pars_5_subject_' + subject + str(n_simuls_network) + label_j0 + '.npy')
+        neg_log_likelihood_s = fun_get_neg_log_likelihood_data(params, x, condition, density_estimator, pshuffle,
+                                                               use_j0=use_j0, contaminants=True)
+        aic_s = 2*numpars + 2*neg_log_likelihood_s
+        bic_s = numpars*np.log(tensor_input.shape[0]) + 2*neg_log_likelihood_s
+        bics.append(bic_s)
+        aics.append(aic_s)
+        nllh.append(neg_log_likelihood_s)
+    return np.array(nllh), np.array(aics), np.array(bics)
+
+
+def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
+                       sv_folder=SV_FOLDER, ntraining=8, n_simuls_network=50000,
+                       plot=False, simulate=False, use_j0=False):
+    label_j0 = '_with_j0' if use_j0 else ''
+    nFrame = fps*tFrame
+    df = load_data(data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    ntrials = 72
+    subjects = df.subject.unique()
+    # subjects = ['s_1']
+    choices_all_subject = np.zeros((len(subjects), ntrials, nFrame))
+    for i_s, subject in enumerate(subjects):
+        print('Simulating subject', subject)
+        fitted_params = np.load(sv_folder + '/pars_5_subject_' + subject + str(n_simuls_network) + label_j0 + '.npy')
+        df_subject = df.loc[df.subject == subject]
+        pshuffles = df_subject.groupby('trial_index')['pShuffle'].mean().values
+        ini_side = df_subject.groupby('trial_index')['initial_side'].mean().values
+        frequencies = df_subject.groupby('trial_index')['freq'].mean().values*ini_side
+        if simulate:
+            choice_all = np.zeros((ntrials, nFrame))
+            for trial in range(ntrials):
+                j_eff = (1-pshuffles[trial])*fitted_params[1] + fitted_params[0]*use_j0
+                params = fitted_params[1:]
+                params[0] = j_eff
+                choice, _ = simulator_5_params(params=params, freq=frequencies[trial], nFrame=nFrame,
+                                               fps=fps, return_choice=True)
+                choice_all[trial, :] = choice
+            np.save(sv_folder + f'choice_matrix_subject_{subject}.npy', choice_all)
+        else:
+            choice_all = np.load(sv_folder + f'choice_matrix_subject_{subject}.npy')
+        choices_all_subject[i_s] = choice_all
+    if plot:
+        unique_shuffle = [1., 0.7, 0.]
+        nshuffle = len(unique_shuffle)
+        f2, ax2 = plt.subplots(ncols=2, figsize=(9, 4.5))
+        colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+        # containers: [shuffle, subject, timepoints]
+        ascending_subjects_2 = np.full((nshuffle, len(subjects), nFrame//2), np.nan)
+        descending_subjects_2 = np.full((nshuffle, len(subjects), nFrame//2), np.nan)
+        ascending_subjects_4 = np.full((nshuffle, len(subjects), nFrame//4), np.nan)
+        descending_subjects_4 = np.full((nshuffle, len(subjects), nFrame//4), np.nan)
+        
+        for i_s, subject in enumerate(subjects):
+            df_subject = df.loc[df.subject == subject]
+            pshuffles = np.round(df_subject.groupby('trial_index')['pShuffle'].mean().values, 3)
+            ini_side = np.round(df_subject.groupby('trial_index')['initial_side'].mean().values, 1)
+            frequencies = np.round(df_subject.groupby('trial_index')['freq'].mean().values * ini_side, 2)
+            choice_all = choices_all_subject[i_s]
+            ntrials = len(frequencies)
+            # trial-level accumulators
+            trial_ascending_subjects_2 = np.full((ntrials, nshuffle, nFrame//2), np.nan)
+            trial_descending_subjects_2 = np.full((ntrials, nshuffle, nFrame//2), np.nan)
+            trial_ascending_subjects_4 = np.full((ntrials*2, nshuffle, nFrame//4), np.nan)
+            trial_descending_subjects_4 = np.full((ntrials*2, nshuffle, nFrame//4), np.nan)
+        
+            for i_trial, freqval in enumerate(frequencies):
+                i_sh = np.where(unique_shuffle == pshuffles[i_trial])[0][0]
+                stimulus = get_blist(freq=freqval, nFrame=nFrame)
+        
+                response_raw = choice_all[i_trial, :]
+                response_raw[response_raw == 0] = np.nan
+                response_raw = (response_raw + 1) / 2
+        
+                if abs(freqval) == 4:
+                    response_raw = np.column_stack((response_raw[:nFrame//2],
+                                                    response_raw[nFrame//2:]))
+                    stimulus = stimulus[:nFrame//2]
+        
+                asc_mask = np.sign(np.gradient(stimulus)) > 0
+                ascending = response_raw[asc_mask].T
+                descending = response_raw[~asc_mask].T
+        
+                if np.abs(freqval) == 4:
+                    trial_descending_subjects_4[[i_trial, ntrials], i_sh] = descending
+                    trial_ascending_subjects_4[[i_trial, ntrials], i_sh] = ascending
+                else:
+                    trial_descending_subjects_2[i_trial, i_sh] = descending
+                    trial_ascending_subjects_2[i_trial, i_sh] = ascending
+            ascending_subjects_2[:, i_s] = np.nanmean(trial_ascending_subjects_2, axis=0)
+            descending_subjects_2[:, i_s] = np.nanmean(trial_descending_subjects_2, axis=0)
+            ascending_subjects_4[:, i_s] = np.nanmean(trial_ascending_subjects_4, axis=0)
+            descending_subjects_4[:, i_s] = np.nanmean(trial_descending_subjects_4, axis=0)
+
+        for freq_idx, freqval in enumerate([2, 4]):
+            stimulus = get_blist(freq=freqval, nFrame=nFrame)
+            if freqval == 4:
+                stimulus = stimulus[:nFrame//2]
+        
+            asc_mask = np.sign(np.gradient(stimulus)) > 0
+        
+            for i_sh in range(nshuffle):
+                if freqval == 4:
+                    ascending_subjects = ascending_subjects_4
+                    descending_subjects = descending_subjects_4
+                else:
+                    ascending_subjects = ascending_subjects_2
+                    descending_subjects = descending_subjects_2
+        
+                # average across subjects
+                asc_vals = np.nanmean(ascending_subjects[i_sh], axis=0)
+                desc_vals = np.nanmean(descending_subjects[i_sh], axis=0)
+        
+                # plot
+                ax2[freq_idx].plot(stimulus[asc_mask],
+                                   asc_vals[:asc_mask.sum()],
+                                   color=colormap[i_sh], linewidth=3)
+                ax2[freq_idx].plot(stimulus[~asc_mask],
+                                   desc_vals[:(~asc_mask).sum()],
+                                   color=colormap[i_sh], linewidth=3)
+        for a in ax2:
+            a.set_xlabel('Sensory evidence B(t)')
+            a.spines['right'].set_visible(False)
+            a.spines['top'].set_visible(False)
+            a.axhline(0.5, color='k', linestyle='--', alpha=0.2)
+            a.axvline(0., color='k', linestyle='--', alpha=0.2)
+            a.set_ylim(-0.1, 1.1)
+        ax2[0].set_ylabel('P(choice = R)')
+        # fig, ax = plt.subplots()
+        # ax.spines['right'].set_visible(False)
+        # ax.spines['top'].set_visible(False)
+        # colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+        # ax.plot([0, 3], [0, 3], color='k', alpha=0.2, linestyle='--', linewidth=4)
+        # for i_c in range(nshuffle):
+        #     ax.plot(hyst_width_2[i_c], hyst_width_4[i_c],
+        #             color=colormap[i_c], marker='o', linestyle='')
+        # ax.set_ylabel('Width freq = 4')
+        # ax.set_xlabel('Width freq = 2')
+        # fig.tight_layout()
+        f2.tight_layout()
+        
+
+
+def prepare_data_for_fitting(df_subject, fps=60, tFrame=26):
+    """
+    Gets the df of a subject, returns two tensors:
+        - Input (without parameters): [response^t, t_onset, freq]
+        - Output: [t_offset, response^{t+1}]
+    """
+    map_resps = {1:1, 0:0, 2:-1}
+    times_onset = df_subject.keypress_seconds_onset.values/tFrame
+    times_offset = df_subject.keypress_seconds_offset.values/tFrame
+    freq = df_subject.freq.values
+    responses = df_subject.response.values
+    responses = np.array([map_resps[r] for r in responses])
+    idx_filt = (responses == 0)*(times_onset != 0)
+    responses_output = np.roll(responses, 1)
+    tensor_input = np.column_stack((responses, times_onset, freq))
+    tensor_output = np.column_stack((times_offset, responses_output))
+    return tensor_input[~idx_filt], tensor_output[~idx_filt], idx_filt
+
+
+def plot_fitted_params(data_folder=DATA_FOLDER, n_simuls_network=50000,
+                       sv_folder=SV_FOLDER, use_j0=False):
+    label_j0 = '_with_j0' if use_j0 else ''
+    df = load_data(data_folder, n_participants='all')
+    subjects = df.subject.unique()
+    pars_all = np.zeros((5, len(subjects)))
+    for i_s, subject in enumerate(subjects):
+        fitted_params = np.load(sv_folder + '/pars_5_subject_' + subject + str(n_simuls_network) + label_j0 + '.npy')
+        pars_all[:, i_s] = fitted_params
+    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(9, 5)); ax=ax.flatten()
+    ax2 = ax[-1]
+    titles = [r'$J_0$', r'$J_1$', r'$B_1$', r'$\theta$', r'$\sigma$']
+    lb = np.array([-1, -0.5, -0.5, 0.0, 0.02])
+    ub = np.array([2., 2.2, 1., 0.45, 0.4])
+    for i_a, a in enumerate(ax[:-1]):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.spines['left'].set_visible(False)
+        a.axvline(lb[i_a], color='gray', linestyle='--', linewidth=2.5, alpha=0.6)
+        a.axvline(ub[i_a], color='gray', linestyle='--', linewidth=2.5, alpha=0.6)
+        sns.violinplot(pars_all[i_a], ax=a, inner=None, fill=False,
+                       edgecolor='k', orient='y')
+        sns.swarmplot(pars_all[i_a], ax=a, color='k', orient='y', size=3)
+        a.set_xlabel(titles[i_a])
+    if use_j0:
+        ax[0].axis('off')
+    fig.tight_layout()
+    # fig2, ax2 = plt.subplots(ncols=1)
+    numpars = pars_all.shape[0]
+    mat_corr = np.corrcoef(pars_all, rowvar=True)
+    mat_corr *= np.tri(*mat_corr.shape, k=-1)
+    im = ax2.imshow(mat_corr, cmap='bwr', vmin=-1, vmax=1)
+    ax2.step(np.arange(0, numpars)-0.5, np.arange(0, numpars)-0.5, color='k', linewidth=.7)
+    ax2.set_xticks(np.arange(numpars), titles, fontsize=12, rotation=45)  # , rotation='270'
+    ax2.set_yticks(np.arange(numpars), titles, fontsize=12)
+    plt.colorbar(im, ax=ax2, label='Correlation', shrink=0.6, aspect=10)
+    
+    # fig2.tight_layout()
+
+
+def plot_j1_lmm_slopes(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER, n_simuls_network=50000,
+                       use_j0=True):
+    label_j0 = '_with_j0' if use_j0 else ''
+    intercepts_2, slopes_2, _ =\
+        lmm_hysteresis_dominance(freq=2, plot_summary=False,
+                                 slope_random_effect=True, plot_individual=False)
+    intercepts_4, slopes_4, _ =\
+        lmm_hysteresis_dominance(freq=4, plot_summary=False,
+                                 slope_random_effect=True, plot_individual=False)
+    df = load_data(data_folder, n_participants='all')
+    subjects = df.subject.unique()
+    pars_all = np.zeros((5, len(subjects)))
+    for i_s, subject in enumerate(subjects):
+        fitted_params = np.load(sv_folder + '/pars_5_subject_' + subject + str(n_simuls_network) + label_j0 + '.npy')
+        pars_all[:, i_s] = fitted_params
+    df_all_pars = pd.DataFrame({'J0': pars_all[0], 'J1': pars_all[1],
+                                'B1': pars_all[2], '\theta': pars_all[3],
+                                'sigma': pars_all[4], 'slopes f2': slopes_2,
+                                'slopes f4': slopes_4, 'int f2': intercepts_2,
+                                'int f4': intercepts_4})
+    g = sns.pairplot(df_all_pars)
+    g.map_lower(corrfunc)
+
+
+def fitting_pipeline(n_simuls_network=50000, use_j0=False, contaminants=True,
+                     fit=False, plot_lmm=True, plot_pars=True, simulate=False):
+    if fit:
+        fit_data(data_folder=DATA_FOLDER, ntraining=8,
+                  n_simuls_network=n_simuls_network, fps=60, tFrame=26,
+                  sv_folder=SV_FOLDER, load_net=True, use_j0=use_j0, contaminants=contaminants)
+    if plot_lmm:
+        plot_j1_lmm_slopes(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
+                           n_simuls_network=n_simuls_network, use_j0=use_j0)
+    if plot_pars:
+        plot_fitted_params(data_folder=DATA_FOLDER, n_simuls_network=n_simuls_network,
+                           sv_folder=SV_FOLDER, use_j0=use_j0)
+    if simulate:
+        simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
+                           sv_folder=SV_FOLDER, ntraining=8, n_simuls_network=n_simuls_network,
+                           plot=True, simulate=simulate, use_j0=use_j0)
+
+
+def plot_dist_metrics(n_simuls_network=100000):
+    
+    nllhj0, aicj0, bicj0 = get_log_likelihood_all_data(data_folder=DATA_FOLDER,
+                                                       sv_folder=SV_FOLDER, use_j0=True,
+                                                       n_simuls_network=n_simuls_network, ntraining=8,
+                                                       fps=60, tFrame=26)
+    nllh_no_j0, aic_no_j0, bic_no_j0 = get_log_likelihood_all_data(data_folder=DATA_FOLDER,
+                                                                   sv_folder=SV_FOLDER, use_j0=False,
+                                                                   n_simuls_network=n_simuls_network, ntraining=8,
+                                                                   fps=60, tFrame=26)
+    fig, ax = plt.subplots(ncols=3, figsize=(10, 3))
+    df_nllh = pd.DataFrame({'NLLH, J0': nllh_no_j0-nllhj0})
+    df_aic = pd.DataFrame({'AIC, J0': aic_no_j0-aicj0})
+    df_bic = pd.DataFrame({'BIC, J0': bic_no_j0-bicj0})
+    sns.violinplot(df_nllh, ax=ax[0], inner=None, fill=False, edgecolor='k')
+    sns.swarmplot(df_nllh, ax=ax[0], color='k')
+    sns.violinplot(df_aic, ax=ax[1], inner=None, fill=False, edgecolor='k')
+    sns.swarmplot(df_aic, ax=ax[1], color='k')
+    sns.violinplot(df_bic, ax=ax[2], inner=None, fill=False, edgecolor='k')
+    sns.swarmplot(df_bic, ax=ax[2], color='k')
+    fig.tight_layout()
+
+
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
+    fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
+                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
+                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    fitting_pipeline(n_simuls_network=50000, use_j0=False, contaminants=True,
+                     fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    fitting_pipeline(n_simuls_network=50000, use_j0=True, contaminants=True,
+                     fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # plot_dist_metrics(n_simuls_network=100000)
+    # plot_dist_metrics(n_simuls_network=50000)
     # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
     #              fps=60, tFrame=18, model='MF', prob_flux=False,
     #              freq=4, idx=2)
@@ -3309,9 +3615,9 @@ if __name__ == '__main__':
     # plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                           ntraining=8, coupling_levels=[0, 0.3, 1],
     #                           window_conv=None, ndt_list=np.arange(-20, 200))
-    plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-                            ntraining=8, coupling_levels=[0, 0.3, 1],
-                            window_conv=None, ndt_list=None)
+    # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+    #                         ntraining=8, coupling_levels=[0, 0.3, 1],
+    #                         window_conv=None, ndt_list=None)
     # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                   ntraining=8, coupling_levels=[0, 0.3, 1],
     #                   window_conv=20, bin_size=0.1)
@@ -3328,13 +3634,6 @@ if __name__ == '__main__':
     # hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
     #                                     fps=60, tFrame=26, data_folder=DATA_FOLDER,
     #                                     ntraining=8, arrows=False)
-    # parameter_recovery(n_simuls_network=2000000, fps=60, tFrame=26,
-    #                     n_pars_to_fit=200, n_sims_per_par=120,
-    #                     model='MF', sv_folder=SV_FOLDER, simulate=True,
-    #                     load_net=True)
-    # fit_data(data_folder=DATA_FOLDER, n_simuls_network=2000000,
-    #          tFrame=18, fps=60, ntraining=10, model='MF',
-    #          sv_folder=SV_FOLDER, npars=5)
     # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
     #                       fps=60, tFrame=18, data_folder=DATA_FOLDER,
     #                       nbins=9, ntraining=8, arrows=True)*
