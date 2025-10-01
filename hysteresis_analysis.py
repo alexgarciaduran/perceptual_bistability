@@ -2319,10 +2319,10 @@ def fitting_fokker_planck(data_folder=DATA_FOLDER, tFrame=18, fps=60,
 def prior_parameters(n_simuls=100):
     prior =\
         MultipleIndependent([
-            Uniform(torch.tensor([0.]),
-                    torch.tensor([2.])),  # J_eff / N = (J_0 + J_1*coupling) (N=4)
+            Uniform(torch.tensor([-0.5]),
+                    torch.tensor([2.5])),  # J_eff / N = (J_0 + J_1*coupling) (N=4)
             Uniform(torch.tensor([-0.4]),
-                    torch.tensor([0.4])),  # B1
+                    torch.tensor([1.])),  # B1
             # Uniform(torch.tensor([0.05]),
             #         torch.tensor([5])),  # tau
             Uniform(torch.tensor([0.]),
@@ -2426,10 +2426,10 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
                                 load_net=True, not_plot_and_return=False):
     density_estimator, _ = sbi_training_5_params(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame,
                                                  data_folder=DATA_FOLDER, load_net=load_net)
-    lb = np.array([0., -0.5, 0.0, 0.0])
-    ub = np.array([2.2, 0.5, 0.5, 0.4])
-    plb = np.array([0.01, -0.1, 0.01, 0.05])
-    pub = np.array([1.6, 0.4, 0.45, 0.35])
+    lb = np.array([-0.5, -0.4, 0.0, 0.0])
+    ub = np.array([2.5, 1., 0.45, 0.35])
+    plb = np.array([-0.3, -0.1, 0.01, 0.05])
+    pub = np.array([1.6, 0.4, 0.3, 0.3])
     x0 = np.array([0.2, 0.1, 0.2, 0.15])
     nFrame = fps*tFrame
     orig_params = np.zeros((n_pars_to_fit, len(x0)))
@@ -2717,8 +2717,8 @@ def save_5_params_recovery(n_pars=50, sv_folder=SV_FOLDER, i_ini=0):
     Saves samples of 5 params: J_eff, B_1, tau, threshold distance, noise
     """
     for i in range(i_ini, n_pars):
-        j0 = np.random.uniform(0.01, 1.6)
-        b10 = np.random.uniform(-0.1, 0.4)
+        j0 = np.random.uniform(-0.3, 1.8)
+        b10 = np.random.uniform(-0.1, 0.8)
         # tau0 = np.random.uniform(0.05, 5)
         threshold0 = np.random.uniform(0., 0.25)
         noise0 = np.random.uniform(0.05, 0.34)
@@ -3304,7 +3304,8 @@ if __name__ == '__main__':
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
-    for sims in [500000]:
+    
+    for sims in [1000000]:
         parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
                                     n_pars_to_fit=100, n_sims_per_par=100,
                                     sv_folder=SV_FOLDER, simulate=True,
