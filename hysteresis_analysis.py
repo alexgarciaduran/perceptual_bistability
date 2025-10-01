@@ -3461,7 +3461,7 @@ def prepare_data_for_fitting(df_subject, fps=60, tFrame=26):
     idx_filt = (responses == 0)*(times_onset != 0)
     responses_output = np.roll(responses, 1)
     tensor_input = np.column_stack((responses, times_onset, freq))
-    tensor_output = np.column_stack((times_offset, responses_output))
+    tensor_output = np.column_stack((responses_output, times_offset))
     return tensor_input[~idx_filt], tensor_output[~idx_filt], idx_filt
 
 
@@ -3572,14 +3572,14 @@ def plot_dist_metrics(n_simuls_network=100000):
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
-    fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
-                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
-                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    fitting_pipeline(n_simuls_network=50000, use_j0=False, contaminants=True,
-                     fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    fitting_pipeline(n_simuls_network=50000, use_j0=True, contaminants=True,
-                     fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
+    #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
+    #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # fitting_pipeline(n_simuls_network=50000, use_j0=False, contaminants=True,
+    #                  fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # fitting_pipeline(n_simuls_network=50000, use_j0=True, contaminants=True,
+    #                  fit=True, plot_lmm=False, plot_pars=True, simulate=True)
     # plot_dist_metrics(n_simuls_network=100000)
     # plot_dist_metrics(n_simuls_network=50000)
     # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
