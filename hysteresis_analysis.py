@@ -229,7 +229,7 @@ def collect_responses(df, subjects, coupling_levels, fps=60, tFrame=26):
 
 def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling_levels,
                           tFrame=26, fps=60, window_conv=None,
-                          ndt_list=np.arange(100)):
+                          ndt_list=np.arange(100), unfold_time=False):
     """
     Make a 2-panel plot:
       - Left:  freq=2
@@ -279,9 +279,11 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     for i_c, coupling in enumerate(coupling_levels):
         subj_means_asc, subj_means_desc = [], []
         for i_s, subj_resp in enumerate(responses_2[i_c]):
-            subj_means_asc.append(np.roll(np.nanmean(subj_resp["asc"], axis=0), delay_per_subject[i_s]))
-            subj_means_desc.append(np.roll(np.nanmean(subj_resp["desc"], axis=0), delay_per_subject[i_s]))
-            hyst_width_2[i_c, i_s] = np.nansum(np.abs(np.nanmean(subj_resp["desc"], axis=0)[::-1]-np.nanmean(subj_resp["asc"], axis=0)), axis=0) * np.diff(barray_2[:nFrame//2])[0]
+            asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), delay_per_subject[i_s])
+            desc = np.roll(np.nanmean(subj_resp["desc"], axis=0), delay_per_subject[i_s])
+            subj_means_asc.append(asc)
+            subj_means_desc.append(desc)
+            hyst_width_2[i_c, i_s] = np.nansum(np.abs(desc[::-1]-asc), axis=0) * np.diff(barray_2[:nFrame//2])[0]
             switch_time_diff_2[i_c, i_s] = np.nanmean(subj_resp['switches_diff'])
         if subj_means_asc:
             y_asc = np.nanmean(subj_means_asc, axis=0)
@@ -305,9 +307,11 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     for i_c, coupling in enumerate(coupling_levels):
         subj_means_asc, subj_means_desc = [], []
         for i_s, subj_resp in enumerate(responses_4[i_c]):
-            subj_means_asc.append(np.roll(np.nanmean(subj_resp["asc"], axis=0), delay_per_subject[i_s]))
-            subj_means_desc.append(np.roll(np.nanmean(subj_resp["desc"], axis=0), delay_per_subject[i_s]))
-            hyst_width_4[i_c, i_s] = np.nansum(np.abs(np.nanmean(subj_resp["desc"], axis=0)[::-1]-np.nanmean(subj_resp["asc"], axis=0)), axis=0)* np.diff(barray_4[:nFrame//2])[0]
+            asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), delay_per_subject[i_s])
+            desc = np.roll(np.nanmean(subj_resp["desc"], axis=0), delay_per_subject[i_s])
+            subj_means_asc.append(asc)
+            subj_means_desc.append(desc)
+            hyst_width_4[i_c, i_s] = np.nansum(np.abs(desc[::-1]-asc), axis=0) * np.diff(barray_4[:nFrame//2])[0]
             switch_time_diff_4[i_c, i_s] = np.nanmean(subj_resp['switches_diff'])
         if subj_means_asc:
             y_asc = np.nanmean(subj_means_asc, axis=0)
@@ -350,7 +354,7 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     # fig2.tight_layout()
     plt.show()
     fig3, ax3 = plt.subplots(1, figsize=(5, 4))
-    ax3.plot([0, 2.5], [0, 2.5], color='k', alpha=0.4, linestyle='--', linewidth=4)
+    ax3.plot([0, 3], [0, 3], color='k', alpha=0.4, linestyle='--', linewidth=4)
     for i_c in range(len(coupling_levels)):
         ax3.plot(hyst_width_2[i_c], hyst_width_4[i_c],
                   color=colormap[i_c], marker='o', linestyle='')
@@ -377,24 +381,27 @@ def get_argmax_ndt_hyst_per_subject(responses_2, responses_4, barray_2, barray_4
                                     tFrame=26, fps=60, window_conv=None,
                                     ndtlist=np.arange(100)):
     nFrame = tFrame*fps
-    hyst_widths = np.zeros((len(coupling_levels), len(responses_2[0]), len(ndtlist)))
+    hyst_widths = np.zeros((1, len(responses_2[0]), len(ndtlist)))
     # --- FREQ = 2 ---
-    for i_c, coupling in enumerate(coupling_levels):
-        for i_s, subj_resp in enumerate(responses_2[i_c]):
-            for i_ndt, ndt in enumerate(ndtlist):
-                desc = np.roll(np.nanmean(subj_resp["desc"], axis=0)[::-1], -ndt)
-                asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), ndt)
-                hyst_widths[i_c, i_s, i_ndt] += np.nansum(np.abs(desc-asc), axis=0) *\
-                    np.diff(barray_2[:nFrame//2])[0]
+    # for i_c, coupling in enumerate(coupling_levels):
+    i_c = 2
+    for i_s, subj_resp in enumerate(responses_2[i_c]):
+        for i_ndt, ndt in enumerate(ndtlist):
+            desc = np.roll(np.nanmean(subj_resp["desc"], axis=0)[::-1], -ndt)
+            asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), ndt)
+            ndt = abs(ndt)
+            hyst_widths[0, i_s, i_ndt] += np.nansum(np.abs(desc-asc)[ndt//2:-ndt//2], axis=0) *\
+                np.diff(barray_2[:nFrame//2])[0]
 
     # --- FREQ = 4 ---
-    for i_c, coupling in enumerate(coupling_levels):
-        for i_s, subj_resp in enumerate(responses_4[i_c]):
-            for i_ndt, ndt in enumerate(ndtlist):
-                desc = np.roll(np.nanmean(subj_resp["desc"], axis=0)[::-1], -ndt)
-                asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), ndt)
-                hyst_widths[i_c, i_s, i_ndt] += np.nansum(np.abs(desc-asc), axis=0) *\
-                    np.diff(barray_4[:nFrame//2])[0]
+    # for i_c, coupling in enumerate(coupling_levels):
+    for i_s, subj_resp in enumerate(responses_4[i_c]):
+        for i_ndt, ndt in enumerate(ndtlist):
+            desc = np.roll(np.nanmean(subj_resp["desc"], axis=0)[::-1], -ndt)
+            asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), ndt)
+            ndt = abs(ndt)
+            hyst_widths[0, i_s, i_ndt] += np.nansum(np.abs(desc-asc)[ndt//2:-ndt//2], axis=0) *\
+                np.diff(barray_4[:nFrame//2])[0]
     ndts_max = np.argmax(hyst_widths/2, axis=2)
     return hyst_widths, ndts_max
     
@@ -727,7 +734,9 @@ def get_blist(freq, nFrame):
 
 def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                      ntraining=8, coupling_levels=[0, 0.3, 1],
-                     window_conv=10, bin_size=0.05):
+                     window_conv=10, bin_size=0.1, switch_01=True,
+                     only_ascending=False):
+    nFrame = tFrame*fps
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
@@ -735,33 +744,62 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     responses_2, responses_4, barray_2, barray_4 = collect_responses(
         df, subjects, coupling_levels, fps=fps, tFrame=tFrame)
     
-    timebins = np.arange(0, tFrame + bin_size, bin_size)
+    timebins = np.arange(0, tFrame+bin_size, bin_size)
     xvals = timebins[:-1] + bin_size/2
+    # frame → time mapping
+    # frame_times = np.linspace(0, tFrame, nFrame, endpoint=False)
+    # # interpolate array values at bin times
+    # array_at_bins_2 = np.interp(timebins, frame_times, barray_2)
+    # array_at_bins_4 = np.interp(timebins, frame_times, barray_4)
+
     fig, axes = plt.subplots(ncols=2, figsize=(7.5, 4.))
     titles = ['Freq = 2', 'Freq = 4']
     for i_ax, ax in enumerate(axes):
         ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
         ax.set_xlabel('Time (s)'); ax.axvline(tFrame/(2+2*i_ax), color='k', alpha=0.4,
                                               linestyle='--', linewidth=3)
-        ax.set_title(titles[i_ax], fontsize=12)
+        ax.axvline(tFrame/(4+4*i_ax), color='k', alpha=0.6, linestyle=':', linewidth=2)
+        ax.axvline(3*tFrame/(4+4*i_ax), color='k', alpha=0.6, linestyle=':', linewidth=2)
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     for i_c, coupling in enumerate(coupling_levels):
     # pick one coupling level (e.g. i_c = 0) and ascending responses
         bins, mean012, sem01, mean102, sem10, per_sub_rates_01, per_sub_rates_10 =\
-            average_switch_rates_dir(responses_2[i_c], fps=fps, bin_size=bin_size, join=True)
+            average_switch_rates_dir(responses_2[i_c], fps=fps, bin_size=bin_size, join=True,
+                                     only_ascending=only_ascending)
         bins, mean014, sem01, mean104, sem10, per_sub_rates_01, per_sub_rates_10 =\
-            average_switch_rates_dir(responses_4[i_c], fps=fps, bin_size=bin_size/2, join=True)
-        convolved_vals2 = np.convolve(mean102, np.ones(window_conv)/window_conv,
-                                     "same")
-        convolved_vals4 = np.convolve(mean104, np.ones(window_conv)/window_conv,
-                                     "same")
-        axes[0].plot(xvals, convolved_vals2, color=colormap[i_c], linewidth=3, label=f'{1-coupling}')
+            average_switch_rates_dir(responses_4[i_c], fps=fps, bin_size=bin_size/2, join=True,
+                                     only_ascending=only_ascending)
+        val_2 = mean012 if switch_01 else mean102
+        val_4 = mean014 if switch_01 else mean104
+        convolved_vals2 = np.convolve(val_2, np.ones(window_conv)/window_conv, "same")
+        convolved_vals4 = np.convolve(val_4, np.ones(window_conv)/window_conv, "same")
+        axes[0].plot(xvals , convolved_vals2, color=colormap[i_c], linewidth=3, label=f'{1-coupling}')
         axes[1].plot(xvals/2, convolved_vals4, color=colormap[i_c], linewidth=3)
-    axes[0].legend(frameon=False, title='p(shuffle)'); axes[0].set_ylabel('Switch rate (L to R, asc. start)')
+    axes[0].legend(frameon=True, title='p(shuffle)'); axes[0].set_ylabel(r'Switch rate L$\rightarrow$R, (Hz)')
     fig.tight_layout()
+    for ax in axes:
+        pos_ax = ax.get_position()
+        ax.set_position([pos_ax.x0, pos_ax.y0, pos_ax.width, pos_ax.height*0.7])
+    pos_ax = axes[0].get_position()
+    ax2 = fig.add_axes([pos_ax.x0, pos_ax.y0+pos_ax.height*1.05, pos_ax.width, pos_ax.height/3])
+    pos_ax = axes[1].get_position()
+    ax3 = fig.add_axes([pos_ax.x0, pos_ax.y0+pos_ax.height*1.05, pos_ax.width, pos_ax.height/3])
+    for i_a, a in enumerate([ax2, ax3]):
+        left, right = axes[0].get_xlim()
+        a.set_xlim([left*fps, right*fps])   
+        a.plot(barray_2*(-1)**(only_ascending), color='k', linewidth=4)
+        a.axhline(0, color='k', linewidth=1)
+        a.axvline((nFrame)/4, color='k', alpha=0.6, linestyle=':', linewidth=2)
+        a.axvline(3*(nFrame)/4, color='k', alpha=0.6, linestyle=':', linewidth=2)
+        a.axvline((nFrame)/2, color='k', alpha=0.4, linestyle='--', linewidth=3)
+        a.set_xticks([]); a.set_yticks([-2, 0, 2], ['L', '0', 'R'])
+        a.spines['right'].set_visible(False);  a.spines['top'].set_visible(False);
+        a.spines['bottom'].set_visible(False)
+        a.set_title(titles[i_a], fontsize=12)
+    ax2.set_ylabel('Stim.(t)')
 
 
-def join_trial_responses(subj):
+def join_trial_responses(subj, only_ascending=False):
     """
     subj: dict {"asc": array, "desc": array, "ini_side": list}
     Returns joined responses (n_trials, timepoints).
@@ -770,15 +808,19 @@ def join_trial_responses(subj):
     joined = []
     for i in range(len(ini_sides)):
         if ini_sides[i] == -1:   # ascending first
-            continue
+            if not only_ascending:
+                continue  # keep only one!
             trial = np.concatenate([asc[i], desc[i]])
         else:                   # descending first
+            if only_ascending:
+                continue
             trial = np.concatenate([desc[i], asc[i]])
         joined.append(trial)
     return np.array(joined)
 
 
-def average_switch_rates_dir(responses, fps=60, bin_size=1.0, join=True):
+def average_switch_rates_dir(responses, fps=60, bin_size=1.0, join=True,
+                             only_ascending=False):
     """
     Compute average 0→1 and 1→0 switch rates across subjects.
     If join=True, concatenates asc+desc before counting.
@@ -787,7 +829,7 @@ def average_switch_rates_dir(responses, fps=60, bin_size=1.0, join=True):
     bins_ref = None
 
     for subj in responses:
-        arr = join_trial_responses(subj) if join else subj["asc"]
+        arr = join_trial_responses(subj, only_ascending=False) if join else subj["asc"]
         bins, r01, r10, _, _, _ = compute_switch_rate_from_array_dir(
             arr, fps=fps, bin_size=bin_size)
         if bins_ref is None:
@@ -863,7 +905,8 @@ def compute_switch_rate_from_array_dir(response_array, fps=60, bin_size=1.0):
 
 def plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                             ntraining=8, coupling_levels=[0, 0.3, 1],
-                            window_conv=None, ndt_list=np.arange(-50, 50)):
+                            window_conv=None, ndt_list=np.arange(-50, 50),
+                            unfold_time=False):
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
@@ -873,7 +916,7 @@ def plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     
     plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling_levels,
                           tFrame=tFrame, fps=fps, window_conv=window_conv,
-                          ndt_list=ndt_list)
+                          ndt_list=ndt_list, unfold_time=unfold_time)
 
 
 def plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
@@ -996,7 +1039,7 @@ def hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
                                       fps=60, tFrame=26, data_folder=DATA_FOLDER,
                                       nbins=13, ntraining=4, arrows=False):
     nFrame = fps*tFrame
-    df = load_data(data_folder, n_participants='all')
+    df = load_data(data_folder, n_participants='all', filter_subjects=False)
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
     fig, ax = plt.subplots(ncols=6, nrows=int(np.ceil(len(subjects)/3)), figsize=(22, 23))
@@ -1015,12 +1058,6 @@ def hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
     for a in ax2:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
-        # a.set_ylim(-0.025, 1.085)
-        # a.set_yticks([0, 0.5, 1])
-        # a.set_xlim(-2.05, 2.05)
-        # a.set_xticks([-2, 0, 2], [-1, 0, 1])
-        # a.axhline(0.5, color='k', linestyle='--', alpha=0.2)
-        # a.axvline(0., color='k', linestyle='--', alpha=0.2)
     colormap = pl.cm.Oranges(np.linspace(0.3, 1, 3))[::-1]
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     for i_s, subject in enumerate(subjects):
@@ -1028,7 +1065,7 @@ def hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
         for i_c, coupling in enumerate(coupling_levels):
             df_filt = df_sub.loc[df_sub.pShuffle.round(2) == round(1-coupling, 2)]
             df_freq_2 = df_filt.loc[df_filt.freq == 2]
-            response_array_asc, response_array_desc, barray_2, _ = get_response_and_blist_array(df_freq_2, fps=fps,
+            response_array_asc, response_array_desc, barray_2, _, _ = get_response_and_blist_array(df_freq_2, fps=fps,
                                                                                                 tFrame=tFrame)
             # response_array_2 = np.roll(response_array_2, -50, axis=1)
             # mean_response_2 = np.nanmean(response_array_2, axis=0)
@@ -1043,7 +1080,7 @@ def hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
             ax[i_s*2].plot(x_valsdesc, r2desc, color=colormap[i_c], linewidth=4,
                            linestyle='--' if arrows else 'solid')
             df_freq_4 = df_filt.loc[df_filt.freq == 4]
-            response_array_4_asc, response_array_4_desc, barray_4, _ = get_response_and_blist_array(df_freq_4, fps=fps,
+            response_array_4_asc, response_array_4_desc, barray_4, _, _ = get_response_and_blist_array(df_freq_4, fps=fps,
                                                                                                     tFrame=tFrame)
             asc_mask = np.gradient(barray_4) > 0
             x_vals4_asc = barray_4[asc_mask][:nFrame//4]
@@ -1060,11 +1097,9 @@ def hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
                                                 steps_back=65, steps_front=20,
                                                 shuffle_vals=[1, 0.7, 0], violin=False, sub=subject,
                                                 avoid_first=False, window_conv=1, zscore_number_switches=False, ax=ax2[i_s],
-                                                fig=fig)
-        # ax2[i_s].set_title(subject)
+                                                fig=fig, filter_subjects=False)
         plt.close(f2)
         plt.close(f3)
-        # plt.close(plt.figure(3))
         plt.close(g.fig)
         if i_s < 32:
             ax2[i_s].set_xticks([-1, 0, 1], ['', '', ''])
@@ -1480,9 +1515,10 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
                              steps_back=60, steps_front=20,
                              shuffle_vals=[1, 0.7, 0], violin=False, sub='s_1',
                              avoid_first=False, window_conv=1, zscore_number_switches=False, ax=None,
-                             fig=None, normalize_variables=True, hysteresis_area=False):
+                             fig=None, normalize_variables=True, hysteresis_area=False,
+                             filter_subjects=True):
     nFrame = fps*tFrame
-    df = load_data(data_folder + '/noisy/', n_participants='all')
+    df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=filter_subjects)
     if sub is not None:
         df = df.loc[df.subject == sub]
     # print(len(df.trial_index.unique()))
@@ -1591,12 +1627,18 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
                                  'Dominance': mean_number_switchs_coupling.flatten(),
                                  'Width f2': hyst_width_2.flatten(),
                                  'Width f4': hyst_width_4.flatten()})
-        delta_dominance = mean_number_switchs_coupling[-1]-mean_number_switchs_coupling[0]
+        delta_dominance = (mean_number_switchs_coupling[-1]-mean_number_switchs_coupling[0])  # /mean_number_switchs_coupling[0]
         delta_hysteresis_2 = hyst_width_2[-1]-hyst_width_2[0]
         delta_hysteresis_4 = hyst_width_4[-1]-hyst_width_4[0]
+        avg_hyst_2 = np.nanmean(hyst_width_2, axis=0)
+        avg_hyst_4 = np.nanmean(hyst_width_4, axis=0)
+        avg_dominance = np.nanmean(mean_number_switchs_coupling, axis=0)
         datframe_deltas  = pd.DataFrame({'Difference dominance': delta_dominance,
                                          'Difference H2 width': delta_hysteresis_2,
-                                         'Difference H4 width': delta_hysteresis_4})
+                                         'Difference H4 width': delta_hysteresis_4,
+                                         '<Hyst>f2': avg_hyst_2,
+                                         '<Hyst>f4': avg_hyst_4,
+                                         '<T_domin>': avg_dominance})
         deltasplot = sns.pairplot(datframe_deltas)
         deltasplot.map_lower(corrfunc)
     else:
@@ -3570,16 +3612,129 @@ def plot_dist_metrics(n_simuls_network=100000):
     fig.tight_layout()
 
 
+def get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
+                                      ntraining=8, coupling_levels=[0, 0.3, 1]):
+    df = load_data(data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+    accuracies_1st = []
+    all_rts = []
+    fig2, ax2 = plt.subplots(ncols=4, nrows=int(np.ceil(len(subjects)/4)), figsize=(18, 20))
+    fig3, ax3 = plt.subplots(ncols=4, nrows=int(np.ceil(len(subjects)/4)), figsize=(18, 20))
+    ax2 = ax2.flatten()
+    ax3 = ax3.flatten()
+    for i_s, subject in enumerate(subjects):
+        df_filt = df.loc[df.subject == subject]
+        trial_index = df_filt.trial_index.unique()
+        reac_times_subject = []
+        choices_subject = []
+        response_0_times = np.array(())
+        for ti in trial_index:
+            df_ti = df_filt.loc[df_filt.trial_index == ti]
+            df_resp_0 = df_ti.loc[df_ti.response == 0, ['keypress_seconds_offset', 'keypress_seconds_onset']]
+            diff = (df_resp_0.keypress_seconds_offset-df_resp_0.keypress_seconds_onset).values
+            response_0_times = np.concatenate((response_0_times, diff))
+            rt = df_ti.keypress_seconds_offset.values[0]
+            choice = df_ti.response.values[1]
+            reac_times_subject.append(rt); choices_subject.append((choice-1)*2-1)
+        correct_1st_choice = np.array(choices_subject) == -df_filt.groupby('trial_index')['initial_side'].min().values
+        accuracy_1st_choice = np.mean(correct_1st_choice)
+        accuracies_1st.append(accuracy_1st_choice)
+        signed_rt = np.array(reac_times_subject)*(-1)**(~correct_1st_choice)
+        sns.histplot(np.abs(signed_rt), color='k', linewidth=3, ax=ax2[i_s], bins=20)
+        sns.histplot(np.array(response_0_times).flatten(), color='k', linewidth=3, ax=ax3[i_s], bins=20)
+        all_rts.append(signed_rt)
+        if i_s >= (int(np.ceil(len(subjects)/4))-1)*4:
+            ax2[i_s].set_xlabel('RT (s)')
+            ax3[i_s].set_xlabel('Time(ch=0)')
+    fig2.tight_layout()
+    fig3.tight_layout()
+    fig, ax = plt.subplots(1)
+    all_rts = np.array(all_rts)
+    sns.kdeplot(all_rts[(all_rts > 0)*(all_rts < 5)], ax=ax, color='g', label='Correct')
+    sns.kdeplot(-all_rts[(all_rts < 0)*(np.abs(all_rts) < 5)], ax=ax, color='r', label='Incorrect')
+    ax.legend(frameon=False); ax.set_xlabel('RT (s)')
+    ax.set_xlim(-0.5, 5)
+    plt.figure()
+    sns.histplot(accuracies_1st, color='forestgreen', bins=20)
+    plt.xlabel('Accuracy first choice')
+
+
+def plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8):
+    df = load_data(data_folder=data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+    df_noisy = load_data(data_folder + '/noisy/', n_participants='all')
+    maxes = np.max([df.trial_index.max(), df_noisy.trial_index.max()])
+    mins = np.min([df.trial_index.min(), df_noisy.trial_index.min()])
+    trial_indices = np.arange(mins, maxes)
+    sequential_effects_all = np.zeros((2, 2, len(subjects)))
+    sequential_effects_all_counts = np.zeros((2, 2, len(subjects)))
+    for i_s, subject in enumerate(subjects):
+        df_filt = df.loc[df.subject == subject]
+        df_filt = df_filt.loc[df_filt.response != 0]
+        trial_indices_hyst = df_filt.trial_index.unique()
+        df_noisy_filt = df_noisy.loc[df_noisy.subject == subject]
+        trial_indices_noise = df_noisy_filt.trial_index.unique()
+        sequential_effects_subject = np.zeros((2, 2))
+        sequential_effects_subject_counts = np.zeros((2, 2))
+        for ti in trial_indices[1:]:
+            if ti in trial_indices_hyst:
+                first_response = df_filt.loc[df_filt.trial_index == ti, 'response'].values[0]
+                current = 1
+            if ti in trial_indices_noise:
+                responses = df_noisy_filt.loc[df_noisy_filt.trial_index == ti, 'responses'].values
+                first_response = responses[responses != 0][0]
+                current = 0
+            if ti-1 in trial_indices_hyst:
+                last_response = df_filt.loc[df_filt.trial_index == ti-1, 'response'].values[-1]
+                last = 1
+            if ti-1 in trial_indices_noise:
+                last_responses = df_noisy_filt.loc[df_noisy_filt.trial_index == ti-1, 'responses'].values
+                last_response = last_responses[last_responses != 0][-1]
+                last = 0
+            sequential_effects_subject[last, current] += (first_response == last_response)*1.
+            sequential_effects_subject_counts[last, current] += 1
+        sequential_effects_all[:, :, i_s] = sequential_effects_subject/sequential_effects_subject_counts
+        sequential_effects_all_counts[:, :, i_s] = sequential_effects_subject_counts
+    fig, ax = plt.subplots(1)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.axhline(0.5, color='gray', linestyle='--')
+    seq_all = []
+    mean_counts = np.round(np.mean(sequential_effects_all_counts, axis=-1), 1) # / (len(trial_indices)-1), 2)
+    i = 0
+    for last in range(2):
+        for current in range(2):
+            sequential_effs = sequential_effects_all[last, current]
+            seq_all.append(sequential_effs)
+            ax.text(i-0.45, 1.1, r'$\hat{N}$ ='+f'{mean_counts[last, current]}')
+            i += 1
+    sns.violinplot(seq_all, fill=False, inner=None,
+                   edgecolor='k', ax=ax, cut=0)
+    sns.swarmplot(seq_all, color='k', ax=ax)
+    ax.set_xticks([0, 1, 2, 3], ['N-->N', 'H-->N', 'N-->H', 'H-->H'])
+    ax.set_ylabel('p(ch_last = ch_current)')
+    ax.set_ylim(-0.1, 1.1)
+    fig.tight_layout()
+    # im = ax.imshow(np.nanmean(sequential_effects_all, axis=-1), cmap='bwr',
+    #                vmin=0.3, vmax=0.7)
+    # ax.set_xticks([0, 1], ['Hyst.', 'Noise'])
+    # ax.set_yticks([0, 1], ['Hyst.', 'Noise'])
+    # ax.set_ylabel('Last trial'); ax.set_xlabel('Current trial')
+    # plt.colorbar(im, ax=ax, label='p(last = same response)', shrink=0.6, aspect=10)
+
+
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
-    fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
-                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
-                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    fitting_pipeline(n_simuls_network=50000, use_j0=False, contaminants=True,
-                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
-    fitting_pipeline(n_simuls_network=50000, use_j0=True, contaminants=True,
-                      fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
+    #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
+    #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # fitting_pipeline(n_simuls_network=50000, use_j0=False, contaminants=True,
+    #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
+    # fitting_pipeline(n_simuls_network=50000, use_j0=True, contaminants=True,
+    #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
     # plot_dist_metrics(n_simuls_network=100000)
     # plot_dist_metrics(n_simuls_network=50000)
     # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
@@ -3614,13 +3769,16 @@ if __name__ == '__main__':
     #                       window_conv=None)
     # plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                           ntraining=8, coupling_levels=[0, 0.3, 1],
-    #                           window_conv=None, ndt_list=np.arange(-20, 200))
+    #                           window_conv=None, ndt_list=np.arange(-150, 0))
     # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
     #                         window_conv=None, ndt_list=None)
-    # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-    #                   ntraining=8, coupling_levels=[0, 0.3, 1],
-    #                   window_conv=20, bin_size=0.1)
+    plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+                      ntraining=8, coupling_levels=[0, 0.3, 1],
+                      window_conv=5, bin_size=0.35, switch_01=False)
+    plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8)
+    get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
+                                      ntraining=8, coupling_levels=[0, 0.3, 1])
     # hysteresis_basic_plot_simulation(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
     #                                  fps=60, nsubs=1, n=4, nsims=1000,
     #                                  b_list=np.linspace(-0.5, 0.5, 501))
@@ -3632,8 +3790,8 @@ if __name__ == '__main__':
     #                           normalize_variables=True,
     #                           hysteresis_area=True)
     # hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
-    #                                     fps=60, tFrame=26, data_folder=DATA_FOLDER,
-    #                                     ntraining=8, arrows=False)
+    #                                    fps=60, tFrame=26, data_folder=DATA_FOLDER,
+    #                                    ntraining=8, arrows=False)
     # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
     #                       fps=60, tFrame=18, data_folder=DATA_FOLDER,
     #                       nbins=9, ntraining=8, arrows=True)*
