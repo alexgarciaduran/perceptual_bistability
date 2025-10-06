@@ -5,6 +5,8 @@ Created on Mon Apr 21 20:07:39 2025
 @author: alexg
 """
 
+import pyddm
+import pyddm.plot
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -29,6 +31,8 @@ import pickle
 from sbi import analysis as analysis
 import tqdm
 import statsmodels.formula.api as smf
+from scipy.signal import sawtooth
+import itertools
 
 
 mpl.rcParams['font.size'] = 16
@@ -279,8 +283,12 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     for i_c, coupling in enumerate(coupling_levels):
         subj_means_asc, subj_means_desc = [], []
         for i_s, subj_resp in enumerate(responses_2[i_c]):
-            asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), delay_per_subject[i_s])
-            desc = np.roll(np.nanmean(subj_resp["desc"], axis=0), delay_per_subject[i_s])
+            resp_desc = subj_resp["desc"]
+            resp_asc = subj_resp["asc"]
+            responses_asc_desc = np.hstack((resp_asc, resp_desc))
+            resp_rolled = np.roll(responses_asc_desc, delay_per_subject[i_s], axis=1)
+            asc = np.nanmean(resp_rolled[:, :nFrame//2], axis=0)
+            desc = np.nanmean(resp_rolled[:, nFrame//2:], axis=0)
             subj_means_asc.append(asc)
             subj_means_desc.append(desc)
             hyst_width_2[i_c, i_s] = np.nansum(np.abs(desc[::-1]-asc), axis=0) * np.diff(barray_2[:nFrame//2])[0]
@@ -307,8 +315,12 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     for i_c, coupling in enumerate(coupling_levels):
         subj_means_asc, subj_means_desc = [], []
         for i_s, subj_resp in enumerate(responses_4[i_c]):
-            asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), delay_per_subject[i_s])
-            desc = np.roll(np.nanmean(subj_resp["desc"], axis=0), delay_per_subject[i_s])
+            resp_desc = subj_resp["desc"]
+            resp_asc = subj_resp["asc"]
+            responses_asc_desc = np.hstack((resp_asc, resp_desc))
+            resp_rolled = np.roll(responses_asc_desc, delay_per_subject[i_s], axis=1)
+            asc = np.nanmean(resp_rolled[:, :nFrame//4], axis=0)
+            desc = np.nanmean(resp_rolled[:, nFrame//4:], axis=0)
             subj_means_asc.append(asc)
             subj_means_desc.append(desc)
             hyst_width_4[i_c, i_s] = np.nansum(np.abs(desc[::-1]-asc), axis=0) * np.diff(barray_4[:nFrame//2])[0]
@@ -381,30 +393,35 @@ def get_argmax_ndt_hyst_per_subject(responses_2, responses_4, barray_2, barray_4
                                     tFrame=26, fps=60, window_conv=None,
                                     ndtlist=np.arange(100)):
     nFrame = tFrame*fps
-    hyst_widths = np.zeros((1, len(responses_2[0]), len(ndtlist)))
+    hyst_widths = np.zeros((3, len(responses_2[0]), len(ndtlist)))
     # --- FREQ = 2 ---
-    # for i_c, coupling in enumerate(coupling_levels):
-    i_c = 2
-    for i_s, subj_resp in enumerate(responses_2[i_c]):
-        for i_ndt, ndt in enumerate(ndtlist):
-            desc = np.roll(np.nanmean(subj_resp["desc"], axis=0)[::-1], -ndt)
-            asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), ndt)
-            ndt = abs(ndt)
-            hyst_widths[0, i_s, i_ndt] += np.nansum(np.abs(desc-asc)[ndt//2:-ndt//2], axis=0) *\
-                np.diff(barray_2[:nFrame//2])[0]
+    for i_c, coupling in enumerate(coupling_levels):
+        for i_s, subj_resp in enumerate(responses_2[i_c]):
+            for i_ndt, ndt in enumerate(ndtlist):
+                resp_desc = subj_resp["desc"]
+                resp_asc = subj_resp["asc"]
+                responses_asc_desc = np.hstack((resp_asc, resp_desc))
+                resp_rolled = np.roll(responses_asc_desc, ndt, axis=1)
+                desc = np.nanmean(resp_rolled[:, :nFrame//2], axis=0)[::-1]
+                asc = np.nanmean(resp_rolled[:, nFrame//2:], axis=0)
+                hyst_widths[i_c, i_s, i_ndt] += np.nansum(desc-asc, axis=0) *\
+                    np.diff(barray_2[:nFrame//2])[0]
 
     # --- FREQ = 4 ---
-    # for i_c, coupling in enumerate(coupling_levels):
-    for i_s, subj_resp in enumerate(responses_4[i_c]):
-        for i_ndt, ndt in enumerate(ndtlist):
-            desc = np.roll(np.nanmean(subj_resp["desc"], axis=0)[::-1], -ndt)
-            asc = np.roll(np.nanmean(subj_resp["asc"], axis=0), ndt)
-            ndt = abs(ndt)
-            hyst_widths[0, i_s, i_ndt] += np.nansum(np.abs(desc-asc)[ndt//2:-ndt//2], axis=0) *\
-                np.diff(barray_4[:nFrame//2])[0]
+    for i_c, coupling in enumerate(coupling_levels):
+        for i_s, subj_resp in enumerate(responses_4[i_c]):
+            for i_ndt, ndt in enumerate(ndtlist):
+                resp_desc = subj_resp["desc"]
+                resp_asc = subj_resp["asc"]
+                responses_asc_desc = np.hstack((resp_asc, resp_desc))
+                resp_rolled = np.roll(responses_asc_desc, ndt, axis=1)
+                desc = np.nanmean(resp_rolled[:, :nFrame//4], axis=0)[::-1]
+                asc = np.nanmean(resp_rolled[:, nFrame//4:], axis=0)
+                hyst_widths[i_c, i_s, i_ndt] += np.nansum(desc-asc, axis=0) *\
+                    np.diff(barray_4[:nFrame//4])[0]
     ndts_max = np.argmax(hyst_widths/2, axis=2)
     return hyst_widths, ndts_max
-    
+
 
 def get_analytical_approximations_areas(shuffling_levels=np.array([0., 0.7, 1]),
                                         b1=1, j1=1, tFrame=26):
@@ -779,11 +796,11 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     fig.tight_layout()
     for ax in axes:
         pos_ax = ax.get_position()
-        ax.set_position([pos_ax.x0, pos_ax.y0, pos_ax.width, pos_ax.height*0.7])
+        ax.set_position([pos_ax.x0, pos_ax.y0, pos_ax.width, pos_ax.height*0.75])
     pos_ax = axes[0].get_position()
-    ax2 = fig.add_axes([pos_ax.x0, pos_ax.y0+pos_ax.height*1.05, pos_ax.width, pos_ax.height/3])
+    ax2 = fig.add_axes([pos_ax.x0, pos_ax.y0+pos_ax.height*1.03, pos_ax.width, pos_ax.height/4])
     pos_ax = axes[1].get_position()
-    ax3 = fig.add_axes([pos_ax.x0, pos_ax.y0+pos_ax.height*1.05, pos_ax.width, pos_ax.height/3])
+    ax3 = fig.add_axes([pos_ax.x0, pos_ax.y0+pos_ax.height*1.03, pos_ax.width, pos_ax.height/4])
     for i_a, a in enumerate([ax2, ax3]):
         left, right = axes[0].get_xlim()
         a.set_xlim([left*fps, right*fps])   
@@ -3725,6 +3742,163 @@ def plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8):
     # plt.colorbar(im, ax=ax, label='p(last = same response)', shrink=0.6, aspect=10)
 
 
+def model_pyddm(plot=False, n=4):
+    stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t-phase_ini)/26, 0.5)*2*np.sign(freq)
+    x_hat = lambda prev_choice, x: x if prev_choice == -1 else x+1
+    drift_function = lambda t, x, j1, b, pshuffle, prev_choice, freq, phase_ini: 1/(1+np.exp(-2*(n*(j1*(1-pshuffle))*(2*x_hat(prev_choice, x)-1) + b*stim(t, freq, phase_ini))))-x_hat(prev_choice, x)
+    parameters = {"j1": (-0.1, 0.4),"b": (-0.1, 0.7), "sigma": (0.05, 0.3), "theta": (0., 0.4)}  # , "j0": (-0.1, 0.3)
+    bound = lambda theta: 0.5+theta
+    starting_position = lambda theta, prev_choice: 0.5-theta if prev_choice == -1 else -0.5+theta
+    conditions = ["pshuffle", "prev_choice", "freq", "phase_ini"]
+    noise = lambda sigma: sigma
+    model = pyddm.gddm(drift=drift_function, parameters=parameters,
+                       conditions=conditions, starting_position=starting_position, bound=bound, noise=noise,
+                       T_dur=26)
+    if plot:
+        pyddm.plot.model_gui(model, conditions={"pshuffle": [0, 0.3, 1], "prev_choice": [-1, 1], "freq": [2, 4], "phase_ini": [0, 6.5, 13, 19.5]})
+    return model
+
+
+def model_known_params_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, n=4):
+    # First create two versions of the model, one to simulate the data, and one to fit to the simulated data.
+    stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t-phase_ini)/26, 0.5)*2*np.sign(freq)
+    x_hat = lambda prev_choice, x: x if prev_choice == -1 else x+1
+    starting_position = lambda prev_choice: 0.5-THETA if prev_choice == -1 else -0.5+THETA
+    drift_function_sim = lambda t, x, pshuffle, prev_choice, freq, phase_ini: 1/(1+np.exp(-2*(n*(J1*(1-pshuffle))*(2*x_hat(prev_choice, x)-1) + B*stim(t, freq, phase_ini))))-x_hat(prev_choice, x)
+    conditions = ["pshuffle", "prev_choice", "freq", "phase_ini"]
+    m_sim = pyddm.gddm(drift=drift_function_sim, 
+                       conditions=conditions, starting_position=starting_position, bound=THETA+0.5, noise=SIGMA,
+                       T_dur=26)
+    return m_sim
+
+
+def plot_rt_distros_simple(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1):
+    m_sim = model_known_params_pyddm(J1=J1, J0=J0, B=B, SIGMA=SIGMA, THETA=THETA)
+    fig = plt.figure(figsize=(12, 2))
+    ax1=plt.subplot(1, 4, 1)
+    ax2=plt.subplot(1, 4, 2)
+    ax3=plt.subplot(1, 4, 3)
+    ax4=plt.subplot(1, 4, 4)
+    titles = ['L to L', 'L to R', 'R to L' , 'R to R']
+    for phase in [0, 6.5, 13]:
+        sol1=m_sim.solve(conditions={"freq": 2, "phase_ini": phase, "prev_choice": 1, "pshuffle": 0})
+        sol0=m_sim.solve(conditions={"freq": 2, "phase_ini": phase, "prev_choice": -1, "pshuffle": 0})
+        ax1.plot(sol0.pdf(0), label=phase)
+        ax2.plot(sol0.pdf(1), label=phase)
+        ax3.plot(sol1.pdf(0), label=phase)
+        ax4.plot(sol1.pdf(1), label=phase)
+    for i_a, ax in enumerate([ax1, ax2, ax3, ax4]):
+        ax.set_title(titles[i_a])
+    ax1.legend(title='Phase')
+    ax1.set_ylabel('RT density')
+    fig.tight_layout()
+
+
+def simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1):
+    params = []
+    model = model_pyddm()
+    m_sim = model_known_params_pyddm(J1=J1, J0=J0, B=B, SIGMA=SIGMA, THETA=THETA)
+    freqs = [2, 4]
+    prev_choice = [-1, 1]
+    pshuffle = [0, 0.3, 1]
+    combs = list(itertools.product(freqs, prev_choice))
+    try:
+        SAMPLE_SIZE = 72
+        for i in range(0, 50):
+            for j in range(SAMPLE_SIZE):
+                pshuffle_i = np.random.choice(pshuffle)
+                freq_i = np.random.choice(freqs)
+                phase_ini_i = np.random.uniform(6.5, 19.5)
+                if freq_i == 2:
+                    prev_choice_i = -1
+                else:
+                    if 6.5 <= phase_ini_i <= 9.75:
+                        prev_choice_i = -1
+                    if 9.75 < phase_ini_i < 16.25:
+                        prev_choice_i = 1
+                    if phase_ini_i > 16.25:
+                        prev_choice_i = -1
+                sample1 = m_sim.solve(conditions={"pshuffle": pshuffle_i, "freq": freq_i, "prev_choice": prev_choice_i, "phase_ini": phase_ini_i}).sample(1)
+                if j == 0:
+                    sample_all = sample1
+                else:
+                    sample_all = sample_all + sample1
+            print(f'Simulation number {i}')
+            # freq_i = 2
+            # prev_choice_i = -1
+            # phase_ini_i = np.random.uniform(6.5, 19.5)
+            # sample1 = m_sim.solve(conditions={"pshuffle": 0., "freq": freq_i, "prev_choice": prev_choice_i, "phase_ini": phase_ini_i}).sample(SAMPLE_SIZE//3)
+            # sample2 = m_sim.solve(conditions={"pshuffle": 0.3, "freq": freq_i, "prev_choice": prev_choice_i, "phase_ini": phase_ini_i}).sample(SAMPLE_SIZE//3)
+            # sample3 = m_sim.solve(conditions={"pshuffle": 1, "freq": freq_i, "prev_choice": prev_choice_i, "phase_ini": phase_ini_i}).sample(SAMPLE_SIZE//3)
+            # sample_all = sample1 + sample2 + sample3
+            model.fit(sample_all, verbose=False, fitting_method='simple')
+            params.append(model.get_model_parameters())
+        # Convert to a numpy array for ease
+        params = np.asarray(params)
+    
+        # Plot the histogram for each parameter
+        plt.subplot(3,2,1)
+        plt.hist(params[:,0])
+        plt.axvline(J1, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[0])
+        
+        plt.subplot(3,2,2)
+        plt.hist(params[:,1])
+        plt.axvline(J0, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[1])
+        
+        plt.subplot(3,2,3)
+        plt.hist(params[:,2])
+        plt.axvline(B, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[2])
+        
+        
+        plt.subplot(3,2,4)
+        plt.hist(params[:,3])
+        plt.axvline(SIGMA, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[3])
+        
+        plt.subplot(3,2,5)
+        plt.hist(params[:,4])
+        plt.axvline(THETA, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[4])
+        
+        plt.tight_layout()
+
+    except KeyboardInterrupt:
+        # Convert to a numpy array for ease
+        params = np.asarray(params)
+    
+        # Plot the histogram for each parameter
+        plt.subplot(3,2,1)
+        plt.hist(params[:,0])
+        plt.axvline(J1, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[0])
+        
+        plt.subplot(3,2,2)
+        plt.hist(params[:,1])
+        plt.axvline(J0, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[1])
+        
+        plt.subplot(3,2,3)
+        plt.hist(params[:,2])
+        plt.axvline(B, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[2])
+        
+        
+        plt.subplot(3,2,4)
+        plt.hist(params[:,3])
+        plt.axvline(SIGMA, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[3])
+        
+        plt.subplot(3,2,5)
+        plt.hist(params[:,4])
+        plt.axvline(THETA, c='k', linewidth=3)
+        plt.title(model.get_model_parameter_names()[4])
+        
+        plt.tight_layout()
+
+
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
     # fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
@@ -3769,16 +3943,17 @@ if __name__ == '__main__':
     #                       window_conv=None)
     # plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                           ntraining=8, coupling_levels=[0, 0.3, 1],
-    #                           window_conv=None, ndt_list=np.arange(-150, 0))
+    #                           window_conv=None, ndt_list=np.arange(-240, 80))
     # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
-    #                         window_conv=None, ndt_list=None)
-    plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-                      ntraining=8, coupling_levels=[0, 0.3, 1],
-                      window_conv=5, bin_size=0.35, switch_01=False)
-    plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8)
-    get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
-                                      ntraining=8, coupling_levels=[0, 0.3, 1])
+    #                         window_conv=None, ndt_list=np.arange(-240, 80))
+    simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
+    # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+    #                   ntraining=8, coupling_levels=[0, 0.3, 1],
+    #                   window_conv=5, bin_size=0.35, switch_01=False)
+    # plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8)
+    # get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
+    #                                   ntraining=8, coupling_levels=[0, 0.3, 1])
     # hysteresis_basic_plot_simulation(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
     #                                  fps=60, nsubs=1, n=4, nsims=1000,
     #                                  b_list=np.linspace(-0.5, 0.5, 501))
