@@ -3641,12 +3641,12 @@ if __name__ == '__main__':
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
-    for sims in [1000000]:
+    for sims in [1000]:
         parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
                                     n_pars_to_fit=100, n_sims_per_par=100,
                                     sv_folder=SV_FOLDER, simulate=True,
                                     load_net=False, not_plot_and_return=False)
-        plt.close('all')
+        # plt.close('all')
     # plt.close('all')
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
     #                       fps=60, tFrame=26, freq=2, idx=1, n=3.92, theta=0.5,
