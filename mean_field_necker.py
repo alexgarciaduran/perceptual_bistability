@@ -35,6 +35,7 @@ plt.rcParams['legend.title_fontsize'] = 14
 plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
+plt.rcParams["axes.grid"] = False
 
 
 # ---GLOBAL VARIABLES
@@ -4861,7 +4862,7 @@ def bcrit(j_list=np.arange(0, 1, 1e-3), n=3.92):
 
 
 def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 0.15, 0.2],
-                         nsimuls=10000, load_sims=True, inset=True, cylinder=False):
+                         nsimuls=10000, load_sims=True, inset=True, cylinder=False, barplot=False):
     if cylinder:
         theta = get_regular_graph()
         add_theta = np.random.randn(theta.shape[0], theta.shape[1])*0.25
@@ -4885,76 +4886,118 @@ def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 
         np.save(DATA_FOLDER + f'mean_CP_vs_coupling_sigma{lab_cylin}_common_noise.npy', cp_matrix)
     else:
         cp_matrix = np.load(DATA_FOLDER + f'mean_CP_vs_coupling_sigma{lab_cylin}_common_noise.npy')
-    fig, ax = plt.subplots(figsize=(6, 4.2))
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
-    # colors = ['k', 'firebrick', 'forestgreen']
-    colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(noise_list)))[::-1]
-    if not inset:
-        ax.axhline(0.67, color='k', linestyle='--', alpha=1, zorder=1)
-        ax.axhline(0.56, color='k', linestyle='--', alpha=0.4, zorder=1)
-        if not cylinder:
-            ax.text(0.42, 0.69, 'SFM (Dodd 2001)', fontsize=12)
-            ax.text(0.42, 0.57, 'RDM (Britten 1996)', fontsize=12, alpha=0.4)
-            ax.text(0.4, 0.75, 'Experiments (MT/V5)', fontsize=13)
-        if cylinder:
-            ax.text(0.32, 0.69, 'SFM (Dodd 2001)', fontsize=12)
-            ax.text(0.32, 0.57, 'RDM (Britten 1996)', fontsize=12, alpha=0.4)
-            ax.text(0.29, 0.75, 'Experiments (MT/V5)', fontsize=13)
-    if len(noise_list) == 1:
-        colormap = ['k']
-    for i_n, noise in enumerate(noise_list):
+    if not barplot:
+        fig, ax = plt.subplots(figsize=(6, 4.2))
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        # colors = ['k', 'firebrick', 'forestgreen']
+        colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(noise_list)))[::-1]
+        if not inset:
+            ax.axhline(0.67, color='k', linestyle='--', alpha=1, zorder=1)
+            ax.axhline(0.56, color='k', linestyle='--', alpha=0.4, zorder=1)
+            if not cylinder:
+                ax.text(0.42, 0.69, 'SFM (Dodd 2001)', fontsize=12)
+                ax.text(0.42, 0.57, 'RDM (Britten 1996)', fontsize=12, alpha=0.4)
+                ax.text(0.4, 0.75, 'Experiments (MT/V5)', fontsize=13)
+            if cylinder:
+                ax.text(0.32, 0.69, 'SFM (Dodd 2001)', fontsize=12)
+                ax.text(0.32, 0.57, 'RDM (Britten 1996)', fontsize=12, alpha=0.4)
+                ax.text(0.29, 0.75, 'Experiments (MT/V5)', fontsize=13)
         if len(noise_list) == 1:
-            ax.plot(j_list, cp_matrix[:, i_n], color='gray', alpha=0.7,
-                    linewidth=4, zorder=2)
+            colormap = ['k']
+        for i_n, noise in enumerate(noise_list):
+            if len(noise_list) == 1:
+                ax.plot(j_list, cp_matrix[:, i_n], color='gray', alpha=0.7,
+                        linewidth=4, zorder=2)
+            else:
+                ax.plot(j_list, cp_matrix[:, i_n], color=colormap[i_n], alpha=0.7,
+                        linewidth=4, zorder=2)
+            ax.scatter(j_list[j_list <= jcrit], cp_matrix[j_list <= jcrit, i_n], color=colormap[i_n],
+                    marker='o', label=noise, s=80,
+                    facecolor='white', zorder=10)
+            ax.scatter(j_list[j_list > jcrit], cp_matrix[j_list > jcrit, i_n], color=colormap[i_n],
+                       marker='o', label=noise, s=80, zorder=10)
+        legendelements = [Line2D([0], [0], color='k', lw=2, label='Monostable', marker='s', linestyle='',
+                                 mfc='white', markersize=9),
+                          Line2D([0], [0], color='k', lw=2, label='Bistable', linestyle='', marker='s', markersize=9)]
+        ax.legend(handles=legendelements, frameon=False, ncol=1, fontsize=12, loc='upper left')
+        if cylinder:
+            ax.axvline(jcrit, linestyle=':', color='gray')
         else:
-            ax.plot(j_list, cp_matrix[:, i_n], color=colormap[i_n], alpha=0.7,
-                    linewidth=4, zorder=2)
-        ax.scatter(j_list[j_list <= jcrit], cp_matrix[j_list <= jcrit, i_n], color=colormap[i_n],
-                marker='o', label=noise, s=80,
-                facecolor='white', zorder=10)
-        ax.scatter(j_list[j_list > jcrit], cp_matrix[j_list > jcrit, i_n], color=colormap[i_n],
-                   marker='o', label=noise, s=80, zorder=10)
-    legendelements = [Line2D([0], [0], color='k', lw=2, label='Monostable', marker='s', linestyle='',
-                             mfc='white', markersize=9),
-                      Line2D([0], [0], color='k', lw=2, label='Bistable', linestyle='', marker='s', markersize=9)]
-    ax.legend(handles=legendelements, frameon=False, ncol=1, fontsize=12, loc='upper left')
-    if cylinder:
-        ax.axvline(jcrit, linestyle=':', color='gray')
-    else:
-        ax.axvline(jcrit, linestyle=':', color='gray')
-    # ax.text(0.25, 0.55, 'Monostable', rotation='vertical', color='gray')
-    # ax.text(0.36, 0.55, 'Bistable', rotation='vertical', color='gray')
-    if len(noise_list) > 1:
-        ax.legend(title=r'$\sigma$', frameon=False)
-    ax.set_xlabel('Coupling, J')
-    ax.set_ylabel('Choice probability (CP)')
-    ax.axhline(0.5, color='gray', linestyle=':')
-    ax.set_ylim(0.45, 0.8)
-    fig.tight_layout()
-    if inset:
-        pos = ax.get_position()
-        ax2 = fig.add_axes([pos.x0+pos.width/1.3, pos.y0+pos.height/3, pos.width/3, pos.height/3])
-        ax2.spines['right'].set_visible(False)
-        ax2.spines['top'].set_visible(False)
-        ax2.plot(1, 0.67, '^', color='k', markersize=12)
-        ax2.plot(0, 0.56, '^', color='k', mfc='none', markersize=12)
-        ax2.set_ylim(0.49, 0.73)
-        ax2.set_xlim(-0.8, 1.8)
-        ax2.set_title('Experiments (V5/MT)', fontsize=12)
-        # ax.plot(0.9, 0.67, '^', color='k', markersize=10)
-        # ax.plot(0.8, 0.56, '^', color='k', mfc='none', markersize=10)
-        # ax.text(0.6, 0.38, 'Data - Bistable', fontsize=12)
-        # ax.text(0.6, 0.19, 'Data - Monostable', fontsize=12)
-        ax2.text(-0.6, 0.6, 'Britten 1996', fontsize=10)
-        ax2.text(0.4, 0.71, 'Dodd 2001', fontsize=10)
-        ax2.set_xticks([0, 1], ['RDM', 'SFM'], fontsize=12, rotation=45)
-        ax2.set_ylabel('CP')
-    # ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 0.9], [0, 0.2, 0.4, 0.6, '', ''])
-    # ax.text(0.47, 0.655, 'Data - Bistable', fontsize=12)
-    # ax.text(0.47, 0.545, 'Data - Monostable', fontsize=12)
-    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.svg', dpi=400, bbox_inches='tight')
+            ax.axvline(jcrit, linestyle=':', color='gray')
+        # ax.text(0.25, 0.55, 'Monostable', rotation='vertical', color='gray')
+        # ax.text(0.36, 0.55, 'Bistable', rotation='vertical', color='gray')
+        if len(noise_list) > 1:
+            ax.legend(title=r'$\sigma$', frameon=False)
+        ax.set_xlabel('Coupling, J')
+        ax.set_ylabel('Choice probability (CP)')
+        ax.axhline(0.5, color='gray', linestyle=':')
+        ax.set_ylim(0.45, 0.8)
+        fig.tight_layout()
+        if inset:
+            pos = ax.get_position()
+            ax2 = fig.add_axes([pos.x0+pos.width/1.3, pos.y0+pos.height/3, pos.width/3, pos.height/3])
+            ax2.spines['right'].set_visible(False)
+            ax2.spines['top'].set_visible(False)
+            ax2.plot(1, 0.67, '^', color='k', markersize=12)
+            ax2.plot(0, 0.56, '^', color='k', mfc='none', markersize=12)
+            ax2.set_ylim(0.49, 0.73)
+            ax2.set_xlim(-0.8, 1.8)
+            ax2.set_title('Experiments (V5/MT)', fontsize=12)
+            # ax.plot(0.9, 0.67, '^', color='k', markersize=10)
+            # ax.plot(0.8, 0.56, '^', color='k', mfc='none', markersize=10)
+            # ax.text(0.6, 0.38, 'Data - Bistable', fontsize=12)
+            # ax.text(0.6, 0.19, 'Data - Monostable', fontsize=12)
+            ax2.text(-0.6, 0.6, 'Britten 1996', fontsize=10)
+            ax2.text(0.4, 0.71, 'Dodd 2001', fontsize=10)
+            ax2.set_xticks([0, 1], ['RDM', 'SFM'], fontsize=12, rotation=45)
+            ax2.set_ylabel('CP')
+        # ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 0.9], [0, 0.2, 0.4, 0.6, '', ''])
+        # ax.text(0.47, 0.655, 'Data - Bistable', fontsize=12)
+        # ax.text(0.47, 0.545, 'Data - Monostable', fontsize=12)
+        fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.svg', dpi=400, bbox_inches='tight')
+    if barplot:
+        fig, ax = plt.subplots(figsize=(3.5, 3.2))
+        colormap = pl.cm.Greens(np.linspace(0.3, 1, 2))
+        colormap = ['mediumvioletred', 'dimgrey', 'forestgreen']*2
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        # ax.text(0.02, 0.52, 'Experiments (MT/V5)\nWashmut et al. 2019', fontsize=12)
+        vals_bar = [np.nanmean(cp_matrix[np.argmin(np.abs(j_list - 0.11)), 0]),
+                    np.nanmean(cp_matrix[np.argmin(np.abs(j_list - 0.33)), 0])]
+        types = ['RDM', 'SFM (B=0)']*2
+        classes = ['Data']*2 + ['Model']*2
+        vals_all = [0.56, 0.67] + vals_bar
+        df = pd.DataFrame({
+            "Type": types,
+            "Classes": classes,
+            "Choice probability": vals_all})
+        
+        # Define colors — one per Type
+        pair_colors = ['dimgrey', 'dimgrey']
+        ax.set_ylim(0.5, 0.75)
+        plt.axhline(0.5, color='k', alpha=0.3, linestyle='--')
+        # Draw bars
+        bar = sns.barplot(
+            data=df, x="Type", y="Choice probability", hue="Classes",
+            palette=pair_colors, ax=ax, legend=False)
+        ax.grid(False)
+        ax.set_xlabel('')
+        # Apply hatching to 'Model' bars only
+        hatch_map = {'Data': '', 'Model': '///'}
+        for container, class_name in zip(bar.containers, df['Classes'].unique()):
+            hatch = hatch_map[class_name]
+            for patch in container:
+                patch.set_hatch(hatch)
+        plt.xticks(rotation=30)
+        # Beautify
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'choice_probability_barplot.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'choice_probability_barplot.svg', dpi=400, bbox_inches='tight')
+        
 
 
 def cp_vs_coupling_random_neurons(j_list=np.arange(0, 0.6, 0.05), rand_neur_list=[False, 2, 4, 8],
@@ -5013,7 +5056,7 @@ def compute_time_resolved_cp(X, y, time_axis=2, cv_splits=10):
 def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
                                            j_list=np.arange(0, 1.01, 0.02),
                                            nsims=50, load_data=True, sigma=0.1, long=True,
-                                           cylinder=False, theta=theta, inset=True):
+                                           cylinder=False, theta=theta, inset=True, barplot=False):
     if cylinder:
         theta = get_regular_graph(d=4, n=100)
         lab_cylin = 'cylinder'
@@ -5061,62 +5104,161 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
     # ax.set_ylabel('Coupling, J')
     # ax.set_xlim(0,  b_list[-1])
     # ax.set_xlabel('Sensory evidence, B')
-    
     B_targets = [0.0, 0.1]
     B_indices = [np.argmin(np.abs(b_list - B)) for B in B_targets]
-    
-    # Plot correlation vs J for the selected B values
-    fig, ax = plt.subplots(figsize=(5.5, 4.2))
-    colormap = pl.cm.Greens(np.linspace(0.3, 1, 2))
-    colormap = ['mediumvioletred', 'dimgrey', 'green']
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
-    if not cylinder:
-        ax.axvline(1/3, color='mediumblue', alpha=0.6, linestyle='--', linewidth=2)
-    if cylinder:
-        ax.axvline(1/3.92, color='mediumblue', alpha=0.6, linestyle='--', linewidth=2)
-    p = 0
-    if not inset:
-        ax.axhline(0.42, color=colormap[0], linestyle='--', alpha=1, linewidth=3)
-        ax.axhline(0.28, color=colormap[1], linestyle='--', alpha=1, linewidth=3)
-        ax.axhline(0.23, color=colormap[2], linestyle='--', alpha=0.7, linewidth=3)
-        ax.text(0.02, 0.44, 'SFM (B=0)', fontsize=12, color=colormap[0])
-        ax.text(0.02, 0.30, 'SFM (B>0)', fontsize=12, color=colormap[1])
-        ax.text(0.02, 0.16, 'RDM', fontsize=12, color=colormap[2])
-        ax.text(0.02, 0.52, 'Experiments (MT/V5)\nWashmut et al. 2019', fontsize=12)
-    colors_lines = ['mediumblue', 'lightskyblue']
-    for B_val, idxB in zip(B_targets, B_indices):
-        plt.plot(j_list[j_list < 0.6], np.nanmean(rsc_matrix, axis=-1)[:, idxB][j_list < 0.6], label=f'{B_val}',
-                 color=colors_lines[p], linewidth=4)
-        p += 1
-    plt.xlabel('Coupling, J')
-    plt.legend(frameon=False, title='B', loc='lower right')
-    # ax.text(0.25, 0.02, 'Monostable', rotation='vertical', color='gray')
-    # ax.text(0.36, 0.02, 'Bistable', rotation='vertical', color='gray')
-    plt.ylabel('Interneuronal correlation (IC)')
-    if not long:
-        plt.ylim(-0.05, 0.7)
-    if long:
-        plt.ylim(-0.05, 0.7)
+    if not barplot:
+        
+        # Plot correlation vs J for the selected B values
+        fig, ax = plt.subplots(figsize=(5.5, 4.2))
+        colormap = pl.cm.Greens(np.linspace(0.3, 1, 2))
+        colormap = ['mediumvioletred', 'dimgrey', 'green']
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        if not cylinder:
+            ax.axvline(1/3, color='mediumblue', alpha=0.6, linestyle='--', linewidth=2)
+        if cylinder:
+            ax.axvline(1/3.92, color='mediumblue', alpha=0.6, linestyle='--', linewidth=2)
+        p = 0
+        if not inset:
+            ax.axhline(0.42, color=colormap[0], linestyle='--', alpha=1, linewidth=3)
+            ax.axhline(0.28, color=colormap[1], linestyle='--', alpha=1, linewidth=3)
+            ax.axhline(0.23, color=colormap[2], linestyle='--', alpha=0.7, linewidth=3)
+            ax.text(0.02, 0.44, 'SFM (B=0)', fontsize=12, color=colormap[0])
+            ax.text(0.02, 0.30, 'SFM (B>0)', fontsize=12, color=colormap[1])
+            ax.text(0.02, 0.16, 'RDM', fontsize=12, color=colormap[2])
+            ax.text(0.02, 0.52, 'Experiments (MT/V5)\nWashmut et al. 2019', fontsize=12)
+        colors_lines = ['mediumblue', 'lightskyblue']
+        for B_val, idxB in zip(B_targets, B_indices):
+            plt.plot(j_list[j_list < 0.6], np.nanmean(rsc_matrix, axis=-1)[:, idxB][j_list < 0.6], label=f'{B_val}',
+                     color=colors_lines[p], linewidth=4)
+            p += 1
+        plt.xlabel('Coupling, J')
+        plt.legend(frameon=False, title='B', loc='lower right')
+        # ax.text(0.25, 0.02, 'Monostable', rotation='vertical', color='gray')
+        # ax.text(0.36, 0.02, 'Bistable', rotation='vertical', color='gray')
+        plt.ylabel('Interneuronal correlation (IC)')
+        if not long:
+            plt.ylim(-0.05, 0.7)
+        if long:
+            plt.ylim(-0.05, 0.7)
+        fig.tight_layout()
+        if inset:
+            pos = ax.get_position()
+            ax2 = fig.add_axes([pos.x0+pos.width/1.4, pos.y0+pos.height/1.6, pos.width/3, pos.height/3])
+            ax2.spines['right'].set_visible(False)
+            ax2.spines['top'].set_visible(False)
+            ax2.set_ylim(0.15, 0.45)
+            ax2.set_xlim(-0.3, 2.3)
+            ax2.set_title('Experiments (V5/MT)\n Washmut 2019', fontsize=13)
+            ax2.plot(2, 0.42, '^', color=colormap[0], markersize=10)
+            ax2.plot(1, 0.28, '^', color=colormap[1], markersize=10)
+            ax2.plot(0, 0.23, '^', color='k', mfc='none', markersize=10)
+            ax2.set_xticks([0, 1, 2], ['RDM', 'SFM (B>0)', 'SFM (B=0)'], rotation=45, fontsize=12)
+            ax2.set_ylabel('IC')
+        # ax.text(0.6, 0.38, 'Data - Bistable', fontsize=12)
+        # ax.text(0.6, 0.19, 'Data - Monostable', fontsize=12)
+        # ax2.set_xticks([0, 1], ['Monostable', 'Bistable'], fontsize=12, rotation=45)
+        fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.svg', dpi=400, bbox_inches='tight')
+    if barplot:
+        fig, ax = plt.subplots(figsize=(3.5, 3.2))
+        colormap = pl.cm.Greens(np.linspace(0.3, 1, 2))
+        colormap = ['mediumvioletred', 'dimgrey', 'forestgreen']*2
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        # ax.text(0.02, 0.52, 'Experiments (MT/V5)\nWashmut et al. 2019', fontsize=12)
+        vals_bar = [np.nanmean(rsc_matrix, axis=-1)[:, 0][np.argmin(np.abs(j_list - 0.1))]]
+        for B_val, idxB in zip(B_targets[::-1], B_indices[::-1]):
+            val = np.nanmean(rsc_matrix, axis=-1)[:, idxB][np.argmin(np.abs(j_list - 0.33))]
+            vals_bar.append(val)
+        types = ['RDM', 'SFM (B>0)', 'SFM (B=0)']*2
+        classes = ['Data']*3 + ['Model']*3
+        vals_all = [0.23, 0.28, 0.42] + vals_bar
+        df = pd.DataFrame({
+            "Type": types,
+            "Classes": classes,
+            "Interneuronal correlation": vals_all})
+        
+        # Define colors — one per Type
+        pair_colors = ['dimgrey', 'dimgrey']
+        ax.set_ylim(0, 0.7)
+        # Draw bars
+        bar = sns.barplot(
+            data=df, x="Type", y="Interneuronal correlation", hue="Classes",
+            palette=pair_colors, ax=ax)
+        ax.grid(False)
+        ax.set_xlabel('')
+        # Apply hatching to 'Model' bars only
+        hatch_map = {'Data': '', 'Model': '///'}
+        for container, class_name in zip(bar.containers, df['Classes'].unique()):
+            hatch = hatch_map[class_name]
+            for patch in container:
+                patch.set_hatch(hatch)
+        plt.xticks(rotation=30)
+        # Beautify
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.legend(title='', loc='best', frameon=False)
+        
+        # Make sure legend shows hatches too
+        for legend_patch, class_name in zip(ax.legend_.get_patches(), df['Classes'].unique()):
+            legend_patch.set_hatch(hatch_map[class_name])
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'interneuronal_correlation_barplot.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'interneuronal_correlation_barplot.svg', dpi=400, bbox_inches='tight')
+
+
+def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
+                             shift=0, jump=20):
+    np.random.seed(100)
+    from scipy.stats import zscore
+    time = np.arange(0, t_dur+dt, dt)
+    theta = get_regular_graph() + np.random.randn()*0.0
+    vec1 = np.random.rand(theta.shape[0])
+    vec2 = np.random.rand(theta.shape[0])
+    vec1_arr = np.zeros((theta.shape[0], len(time)))
+    noise1 = np.random.randn(len(time)+shift, theta.shape[0])
+    noise2 = np.random.randn(len(time)+shift, theta.shape[0])
+    vec2_arr = np.zeros_like(vec1_arr)
+    for t in range(len(time)+shift):
+        vec1 = vec1 + dt*(gn.sigmoid(2*j1*np.matmul(theta, 2*vec1-1)+2*0.1*np.random.rand())-vec1)/0.1 + sigma*np.sqrt(dt/0.1)*noise1[t]
+        vec2 = vec2 + dt*(gn.sigmoid(2*j0*np.matmul(theta, 2*vec2-1)+2*0.1*np.random.rand())-vec2)/0.1 + sigma*np.sqrt(dt/0.1)*noise2[t]
+        if t >= shift:
+            vec1_arr[:, t-shift] = vec1
+            vec2_arr[:, t-shift] = vec2
+    vec2_arr = vec2_arr[::jump], vec1_arr = vec1_arr[::jump]
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(5, 4.5))
+    colormap = ['mediumvioletred', 'forestgreen']
+    ax[0, 1].plot(time, zscore(np.matmul(theta, vec1_arr)[0]), color=colormap[0], linewidth=3)
+    ax[0, 1].plot(time, zscore(vec1_arr[0]), color=colormap[1], linewidth=3)
+    ax[0, 0].plot(time, zscore(np.matmul(theta, vec2_arr)[0]), color=colormap[0], linewidth=3,
+                  label='Neighbors')
+    ax[0, 0].plot(time, zscore(vec2_arr[0]), color=colormap[1], linewidth=3,
+                  label='Neuron i')
+    ax[0, 0].legend(frameon=False)
+    ax[1, 1].plot(zscore(vec1_arr[0]), zscore(np.matmul(theta, vec1_arr)[0]),
+                  color='k', linestyle='', marker='o', markersize=3)
+    ax[1, 0].plot(zscore(vec2_arr[0]), zscore(np.matmul(theta, vec2_arr)[0]),
+                  color='k', linestyle='', marker='o', markersize=3)
+    corr1 = round(np.corrcoef(zscore(vec1_arr[0]), zscore(np.matmul(theta, vec1_arr)[0]))[0][1], 3)
+    corr2 = round(np.corrcoef(zscore(vec2_arr[0]), zscore(np.matmul(theta, vec2_arr)[0]))[0][1], 3)
+    corrs = [corr1, corr2]
+    for i_a, a in enumerate([ax[1, 1], ax[1, 0]]):
+        a.plot([-3, 3], [-3, 3], color='gray', linestyle='--', alpha=0.7, linewidth=4)
+        a.text(1.2, -1.8, rf'$\rho = $ {corrs[i_a]}', fontsize=12)
+        a.set_xlabel('Single unit')
+    ax[0, 0].set_ylabel('Activity')
+    ax[0, 0].set_xlabel('Time')
+    ax[0, 1].set_xlabel('Time')
+    ax[1, 0].set_ylabel('Neighbors')
+    for a in ax.flatten():
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_yticks([])
+        a.set_xticks([])
     fig.tight_layout()
-    if inset:
-        pos = ax.get_position()
-        ax2 = fig.add_axes([pos.x0+pos.width/1.4, pos.y0+pos.height/1.6, pos.width/3, pos.height/3])
-        ax2.spines['right'].set_visible(False)
-        ax2.spines['top'].set_visible(False)
-        ax2.set_ylim(0.15, 0.45)
-        ax2.set_xlim(-0.3, 2.3)
-        ax2.set_title('Experiments (V5/MT)\n Washmut 2019', fontsize=13)
-        ax2.plot(2, 0.42, '^', color=colormap[0], markersize=10)
-        ax2.plot(1, 0.28, '^', color=colormap[1], markersize=10)
-        ax2.plot(0, 0.23, '^', color='k', mfc='none', markersize=10)
-        ax2.set_xticks([0, 1, 2], ['RDM', 'SFM (B>0)', 'SFM (B=0)'], rotation=45, fontsize=12)
-        ax2.set_ylabel('IC')
-    # ax.text(0.6, 0.38, 'Data - Bistable', fontsize=12)
-    # ax.text(0.6, 0.19, 'Data - Monostable', fontsize=12)
-    # ax2.set_xticks([0, 1], ['Monostable', 'Bistable'], fontsize=12, rotation=45)
-    fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'interneuronal_correlation_cartoon_example_v2.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'interneuronal_correlation_cartoon_example_v2.svg', dpi=400, bbox_inches='tight')
 
 
 def analytical_correlation_rsc(sigma=0.15, theta=theta):
@@ -5806,10 +5948,12 @@ if __name__ == '__main__':
     #                                           b=b, theta=theta, num_iter=20)
     # cp_vs_coupling_random_neurons(j_list=np.arange(0, 0.6, 0.05), rand_neur_list=[False, 8, 16, 32],
     #                               nsimuls=2000, noise=0.15, load_sims=True)
-    # cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.15],
-    #                      nsimuls=200, load_sims=True, inset=False, cylinder=True)
-    # plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
-    #                                         j_list=np.arange(0, 1.01, 0.02),
-    #                                         nsims=20, load_data=False, sigma=0.11,
-    #                                         long=True, cylinder=True, inset=False)
+    cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.15],
+                          nsimuls=200, load_sims=True, inset=False, cylinder=True,
+                          barplot=True)
+    plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
+                                            j_list=np.arange(0, 1.01, 0.02),
+                                            nsims=20, load_data=True, sigma=0.2,
+                                            long=True, cylinder=True, inset=False,
+                                            barplot=True)
     # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
