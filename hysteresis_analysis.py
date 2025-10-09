@@ -3982,7 +3982,6 @@ if __name__ == '__main__':
     #                                 sv_folder=SV_FOLDER, simulate=True,
     #                                 load_net=False, not_plot_and_return=False)
     #     plt.close('all')
-    # plt.close('all')
     # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
     #                       fps=60, tFrame=26, freq=2, idx=1, n=3.92, theta=0.5,
     #                       tol=1e-3, pshuffle=0)
