@@ -231,6 +231,51 @@ def collect_responses(df, subjects, coupling_levels, fps=60, tFrame=26):
     return responses_2, responses_4, barray_2, barray_4
 
 
+def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.05, barh=.05, fs=9,
+                              maxasterix=3, ax=None):
+    """ 
+    Annotate barplot with p-values.
+
+    :param num1: number of left bar to put bracket over
+    :param num2: number of right bar to put bracket over
+    :param data: string to write or number for generating asterixes
+    :param center: centers of all bars (like plt.bar() input)
+    :param height: heights of all bars (like plt.bar() input)
+    :param yerr: yerrs of all bars (like plt.bar() input)
+    :param dh: height offset over bar / bar + yerr in axes coordinates (0 to 1)
+    :param barh: bar height in axes coordinates (0 to 1)
+    :param fs: font size
+    :param maxasterix: maximum number of asterixes to write (for very small p-values)
+    """
+
+    text = stars_pval(data)
+    print(data)
+
+    lx, ly = center[num1], height[num1]
+    rx, ry = center[num2], height[num2]
+
+    if yerr:
+        ly += yerr[num1]
+        ry += yerr[num2]
+
+    ax_y0, ax_y1 = ax.get_ylim()
+    dh *= (ax_y1 - ax_y0)
+    barh *= (ax_y1 - ax_y0)
+
+    y = max(ly, ry) + dh
+
+    barx = [lx, lx, rx, rx]
+    bary = [y, y+barh, y+barh, y]
+    mid = ((lx+rx)/2, y+barh)
+
+    ax.plot(barx, bary, c='black')
+
+    kwargs = dict(ha='center', va='bottom')
+    if fs is not None:
+        kwargs['fontsize'] = fs
+
+    ax.text(*mid, text, **kwargs)
+
 
 def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling_levels,
                           tFrame=26, fps=60, window_conv=None,
@@ -310,7 +355,7 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
                        label=f"{1-coupling:.1f}")
             ax[0].plot(x_desc, y_desc, color=colormap[i_c], linewidth=4)
     sns.barplot(hyst_width_2.T, palette=colormap, ax=ax2, errorbar='se')
-    ax2.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.25)
+    ax2.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.54)
     hyst_width_4 = np.zeros((len(coupling_levels), len(responses_2[0])))
     # --- FREQ = 4 ---
     for i_c, coupling in enumerate(coupling_levels):
@@ -343,6 +388,20 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
             ax[1].plot(x_desc, y_desc, color=colormap[i_c], linewidth=4)
     sns.barplot(hyst_width_4.T, palette=colormap, ax=ax4, errorbar="se")
     ax4.set_ylim(np.min(np.mean(hyst_width_4, axis=1))-0.25, np.max(np.mean(hyst_width_4, axis=1))+0.2)
+    heights = np.nanmean(hyst_width_2.T, axis=0)
+    bars = np.arange(3)
+    pv_sh012 = scipy.stats.ttest_ind(hyst_width_2[0], hyst_width_2[1]).pvalue
+    pv_sh022 = scipy.stats.ttest_ind(hyst_width_2[0], hyst_width_2[2]).pvalue
+    pv_sh122 = scipy.stats.ttest_ind(hyst_width_2[1], hyst_width_2[2]).pvalue
+    # pv_sh014 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[1]).pvalue
+    # pv_sh024 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[2]).pvalue
+    # pv_sh124 = scipy.stats.ttest_ind(hyst_width_4[1], hyst_width_4[2]).pvalue
+    barplot_annotate_brackets(0, 1, pv_sh012, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
+                              maxasterix=3, ax=ax2)
+    barplot_annotate_brackets(0, 2, pv_sh022, bars, heights, yerr=None, dh=.39, barh=.05, fs=10,
+                              maxasterix=3, ax=ax2)
+    barplot_annotate_brackets(1, 2, pv_sh122, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
+                              maxasterix=3, ax=ax2)
     for a in ax2, ax4:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
@@ -1156,29 +1215,26 @@ def hysteresis_basic_plot_simulation(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
     dt  = 1/fps
     time = np.arange(0, nFrame, 1)*dt
     tau = 0.1
-    indep_noise = np.sqrt(dt/tau)*np.random.randn(nFrame, nsims, nsubs)*0.08
+    indep_noise = np.sqrt(dt/tau)*np.random.randn(nFrame, nsims, nsubs)*0.07
     choice = np.zeros((len(coup_vals), nFrame, nsims, 2, nsubs))
     for i_j, j in enumerate(coup_vals):
         for freq in range(2):
             stimulus = [b_list_2, b_list_4][freq]
             for sub in range(nsubs):
                 for sim in range(nsims):
-                    # convergence
-                    x = np.random.rand()
-                    for i in range(50):
-                        x = sigmoid(2*j*n*(2*x-1))
+                    x = 0.02  # assume we start close to q ~ 0 (always L --> R)
                     vec = [x]
                     for t in range(1, nFrame):
-                        x = x + dt*(sigmoid(2*j*n*(2*x-1)+2*stimulus[t])-x)/tau + indep_noise[t, sim, sub]
+                        x = x + dt*(sigmoid(2*j*n*(2*x-1)+2*stimulus[t]*0.3)-x)/tau + indep_noise[t, sim, sub]
                         vec.append(x)
                         if x < 0.4:
                             ch = 0.
                         if x > 0.6:
                             ch = 1.
                         if 0.4 <= x <= 0.6 and t > 0:
-                            ch = choice[i_j, t-1, sim, freq, sub] 
+                            ch = choice[i_j, t-1, sim, freq, sub]
                         choice[i_j, t, sim, freq, sub] = ch
-    # np.save(DATA_FOLDER + 'choice_hysteresis.npy', choice)
+    np.save(DATA_FOLDER + 'choice_hysteresis_large_tau.npy', choice)
     fig, ax = plt.subplots(ncols=2, nrows=1, figsize=(7.5, 4))
     for a in ax:
         a.spines['right'].set_visible(False)
@@ -1214,21 +1270,32 @@ def hysteresis_basic_plot_simulation(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
     ax[0].set_title('Freq = 2', fontsize=14)
     ax[1].set_title('Freq = 4', fontsize=14)
     fig.tight_layout()
-    fig.savefig(SV_FOLDER + 'hysteresis_basic_plot_simulation.png', dpi=400, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + 'hysteresis_basic_plot_simulation.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'hysteresis_basic_plot_simulation_v2.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'hysteresis_basic_plot_simulation_v2.svg', dpi=400, bbox_inches='tight')
 
 
 def plot_hysteresis_width_simluations(coup_vals=np.arange(0.05, 0.35, 1e-2),
-                                      b_list=np.linspace(-0.5, 0.5, 501)):
+                                      b_list=np.linspace(-0.5, 0.5, 501),
+                                      window_conv=10):
     b_list_2 = np.concatenate((b_list[:-1], b_list[1:][::-1]))
     b_list_4 = np.concatenate((b_list[:-1][::2], b_list[1:][::-2], b_list[:-1][::2], b_list[1:][::-2]))
     # choice is a len(coup_vals) x timepoints x nsims x freqs(2)
-    choice = np.load(DATA_FOLDER + 'choice_hysteresis.npy')
+    choice = np.load(DATA_FOLDER + 'choice_hysteresis_large_tau.npy')[:, ..., 0]
+    # choice = np.load(DATA_FOLDER + 'choice_hysteresis.npy')
     n_coup, nFrame, nsims, nfreqs = choice.shape
     hyst_width_2 = np.zeros((n_coup))
     hyst_width_4 = np.zeros((n_coup))
-    f0, ax0 = plt.subplots(ncols=2, figsize=(9, 4.5))
+    f0, ax0 = plt.subplots(ncols=2, figsize=(7.5, 4.))
     colormap = pl.cm.Blues(np.linspace(0.3, 1, 3))
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    left, bottom, width, height = [0.4, 0.27, 0.12, 0.2]
+    ax2 = f0.add_axes([left, bottom, width, height])
+    left, bottom, width, height = [0.9, 0.27, 0.12, 0.2]
+    ax4 = f0.add_axes([left, bottom, width, height])
+    for a in ax2, ax4:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    h2 = []; h4 = []
     for freq in range(2):
         color = 0
         for i_c, coupling in enumerate(coup_vals):
@@ -1245,15 +1312,33 @@ def plot_hysteresis_width_simluations(coup_vals=np.arange(0.05, 0.35, 1e-2),
             descending = np.nanmean(response_raw, axis=1)[~asc_mask]
             width = np.nansum(np.abs(descending[::-1] - ascending))*dx
             [hyst_width_2, hyst_width_4][freq][i_c] = width
-            if i_c in [0, n_coup//2, n_coup-1]:
+            descending = np.convolve(descending, np.ones(window_conv)/window_conv, "same")
+            ascending = np.convolve(ascending, np.ones(window_conv)/window_conv, "same")
+            if i_c in [0, 1, 2]:
                 ax0[freq].plot(stimulus[asc_mask], ascending, color=colormap[color], linewidth=4,
-                               label=f'{coup_vals[i_c]}')
+                               label=f'{round(coup_vals[i_c], 1)}')
                 ax0[freq].plot(stimulus[~asc_mask], descending, color=colormap[color], linewidth=4)
                 color += 1
+                [h2, h4][freq].append(width)
+    sns.barplot(h2, palette=colormap, ax=ax2, errorbar="se")
+    ax2.set_ylim(np.min(np.mean(h2))-0.25, np.max(np.mean(h2))+0.5)
+    sns.barplot(h4, palette=colormap, ax=ax4, errorbar="se")
+    ax4.set_ylim(np.min(np.mean(h4))-0.25, np.max(np.mean(h4))+0.2)
+    for a in ax2, ax4:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_xlabel('Coupling, J', fontsize=11); a.set_xticks([])
+        a.set_ylabel('Hysteresis', fontsize=11); a.set_yticks([])
     for a in ax0:
         a.set_xlabel('Sensory evidence B(t)'); a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
-    ax0[0].set_ylabel('P(choice = R)');  ax0[0].legend(frameon=False, title='J')
+        a.axhline(0.5, color='k', linestyle='--', alpha=0.2)
+        a.axvline(0., color='k', linestyle='--', alpha=0.2)
+        a.set_xlim(-0.51, 0.51)
+        a.set_xticks([-0.5, 0, 0.5], [-1, 0, 1])
+    ax0[0].set_ylabel('P(rightward)');  ax0[0].legend(frameon=False, title='Coupling, J', loc='upper left'); ax0[0].set_yticks([0, 0.5, 1])
     f0.tight_layout()
+    f0.savefig(SV_FOLDER + 'hysteresis_basic_plot_simulation_v3.png', dpi=400, bbox_inches='tight')
+    f0.savefig(SV_FOLDER + 'hysteresis_basic_plot_simulation_v3.svg', dpi=400, bbox_inches='tight')
     fig, ax = plt.subplots()
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
@@ -1519,7 +1604,7 @@ def plot_psych_kernels(data_folder=DATA_FOLDER, fps=60, tFrame=15,
 
 
 def stars_pval(pval):
-    s = 'ns'
+    s = 'n.s.'
     if pval < 0.05 and pval >= 0.01:
         s = '*'
     if pval < 0.01 and pval >= 0.001:
@@ -3950,8 +4035,9 @@ if __name__ == '__main__':
     #                          n=4.0, steps_back=60, steps_front=20,
     #                          ntrials=20, hysteresis_width=False,
     #                          th=0.1)
-    # plot_hysteresis_width_simluations(coup_vals=np.arange(0.05, 0.35, 1e-2),
-    #                                   b_list=np.linspace(-0.5, 0.5, 501))
+    plot_hysteresis_width_simluations(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
+                                      b_list=np.linspace(-0.5, 0.5, 501),
+                                      window_conv=1)
     # hysteresis_simulation_threshold(j=1.2, thres_vals=np.arange(0, 0.5, 1e-2),
     #                                 n=4., tau=0.07, sigma=0.1, b1=0.15,
     #                                 tFrame=26, fps=60, nreps=1000,
@@ -4003,8 +4089,8 @@ if __name__ == '__main__':
     #                           normalize_variables=True,
     #                           hysteresis_area=True)
     # hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
-    #                                    fps=60, tFrame=26, data_folder=DATA_FOLDER,
-    #                                    ntraining=8, arrows=False)
+    #                                     fps=60, tFrame=26, data_folder=DATA_FOLDER,
+    #                                     ntraining=8, arrows=False)
     # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
     #                       fps=60, tFrame=18, data_folder=DATA_FOLDER,
     #                       nbins=9, ntraining=8, arrows=True)*
