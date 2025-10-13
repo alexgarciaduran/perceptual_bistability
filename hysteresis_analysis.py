@@ -42,7 +42,7 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
     SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
@@ -3839,7 +3839,7 @@ def plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8):
     # plt.colorbar(im, ax=ax, label='p(last = same response)', shrink=0.6, aspect=10)
 
 
-def model_pyddm(plot=False, n=4):
+def model_pyddm(plot=False, n=4, t_dur=15):
     stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t-phase_ini)/26, 0.5)*2*np.sign(freq)
     x_hat = lambda prev_choice, x: x if prev_choice == -1 else x+1
     drift_function = lambda t, x, j1, j0, b, pshuffle, prev_choice, freq, phase_ini: 1/(1+np.exp(-2*(n*(j0+j1*(1-pshuffle))*(2*x_hat(prev_choice, x)-1) + b*stim(t, freq, phase_ini))))-x_hat(prev_choice, x)
@@ -3850,7 +3850,7 @@ def model_pyddm(plot=False, n=4):
     noise = lambda sigma: sigma
     model = pyddm.gddm(drift=drift_function, parameters=parameters,
                        conditions=conditions, starting_position=starting_position, bound=bound, noise=noise,
-                       T_dur=26, dt=0.001, dx=0.001)
+                       T_dur=15, dt=0.001, dx=0.001)
     if plot:
         pyddm.plot.model_gui(model, conditions={"pshuffle": [0, 0.3, 1], "prev_choice": [-1, 1], "freq": [2, 4], "phase_ini": [0, 6.5, 13, 19.5]})
     return model
@@ -3865,7 +3865,7 @@ def model_known_params_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, n=4):
     conditions = ["pshuffle", "prev_choice", "freq", "phase_ini"]
     m_sim = pyddm.gddm(drift=drift_function_sim, 
                        conditions=conditions, starting_position=starting_position, bound=THETA+0.5, noise=SIGMA,
-                       T_dur=26, dt=0.001, dx=0.001)
+                       T_dur=15, dt=0.001, dx=0.001)
     return m_sim
 
 
@@ -4009,25 +4009,27 @@ def recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=10, i_ini=0):
 # print(common_login_ids)
 
 
-def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8):
+def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
+                   t_dur=15):
     set_N_cpus(ncpus)
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
     for i_s, subject in enumerate(subjects):
         print('Fitting subject ', subject)
-        model = model_pyddm()
+        model = model_pyddm(t_dur=t_dur)
         df_sub = df.loc[(df.subject == subject) & (df.response > 0)]
         pshuffles = df_sub.pShuffle.values
-        freqs = df_sub.freq.values
+        freqs = -df_sub.freq.values*df_sub.initial_side.values
         phase_inis = df_sub.keypress_seconds_onset.values
         prev_choices = (df_sub.response.values-1)*2-1
         next_choice = -((df_sub.response.values-1)-1)
         rt = df_sub.keypress_seconds_offset.values-phase_inis
+        rt_idx = rt < t_dur
         df_fit = pd.DataFrame({'prev_choice': prev_choices,
                                "freq": freqs, "phase_ini": phase_inis,
                                "pshuffle": pshuffles, "next_choice": next_choice,
-                               "rt": rt})
+                               "rt": rt})[rt_idx]
         sample_all = pyddm.Sample.from_pandas_dataframe(df_fit, rt_column_name="rt", choice_column_name="next_choice")
         model.fit(sample_all, verbose=True)
         params = model.get_model_parameters()
@@ -4089,7 +4091,7 @@ if __name__ == '__main__':
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=16, sv_folder=SV_FOLDER)
     # recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=9, i_ini=0)
-    fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=9, ntraining=8)
+    fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8)
     # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
     #                             n_pars_to_fit=43, n_sims_per_par=100,
     #                             sv_folder=SV_FOLDER, simulate=True,
