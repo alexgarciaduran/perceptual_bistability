@@ -3979,6 +3979,34 @@ def recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=10):
         simple_recovery_pyddm(J1=J1, J0=J0, B=B, THETA=THETA, SIGMA=SIGMA, ncpus=n_cpus,
                               plot=False, idx=i)
 
+# import pandas as pd
+# # Load the CSV file
+# file_path_marti = "C:/Users/alexg/Downloads/roster_download_2.csv"
+# df_marti = pd.read_csv(
+#     file_path_marti,
+#     skiprows=1,
+#     sep=",",
+#     quotechar='"',
+#     engine="python",
+#     encoding="utf-8-sig",
+# )
+# df_marti['full_name'] = df_marti['first_name'] + df_marti['last_name']
+
+# file_path_alex = "C:/Users/alexg/Downloads/roster_download_5.csv"
+# df_alex = pd.read_csv(
+#     file_path_alex,
+#     skiprows=1,
+#     sep=",",
+#     quotechar='"',
+#     engine="python",
+#     encoding="utf-8-sig",
+# )
+# df_alex['full_name'] = df_alex['first_name'] + df_alex['last_name']
+
+# common_login_ids = set(df_alex['full_name']).intersection(df_marti['full_name'])
+# print(f"Number of participants in both files: {len(common_login_ids)}")
+# print(common_login_ids)
+
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
