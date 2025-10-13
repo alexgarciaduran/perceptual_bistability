@@ -42,12 +42,12 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
     SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
 elif pc_name == 'alex_CRM':
-    DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/hysteresis/'  # Alex CRM
+    DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/hysteresis/data/'  # Alex CRM
     SV_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/hysteresis/'  # Alex CRM
 
 
@@ -2628,7 +2628,7 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
     if not_plot_and_return:
         return orig_params, recovered_params
     else:
-        fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(10, 9))
+        fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(8, 5))
         ax = ax.flatten()
         # labels = ['Jeff', ' B1',  'Tau', 'Thres.', 'sigma']
         if pyddmfit:
@@ -2648,11 +2648,12 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
                    color='k', linestyle='--',
                    alpha=0.3, linewidth=4)
             # a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
-            a.set_title(labels[i_a])
-            a.set_xlabel('Original parameters')
-            a.set_ylabel('Recovered parameters')
+            a.set_title(labels[i_a], fontsize=12)
+            a.set_xlabel('Original', fontsize=12)
+            a.set_ylabel('Recovered', fontsize=12)
             a.spines['right'].set_visible(False)
             a.spines['top'].set_visible(False)
+        ax[-1].axis('off')
         # ax[-1].axis('off')
         fig.tight_layout()
         fig2, ax2 = plt.subplots(ncols=2)
@@ -3849,7 +3850,7 @@ def model_pyddm(plot=False, n=4):
     noise = lambda sigma: sigma
     model = pyddm.gddm(drift=drift_function, parameters=parameters,
                        conditions=conditions, starting_position=starting_position, bound=bound, noise=noise,
-                       T_dur=8, dt=0.005, dx=0.005)
+                       T_dur=26, dt=0.001, dx=0.001)
     if plot:
         pyddm.plot.model_gui(model, conditions={"pshuffle": [0, 0.3, 1], "prev_choice": [-1, 1], "freq": [2, 4], "phase_ini": [0, 6.5, 13, 19.5]})
     return model
@@ -3864,7 +3865,7 @@ def model_known_params_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, n=4):
     conditions = ["pshuffle", "prev_choice", "freq", "phase_ini"]
     m_sim = pyddm.gddm(drift=drift_function_sim, 
                        conditions=conditions, starting_position=starting_position, bound=THETA+0.5, noise=SIGMA,
-                       T_dur=8, dt=0.005, dx=0.005)
+                       T_dur=26, dt=0.001, dx=0.001)
     return m_sim
 
 
@@ -3965,16 +3966,16 @@ def save_params_pyddm_recovery(n_pars=100, i_ini=0,
     for i in range(i_ini, n_pars):
         j1 = np.random.uniform(-0.1, 0.4)
         j0 = np.random.uniform(-0.1, 0.3)
-        b1 = np.random.uniform(-0.1, 0.7)
+        b1 = np.random.uniform(0.1, 0.7)
         sigma = np.random.uniform(0.05, 0.3)
-        theta = np.random.uniform(0., 0.4)
+        theta = np.random.uniform(0.01, 0.35)
         params = [j1, j0, b1, sigma, theta]
         np.save(sv_folder + 'param_recovery/pars_pyddm_prt' + str(i) + '.npy',
                 np.array(params))
 
 
-def recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=10):
-    for i in tqdm.tqdm(range(n_pars)):
+def recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=10, i_ini=0):
+    for i in tqdm.tqdm(range(i_ini, n_pars)):
         J1, J0, B, SIGMA, THETA = np.load(sv_folder + 'param_recovery/pars_pyddm_prt' + str(i) + '.npy')
         simple_recovery_pyddm(J1=J1, J0=J0, B=B, THETA=THETA, SIGMA=SIGMA, ncpus=n_cpus,
                               plot=False, idx=i)
@@ -4008,6 +4009,34 @@ def recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=10):
 # print(common_login_ids)
 
 
+def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8):
+    set_N_cpus(ncpus)
+    df = load_data(data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+    for i_s, subject in enumerate(subjects):
+        print('Fitting subject ', subject)
+        model = model_pyddm()
+        df_sub = df.loc[(df.subject == subject) & (df.response > 0)]
+        pshuffles = df_sub.pShuffle.values
+        freqs = df_sub.freq.values
+        phase_inis = df_sub.keypress_seconds_onset.values
+        prev_choices = (df_sub.response.values-1)*2-1
+        next_choice = -((df_sub.response.values-1)-1)
+        rt = df_sub.keypress_seconds_offset.values-phase_inis
+        df_fit = pd.DataFrame({'prev_choice': prev_choices,
+                               "freq": freqs, "phase_ini": phase_inis,
+                               "pshuffle": pshuffles, "next_choice": next_choice,
+                               "rt": rt})
+        sample_all = pyddm.Sample.from_pandas_dataframe(df_fit, rt_column_name="rt", choice_column_name="next_choice")
+        model.fit(sample_all, verbose=True)
+        params = model.get_model_parameters()
+        print(params)
+        # Convert to a numpy array for ease
+        params = np.asarray(params)
+        np.save(SV_FOLDER + f'param_recovery/recovered_params_pyddm_{subject}.npy', params)
+
+
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
     # fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
@@ -4028,9 +4057,9 @@ if __name__ == '__main__':
     #                          n=4.0, steps_back=60, steps_front=20,
     #                          ntrials=20, hysteresis_width=False,
     #                          th=0.1)
-    plot_hysteresis_width_simluations(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
-                                      b_list=np.linspace(-0.5, 0.5, 501),
-                                      window_conv=1)
+    # plot_hysteresis_width_simluations(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
+    #                                   b_list=np.linspace(-0.5, 0.5, 501),
+    #                                   window_conv=1)
     # hysteresis_simulation_threshold(j=1.2, thres_vals=np.arange(0, 0.5, 1e-2),
     #                                 n=4., tau=0.07, sigma=0.1, b1=0.15,
     #                                 tFrame=26, fps=60, nreps=1000,
@@ -4058,9 +4087,11 @@ if __name__ == '__main__':
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
     #                         window_conv=None, ndt_list=None)
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
-    # recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=10)
+    # save_params_pyddm_recovery(n_pars=100, i_ini=16, sv_folder=SV_FOLDER)
+    # recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=9, i_ini=0)
+    fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=9, ntraining=8)
     # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
-    #                             n_pars_to_fit=7, n_sims_per_par=100,
+    #                             n_pars_to_fit=43, n_sims_per_par=100,
     #                             sv_folder=SV_FOLDER, simulate=True,
     #                             load_net=False, not_plot_and_return=False,
     #                             pyddmfit=True)
