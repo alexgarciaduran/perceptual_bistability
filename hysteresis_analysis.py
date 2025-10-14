@@ -42,7 +42,7 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
     SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
@@ -4009,7 +4009,8 @@ def recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=10, i_ini=0):
 
 def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
                    t_dur=15):
-    set_N_cpus(ncpus)
+    if ncpus is not None:
+        set_N_cpus(ncpus)
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
@@ -4090,7 +4091,7 @@ if __name__ == '__main__':
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=16, sv_folder=SV_FOLDER)
     # recovery_pyddm(n_pars=100, sv_folder=SV_FOLDER, n_cpus=9, i_ini=50)
-    # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=9, ntraining=8, t_dur=18)
+    fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=None, ntraining=8, t_dur=18)
     # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
     #                             n_pars_to_fit=50, n_sims_per_par=100,
     #                             sv_folder=SV_FOLDER, simulate=True,
