@@ -42,7 +42,7 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-pc_name = 'alex'
+pc_name = 'alex_CRM'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
     SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
@@ -3840,7 +3840,7 @@ def plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8):
 
 
 def model_pyddm(plot=False, n=4, t_dur=15):
-    stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t-phase_ini)/26, 0.5)*2*np.sign(freq)
+    stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t+phase_ini)/26, 0.5)*2*np.sign(freq)
     x_hat = lambda prev_choice, x: x if prev_choice == -1 else x+1
     drift_function = lambda t, x, j1, j0, b, pshuffle, prev_choice, freq, phase_ini: 1/(1+np.exp(-2*(n*(j0+j1*(1-pshuffle))*(2*x_hat(prev_choice, x)-1) + b*stim(t, freq, phase_ini))))-x_hat(prev_choice, x)
     parameters = {"j1": (-0.1, 0.4), "j0": (-0.1, 0.3), "b": (-0.1, 0.7), "sigma": (0.05, 0.3), "theta": (0., 0.4)}  # , "j0": (-0.1, 0.3)
@@ -3850,22 +3850,22 @@ def model_pyddm(plot=False, n=4, t_dur=15):
     noise = lambda sigma: sigma
     model = pyddm.gddm(drift=drift_function, parameters=parameters,
                        conditions=conditions, starting_position=starting_position, bound=bound, noise=noise,
-                       T_dur=15, dt=0.001, dx=0.001)
+                       T_dur=t_dur, dt=0.001, dx=0.001)
     if plot:
         pyddm.plot.model_gui(model, conditions={"pshuffle": [0, 0.3, 1], "prev_choice": [-1, 1], "freq": [2, 4], "phase_ini": [0, 6.5, 13, 19.5]})
     return model
 
 
-def model_known_params_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, n=4):
+def model_known_params_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, n=4, t_dur=10):
     # First create two versions of the model, one to simulate the data, and one to fit to the simulated data.
-    stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t-phase_ini)/26, 0.5)*2*np.sign(freq)
+    stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t+phase_ini)/26, 0.5)*2*np.sign(freq)
     x_hat = lambda prev_choice, x: x if prev_choice == -1 else x+1
     starting_position = lambda prev_choice: 0.5-THETA if prev_choice == -1 else -0.5+THETA
     drift_function_sim = lambda t, x, pshuffle, prev_choice, freq, phase_ini: 1/(1+np.exp(-2*(n*(J0+J1*(1-pshuffle))*(2*x_hat(prev_choice, x)-1) + B*stim(t, freq, phase_ini))))-x_hat(prev_choice, x)
     conditions = ["pshuffle", "prev_choice", "freq", "phase_ini"]
     m_sim = pyddm.gddm(drift=drift_function_sim, 
                        conditions=conditions, starting_position=starting_position, bound=THETA+0.5, noise=SIGMA,
-                       T_dur=15, dt=0.001, dx=0.001)
+                       T_dur=t_dur, dt=0.001, dx=0.001)
     return m_sim
 
 
@@ -3893,8 +3893,8 @@ def plot_rt_distros_simple(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1):
 
 def simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, ncpus=10, plot=False, idx=0):
     set_N_cpus(ncpus)
-    model = model_pyddm()
-    m_sim = model_known_params_pyddm(J1=J1, J0=J0, B=B, SIGMA=SIGMA, THETA=THETA)
+    model = model_pyddm(t_dur=10)
+    m_sim = model_known_params_pyddm(J1=J1, J0=J0, B=B, SIGMA=SIGMA, THETA=THETA, t_dur=10)
     freqs = [2, 4]
     prev_choice = [-1, 1]
     pshuffle = [0, 0.3, 1]
@@ -3902,7 +3902,7 @@ def simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, ncpus=10,
     SAMPLE_SIZE = 250
     pshuffles_i = np.random.choice(pshuffle, ncpus)
     freqs_i = np.random.choice(freqs, ncpus)
-    phase_inis_i = np.random.uniform(6.5, 19.5, ncpus)
+    phase_inis_i = np.random.uniform(0, 6.5, ncpus)
     for j in range(SAMPLE_SIZE):
         pshuffle_i = pshuffles_i[j % ncpus]
         freq_i = freqs_i[j % ncpus]
@@ -3910,12 +3910,10 @@ def simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, ncpus=10,
         if freq_i == 2:
             prev_choice_i = -1
         else:
-            if 6.5 <= phase_ini_i <= 9.75:
+            if phase_ini_i <= 3.25:
                 prev_choice_i = -1
-            if 9.75 < phase_ini_i < 16.25:
+            else:
                 prev_choice_i = 1
-            if phase_ini_i > 16.25:
-                prev_choice_i = -1
         sample1 = m_sim.solve(conditions={"pshuffle": pshuffle_i, "freq": freq_i, "prev_choice": prev_choice_i, "phase_ini": phase_ini_i}).sample(1)
         if j == 0:
             sample_all = sample1
@@ -4020,18 +4018,19 @@ def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
         model = model_pyddm(t_dur=t_dur)
         df_sub = df.loc[(df.subject == subject) & (df.response > 0)]
         pshuffles = df_sub.pShuffle.values
-        freqs = -df_sub.freq.values*df_sub.initial_side.values
+        freqs = df_sub.freq.values*df_sub.initial_side.values
         phase_inis = df_sub.keypress_seconds_onset.values
         prev_choices = (df_sub.response.values-1)*2-1
         next_choice = -((df_sub.response.values-1)-1)
         rt = df_sub.keypress_seconds_offset.values-phase_inis
         rt_idx = rt < t_dur
+        not_last_change_idx = phase_inis < 25
         df_fit = pd.DataFrame({'prev_choice': prev_choices,
                                "freq": freqs, "phase_ini": phase_inis,
                                "pshuffle": pshuffles, "next_choice": next_choice,
                                "rt": rt})[rt_idx]
         sample_all = pyddm.Sample.from_pandas_dataframe(df_fit, rt_column_name="rt", choice_column_name="next_choice")
-        model.fit(sample_all, verbose=True)
+        model.fit(sample_all, verbose=False)
         params = model.get_model_parameters()
         print(params)
         # Convert to a numpy array for ease
@@ -4090,10 +4089,10 @@ if __name__ == '__main__':
     #                         window_conv=None, ndt_list=None)
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=16, sv_folder=SV_FOLDER)
-    # recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=9, i_ini=0)
-    fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8)
+    # recovery_pyddm(n_pars=100, sv_folder=SV_FOLDER, n_cpus=9, i_ini=50)
+    # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=9, ntraining=8, t_dur=18)
     # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
-    #                             n_pars_to_fit=43, n_sims_per_par=100,
+    #                             n_pars_to_fit=50, n_sims_per_par=100,
     #                             sv_folder=SV_FOLDER, simulate=True,
     #                             load_net=False, not_plot_and_return=False,
     #                             pyddmfit=True)
