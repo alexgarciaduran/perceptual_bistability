@@ -3696,7 +3696,75 @@ def plot_all_fbp_densities(j_list=[0.1, 0.6, 0.8], b_list=[0., 0.25, 0.5],
     fig.savefig(DATA_FOLDER + 'fbp_density_plot.svg', dpi=200, bbox_inches='tight')
 
 
+def hysteresis_fbp(nFrame=1560, fps=60, ntrials=3000,
+                   alpha=1, j1=0.3, j0=0.2, b1=0.5, sigma=0.1,
+                   thres=0.1, plot=False, n=4):
+    couplings = 1-np.repeat([0., 0.7, 1.], np.ceil(ntrials/3)).round(1)
+    difficulty_time_ref = np.linspace(-2, 2, nFrame//2)
+    blist_freq_ref = np.concatenate(([difficulty_time_ref, -difficulty_time_ref]))[::-1]
+    choice_array = np.zeros((ntrials, nFrame))
+    dt = 1/fps
+    upper_bound = np.log((0.5+thres)/(1-0.5-thres))
+    lower_bound = np.log((0.5-thres)/(1-0.5+thres))
+    for trial in range(ntrials):
+        x = np.random.randn()*0.1
+        jeff = j1*couplings[trial]+j0
+        stim = blist_freq_ref*b1
+        for t in range(nFrame):
+            x = dyn_sys_fbp(x, jeff, stim[t], alpha=alpha,
+                            n=n, dt=dt, noise=sigma)
+            y = x*n+stim[t]
+            if y <= lower_bound:
+                ch = 0.
+            if y >= upper_bound:
+                ch = 1.
+            if lower_bound <= y <= upper_bound:
+                if t > 0:
+                    ch = choice_array[trial, t-1]
+                else:
+                    ch = np.nan
+            choice_array[trial, t] = ch
+    if plot:
+        colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+        for i_c, coupling in enumerate([0., 0.3, 1]):
+            idx_coup = np.round(couplings, 1)[:ntrials] == coupling
+            plt.plot(blist_freq_ref, np.nanmean(choice_array[idx_coup], axis=0), color=colormap[i_c],
+                     linewidth=3)
+    return choice_array, couplings
+
+
+def hysteresis_alpha_effect(alphas=[0.75, 1, 1.25], nFrame=1560):
+    choices = []
+    difficulty_time_ref = np.linspace(-2, 2, nFrame//2)
+    blist_freq_ref = np.concatenate(([difficulty_time_ref, -difficulty_time_ref]))[::-1]
+    for i_alpha, alpha in enumerate(alphas):
+        choices_all, couplings =\
+            hysteresis_fbp(nFrame=nFrame, fps=60, ntrials=1500,
+                           alpha=alpha, j1=0.3, j0=0.2, b1=0.5, sigma=0.1,
+                           thres=0.1, plot=False, n=4)
+        choices.append(choices_all)
+    nAlpha = len(alphas)
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, nAlpha))
+    fig, ax = plt.subplots(ncols=nAlpha, nrows=1, figsize=(2+3*nAlpha, 4))
+    for i_alpha in range(nAlpha):
+        ax[i_alpha].spines['top'].set_visible(False)
+        ax[i_alpha].spines['right'].set_visible(False)
+        ax[i_alpha].set_yticks([0, 0.5, 1])
+        ax[i_alpha].axhline(0.5, color='k', linestyle='--', alpha=0.3)
+        ax[i_alpha].axvline(0., color='k', linestyle='--', alpha=0.3)
+        colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+        for i_c, coupling in enumerate([0., 0.3, 1]):
+            idx_coup = np.round(couplings, 1) == coupling
+            ax[i_alpha].plot(blist_freq_ref, np.nanmean(choices[i_alpha][idx_coup], axis=0),
+                             color=colormap[i_c], linewidth=3)
+        ax[i_alpha].set_title(fr'$\alpha = $ {alphas[i_alpha]}', fontsize=13)
+        ax[i_alpha].set_xlabel('Sensory evidence, B(t)')
+    ax[0].set_ylabel('P(rightward)')
+    fig.tight_layout()
+
+
 if __name__ == '__main__':
+    print('Running LBP script')
     # for stim in [0]:
     #     plot_loopy_b_prop_sol(theta=gn.return_theta(), num_iter=200,
     #                           j_list=np.arange(0.00001, 1, 0.01),
@@ -3759,14 +3827,14 @@ if __name__ == '__main__':
     # plot_rt_FBP_ddm(drift=.4, noise=0.1, j=0.6, 
     #                 time_end=2.5, bound=1, tau=0.1, dt=1e-3,
     #                 alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1)
-    tachometric_vs_coupling(drift=.3, noise=0.3, j_list=[0.1, 0.4, 0.6, 1.],
-                            time_end=5, bound=2, tau=0.1, dt=1e-2,
-                            alpha=1, n=3, ntrials=70000, b=.7, tau_ddm=0.1, nbins=20,
-                            time_eff=0.05)
-    tachometric_vs_coupling(drift=.4, noise=0.25, j_list=[0.1, 0.4, 0.6, 1.],
-                            time_end=5, bound=1, tau=0.1, dt=1e-2,
-                            alpha=1, n=3, ntrials=70000, b=.3, tau_ddm=0.1, nbins=20,
-                            time_eff=0.05)
+    # tachometric_vs_coupling(drift=.3, noise=0.3, j_list=[0.1, 0.4, 0.6, 1.],
+    #                         time_end=5, bound=2, tau=0.1, dt=1e-2,
+    #                         alpha=1, n=3, ntrials=70000, b=.7, tau_ddm=0.1, nbins=20,
+    #                         time_eff=0.05)
+    # tachometric_vs_coupling(drift=.4, noise=0.25, j_list=[0.1, 0.4, 0.6, 1.],
+    #                         time_end=5, bound=1, tau=0.1, dt=1e-2,
+    #                         alpha=1, n=3, ntrials=70000, b=.3, tau_ddm=0.1, nbins=20,
+    #                         time_eff=0.05)
     # plot_sol_LBP(j_list=np.arange(0.00001, 1, 0.0001), stim=0.)
     # plot_potentials_lbp(j_list=np.arange(0., 1.1, 0.1), b=-0., neighs=3, q1=False)
     # plot_potential_lbp(q=np.arange(0.0001, 4, 0.01),
