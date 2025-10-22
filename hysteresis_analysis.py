@@ -2567,7 +2567,8 @@ def sbi_training_5_params(n_simuls=10000, fps=60, tFrame=26, data_folder=DATA_FO
 def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
                                 n_pars_to_fit=50, n_sims_per_par=108,
                                 sv_folder=SV_FOLDER, simulate=False,
-                                load_net=True, not_plot_and_return=False, pyddmfit=True):
+                                load_net=True, not_plot_and_return=False, pyddmfit=True,
+                                ini_par=0, transform=False):
     if not pyddmfit:
         density_estimator, _ = sbi_training_5_params(n_simuls=n_simuls_network, fps=fps, tFrame=tFrame,
                                                      data_folder=DATA_FOLDER, load_net=load_net)
@@ -2582,11 +2583,11 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
     nFrame = fps*tFrame
     orig_params = np.zeros((n_pars_to_fit, npars))
     recovered_params = np.zeros((n_pars_to_fit, npars))
-    for par in tqdm.tqdm(range(n_pars_to_fit)):
+    for par in tqdm.tqdm(range(ini_par, n_pars_to_fit)):
         # simulate
         if pyddmfit:
             theta = np.load(sv_folder + 'param_recovery/pars_pyddm_prt' + str(par) + '.npy')
-            pars = np.load(SV_FOLDER + f'param_recovery/recovered_params_pyddm_{par}.npy')
+            pars = np.load(sv_folder + f'param_recovery/recovered_params_pyddm_{par}.npy')
         else:
             theta = np.load(sv_folder + 'param_recovery/pars_5_prt' + str(par) + '.npy')
             if simulate:
@@ -2625,6 +2626,18 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
                 pars = np.load(sv_folder + 'param_recovery/pars_5_prt_recovered' + str(par) + str(n_simuls_network) + '.npy')
         orig_params[par] = theta
         recovered_params[par] = pars
+    # transform vars
+    if transform:
+        orig_params[:, 2] /= orig_params[:, 3]
+        orig_params[:, 4] /= orig_params[:, 3]
+        recovered_params[:, 2] /= recovered_params[:, 3]
+        recovered_params[:, 4] /= recovered_params[:, 3]
+        orig_params[:, 0] /= orig_params[:, 2]
+        orig_params[:, 1] /= orig_params[:, 2]
+        recovered_params[:, 0] /= recovered_params[:, 2]
+        recovered_params[:, 1] /= recovered_params[:, 2]
+        orig_params[np.isnan(orig_params)] = 0
+        recovered_params[np.isnan(recovered_params)] = 0
     if not_plot_and_return:
         return orig_params, recovered_params
     else:
@@ -2640,8 +2653,8 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
             a = ax[i_a]
             a.plot(orig_params[:, i_a], recovered_params[:, i_a], color='k', marker='o',
                    markersize=5, linestyle='')
-            maxval = np.max([orig_params[:, i_a], recovered_params[:, i_a]])
-            minval = np.min([orig_params[:, i_a], recovered_params[:, i_a]])
+            maxval = np.nanmax([orig_params[:, i_a], recovered_params[:, i_a]])
+            minval = np.nanmin([orig_params[:, i_a], recovered_params[:, i_a]])
             a.set_xlim(minval-1e-2, maxval+1e-2)
             a.set_ylim(minval-1e-2, maxval+1e-2)
             a.plot([minval, maxval], [minval, maxval],
@@ -2653,7 +2666,26 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
             a.set_ylabel('Recovered', fontsize=12)
             a.spines['right'].set_visible(False)
             a.spines['top'].set_visible(False)
-        ax[-1].axis('off')
+        for a in [ax[-1]]:
+            b_over_sigma_orig = orig_params[:, 2]/orig_params[:, 3]
+            b_over_sigma_rec = recovered_params[:, 2]/recovered_params[:, 3]
+            a.plot(b_over_sigma_orig, b_over_sigma_rec, color='k', marker='o',
+                   markersize=5, linestyle='')
+            notnanidx = np.isnan(b_over_sigma_orig+b_over_sigma_rec)
+            corr = np.corrcoef(b_over_sigma_orig[~notnanidx], b_over_sigma_rec[~notnanidx])[0][1]
+            maxval = np.nanmax([b_over_sigma_orig, b_over_sigma_rec])
+            minval = np.nanmin([b_over_sigma_orig, b_over_sigma_rec])
+            a.set_xlim(minval-1e-2, maxval+1e-2)
+            a.set_ylim(minval-1e-2, maxval+1e-2)
+            a.plot([minval, maxval], [minval, maxval],
+                   color='k', linestyle='--',
+                   alpha=0.3, linewidth=4)
+            # a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
+            a.set_title(f'B1 / sigma, r={round(corr, 3)}', fontsize=12)
+            a.set_xlabel('Original', fontsize=12)
+            a.set_ylabel('Recovered', fontsize=12)
+            a.spines['right'].set_visible(False)
+            a.spines['top'].set_visible(False)
         # ax[-1].axis('off')
         fig.tight_layout()
         fig2, ax2 = plt.subplots(ncols=2)
@@ -2666,7 +2698,13 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
                 # compute cross-correlation matrix
                 corr_mat[i, j] = np.corrcoef(orig_params[:, i], recovered_params[:, j])[1][0]
         # plot cross-correlation matrix
-        im = ax.imshow(corr_mat.T, cmap='bwr', vmin=-1, vmax=1)
+        if np.min(corr_mat) < -0.2:
+            vmin = -1
+            cmap = 'bwr'
+        else:
+            vmin = 0
+            cmap = 'Reds'
+        im = ax.imshow(corr_mat.T, cmap=cmap, vmin=vmin, vmax=1)
         # tune panels
         plt.colorbar(im, ax=ax, label='Correlation')
         labels_reduced = labels
@@ -2676,8 +2714,9 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
         # compute correlation matrix
         mat_corr = np.corrcoef(recovered_params.T, rowvar=True)
         mat_corr *= np.tri(*mat_corr.shape, k=-1)
+        mat_corr[mat_corr == 0] = np.nan
         # plot correlation matrix
-        im = ax2.imshow(mat_corr, cmap='bwr', vmin=-1, vmax=1)
+        im = ax2.imshow(mat_corr, cmap=cmap, vmin=vmin, vmax=1)
         ax2.step(np.arange(0, npars)-0.5, np.arange(0, npars)-0.5, color='k',
                  linewidth=.7)
         ax2.set_xticks(np.arange(npars), labels, fontsize=12, rotation=45)  # , rotation='270'
@@ -3850,6 +3889,23 @@ def model_pyddm(plot=False, n=4, t_dur=15):
     noise = lambda sigma: sigma
     model = pyddm.gddm(drift=drift_function, parameters=parameters,
                        conditions=conditions, starting_position=starting_position, bound=bound, noise=noise,
+                       T_dur=t_dur, dt=0.0025, dx=0.0025)
+    if plot:
+        pyddm.plot.model_gui(model, conditions={"pshuffle": [0, 0.3, 1], "prev_choice": [-1, 1], "freq": [2, 4], "phase_ini": [0, 6.5, 13, 19.5]})
+    return model
+
+
+def model_pyddm_reparameterized(plot=False, n=4, t_dur=15):
+    stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t+phase_ini)/26, 0.5)*2*np.sign(freq)
+    x_hat = lambda prev_choice, x: x if prev_choice == -1 else x+1
+    drift_function = lambda t, x, j1, j0, beta, sigma, pshuffle, prev_choice, freq, phase_ini: 1/(1+np.exp(-2*(n*(j0+j1*(1-pshuffle))*(2*x_hat(prev_choice, x)-1) + beta*sigma*stim(t, freq, phase_ini))))-x_hat(prev_choice, x)
+    parameters = {"j1": (-0.1, 0.4), "j0": (-0.1, 0.3), "beta": (-0.1, 0.7), "sigma": (0.05, 0.3), "tau": (0., 0.4)}  # , "j0": (-0.1, 0.3)
+    bound = lambda tau, sigma: 0.5+tau*sigma
+    starting_position = lambda tau, sigma, prev_choice: 0.5-tau*sigma if prev_choice == -1 else -0.5+tau*sigma
+    conditions = ["pshuffle", "prev_choice", "freq", "phase_ini"]
+    noise = lambda sigma: sigma
+    model = pyddm.gddm(drift=drift_function, parameters=parameters,
+                       conditions=conditions, starting_position=starting_position, bound=bound, noise=noise,
                        T_dur=t_dur, dt=0.001, dx=0.001)
     if plot:
         pyddm.plot.model_gui(model, conditions={"pshuffle": [0, 0.3, 1], "prev_choice": [-1, 1], "freq": [2, 4], "phase_ini": [0, 6.5, 13, 19.5]})
@@ -3865,7 +3921,7 @@ def model_known_params_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, n=4, t
     conditions = ["pshuffle", "prev_choice", "freq", "phase_ini"]
     m_sim = pyddm.gddm(drift=drift_function_sim, 
                        conditions=conditions, starting_position=starting_position, bound=THETA+0.5, noise=SIGMA,
-                       T_dur=t_dur, dt=0.001, dx=0.001)
+                       T_dur=t_dur, dt=0.005, dx=0.005)
     return m_sim
 
 
@@ -4008,11 +4064,16 @@ def recovery_pyddm(n_pars=50, sv_folder=SV_FOLDER, n_cpus=10, i_ini=0):
 
 
 def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
-                   t_dur=15):
+                   t_dur=15, subj_ini=None, nbins=27):
     set_N_cpus(ncpus)
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
+    bins = np.linspace(0, 26, nbins).round(2)
+    if subj_ini is not None:
+        idx = np.where(subjects == subj_ini)[0][0]
+        subjects = subjects[idx:]
+    print('Fitting ', len(subjects), ' subjects')
     for i_s, subject in enumerate(subjects):
         print('Fitting subject ', subject)
         model = model_pyddm(t_dur=t_dur)
@@ -4024,18 +4085,19 @@ def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
         next_choice = -((df_sub.response.values-1)-1)
         rt = df_sub.keypress_seconds_offset.values-phase_inis
         rt_idx = rt < t_dur
-        not_last_change_idx = phase_inis < 25
+        # not_last_change_idx = phase_inis < 25
         df_fit = pd.DataFrame({'prev_choice': prev_choices,
-                               "freq": freqs, "phase_ini": phase_inis,
+                               "freq": freqs, "phase_ini": bins[np.digitize(phase_inis-1e-5, bins)],
                                "pshuffle": pshuffles, "next_choice": next_choice,
                                "rt": rt})[rt_idx]
         sample_all = pyddm.Sample.from_pandas_dataframe(df_fit, rt_column_name="rt", choice_column_name="next_choice")
+        print('Start actual fitting')
         model.fit(sample_all, verbose=False)
         params = model.get_model_parameters()
         print(params)
         # Convert to a numpy array for ease
         params = np.asarray(params)
-        np.save(SV_FOLDER + f'param_recovery/recovered_params_pyddm_{subject}.npy', params)
+        np.save(SV_FOLDER + f'fitted_params/fitted_params_pyddm_{subject}.npy', params)
 
 
 if __name__ == '__main__':
@@ -4089,13 +4151,14 @@ if __name__ == '__main__':
     #                         window_conv=None, ndt_list=None)
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=16, sv_folder=SV_FOLDER)
-    # recovery_pyddm(n_pars=100, sv_folder=SV_FOLDER, n_cpus=9, i_ini=50)
-    # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=9, ntraining=8, t_dur=18)
-    # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
-    #                             n_pars_to_fit=50, n_sims_per_par=100,
-    #                             sv_folder=SV_FOLDER, simulate=True,
-    #                             load_net=False, not_plot_and_return=False,
-    #                             pyddmfit=True)
+    # recovery_pyddm(n_pars=100, sv_folder=SV_FOLDER, n_cpus=5, i_ini=50)
+    # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=6, ntraining=8, t_dur=15,
+    #                subj_ini='s_1', nbins=27)
+    parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
+                                n_pars_to_fit=100, n_sims_per_par=100,
+                                sv_folder=SV_FOLDER, simulate=True,
+                                load_net=False, not_plot_and_return=False,
+                                pyddmfit=True, ini_par=50)
     # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                   ntraining=8, coupling_levels=[0, 0.3, 1],
     #                   window_conv=5, bin_size=0.35, switch_01=False)
@@ -4117,7 +4180,7 @@ if __name__ == '__main__':
     #                                     ntraining=8, arrows=False)
     # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
     #                       fps=60, tFrame=18, data_folder=DATA_FOLDER,
-    #                       nbins=9, ntraining=8, arrows=True)*
+    #                       nbins=9, ntraining=8, arrows=True)
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     #                          steps_back=120, steps_front=20,
     #                          shuffle_vals=[1, 0.7, 0])
