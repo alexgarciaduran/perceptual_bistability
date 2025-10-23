@@ -1508,10 +1508,12 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     ax2.set_ylabel('Bimodality coef.')
     fig2.tight_layout()
     fig3, ax3 = plt.subplots(ncols=2, figsize=(10, 4))
+    color = ['k' if s != 1 else 'r' for s in state]
+    alphas = [0.3 if s != 1 else 0.8 for s in state]
     for a in ax3:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
-        [a.plot([0, 0.3, 1], coupvals[:, i], color='k', marker='o', alpha=0.2) for i in range(len(subjects))]
+        [a.plot([0, 0.3, 1], coupvals[:, i], color=color[i], marker='o', alpha=alphas[i]) for i in range(len(subjects))]
         a.axhline(0, color='r', linestyle='--', alpha=0.3)
         # a.axhline(1/3.92, color='r', linestyle='--', alpha=0.3)
         a.set_xlabel('J = 1-p_shuffle')
