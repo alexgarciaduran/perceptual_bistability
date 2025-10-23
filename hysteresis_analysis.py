@@ -4747,13 +4747,13 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=filter_subjects)
     subs = df.subject.unique()[:fitted_subs]
     print(subs, ', number:', len(subs))
-    mean_vals_noise_switch_coupling = np.empty((2, steps_back+steps_front))
+    mean_vals_noise_switch_coupling = np.empty((2, steps_back+steps_front, len(subs)))
     mean_vals_noise_switch_coupling[:] = np.nan
-    err_vals_noise_switch_coupling = np.empty((2, steps_back+steps_front))
+    err_vals_noise_switch_coupling = np.empty((2, steps_back+steps_front, len(subs)))
     err_vals_noise_switch_coupling[:] = np.nan
     avg_bistable = []
-    monostable_kernels = []
-    bistable_kernels = []
+    # monostable_kernels = []
+    # bistable_kernels = []
     for i_sub, subject in enumerate(subs):
         df_sub = df.loc[df.subject == subject]
 
@@ -4795,20 +4795,21 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
         mean_vals_noise_switch_all_trials = mean_vals_noise_switch_all_trials[1:]
         bistable_values = mean_vals_noise_switch_all_trials[bistable_mask]
         monostable_values = mean_vals_noise_switch_all_trials[~bistable_mask]
-        bistable_mask = np.array(bistable_mask)
-        bistable_values = mean_vals_noise_switch_all_trials[bistable_mask]
-        monostable_values = mean_vals_noise_switch_all_trials[~bistable_mask]
-        monostable_kernels.append(monostable_values)
-        bistable_kernels.append(bistable_values)
+        kernel_bistable = np.nanmean(bistable_values, axis=0)
+        kernel_monostable = np.nanmean(monostable_values, axis=0)
+        mean_vals_noise_switch_coupling[0, :, i_sub] = kernel_bistable
+        err_vals_noise_switch_coupling[0, :, i_sub] = np.nanstd(bistable_values, axis=0)
+        mean_vals_noise_switch_coupling[1, :, i_sub] = kernel_monostable
+        err_vals_noise_switch_coupling[1, :, i_sub] = np.nanstd(monostable_values, axis=0)
         
-    bistable_kernels = np.row_stack(bistable_kernels)
-    monostable_kernels = np.row_stack(monostable_kernels)
-    kernel_bistable = np.nanmean(bistable_kernels, axis=0)
-    kernel_monostable = np.nanmean(monostable_kernels, axis=0)
-    mean_vals_noise_switch_coupling[0, :] = kernel_bistable
-    err_vals_noise_switch_coupling[0, :] = np.nanstd(bistable_kernels, axis=0)
-    mean_vals_noise_switch_coupling[1, :] = kernel_monostable
-    err_vals_noise_switch_coupling[1, :] = np.nanstd(monostable_kernels, axis=0)
+    # bistable_kernels = np.row_stack(bistable_kernels)
+    # monostable_kernels = np.row_stack(monostable_kernels)
+    # kernel_bistable = np.nanmean(bistable_kernels, axis=0)
+    # kernel_monostable = np.nanmean(monostable_kernels, axis=0)
+    # mean_vals_noise_switch_coupling[0, :] = kernel_bistable
+    # err_vals_noise_switch_coupling[0, :] = np.nanstd(bistable_kernels, axis=0)
+    # mean_vals_noise_switch_coupling[1, :] = kernel_monostable
+    # err_vals_noise_switch_coupling[1, :] = np.nanstd(monostable_kernels, axis=0)
     print(avg_bistable)
     colormap = ['peru', 'cadetblue']; labels=['Bistable', 'Monostable']
     fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
@@ -4817,11 +4818,11 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     for regime in range(2):
         x_plot = np.arange(-steps_back, steps_front, 1)/fps
         if len(subs) > 1:
-            y_plot = mean_vals_noise_switch_coupling[regime, :]
+            y_plot = np.nanmean(mean_vals_noise_switch_coupling[regime, :], axis=-1)
             err_plot = np.nanstd(mean_vals_noise_switch_coupling[regime, :], axis=-1) / np.sqrt(len(subs))
         else:
-            y_plot = mean_vals_noise_switch_coupling[regime, :]
-            err_plot = err_vals_noise_switch_coupling[regime, :]
+            y_plot = np.nanmean(mean_vals_noise_switch_coupling[regime, :], axis=-1)
+            err_plot = err_vals_noise_switch_coupling[regime, :, 0]
         ax.plot(x_plot, y_plot, color=colormap[regime],
                 label=labels[regime], linewidth=3)
         ax.fill_between(x_plot, y_plot-err_plot, y_plot+err_plot, color=colormap[regime],
@@ -4829,6 +4830,8 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     ax.legend(frameon=False); ax.set_xlabel('Time before switch(s)')
     ax.set_ylabel('Noise')
     fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'kernel_across_subjects.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'kernel_across_subjects.svg', dpi=400)
 
 
 if __name__ == '__main__':
@@ -4837,18 +4840,18 @@ if __name__ == '__main__':
     # plot_noise_variables_vs_fitted_params(n=4, variable='freq4')
     # plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
     #                       ntraining=8, window_conv=1)
-    # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                               steps_back=60, steps_front=20,
-    #                               shuffle_vals=[1, 0.7, 0],
-    #                               avoid_first=False, window_conv=1,
-    #                               filter_subjects=True, n=4)
-    compare_parameters_two_experiments()
+    plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+                                  steps_back=150, steps_front=20,
+                                  shuffle_vals=[1, 0.7, 0],
+                                  avoid_first=True, window_conv=1,
+                                  filter_subjects=True, n=4)
+    # compare_parameters_two_experiments()
     # plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
-    #                                      shuffle_vals=[1., 0.7, 0.], ntrials=36,
-    #                                      steps_back=80, steps_front=20, avoid_first=False,
-    #                                      tFrame=26, window_conv=1,
-    #                                      fps=60, ax=None, hysteresis_area=True,
-    #                                      normalize_variables=True, ratio=1)
+    #                                       shuffle_vals=[1., 0.7, 0.], ntrials=36,
+    #                                       steps_back=150, steps_front=20, avoid_first=False,
+    #                                       tFrame=26, window_conv=1,
+    #                                       fps=60, ax=None, hysteresis_area=True,
+    #                                       normalize_variables=True, ratio=1)
     # fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
     #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
     # fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
