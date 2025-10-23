@@ -4647,6 +4647,17 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance'):
         ax[i].set_xlabel('Fitted J = (1-p(sh))*J1 + J0')
     ax[0].set_ylabel(label)
     fig.tight_layout()
+
+
+def plot_params_distros():
+    pars = glob.glob(SV_FOLDER + 'fitted_params/' + '*.npy')
+    fitted_subs = len(pars)
+    b1s = [np.load(par)[2] for par in pars]
+    sigmas = np.array([np.load(par)[3] for par in pars])
+    thetas = [np.load(par)[4] for par in pars]
+    j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
+    j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
+    labels = ['J1', 'J0', 'B1', 'Threshold', 'Sigma']
     fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(9, 6))
     ax = ax.flatten()
     params_all = [j1s, j0s, b1s, thetas, sigmas]
@@ -4662,6 +4673,7 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance'):
             ax[i].axvline(lims[i][k], color='r', alpha=0.4)
     ax[-1].axis('off')
     fig.tight_layout()
+    print(np.sum(np.array(b1s) > 0.69))
 
 
 def plot_coupling_transitions(n=4):
@@ -4675,8 +4687,13 @@ def plot_coupling_transitions(n=4):
     print(len(np.where(np.sign(j_coupling_0-1/n) != np.sign(j_coupling_1-1/n))[0]))
     all_coups = np.row_stack((j_coupling_0, j_coupling_03, j_coupling_1))
     fig, ax = plt.subplots(1)
-    ax.plot(np.repeat(couplings, len(pars)).reshape(3, len(pars)), all_coups, marker='o', color='k', alpha=0.5)
-    ax.axhline(1/n)
+    idxs = np.sign(j_coupling_0-1/n) != np.sign(j_coupling_1-1/n)
+    color = ['k' if not idx else 'r' for idx in idxs]
+    alphas = [0.3 if not idx else 0.8 for idx in idxs]
+    for i in range(len(pars)):
+        ax.plot(couplings, all_coups[:, i], marker='o',
+                color=color[i], alpha=alphas[i])
+    ax.axhline(1/n, color='r', linewidth=3, linestyle='--', alpha=0.5)
 
 
 def compare_parameters_two_experiments():
@@ -4707,7 +4724,7 @@ def compare_parameters_two_experiments():
         heights = [np.nanmean(parameter_pairs[i_a][k]) for k in range(2)]
         barplot_annotate_brackets(0, 1, pvalue, [0, 1], heights, yerr=None, dh=.16, barh=.05, fs=10,
                                   maxasterix=3, ax=a)
-        sns.barplot(parameter_pairs[i_a], ax=a, linewidth=3, palette=colors)
+        sns.barplot(parameter_pairs[i_a], ax=a, linewidth=3, palette=colors, errorbar='se')
         sns.stripplot(parameter_pairs[i_a], ax=a, color='k', size=2.5)
         a.set_xticks(np.arange(2), ['']*2); a.set_ylabel(labels[i_a])
     # Create legend only once (not in the loop)
@@ -4820,18 +4837,18 @@ if __name__ == '__main__':
     # plot_noise_variables_vs_fitted_params(n=4, variable='freq4')
     # plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
     #                       ntraining=8, window_conv=1)
-    plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-                                  steps_back=120, steps_front=20,
-                                  shuffle_vals=[1, 0.7, 0],
-                                  avoid_first=False, window_conv=1,
-                                  filter_subjects=True, n=4)
-    # compare_parameters_two_experiments()
-    plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
-                                          shuffle_vals=[1., 0.7, 0.], ntrials=36,
-                                          steps_back=150, steps_front=20, avoid_first=False,
-                                          tFrame=26, window_conv=1,
-                                          fps=60, ax=None, hysteresis_area=True,
-                                          normalize_variables=True, ratio=1)
+    # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+    #                               steps_back=60, steps_front=20,
+    #                               shuffle_vals=[1, 0.7, 0],
+    #                               avoid_first=False, window_conv=1,
+    #                               filter_subjects=True, n=4)
+    compare_parameters_two_experiments()
+    # plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
+    #                                      shuffle_vals=[1., 0.7, 0.], ntrials=36,
+    #                                      steps_back=80, steps_front=20, avoid_first=False,
+    #                                      tFrame=26, window_conv=1,
+    #                                      fps=60, ax=None, hysteresis_area=True,
+    #                                      normalize_variables=True, ratio=1)
     # fitting_pipeline(n_simuls_network=100000, use_j0=False, contaminants=True,
     #                   fit=True, plot_lmm=False, plot_pars=True, simulate=True)
     # fitting_pipeline(n_simuls_network=100000, use_j0=True, contaminants=True,
