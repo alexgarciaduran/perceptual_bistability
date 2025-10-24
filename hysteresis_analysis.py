@@ -70,8 +70,6 @@ def load_data(data_folder, n_participants='all', filter_subjects=True):
     if type(n_participants) == str:
         df_0 = pd.DataFrame()
         for i in range(len(files)):
-            # if i in [4, 10, 15, 18, 19]:  # manually discard
-            #     continue
             df = pd.read_csv(files[i])
             df['subject'] = 's_' + str(i+1)
             if filter_subjects and \
