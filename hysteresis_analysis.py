@@ -4682,7 +4682,7 @@ def plot_params_distros():
 
 
 def plot_coupling_transitions(n=4):
-    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*fixed.npy')
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*fixed_v2.npy')
     j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
     j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
     couplings = [0, 0.3, 1]
@@ -4907,8 +4907,8 @@ if __name__ == '__main__':
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=29, sv_folder=SV_FOLDER)
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
-    fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=11, ntraining=8, t_dur=18,
-                    subj_ini=None, nbins=27, fitting_method='bads')
+    # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=11, ntraining=8, t_dur=18,
+    #                 subj_ini=None, nbins=27, fitting_method='bads')
     # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
     #                             n_pars_to_fit=30, n_sims_per_par=100,
     #                             sv_folder=SV_FOLDER, simulate=True,
