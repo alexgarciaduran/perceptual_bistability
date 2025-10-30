@@ -11,6 +11,7 @@ import scipy
 import matplotlib as mpl
 import matplotlib.pylab as pl
 from matplotlib.lines import Line2D
+from matplotlib.colors import LinearSegmentedColormap
 from loop_belief_prop_necker import discrete_DBN, Loopy_belief_propagation, dyn_sys_fbp
 from mean_field_necker import mean_field_stim, solution_mf_sdo_euler, dyn_sys_mf, backwards
 from gibbs_necker import gibbs_samp_necker, return_theta, occ_function_markov
@@ -37,7 +38,7 @@ THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
 
 DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/fitting/data/'  # Alex
 SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/fitting/parameters/'  # Alex
-
+COLORMAP = LinearSegmentedColormap.from_list('rg', ['firebrick', 'gainsboro', 'darkgreen'], N=128)
 
 def sigmoid(x):
     return 1/(1+np.exp(-x))
@@ -1355,12 +1356,12 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
             ax[i_c].set_title(f'Bimodal coef. = {beta},\npval = {p:.3e}', fontsize=14)
         if model_density:
             sns.violinplot(df_model_coup, x='stim_str', y=variable, ax=ax[i_c],
-                           palette='coolwarm_r', hue='stim_str',
+                           palette=COLORMAP, hue='stim_str',
                            legend=False, inner=None, split=False, bw_adjust=bw,
                            linewidth=0, cut=0)
         else:
             sns.violinplot(df_data_coup, x='stim_str', y=variable, ax=ax[i_c],
-                           palette='coolwarm_r', hue='stim_str',
+                           palette=COLORMAP, hue='stim_str',
                            legend=False, inner=None, split=False, bw_adjust=bw,
                            linewidth=0, cut=0)
         sns.swarmplot(df_data_coup, x='stim_str', y=variable, ax=ax[i_c],
@@ -1370,13 +1371,13 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
         # ax[i_c].plot([0, 3, 6], stim_str*slope+intercept, color='gray', linestyle='--', alpha=0.7)
         if plot_all:
             sns.violinplot(df_model_coup, x='stim_str', y=variable, ax=ax[i_c+3],
-                           palette='coolwarm_r', hue='stim_str',
+                           palette=COLORMAP, hue='stim_str',
                            legend=False, inner=None, split=False, bw_adjust=bw,
                            linewidth=0)
             sns.swarmplot(df_model_coup, x='stim_str', y=variable, ax=ax[i_c+3],
                           color='k', size=s, legend=False, alpha=0.8)
             sns.violinplot(df_null_coup, x='stim_str', y=variable, ax=ax[i_c+6],
-                           palette='coolwarm_r', hue='stim_str',
+                           palette=COLORMAP, hue='stim_str',
                            legend=False, inner=None, split=False, bw_adjust=bw,
                            linewidth=0)
             sns.swarmplot(df_null_coup, x='stim_str', y=variable, ax=ax[i_c+6],
@@ -2581,8 +2582,8 @@ if __name__ == '__main__':
     #                                bic=True)
     # plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
-    plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
-                                   data_only=True)
+    # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
+    #                                data_only=True)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=False)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
@@ -2599,8 +2600,8 @@ if __name__ == '__main__':
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF', method=opt_algorithm,
     #                     band_width=0.7, sort_by_j=True)
-    # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
-    #                         bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30
+    plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
+                            bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,

@@ -18,6 +18,7 @@ import matplotlib.pylab as pl
 import matplotlib as mpl
 from matplotlib.transforms import Affine2D
 from matplotlib.markers import MarkerStyle
+from matplotlib.colors import LinearSegmentedColormap
 import sympy
 from matplotlib.lines import Line2D
 from sklearn.metrics import roc_curve, auc, roc_auc_score
@@ -52,7 +53,7 @@ elif pc_name == 'alex_CRM':
 
 # theta matrix
 theta = gn.THETA
-
+COLORMAP = LinearSegmentedColormap.from_list('rg', ['darkgreen', 'gainsboro', 'firebrick'], N=128)
 
 def mean_field(J, num_iter, sigma=1):
     #initialize random state of the cube
@@ -1374,7 +1375,7 @@ def plot_mf_evolution_all_nodes(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2,
         else:
             x = time[:len(vals)][::50]
             y = vals[::50]
-        line = colored_line(x, y, y, ax, linewidth=2, cmap='coolwarm_r', 
+        line = colored_line(x, y, y, ax, linewidth=2, cmap=COLORMAP, 
                             norm=plt.Normalize(vmin=0,vmax=1))
         # ax.plot(time[:len(vals)][::400], vals[::400], color='k')
     ax.set_ylim(-0.05, 1.05)
@@ -5867,7 +5868,7 @@ if __name__ == '__main__':
     #                                       theta=theta)
     # plot_solutions_mfield(j_list=np.arange(0.001, 1.01, 0.001), stim=0, N=3,
     #                       plot_approx=False)
-    # plot_3_examples_mf_evolution(avg=True)
+    plot_3_examples_mf_evolution(avg=True)
     # examples_pot()
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0., 1.005, 0.001),
     #                        num_iter=200, neigh_list=np.arange(3, 11),
@@ -5948,12 +5949,12 @@ if __name__ == '__main__':
     #                                           b=b, theta=theta, num_iter=20)
     # cp_vs_coupling_random_neurons(j_list=np.arange(0, 0.6, 0.05), rand_neur_list=[False, 8, 16, 32],
     #                               nsimuls=2000, noise=0.15, load_sims=True)
-    cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.15],
-                          nsimuls=200, load_sims=True, inset=False, cylinder=True,
-                          barplot=True)
-    plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
-                                            j_list=np.arange(0, 1.01, 0.02),
-                                            nsims=20, load_data=True, sigma=0.2,
-                                            long=True, cylinder=True, inset=False,
-                                            barplot=True)
+    # cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.15],
+    #                       nsimuls=200, load_sims=True, inset=False, cylinder=True,
+    #                       barplot=True)
+    # plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
+    #                                         j_list=np.arange(0, 1.01, 0.02),
+    #                                         nsims=20, load_data=True, sigma=0.2,
+    #                                         long=True, cylinder=True, inset=False,
+    #                                         barplot=True)
     # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
