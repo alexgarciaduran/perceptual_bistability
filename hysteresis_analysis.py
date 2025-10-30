@@ -4515,7 +4515,7 @@ def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
             params = np.full(6, np.nan)
         # Convert to a numpy array for ease
         params = np.asarray(params)
-        np.save(SV_FOLDER + f'fitted_params/ndt/fitted_params_pyddm_{subject}_ndts_fixed_v2.npy', params)
+        np.save(SV_FOLDER + f'fitted_params/fitted_with_preprocessed_data_more_bins/fitted_params_pyddm_{subject}_fixed_ndt_preprocessed.npy', params)
 
 
 def plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
@@ -5849,8 +5849,8 @@ if __name__ == '__main__':
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=29, sv_folder=SV_FOLDER)
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
-    # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=11, ntraining=8, t_dur=18,
-    #                 subj_ini=None, nbins=27, fitting_method='bads')
+    fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=12, ntraining=8, t_dur=13,
+                   subj_ini=None, nbins=54, fitting_method='bads')
     # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
     #                             n_pars_to_fit=30, n_sims_per_par=100,
     #                             sv_folder=SV_FOLDER, simulate=True,
