@@ -53,7 +53,7 @@ plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
 
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/data/'  # Alex
     SV_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/hysteresis/parameters/'  # Alex
@@ -168,7 +168,7 @@ def preprocess_time_series(df, dt=1/60, no_press_threshold=0.3):
         for i, (s, e, val, L) in enumerate(zip(starts, ends, segment_values, lengths)):
             if val == 0 and L <= n_thresh and i + 1 < len(segment_values):
                 next_val = segment_values[i + 1]
-                r[s:e] = next_val
+                r[s:e+1] = next_val
 
         sub_df["responses"] = r
         processed_dfs.append(sub_df)
@@ -525,7 +525,7 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
             ax[1].plot(x_asc, y_asc, color=colormap[i_c], linewidth=4)
             ax[1].plot(x_desc, y_desc, color=colormap[i_c], linewidth=4)
     sns.barplot(hyst_width_4.T, palette=colormap, ax=ax4, errorbar="se")
-    ax4.set_ylim(np.min(np.mean(hyst_width_4, axis=1))-0.25, np.max(np.mean(hyst_width_4, axis=1))+0.2)
+    ax4.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.54)
     heights = np.nanmean(hyst_width_2.T, axis=0)
     bars = np.arange(3)
     pv_sh012 = scipy.stats.ttest_ind(hyst_width_2[0], hyst_width_2[1]).pvalue
@@ -1702,49 +1702,6 @@ def noise_bf_switch_coupling(load_sims=False, coup_vals=np.arange(0.05, 0.35, 1e
     fig3.tight_layout()
 
 
-def get_kernel(d, chi, nFrame):
-    """
-    """
-    chi_mean = np.mean(chi, axis=0)  # (T,)
-    d_mean = np.mean(d, axis=0)  # (T,)
-    chi_var = np.var(chi, axis=0)    # (T,)
-    kern = np.zeros((nFrame))
-    for t in range(nFrame):
-        cov = np.mean((chi[:, t] - chi_mean[t]) * (d[:, t] - d_mean[t]))
-        if chi_var[t] > 0:
-            kern[t] = cov / chi_var[t]
-        else:
-            kern[t] = 0  # avoid divide by zero
-    return kern
-
-
-def plot_psych_kernels(data_folder=DATA_FOLDER, fps=60, tFrame=15,
-                       shuffle_vals=[1, 0.7, 0]):
-    nFrame = fps*tFrame
-    df = load_data(data_folder + '/noisy/', n_participants='all')
-    colormap = pl.cm.Oranges(np.linspace(0.3, 1, 3))[::-1]
-    kernels = np.zeros((len(shuffle_vals), nFrame))
-    for i_sh, pshuffle in enumerate(shuffle_vals):
-        df_coupling = df.loc[df.pShuffle == pshuffle]
-        trial_index = df_coupling.trial_index.unique()
-        chi = df_coupling.stimulus.values.reshape((len(trial_index), nFrame))
-        d = df_coupling.responses.values.astype(np.float32)
-        d = d.reshape((len(trial_index), nFrame))-1
-        kern = get_kernel(d, chi, nFrame=nFrame)
-        kernels[i_sh] = kern
-    fig, ax = plt.subplots(1)
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
-    for i_sh, pshuffle in enumerate(shuffle_vals):
-        ax.plot(np.arange(nFrame)/fps,
-                kernels[i_sh, :], color=colormap[i_sh], label=pshuffle, linewidth=3)
-    ax.legend(title='p(shuffle)')
-    ax.set_xlabel('Time (s)')
-    ax.set_ylabel('P.K.')
-    ax.set_ylim(-1, 1)
-    fig.tight_layout()
-
-
 def stars_pval(pval):
     s = 'n.s.'
     if pval < 0.05 and pval >= 0.01:
@@ -1758,6 +1715,157 @@ def stars_pval(pval):
 
 def decision_kernel(t, A, tau, sigma, baseline):
     return A * np.exp(-((t + tau)**2) / (2 * sigma**2)) + baseline
+
+
+def compute_incongruent_switches(df, nFrame=1560, dt=1/60):
+    """
+    Compute incongruent perceptual switches per subject and trial.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame or structured array
+        Must contain columns:
+        ['subject', 'trial_index', 'response', 'freq', 'initial_side', 'pShuffle']
+        response: 1D np.ndarray or list of 1/2 responses per frame.
+    nFrame : int
+        Number of frames in each trial.
+
+    Returns
+    -------
+    results : list of dict
+        One dict per trial with incongruent switch information.
+    """
+    subjects = df['subject'].unique()
+    results = []
+    mean_per_sub_coupling = np.zeros((3, 35))
+    for i_sub, subj in enumerate(subjects):
+        df_subj = df.loc[df['subject'] == subj]
+        # df_subj = df_subj.loc[df_subj.freq == 2]
+        trial_index = df_subj.trial_index.unique()
+        for trial in trial_index:
+            df_trial = df_subj.loc[df_subj['trial_index'] == trial]
+            df_trial = df_trial.loc[df_trial.keypress_seconds_onset < 26]
+
+            # single-trial info
+            freq = df_trial.freq.values[0]
+            side = df_trial.initial_side.values[0]
+            pShuffle = df_trial.pShuffle.values[0]
+            
+            # reconstruct stimulus trajectory
+            stim = get_blist(freq * side, nFrame)
+            time_array = np.arange(nFrame) * dt  # approximate time vector
+
+            # compute switches between consecutive dominance periods
+            n_switches = len(df_trial) - 1
+            n_incongruent = 0
+
+            for i in range(n_switches):
+                prev_r = df_trial['response'].iloc[i]
+                new_r = df_trial['response'].iloc[i+1]
+
+                # stimulus change over the interval
+                t_start = df_trial['keypress_seconds_onset'].iloc[i+1]
+                t_end = df_trial['keypress_seconds_offset'].iloc[i+1]
+                idx_start = int(np.searchsorted(time_array, t_start))
+                idx_end = int(np.searchsorted(time_array, t_end))
+                delta_stim = stim[idx_end-1] - stim[idx_start]
+
+                # detect incongruency
+                if prev_r == 1 and new_r == 2:
+                    congruent = delta_stim > 0
+                elif prev_r == 2 and new_r == 1:
+                    congruent = delta_stim < 0
+                else:
+                    continue
+
+                if not congruent:
+                    n_incongruent += 1
+
+            frac_incongruent = n_incongruent / n_switches if n_switches > 0 else np.nan
+
+            results.append({
+                'subject': subj,
+                'trial_index': trial,
+                'freq': freq,
+                'initial_side': side,
+                'pShuffle': pShuffle,
+                'n_switches': n_switches,
+                'n_incongruent': n_incongruent,
+                'frac_incongruent': frac_incongruent
+            })
+        resdf = pd.DataFrame(results).loc[pd.DataFrame(results).subject == subj]
+        pshs = resdf.groupby('pShuffle')['frac_incongruent'].mean().index.values
+        inc_switchrate = resdf.groupby('pShuffle')['frac_incongruent'].mean().values
+        for i_psh, pshuff in enumerate([1., 0.7, 0.]):
+            idx_psh = pshs == pshuff
+            mean_per_sub_coupling[idx_psh, i_sub] = inc_switchrate[idx_psh]
+
+    return pd.DataFrame(results)
+
+
+def plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+                                                    simulated=False):
+    df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=True)
+    subs = df.subject.unique()
+    fig, ax = plt.subplots(nrows=len(subs)//5, ncols=5, figsize=(14, 10), sharex=True)
+    ax = ax.flatten()
+    responses_all = np.load(SV_FOLDER + 'responses_simulated_noise.npy')
+    map_resps = {-1:1, 0:0, 1:2}
+    doms_all_subs = []
+    dom_per_coupling = []
+    for i_sub, subject in enumerate(subs):
+        ax[i_sub].spines['right'].set_visible(False)
+        ax[i_sub].spines['top'].set_visible(False)
+        df_sub = df.loc[df.subject == subject]
+        dominances = {0: [], 1: [], 2: []}
+        trial_index = df_sub.trial_index.unique()
+        dom_coup = {1.: [], 0.7: [], 0.: []}
+        for i_trial, trial in enumerate(trial_index):
+            df_trial = df_sub.loc[df_sub.trial_index == trial]
+            r = df_trial.responses.values
+            if simulated:
+                r = [map_resps[resp] for resp in responses_all[i_sub, i_trial]]
+            change = np.r_[True, np.diff(r) != 0, True]
+            starts = np.where(change[:-1])[0]
+            ends = np.where(change[1:])[0]
+            segment_values = np.array([r[s] for s in starts])
+            lengths = np.array(ends - starts)
+            psh = df_trial.pShuffle.values[0]
+            dom_coup[psh].append(np.nanmedian(lengths[segment_values != 0]))
+            for i in [0, 1, 2]:
+                dominances[i].append(lengths[segment_values == i])
+        dominances = [np.concatenate(dominances[i])/fps for i in range(3)]
+        dom_per_coupling.append(dom_coup)
+        doms_all_subs.append([np.nanmean(dominances[i]) for i in range(3)])
+        # sns.kdeplot(dominances[0], color='gray', linewidth=4, ax=ax[i_sub], label='No')
+        sns.kdeplot(dominances[1], color='darkgreen', linewidth=4, ax=ax[i_sub], label='L',
+                    cut=0)
+        sns.kdeplot(dominances[2], color='firebrick', linewidth=4, ax=ax[i_sub], label='R',
+                    cut=0)
+        ax[i_sub].set_xlabel('Dominance (s)')
+        ax[i_sub].set_ylabel('')
+    ax[0].set_ylabel('Density')
+    ax[0].legend(frameon=False)
+    fig.tight_layout()
+    f2, ax2 = plt.subplots(1, figsize=(4, 3.5))
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    doms_all = np.row_stack((doms_all_subs))
+    sns.kdeplot(doms_all[:, 1], color='darkgreen', linewidth=4, ax=ax2, label='L',
+                cut=0)
+    sns.kdeplot(doms_all[:, 2], color='firebrick', linewidth=4, ax=ax2, label='R',
+                cut=0)
+    ax2.legend(frameon=False); ax2.set_xlabel('Dominance (s)'); f2.tight_layout()
+    f3, a3 = plt.subplots(1, figsize=(4, 3.5))
+    pshuffs = [1., 0.7, 0.]
+    a3.spines['right'].set_visible(False)
+    a3.spines['top'].set_visible(False)
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    for i in range(3):
+        dominance_psh = [np.nanmean(dom_per_coupling[k][pshuffs[i]])/fps for k in range(len(subs))]
+        sns.kdeplot(dominance_psh, linewidth=4, color=colormap[i], label=pshuffs[i],
+                    )
+    a3.legend(frameon=False, title='p(shuffle)'); a3.set_xlabel('Dominance (s)'); f3.tight_layout()
 
 
 def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
@@ -1797,18 +1905,25 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
         df_sub = df.loc[df.subject == subject]
         mean_vals_noise_switch_all_shuffles_subject = np.empty((1, steps_back+steps_front))
         mean_vals_noise_switch_all_shuffles_subject[:] = np.nan
+        dominances = {1: [], 2: []}
         for i_sh, pshuffle in enumerate(shuffle_vals):
             df_coupling = df_sub.loc[df_sub.pShuffle == pshuffle]
             trial_index = df_coupling.trial_index.unique()
             # mean_vals_noise_switch_all_trials = np.empty((len(trial_index), steps_back+steps_front))
             mean_vals_noise_switch_all_trials = np.empty((1, steps_back+steps_front))
             mean_vals_noise_switch_all_trials[:] = np.nan
-            # latency = []
-            # height = []
             number_switches = []
             for i_trial, trial in enumerate(trial_index):
                 df_trial = df_coupling.loc[df_coupling.trial_index == trial]
                 responses = df_trial.responses.values
+                r = np.copy(responses)
+                change = np.r_[True, np.diff(r) != 0, True]
+                starts = np.where(change[:-1])[0]
+                ends = np.where(change[1:])[0]
+                segment_values = np.array([r[s] for s in starts])
+                lengths = np.array(ends - starts)
+                for i in [1, 2]:
+                    dominances[i].append(lengths[segment_values == i])
                 chi = df_trial.stimulus.values
                 # chi = chi-np.nanmean(chi)
                 orders = rle(responses)
@@ -2747,15 +2862,8 @@ def simulator_5_params(params, freq, nFrame=1560, fps=60,
     Simulator. Takes set of `params` and simulates the system, returning summary statistics.
     Params: J_eff, B_eff, tau, threshold distance, noise
     """
-    if abs(freq) == 2:
-        difficulty_time_ref_2 = np.linspace(-2, 2, nFrame//2)
-        stimulus = np.concatenate((difficulty_time_ref_2, -difficulty_time_ref_2))
-    if abs(freq) == 4:
-        difficulty_time_ref_4 = np.linspace(-2, 2, nFrame//4)
-        stimulus = np.concatenate((difficulty_time_ref_4, -difficulty_time_ref_4,
-                                   difficulty_time_ref_4, -difficulty_time_ref_4))
-    if freq < 0:
-        stimulus = -stimulus
+    t = np.arange(0, nFrame, 1)/fps
+    stimulus = sawtooth(2 * np.pi * abs(freq)/2 * t/26, 0.5)*2*np.sign(freq)
     j_eff, b_par, th, sigma, ndt = params  # add ndt
     lower_bound, upper_bound = np.array([-1, 1])*th + 0.5
     tau = 1
@@ -2798,9 +2906,6 @@ def simulator_5_params(params, freq, nFrame=1560, fps=60,
 
         # delayed decision
         choice[t] = prev_choice
-    # plt.figure()
-    # plt.plot(x); plt.plot(choice/2+0.5); plt.plot(stimulus/4+0.5); plt.axhline(lower_bound, alpha=0.3, linestyle='--'); plt.axhline(upper_bound, alpha=0.3, linestyle='--')
-    # asd
     if return_choice:
         return choice, x
     else:
@@ -3972,9 +4077,9 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         left, bottom, width, height = [0.9, 0.27, 0.12, 0.2]
         ax_11 = f2.add_axes([left, bottom, width, height])
         sns.barplot(hyst_width_2.T, palette=colormap, ax=ax_01, errorbar='se')
-        ax_01.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.4)
+        ax_01.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.5)
         sns.barplot(hyst_width_4.T, palette=colormap, ax=ax_11, errorbar='se')
-        ax_11.set_ylim(np.min(np.mean(hyst_width_4, axis=1))-0.25, np.max(np.mean(hyst_width_4, axis=1))+0.5)
+        ax_11.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.5)
         heights = np.nanmean(hyst_width_2.T, axis=0)
         bars = np.arange(3)
         pv_sh012 = scipy.stats.ttest_ind(hyst_width_2[0], hyst_width_2[1]).pvalue
@@ -3986,17 +4091,17 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
                                   maxasterix=3, ax=ax_01)
         barplot_annotate_brackets(1, 2, pv_sh122, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
                                   maxasterix=3, ax=ax_01)
-        heights = np.nanmean(hyst_width_4.T, axis=0)
-        bars = np.arange(3)
-        pv_sh012 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[1]).pvalue
-        pv_sh022 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[2]).pvalue
-        pv_sh122 = scipy.stats.ttest_ind(hyst_width_4[1], hyst_width_4[2]).pvalue
-        barplot_annotate_brackets(0, 1, pv_sh012, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
-                                  maxasterix=3, ax=ax_11)
-        barplot_annotate_brackets(0, 2, pv_sh022, bars, heights, yerr=None, dh=.39, barh=.05, fs=10,
-                                  maxasterix=3, ax=ax_11)
-        barplot_annotate_brackets(1, 2, pv_sh122, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
-                                  maxasterix=3, ax=ax_11)
+        # heights = np.nanmean(hyst_width_4.T, axis=0)
+        # bars = np.arange(3)
+        # pv_sh012 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[1]).pvalue
+        # pv_sh022 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[2]).pvalue
+        # pv_sh122 = scipy.stats.ttest_ind(hyst_width_4[1], hyst_width_4[2]).pvalue
+        # barplot_annotate_brackets(0, 1, pv_sh012, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
+        #                           maxasterix=3, ax=ax_11)
+        # barplot_annotate_brackets(0, 2, pv_sh022, bars, heights, yerr=None, dh=.39, barh=.05, fs=10,
+        #                           maxasterix=3, ax=ax_11)
+        # barplot_annotate_brackets(1, 2, pv_sh122, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
+        #                           maxasterix=3, ax=ax_11)
         for a in [ax_01, ax_11]:
             a.spines['right'].set_visible(False)
             a.spines['top'].set_visible(False)
@@ -4004,6 +4109,8 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
             a.set_ylabel('Hysteresis', fontsize=11); a.set_yticks([])
 
         f2.tight_layout()
+        f2.savefig(SV_FOLDER + 'simulated_hysteresis_average.png', dpi=400, bbox_inches='tight')
+        f2.savefig(SV_FOLDER + 'simulated_hysteresis_average.svg', dpi=400, bbox_inches='tight')
         hyst_width_2_data = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
         hyst_width_4_data = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
         fitted_subs = len(subjects)
@@ -4102,6 +4209,8 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         ax3.set_ylabel('Width freq = 4')
         ax3.set_xlabel('Width freq = 2')
         fig3.tight_layout()
+        fig3.savefig(SV_FOLDER + 'simulated_hysteresis_f4_vs_f2.png', dpi=400, bbox_inches='tight')
+        fig3.savefig(SV_FOLDER + 'simulated_hysteresis_f4_vs_f2.svg', dpi=400, bbox_inches='tight')
 
 
 def prepare_data_for_fitting(df_subject, fps=60, tFrame=26):
@@ -4163,20 +4272,19 @@ def plot_fitted_params(data_folder=DATA_FOLDER, n_simuls_network=50000,
     # fig2.tight_layout()
 
 
-def plot_j1_lmm_slopes(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER, n_simuls_network=50000,
-                       use_j0=True):
-    label_j0 = '_with_j0' if use_j0 else ''
+def plot_j1_lmm_slopes(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER):
     intercepts_2, slopes_2, _ =\
         lmm_hysteresis_dominance(freq=2, plot_summary=False,
-                                 slope_random_effect=True, plot_individual=False)
+                                 slope_random_effect=False, plot_individual=False)
     intercepts_4, slopes_4, _ =\
         lmm_hysteresis_dominance(freq=4, plot_summary=False,
-                                 slope_random_effect=True, plot_individual=False)
+                                 slope_random_effect=False, plot_individual=False)
     df = load_data(data_folder, n_participants='all')
     subjects = df.subject.unique()
     pars_all = np.zeros((5, len(subjects)))
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     for i_s, subject in enumerate(subjects):
-        fitted_params = np.load(sv_folder + '/pars_5_subject_' + subject + str(n_simuls_network) + label_j0 + '.npy')
+        fitted_params = np.load(pars[i_s])
         pars_all[:, i_s] = fitted_params
     df_all_pars = pd.DataFrame({'J0': pars_all[0], 'J1': pars_all[1],
                                 'B1': pars_all[2], '\theta': pars_all[3],
@@ -4572,17 +4680,17 @@ def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
 
 
 def plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
-                          ntraining=8, n=4, window_conv=None):
-    # np.random.seed(0)  # 24, 42, 13, 1234, 11  10with1000
+                          ntraining=8, n=4, window_conv=None, fps=60):
+    np.random.seed(50)  # 24, 42, 13, 1234, 11  10with1000
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     print(len(pars), ' fitted subjects')
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]
     # print('J1, J0, B1, Sigma, Threshold')
-    simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
+    simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=fps,
                        sv_folder=SV_FOLDER, ntraining=ntraining,
-                       plot=True, simulate=True, use_j0=True, subjects=None,
+                       plot=True, simulate=False, use_j0=True, subjects=None,
                        fitted_params_all=fitted_params_all, window_conv=window_conv)
 
 
@@ -4951,8 +5059,10 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
     fig.tight_layout()
 
 
-def plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False):
+def lmm_dominance_regime(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False):
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
+    j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
     if simulations:
         mean_number_switchs_coupling = np.load(DATA_FOLDER + 'simulated_mean_number_switches_per_subject.npy')
         dh = 0.6
@@ -4961,26 +5071,84 @@ def plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False
         dh = .5
     print(len(pars), ' fitted subjects')
     fitted_params_all = [np.load(par) for par in pars]
-    fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all]
+    j_coupling_0 = (j0s)
+    j_coupling_03 = (j1s*0.3+j0s)
+    j_coupling_1 = (j1s+j0s)
+    print(len(np.where(np.sign(j_coupling_0-1/n) != np.sign(j_coupling_1-1/n))[0]))
+    all_coups = np.row_stack((j_coupling_0, j_coupling_03, j_coupling_1))
+    fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
     unique_shuffle = np.array(unique_shuffle)
-    fitted_subs = len(pars)
+    fitted_subs = fitted_params_all.shape[0]
+    jeffs = np.zeros((3, fitted_subs))
+    bistable_stim_2_dominance = []
+    monostable_stim_2_dominance = []
+    subjects = []
+    conditions = []
+    for i in range(fitted_subs):
+        jeffs[:, i] = (fitted_params_all[i][0]*(1-unique_shuffle)+fitted_params_all[i][1])
+        for k in range(3):
+            subjects.append(i)
+            conditions.append(unique_shuffle[k])
+    jeffs_mask = jeffs >= 1  # 1/n
+    bistable_stim_2_dominance = mean_number_switchs_coupling[:, :fitted_subs].flatten()[jeffs_mask.flatten()]
+    monostable_stim_2_dominance = mean_number_switchs_coupling[:, :fitted_subs].flatten()[~jeffs_mask.flatten()]
+    dominances = mean_number_switchs_coupling.flatten()
+    regimes = jeffs_mask.flatten()*1.
+    df = pd.DataFrame({"x": regimes,
+                       "y": dominances,
+                       "subject": subjects})
+    re_formula = "~x"
+    model = smf.mixedlm("y ~ x", df, groups=df["subject"],
+                        re_formula=re_formula)
+    result = model.fit()
+    fe = result.fe_params
+    re = result.random_effects
+    # get intercepts/slopes per subject
+    intercepts = [fe["Intercept"] + eff.get("Group", 0) for subj, eff in re.items()]
+    slopes = [fe["x"] + eff.get("x", 0) for subj, eff in re.items()]
+    print(result.summary())
+
+
+def plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False):
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
+    j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
+    if simulations:
+        mean_number_switchs_coupling = np.load(DATA_FOLDER + 'simulated_mean_number_switches_per_subject.npy')
+        dh = 0.45
+    else:
+        mean_number_switchs_coupling = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+        dh = .3
+    print(len(pars), ' fitted subjects')
+    fitted_params_all = [np.load(par) for par in pars]
+    j_coupling_0 = (j0s)
+    j_coupling_03 = (j1s*0.3+j0s)
+    j_coupling_1 = (j1s+j0s)
+    print(len(np.where(np.sign(j_coupling_0-1/n) != np.sign(j_coupling_1-1/n))[0]))
+    all_coups = np.row_stack((j_coupling_0, j_coupling_03, j_coupling_1))
+    # fig, ax = plt.subplots(1, figsize=(6, 4.5))
+    # idxs = np.sign(j_coupling_0-1/n) != np.sign(j_coupling_1-1/n)
+    # mean_number_switchs_coupling = mean_number_switchs_coupling[:, idxs]
+    fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
+    unique_shuffle = np.array(unique_shuffle)
+    fitted_subs = fitted_params_all.shape[0]
     jeffs = np.zeros((3, fitted_subs))
     bistable_stim_2_dominance = []
     monostable_stim_2_dominance = []
     for i in range(fitted_subs):
         jeffs[:, i] = (fitted_params_all[i][0]*(1-unique_shuffle)+fitted_params_all[i][1])
-        # dom_bis = np.nanmean(mean_number_switchs_coupling[:, i][jeffs[:, i] >= 1])
-        # dom_mono = np.nanmean(mean_number_switchs_coupling[:, i][jeffs[:, i] < 1])
-        # if not np.isnan(dom_bis):
-        #     bistable_stim_2_dominance.append(dom_bis)
-        # if not np.isnan(dom_mono):
-        #     monostable_stim_2_dominance.append(dom_mono)
+        dom_bis = np.nanmean(mean_number_switchs_coupling[:, i][jeffs[:, i] >= 1])
+        dom_mono = np.nanmean(mean_number_switchs_coupling[:, i][jeffs[:, i] < 1])
+        if not np.isnan(dom_bis):
+            bistable_stim_2_dominance.append(dom_bis)
+        if not np.isnan(dom_mono):
+            monostable_stim_2_dominance.append(dom_mono)
     jeffs_mask = jeffs >= 1  # 1/n
     # mean_peak_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
     # mean_peak_latency = np.load(DATA_FOLDER + 'mean_peak_latency_per_subject.npy')
     # mean_number_switchs_coupling = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
-    bistable_stim_2_dominance = mean_number_switchs_coupling[:, :fitted_subs].flatten()[jeffs_mask.flatten()]
-    monostable_stim_2_dominance = mean_number_switchs_coupling[:, :fitted_subs].flatten()[~jeffs_mask.flatten()]
+    # bistable_stim_2_dominance = mean_number_switchs_coupling[:, :fitted_subs].flatten()[jeffs_mask.flatten()]
+    # monostable_stim_2_dominance = mean_number_switchs_coupling[:, :fitted_subs].flatten()[~jeffs_mask.flatten()]
     fig5, ax5 = plt.subplots(ncols=1, figsize=(3.5, 4))
     ax5.spines['right'].set_visible(False); ax5.spines['top'].set_visible(False)
     sns.barplot([bistable_stim_2_dominance, monostable_stim_2_dominance], palette=['peru', 'cadetblue'], ax=ax5)
@@ -5056,6 +5224,21 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance'):
         ax[i].set_xlabel('Fitted J = (1-p(sh))*J1 + J0')
     ax[0].set_ylabel(label)
     fig.tight_layout()
+
+
+def plot_params_corrs():
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    fitted_subs = len(pars)
+    b1s = [np.load(par)[2] for par in pars]
+    sigmas = np.array([np.load(par)[3] for par in pars])
+    thetas = [np.load(par)[4] for par in pars]
+    j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
+    j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
+    dat = pd.DataFrame({'J0': j0s, 'J1': j1s,
+                        'B1': b1s, 'Theta': thetas,
+                        'Sigma': sigmas})
+    g = sns.pairplot(dat)
+    g.map_lower(corrfunc)
 
 
 def plot_params_distros(ndt=False):
@@ -5155,6 +5338,40 @@ def compare_parameters_two_experiments():
                  bbox_to_anchor=[0.7, 0.8])
 
 
+def hysteresis_vs_bimodality():
+    folder_bimodal = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/fitting/parameters/'  # Alex
+    bimodal_coef = np.load(folder_bimodal + 'bimodality_coefficient.npy')
+    mean_peak_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
+    mean_peak_latency = np.load(DATA_FOLDER + 'mean_peak_latency_per_subject.npy')
+    mean_number_switchs_coupling = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+    hyst_width_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
+    hyst_width_4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
+    fig, ax = plt.subplots(ncols=3, figsize=(9.2, 4))
+    for a in ax:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    sns.barplot(bimodal_coef.T, palette=colormap, errorbar='se', ax=ax[0])
+    sns.barplot(hyst_width_2.T, palette=colormap, errorbar='se', ax=ax[1])
+    sns.barplot(mean_number_switchs_coupling.T, palette=colormap, errorbar='se', ax=ax[2])
+    ax[0].plot(np.nanmedian(bimodal_coef, axis=1), color='firebrick', linewidth=4)
+    ax[1].plot(np.nanmedian(hyst_width_2, axis=1), color='firebrick', linewidth=4)
+    ax[2].plot(np.nanmedian(mean_number_switchs_coupling, axis=1), color='firebrick', linewidth=4)
+    ax[0].axhline(5/9, color='gray', linestyle='--', linewidth=3)
+    ax[0].set_ylim(0.5, 0.67);  ax[1].set_ylim(0.85, 1.62);  ax[2].set_ylim(5.5, 9)
+    ax[0].set_ylabel("Snarle's bimodality coefficient")
+    ax[2].set_ylabel("Dominance duration (s)")
+    ax[0].set_yticks([0.5, 5/9, 0.6], ['0.5', '5/9', '0.6'])
+    ax[0].set_xticks([0, 1, 2], [1., 0.7, 0.]); ax[0].set_xlabel('p(shuffle)');
+    ax[2].set_xlabel('p(shuffle)')
+    ax[1].set_xlabel('p(shuffle)');  ax[1].set_ylabel('Hysteresis f=2')
+    handles = [mpatches.Patch(color=colormap[0], label='1.'),
+               mpatches.Patch(color=colormap[1], label='0.7'),
+               mpatches.Patch(color=colormap[2], label='0.')]
+    ax[0].legend(handles=handles,frameon=False,
+                 title='p(shuffle)')
+    fig.tight_layout()
+    
+
 def similarity_params(folder_2='ndt_fixed_15_tdur_good_comb'):
     pars_ndt = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     pars = glob.glob(SV_FOLDER + f'fitted_params/{folder_2}/' + '*.npy')[:len(pars_ndt)]
@@ -5216,8 +5433,10 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
     fitted_subs = len(pars)
+    # idxs = [(par[4] < 0.25)*(par[3] < 0.1) for par in fitted_params_all]
+    # fitted_params_all = fitted_params_all[idxs]
     df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=filter_subjects)
-    subs = df.subject.unique()[:fitted_subs]
+    subs = df.subject.unique()[:fitted_subs]  # [idxs]
     print(subs, ', number:', len(subs))
     mean_vals_noise_switch_coupling = np.empty((2, steps_back+steps_front, len(subs)))
     mean_vals_noise_switch_coupling[:] = np.nan
@@ -5309,18 +5528,18 @@ def plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFra
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     if variable == 'J0':
         var = [np.load(par)[1] for par in pars]
-        bins = [-0.1, 0.12, 0.3, 1/2]
+        bins = [-0.1, 0.12, 0.2, 1/2]
         # bins = np.percentile(var, (0, 25, 50, 75, 100))
         colormap = pl.cm.Oranges(np.linspace(0.3, 1, len(bins)))
     if variable == 'B1':
         var = [np.load(par)[2] for par in pars]
-        bins = [0, 0.2, 0.6, 0.8]
+        bins =  [0, 0.2, 0.6, 0.8]
         # bins = np.percentile(var, (0, 33, 66, 100))
         colormap = pl.cm.Greens(np.linspace(0.3, 1, len(bins)))
     if variable == 'THETA':
         var = [np.load(par)[4] for par in pars]
         bins = np.percentile(var, (0, 33, 66, 100))+np.array([-1e-6, 0, 0, 1e-6])
-        bins = [0., 0.01, 0.15, 0.3]
+        bins = [0., 0.02, 0.3]
         colormap = pl.cm.Blues(np.linspace(0.3, 1, len(bins)))
     if variable == 'SIGMA':
         var = [np.load(par)[3] for par in pars]
@@ -5331,7 +5550,7 @@ def plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFra
         var = [np.load(par)[0] for par in pars]
         bins = np.percentile(var, (0, 1/3*100, 100*2/3, 100))+np.array([-1e-6, 0, 0, 1e-6])
         colormap = pl.cm.Reds(np.linspace(0.3, 1, len(bins)))
-    label_save_fig = 'simulation' if simulated else ''
+    label_save_fig = '/kernel_vs_params/simulation' if simulated else '/kernel_vs_params/'
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
     fitted_subs = len(pars)
@@ -5935,21 +6154,289 @@ def plot_dominance_subjects_vs_model():
     plt.plot(normalized_dominance_data.flatten(), normalized_dominance_model.flatten(), color='k', marker='o',
              linestyle='')
 
+
+def compute_dominance_durations(df):
+    """
+    Compute dominance durations for each response state (1=left, 2=right),
+    grouped by subject and p_shuffle condition.
+    """
+    df = df.copy()
+    df["duration"] = df["keypress_seconds_offset"] - df["keypress_seconds_onset"]
+    df = df[df["response"] != 0]  # ignore no-press periods
     
+    durations = (
+        df.groupby(["subject", "pShuffle", "response"], sort=False)["duration"]
+        .apply(list)
+        .reset_index()
+    )
+    return durations
+
+
+def plot_dominance_durations(data_folder=DATA_FOLDER,
+                             ntraining=8, freq=2):
+
+    df = load_data(data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+    nsubs = len(subjects)
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    durations_df = compute_dominance_durations(df.loc[df.freq.abs() == freq])
+
+    
+    fig, axes = plt.subplots(nrows=nsubs//5, ncols=5, figsize=(13, 10), sharex=True)
+    axes = axes.flatten()
+    fig2, axes2 = plt.subplots(nrows=nsubs//5, ncols=5, figsize=(13, 10), sharex=True)
+    axes2 = axes2.flatten()
+    # --- Individual subject distributions
+    mean_dominance_shuffle = np.zeros((3, nsubs))
+    for i, subj in enumerate(subjects):
+        axes[i].spines['right'].set_visible(False)
+        axes[i].spines['top'].set_visible(False)
+        axes2[i].spines['right'].set_visible(False)
+        axes2[i].spines['top'].set_visible(False)
+        subdf = durations_df.loc[durations_df["subject"] == subj]
+        duration_ch1 = np.concatenate(subdf.loc[subdf['response'] == 1, 'duration'].values)
+        duration_ch2 = np.concatenate(subdf.loc[subdf['response'] == 2, 'duration'].values)
+        sns.histplot(duration_ch1, ax=axes[i], color='darkgreen', linewidth=4, label='ch=L',
+                     bins=np.linspace(0, 26, 20))
+        sns.histplot(duration_ch2, ax=axes[i], color='firebrick', linewidth=4, label='ch=R',
+                     bins=np.linspace(0, 26, 20))
+        axes[i].set_title(f"Subject {subj}", fontsize=10)
+        axes[i].set_xlabel("Dominance (s)")
+        axes[i].set_ylabel('')
+        for i_sh, shuffle in enumerate([1., 0.7, 0.]):
+            dom_durs = subdf.groupby(["pShuffle"], sort=False)["duration"].apply(sum)[shuffle]
+            mean_dominance_shuffle[i_sh, i] = np.nanmedian(dom_durs)
+            sns.kdeplot(dom_durs, ax=axes2[i], color=colormap[i_sh], linewidth=4, label=shuffle,
+                        bw_adjust=.7, cut=0)
+        axes2[i].set_title(f"Subject {subj}", fontsize=10)
+        axes2[i].set_xlabel("Dominance (s)")
+        axes2[i].set_ylabel('')
+    axes[0].set_ylabel("Density")
+    axes[0].legend(frameon=False)
+    fig.tight_layout()
+    axes2[0].set_ylabel("Density")
+    axes2[0].legend(frameon=False, title='p(shuffle)')
+    fig2.tight_layout()
+    fig2.savefig(SV_FOLDER + f'dominance_durations_freq_{freq}.png', dpi=400, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + f'dominance_durations_freq_{freq}.svg', dpi=400, bbox_inches='tight')
+
+    # --- Average distribution across subjects -- median across trials per subject
+    fig2, ax2 = plt.subplots(1, figsize=(4, 3.5))
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    for i_sh, shuffle in enumerate([1., 0.7, 0.]):
+        sns.kdeplot(mean_dominance_shuffle[i_sh], ax=ax2, color=colormap[i_sh], linewidth=4,
+                    bw_adjust=0.6, label=shuffle, cut=0)
+    ax2.set_xlabel('Dominance (s)'); ax2.legend(title='p(shuffle)', frameon=False)
+    fig2.tight_layout()
+    fig2.savefig(SV_FOLDER + f'average_dominance_durations_freq_{freq}.png', dpi=400, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + f'average_dominance_durations_freq_{freq}.svg', dpi=400, bbox_inches='tight')
+
+
+    fig2, ax2 = plt.subplots(1, figsize=(4, 3.5))
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    sns.boxplot(mean_dominance_shuffle.T, ax=ax2, palette=colormap, linewidth=4)
+    sns.stripplot(mean_dominance_shuffle.T, ax=ax2, color='k')
+    for i in range(nsubs):
+        ax2.plot([0, 1, 2], mean_dominance_shuffle[:, i], color='gray', alpha=0.5)
+    ax2.set_ylabel('Dominance (s)')
+    fig2.tight_layout()
+
+
+    fig3, ax3 = plt.subplots(1, figsize=(4, 3.5))
+    ax3.spines['right'].set_visible(False)
+    ax3.spines['top'].set_visible(False)
+    if freq == 4:
+        file = 'hysteresis_width_freq_4.npy'
+    if freq == 2:
+        file = 'hysteresis_width_freq_2.npy'
+    var = np.load(DATA_FOLDER + file)
+    r, p = pearsonr(var.flatten(), mean_dominance_shuffle.flatten())
+    ax3.annotate(f'r = {r:.3f}\np = {p:.1e}', xy=(.1, 0.1), xycoords=ax3.transAxes)
+
+    for i in range(3):
+        meanx = np.mean(var[i]); meany = np.mean(mean_dominance_shuffle[i])
+        errx = np.std(var[i]); erry = np.std(mean_dominance_shuffle[i])
+        ax3.errorbar(x=meanx, y=meany, xerr=errx, yerr=erry, color=colormap[i],
+                     marker='o')
+        ax3.plot(var[i], mean_dominance_shuffle[i], color=colormap[i], linestyle='',
+                 marker='x', alpha=0.2)
+    ax3.set_xlabel('Hysteresis')
+    ax3.set_ylabel('Dominance (s)'); fig3.tight_layout()
+
+
+def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=26):
+    """
+    Compute probability of L→R and R→L switches over time,
+    averaged across subjects, grouped by frequency and pshuffle condition.
+    
+    Parameters
+    ----------
+    stim : array (n_subj, n_trials, n_time)
+        Stimulus traces
+    choice : array (n_subj, n_trials, n_time)
+        Choices (-1, 0, 1)
+    freq : array (n_subj, n_trials)
+        Stimulus frequency (2 or 4)
+    pshuffle : array (n_subj, n_trials)
+        Condition (0., 0.7, 1.)
+    n_bins : int
+        Number of time bins
+    
+    Returns
+    -------
+    df : pandas.DataFrame
+        Columns: freq, pshuffle, time_bin, p_LR, p_RL
+    """
+    results = []
+    bin_edges = np.linspace(0, 1, n_bins + 1)
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    n_subj, n_trials, n_time = stim.shape
+    t_norm = np.linspace(0, 1, n_time - 1)  # assume fixed ascending-descending sweep
+    
+    for f in np.unique(freq):
+        deltat = T_trial / n_bins
+        for ps in np.unique(pshuffle):
+            p_LR_sum = np.zeros(n_bins)
+            p_RL_sum = np.zeros(n_bins)
+            count_sum = np.zeros(n_bins)
+            subj_count = 0
+
+            for subj in range(n_subj):
+                # Select trials for this subject and condition
+                mask = (freq[subj] == f) & (pshuffle[subj] == ps)
+                stim_sel = stim[subj, mask]
+                choice_sel = choice[subj, mask]
+
+                if stim_sel.size == 0:
+                    continue
+
+                p_LR_s, p_RL_s, count_s = np.zeros(n_bins), np.zeros(n_bins), np.zeros(n_bins)
+
+                for c in choice_sel:
+                    switch_LR = (c[:-1] == -1) & (c[1:] == 1)
+                    switch_RL = (c[:-1] == 1) & (c[1:] == -1)
+
+                    p_LR, _ = np.histogram(t_norm[switch_LR], bins=bin_edges, range=(0, T_trial))
+                    p_RL, _ = np.histogram(t_norm[switch_RL], bins=bin_edges, range=(0, T_trial))
+                    count, _ = np.histogram(t_norm, bins=bin_edges)
+
+                    p_LR_s += p_LR
+                    p_RL_s += p_RL
+                    count_s += count
+
+                # average over trials for this subject
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    p_LR_s = np.divide(p_LR_s, count_s, out=np.zeros_like(p_LR_s), where=count_s > 0)
+                    p_RL_s = np.divide(p_RL_s, count_s, out=np.zeros_like(p_RL_s), where=count_s > 0)
+
+                p_LR_sum += p_LR_s/deltat
+                p_RL_sum += p_RL_s/deltat
+                count_sum += (count_s > 0)
+                subj_count += 1
+
+            # average across subjects (ignore subjects with no data)
+            if subj_count > 0:
+                p_LR_mean = p_LR_sum / subj_count
+                p_RL_mean = p_RL_sum / subj_count
+            else:
+                p_LR_mean = np.zeros(n_bins)
+                p_RL_mean = np.zeros(n_bins)
+
+            df = pd.DataFrame({
+                "freq": f,
+                "pshuffle": ps,
+                "time_bin": bin_centers,
+                "p_LR": p_LR_mean,
+                "p_RL": p_RL_mean
+            })
+            results.append(df)
+
+    return pd.concat(results, ignore_index=True)
+
+
+def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
+                           fps=60, n=4, ntraining=8, tFrame=26,
+                           window_conv=5, n_bins=74):
+    nFrame = tFrame*fps
+    df = load_data(data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+    choices_all_subject = np.zeros((len(subjects), 72, nFrame))
+    pshuffles_per_sub = np.zeros((len(subjects), 72))
+    freqs_per_sub = np.zeros((len(subjects), 72))
+    all_stims = np.zeros_like(choices_all_subject)
+    for i_s, subject in enumerate(subjects):
+        print('Simulating subject', subject)
+        df_subject = df.loc[df.subject == subject]
+        pshuffles = np.round(df_subject.groupby('trial_index')['pShuffle'].mean().values, 1)
+        ini_side = df_subject.groupby('trial_index')['initial_side'].mean().values
+        frequencies = np.round(df_subject.groupby('trial_index')['freq'].mean().values*ini_side)
+        choice_all = np.load(sv_folder + f'choice_matrix_subject_{subject}.npy')
+        stimlist = np.vstack([get_blist(freq, nFrame) for freq in frequencies])
+        choices_all_subject[i_s] = choice_all
+        pshuffles_per_sub[i_s] = pshuffles
+        freqs_per_sub[i_s] = frequencies
+        all_stims[i_s] = stimlist
+    df_switches = compute_switch_prob_group(all_stims, choices_all_subject, freqs_per_sub, pshuffles_per_sub, n_bins=n_bins)
+    fig, axes = plt.subplots(ncols=2, figsize=(7.5, 4.))
+    titles = ['Freq = 2', 'Freq = 4']
+    for i_ax, ax in enumerate(axes):
+        ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+        ax.set_xlabel('Time (s)'); ax.axvline(tFrame/(2+2*i_ax), color='k', alpha=0.4,
+                                              linestyle='--', linewidth=3)
+        ax.axvline(tFrame/(4+4*i_ax), color='k', alpha=0.6, linestyle=':', linewidth=2)
+        ax.axvline(3*tFrame/(4+4*i_ax), color='k', alpha=0.6, linestyle=':', linewidth=2)
+        ax.set_title(titles[i_ax], fontsize=13)
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    for ipsh, ps in enumerate(sorted(df_switches['pshuffle'].unique())[::-1]):
+        for i_f, f in enumerate([2, 4]):
+            sel = (df_switches['pshuffle'] == ps) & (df_switches['freq'] == f)
+            d = df_switches[sel]
+            if window_conv is None:
+                switch_rate = d['p_LR'].values
+            else:
+                switch_rate = np.convolve(d['p_LR'].values, np.ones(window_conv)/window_conv, mode='same')
+            if f == 4:
+                switch_rate = np.nanmean(np.row_stack([switch_rate[:n_bins//2], switch_rate[n_bins//2:]]), axis=0)
+                timevals = d['time_bin'][::2]*tFrame/2
+            else:
+                timevals = d['time_bin']*tFrame
+            axes[i_f].plot(timevals, switch_rate, label=f"{ps}",
+                           color=colormap[ipsh], linewidth=4)
+            # plt.plot(d['time_bin'], d['p_RL'], '--', label=f"RL f={f}, ps={ps}")
+    axes[0].legend(frameon=False, title='p(shuffle)')
+    axes[1].set_xlim(-0.1, 13.1)
+    axes[0].set_xlabel("Time (s)"); axes[1].set_xlabel("Time (s)")
+    axes[0].set_ylabel("Switch rate L-->R")
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'simulated_hysteresis_switch_rate.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'simulated_hysteresis_switch_rate.svg', dpi=400, bbox_inches='tight')
+
+
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
+    plot_dominance_durations(data_folder=DATA_FOLDER,
+                              ntraining=8, freq=2)
+    plot_dominance_durations(data_folder=DATA_FOLDER,
+                              ntraining=8, freq=4)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
     # plot_noise_variables_vs_fitted_params(n=4, variable='freq4')
     # plot_params_distros(ndt=True)
     # plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
-    #                       ntraining=8, window_conv=1)
-    # plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                                        steps_back=120, steps_front=20,
-    #                                        shuffle_vals=[1, 0.7, 0],
-    #                                        avoid_first=False, window_conv=1,
-    #                                        filter_subjects=True, n=4, variable='J1',
-    #                                        simulated=True, pshuff=1)
+    #                       ntraining=8, window_conv=1, fps=200)
+    # plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
+    #                       fps=200, n=4, ntraining=8, tFrame=26,
+    #                       window_conv=5, n_bins=80)
+    # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+    #                               steps_back=150, steps_front=20,
+    #                               shuffle_vals=[1, 0.7, 0],
+    #                               avoid_first=True, window_conv=1,
+    #                               filter_subjects=True, n=4)
     # compare_parameters_two_experiments()
     # plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
     #                                       shuffle_vals=[1., 0.7, 0.], ntrials=36,
@@ -5957,8 +6444,9 @@ if __name__ == '__main__':
     #                                       tFrame=26, window_conv=1,
     #                                       fps=60, ax=None, hysteresis_area=True,
     #                                       normalize_variables=True, ratio=1,
-    #                                       load_simulations=True)
-    # for variable in ['J0', 'J1', 'SIGMA', 'B1', 'THETA']:
+    #                                       load_simulations=False)
+    # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
+    # for variable in  ['B1']:
     #     plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                             steps_back=120, steps_front=20,
     #                                             shuffle_vals=[1, 0.7, 0],
@@ -6028,11 +6516,11 @@ if __name__ == '__main__':
     #                                  fps=60, nsubs=1, n=4, nsims=1000,
     #                                  b_list=np.linspace(-0.5, 0.5, 501))
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                          steps_back=60, steps_front=10,
-    #                          shuffle_vals=[1, 0.7, 0], violin=True, sub=None,
-    #                          avoid_first=False, window_conv=1,
-    #                          zscore_number_switches=False, 
-    #                          normalize_variables=True, hysteresis_area=True)
+    #                           steps_back=60, steps_front=10,
+    #                           shuffle_vals=[1, 0.7, 0], violin=True, sub=None,
+    #                           avoid_first=True, window_conv=1,
+    #                           zscore_number_switches=False, 
+    #                           normalize_variables=True, hysteresis_area=True)
     # hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
     #                                     fps=60, tFrame=26, data_folder=DATA_FOLDER,
     #                                     ntraining=8, arrows=False)
@@ -6046,11 +6534,6 @@ if __name__ == '__main__':
     #                                 sv_folder=SV_FOLDER, simulate=True,
     #                                 load_net=False, not_plot_and_return=False)
     #     plt.close('all')
-    # plot_example_pswitch(params=[0.7, 1e-2, 0., 0.2, 0.5], data_folder=DATA_FOLDER,
-    #                       fps=60, tFrame=26, freq=2, idx=1, n=3.92, theta=0.5,
-    #                       tol=1e-3, pshuffle=0)
-    # fitting_transitions(data_folder=DATA_FOLDER, fps=60, tFrame=18)
-    # fitting_fokker_planck(data_folder=DATA_FOLDER, model='MF')
     # lmm_hysteresis_dominance(freq=2, plot_summary=True,
     #                          slope_random_effect=False, plot_individual=False)
     # lmm_hysteresis_dominance(freq=2, plot_summary=True,
