@@ -1847,6 +1847,9 @@ def plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps
     ax[0].set_ylabel('Density')
     ax[0].legend(frameon=False)
     fig.tight_layout()
+    label = 'simulated_' if simulated else ''
+    fig.savefig(SV_FOLDER + label + 'noise_trials_dominance.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + label + 'noise_trials_dominance.svg', dpi=400, bbox_inches='tight')
     f2, ax2 = plt.subplots(1, figsize=(4, 3.5))
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
@@ -1866,6 +1869,8 @@ def plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps
         sns.kdeplot(dominance_psh, linewidth=4, color=colormap[i], label=pshuffs[i],
                     )
     a3.legend(frameon=False, title='p(shuffle)'); a3.set_xlabel('Dominance (s)'); f3.tight_layout()
+    f3.savefig(SV_FOLDER + label + 'average_noise_trials_dominance.png', dpi=400, bbox_inches='tight')
+    f3.savefig(SV_FOLDER + label + 'average_noise_trials_dominance.svg', dpi=400, bbox_inches='tight')
 
 
 def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
@@ -1901,6 +1906,7 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     axnew[0].set_xlabel('Time before switch (s)'); axnew[0].set_ylabel('Noise')
     # axgaussian.set_xlabel('Time before switch (s)'); axgaussian.set_ylabel('Noise')
     axnew[0].set_title('Average across trials', fontsize=13)
+    all_kernels = []
     for i_sub, subject in enumerate(subs):
         df_sub = df.loc[df.subject == subject]
         mean_vals_noise_switch_all_shuffles_subject = np.empty((1, steps_back+steps_front))
@@ -1963,8 +1969,8 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
             # axis=1 means average across time (leaves switches coords)
             averaged_and_convolved_values = np.convolve(np.nanmean(mean_vals_noise_switch_all_trials, axis=0),
                                                                           np.ones(window_conv)/window_conv, 'same')
-            mean_peak_latency[i_sh, i_sub] = (np.nanmean(np.argmax(mean_vals_noise_switch_all_trials, axis=1)) - steps_back)/fps
-            mean_peak_amplitude[i_sh, i_sub] = np.nanmean(np.nanmax(mean_vals_noise_switch_all_trials, axis=1))
+            mean_peak_latency[i_sh, i_sub] = (np.argmax(averaged_and_convolved_values) - steps_back)/fps
+            mean_peak_amplitude[i_sh, i_sub] = np.nanmax(averaged_and_convolved_values)
             mean_vals_noise_switch_coupling[i_sh, :, i_sub] = averaged_and_convolved_values
             err_vals_noise_switch_coupling[i_sh, :, i_sub] = np.nanstd(mean_vals_noise_switch_all_trials, axis=0) / np.sqrt(mean_vals_noise_switch_all_trials.shape[0])
         mean_vals_noise_switch_all_shuffles_subject = mean_vals_noise_switch_all_shuffles_subject[1:]
@@ -1981,6 +1987,7 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
         #     axgaussian.plot(x_plot, ker_fitted, color='r', linewidth=2, alpha=0.5, zorder=1)
         #     axgaussian.plot(x_plot, kernel, color='k', linewidth=2, alpha=0.5, zorder=1)
         latency_avg.append(latency)
+        all_kernels.append(kernel)
         axnew[0].plot(x_plot, kernel, color='k', linewidth=2, alpha=0.5, zorder=1)
         axnew[0].plot(latency, peakval, marker='*', color='firebrick', markersize=8, zorder=5)
         if len(subs) > 1 and zscore_number_switches:
@@ -2182,6 +2189,20 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     fignew.savefig(SV_FOLDER + 'latency_computation.svg', dpi=100, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.png', dpi=100, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.svg', dpi=100, bbox_inches='tight')
+    figlast, ax = plt.subplots(ncols=1, figsize=(5, 4))
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    ax.axhline(0, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
+    # for i_sub in range(len(subs)):
+    #     y_plot = all_kernels[i_sub]
+    #     ax.plot(x_plot, y_plot, color='k', linewidth=2, alpha=0.5)
+    x_plot = np.arange(-steps_back, 0, 1)/fps
+    y_plot = np.nanmean(all_kernels, axis=0)
+    ax.plot(x_plot, y_plot, color='k', linewidth=4, )
+    err = np.nanstd(all_kernels, axis=0)/np.sqrt(len(subs))
+    ax.fill_between(x_plot, y_plot-err, y_plot+err, color='k', alpha=0.2)
+    ax.set_xlabel('Time before switch(s)')
+    ax.set_ylabel('Noise')
+    figlast.tight_layout()
     return fig, fig2, fig3, g, fignew
 
 
@@ -4899,8 +4920,8 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
             # axis=1 means average across time (leaves switches coords)
             averaged_and_convolved_values = np.convolve(np.nanmean(mean_vals_noise_switch_all_trials, axis=0),
                                                                           np.ones(window_conv)/window_conv, 'same')
-            mean_peak_latency[i_sh, i_sub] = (np.nanmean(np.argmax(mean_vals_noise_switch_all_trials, axis=1)) - steps_back)/fps
-            mean_peak_amplitude[i_sh, i_sub] = np.nanmean(np.nanmax(mean_vals_noise_switch_all_trials, axis=1))
+            mean_peak_latency[i_sh, i_sub] = (np.argmax(averaged_and_convolved_values) - steps_back)/fps
+            mean_peak_amplitude[i_sh, i_sub] = np.nanmax(averaged_and_convolved_values)
             mean_vals_noise_switch_coupling[i_sh, :, i_sub] = averaged_and_convolved_values
             err_vals_noise_switch_coupling[i_sh, :, i_sub] = np.nanstd(mean_vals_noise_switch_all_trials, axis=0) / np.sqrt(mean_vals_noise_switch_all_trials.shape[0])
 
@@ -4919,13 +4940,9 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
         err_vals_noise_switch_coupling_bist_mono[1, :, i_sub] = np.nanstd(kernel_monostable, axis=0)
 
         if len(subs) > 1 and zscore_number_switches:
-            # mean_number_switchs_coupling[:, i_sub] = zscor(mean_number_switchs_coupling[:, i_sub])
-            # mean_peak_latency[:, i_sub] = zscor(mean_peak_latency[:, i_sub])
-            # mean_peak_amplitude[:, i_sub] = zscor(mean_peak_amplitude[:, i_sub])
             label = 'z-scored '
         else:
             label = ''
-        #     mean_vals_noise_switch_coupling[:, :, i_sub] = zscor(mean_vals_noise_switch_coupling[:, :, i_sub], nan_policy='omit')
     if ax is None:
         fig, ax = plt.subplots(1, figsize=(5.5, 4))
     fig3, ax34567 = plt.subplots(ncols=3, nrows=2, figsize=(12.5, 8))
@@ -5051,9 +5068,14 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
     fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     ax.axhline(0, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
-    for i_sub in range(len(subs)):
-        y_plot = all_kernels[i_sub]
-        ax.plot(x_plot, y_plot, color='k', linewidth=2, alpha=0.5)
+    # for i_sub in range(len(subs)):
+    #     y_plot = all_kernels[i_sub]
+    #     ax.plot(x_plot, y_plot, color='k', linewidth=2, alpha=0.5)
+    x_plot = np.arange(-steps_back, 0, 1)/fps
+    y_plot = np.nanmean(all_kernels, axis=0)[:-steps_front]
+    ax.plot(x_plot, y_plot, color='k', linewidth=4, )
+    err = np.nanstd(all_kernels, axis=0)[:-steps_front]/np.sqrt(len(subs))
+    ax.fill_between(x_plot, y_plot-err, y_plot+err, color='k', alpha=0.2)
     ax.set_xlabel('Time before switch(s)')
     ax.set_ylabel('Noise')
     fig.tight_layout()
@@ -6396,10 +6418,11 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
         for i_f, f in enumerate([2, 4]):
             sel = (df_switches['pshuffle'] == ps) & (df_switches['freq'] == f)
             d = df_switches[sel]
+            sr = d['p_LR'].values
             if window_conv is None:
-                switch_rate = d['p_LR'].values
+                switch_rate = sr
             else:
-                switch_rate = np.convolve(d['p_LR'].values, np.ones(window_conv)/window_conv, mode='same')
+                switch_rate = np.convolve(sr, np.ones(window_conv)/window_conv, mode='same')
             if f == 4:
                 switch_rate = np.nanmean(np.row_stack([switch_rate[:n_bins//2], switch_rate[n_bins//2:]]), axis=0)
                 timevals = d['time_bin'][::2]*tFrame/2
@@ -6407,7 +6430,6 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
                 timevals = d['time_bin']*tFrame
             axes[i_f].plot(timevals, switch_rate, label=f"{ps}",
                            color=colormap[ipsh], linewidth=4)
-            # plt.plot(d['time_bin'], d['p_RL'], '--', label=f"RL f={f}, ps={ps}")
     axes[0].legend(frameon=False, title='p(shuffle)')
     axes[1].set_xlim(-0.1, 13.1)
     axes[0].set_xlabel("Time (s)"); axes[1].set_xlabel("Time (s)")
@@ -6419,19 +6441,23 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
-    plot_dominance_durations(data_folder=DATA_FOLDER,
-                              ntraining=8, freq=2)
-    plot_dominance_durations(data_folder=DATA_FOLDER,
-                              ntraining=8, freq=4)
+    # plot_dominance_durations(data_folder=DATA_FOLDER,
+    #                           ntraining=8, freq=2)
+    # plot_dominance_durations(data_folder=DATA_FOLDER,
+    #                           ntraining=8, freq=4)
+    # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+    #                                                     simulated=False)
+    # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+    #                                                     simulated=True)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
     # plot_noise_variables_vs_fitted_params(n=4, variable='freq4')
     # plot_params_distros(ndt=True)
     # plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
     #                       ntraining=8, window_conv=1, fps=200)
-    # plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
-    #                       fps=200, n=4, ntraining=8, tFrame=26,
-    #                       window_conv=5, n_bins=80)
+    plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
+                          fps=200, n=4, ntraining=8, tFrame=26,
+                          window_conv=5, n_bins=80)
     # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                               steps_back=150, steps_front=20,
     #                               shuffle_vals=[1, 0.7, 0],
@@ -6439,13 +6465,12 @@ if __name__ == '__main__':
     #                               filter_subjects=True, n=4)
     # compare_parameters_two_experiments()
     # plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
-    #                                       shuffle_vals=[1., 0.7, 0.], ntrials=36,
-    #                                       steps_back=150, steps_front=20, avoid_first=True,
-    #                                       tFrame=26, window_conv=1,
-    #                                       fps=60, ax=None, hysteresis_area=True,
-    #                                       normalize_variables=True, ratio=1,
-    #                                       load_simulations=False)
-    # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
+    #                                      shuffle_vals=[1., 0.7, 0.], ntrials=36,
+    #                                      steps_back=150, steps_front=20, avoid_first=True,
+    #                                      tFrame=26, window_conv=1,
+    #                                      fps=60, ax=None, hysteresis_area=True,
+    #                                      normalize_variables=True, ratio=1,
+    #                                      load_simulations=True)
     # for variable in  ['B1']:
     #     plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                             steps_back=120, steps_front=20,
@@ -6516,7 +6541,7 @@ if __name__ == '__main__':
     #                                  fps=60, nsubs=1, n=4, nsims=1000,
     #                                  b_list=np.linspace(-0.5, 0.5, 501))
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                           steps_back=60, steps_front=10,
+    #                           steps_back=150, steps_front=10,
     #                           shuffle_vals=[1, 0.7, 0], violin=True, sub=None,
     #                           avoid_first=True, window_conv=1,
     #                           zscore_number_switches=False, 
