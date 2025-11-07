@@ -2601,10 +2601,10 @@ if __name__ == '__main__':
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF', method=opt_algorithm,
     #                     band_width=0.7, sort_by_j=True)
-    # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
-    #                         bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30
-    plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
-                                   data_only=True)
+    plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
+                            bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30
+    # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
+    #                                data_only=True)
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
