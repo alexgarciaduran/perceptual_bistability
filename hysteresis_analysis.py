@@ -39,7 +39,8 @@ import tqdm
 import statsmodels.formula.api as smf
 from scipy.stats import pearsonr, zscore
 from scipy.signal import sawtooth
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, root_scalar
+from scipy.integrate import quad, cumulative_trapezoid
 import itertools
 from pyddm import set_N_cpus
 from pyddm.models.loss import LossLikelihood, LossBIC
@@ -4517,6 +4518,20 @@ def model_known_params_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, NDT=0,
     return m_sim
 
 
+
+def null_model_known_params_pyddm(J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1, NDT=0, n=4, t_dur=10):
+    # First create two versions of the model, one to simulate the data, and one to fit to the simulated data.
+    stim = lambda t, freq, phase_ini: sawtooth(2 * np.pi * abs(freq)/2 * (t+phase_ini)/26, 0.5)*2*np.sign(freq)
+    x_hat = lambda prev_choice, x: x if prev_choice == -1 else x+1
+    starting_position = lambda prev_choice: 0.5-THETA if prev_choice == -1 else -0.5+THETA
+    drift_function_sim = lambda t, x, pshuffle, prev_choice, freq, phase_ini: 1/(1+np.exp(-2*(n*(J0)*(2*x_hat(prev_choice, x)-1) + B*stim(t, freq, phase_ini))))-x_hat(prev_choice, x)
+    conditions = ["pshuffle", "prev_choice", "freq", "phase_ini"]
+    m_sim = pyddm.gddm(drift=drift_function_sim, 
+                       conditions=conditions, starting_position=starting_position, bound=THETA+0.5, noise=SIGMA, nondecision=NDT,
+                       T_dur=t_dur, dt=0.005, dx=0.005)
+    return m_sim
+
+
 def plot_rt_distros_simple(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1):
     m_sim = model_known_params_pyddm(J1=J1, J0=J0, B=B, SIGMA=SIGMA, THETA=THETA)
     fig = plt.figure(figsize=(12, 2))
@@ -4716,25 +4731,28 @@ def plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
 
 
 def simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=1546, fps=60,
-                            load_simulations=True):
+                            load_simulations=True, sigma_predefined=None):
     ratio = int(nFrame/1546)
     nFrame = nFrame-ratio+1
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     print(len(pars), ' fitted subjects')
+    label = f'_sigma_{sigma_predefined}_' if sigma_predefined is not None else ''
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]
     subjects = df.subject.unique()[:len(pars)]
     time_interp = np.arange(0, nFrame, 1)/fps
     time_frames = len(time_interp)
     responses_all = np.zeros((len(subjects), 36, time_frames))
+    x_all = np.zeros((len(subjects), 36, time_frames))
+    internal_noise_all = np.zeros((len(subjects), 36, time_frames))
     stim_subject = np.zeros((len(subjects), 36, time_frames))
     pshuffles_all = np.zeros((len(subjects), 36))
     time = np.arange(0, 1546, 1)/60
     if load_simulations:
-        stim_subject = np.load(SV_FOLDER + 'stim_subject_noise.npy')
-        responses_all = np.load(SV_FOLDER + 'responses_simulated_noise.npy')
-        pshuffles_all = np.load(SV_FOLDER + 'stim_subject_pshuffles.npy')
+        stim_subject = np.load(SV_FOLDER + f'stim_subject_noise{label}.npy')
+        responses_all = np.load(SV_FOLDER + f'responses_simulated_noise{label}.npy')
+        pshuffles_all = np.load(SV_FOLDER + f'stim_subject_pshuffles{label}.npy')
     else:
         for i_s, subject in enumerate(subjects):
             print('Simulating noise trials subject ', subject)
@@ -4743,6 +4761,8 @@ def simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=1546, fps=6
             pshuffles = df_sub.groupby("trial_index").pShuffle.mean().values
             trial_indices = df_sub.trial_index.unique()
             choices_subject = np.zeros((len(trial_indices), time_frames))
+            x_subject = np.zeros((len(trial_indices), time_frames))
+            internal_noise_subject = np.random.randn(len(trial_indices), nFrame)
             for i_trial, trial in enumerate(trial_indices):
                 j_eff = (1-pshuffles[i_trial])*fitted_params_subject[0] + fitted_params_subject[1]
                 params = fitted_params_subject[1:]
@@ -4753,10 +4773,12 @@ def simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=1546, fps=6
                 # stimulus = np.repeat(stimulus, np.ceil(nFrame/1546))
                 x = np.zeros(choices_subject.shape[1])
                 j_eff, b_par, th, sigma, ndt = params
+                if sigma_predefined is not None:
+                    sigma = sigma_predefined
                 lower_bound, upper_bound = np.array([-th, th]) + 0.5
                 dt = 1/fps; tau=1
                 b_eff = stimulus*b_par
-                noise = np.random.randn(nFrame)*sigma*np.sqrt(dt/tau)
+                noise = internal_noise_subject[i_trial]*sigma*np.sqrt(dt/tau)
                 x = np.zeros(time_frames)
                 x[0] = 0.5
                 choice = np.zeros(nFrame)
@@ -4791,12 +4813,17 @@ def simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=1546, fps=6
                     # delayed decision
                     choice[t] = prev_choice
                 choices_subject[i_trial, :] = choice
+                x_subject[i_trial, :] = x
                 stim_subject[i_s, i_trial, :] = stimulus    
             responses_all[i_s, :, :] = choices_subject
             pshuffles_all[i_s] = pshuffles
-        np.save(SV_FOLDER + 'stim_subject_noise.npy', stim_subject)
-        np.save(SV_FOLDER + 'responses_simulated_noise.npy', responses_all)
-        np.save(SV_FOLDER + 'stim_subject_pshuffles.npy', pshuffles_all)
+            x_all[i_s, :, :] = x_subject
+            internal_noise_all[i_s, :, :] = internal_noise_subject
+        np.save(SV_FOLDER + f'stim_subject_noise{label}.npy', stim_subject)
+        np.save(SV_FOLDER + f'responses_simulated_noise{label}.npy', responses_all)
+        np.save(SV_FOLDER + f'x_simulated_noise{label}.npy', x_all)
+        np.save(SV_FOLDER + f'internal_noise_simulated_noise{label}.npy', internal_noise_all)
+        np.save(SV_FOLDER + f'stim_subject_pshuffles{label}.npy', pshuffles_all)
     return stim_subject, responses_all, pshuffles_all
 
 
@@ -4832,6 +4859,334 @@ def plot_simulated_kernel_per_subject(data_folder=DATA_FOLDER,
     ax2[-1].set_xlabel('Time from switch (s)'); ax2[-1].set_ylabel('Noise')
     fig2.savefig(SV_FOLDER + 'simulated_noise_kernel_all.png', dpi=200, bbox_inches='tight')
     fig2.savefig(SV_FOLDER + 'simulated_nosie_kernel_all.svg', dpi=200, bbox_inches='tight')
+
+
+def drive(q, j, b):
+    return sigmoid(2*j*(2*q-1)+2*b)-q
+
+
+def optimal_escape_eta(j,  time, stim=None):
+    fun_to_minimize = lambda q: sigmoid(2*j*(2*q-1))-q
+    val1 = fsolve(fun_to_minimize, 0)+5e-3
+    x = np.zeros(len(time))
+    x[0] = val1
+    dt = np.diff(time)[0]
+    if stim is None:
+        stim = np.zeros(len(time))
+    for t in range(1, len(time)):
+        x[t] = x[t-1] - drive(x[t-1], j, b=stim[t])*dt
+    eta = -2*drive(x, j, b=stim)
+    return eta
+
+
+def optimal_eta_time(J, theta, T=1.0, B=0.0, n_points=400):
+    """
+    Compute the optimal noise eta*(x) for the nonlinear logistic system.
+    Parameters
+    ----------
+    x : array-like
+        Positions to evaluate eta*(x).
+    J : float
+        Coupling parameter (controls bistability).
+    theta : float
+        Offset from threshold (target endpoint x_T = 0.5 + theta).
+    T : float
+        Total transition duration (arbitrary scaling, defines C).
+    B : float
+        External bias term (default 0).
+    Returns
+    -------
+    eta_star : array
+        Optimal noise at each x.
+    C : float
+        Corresponding constant of motion (depends on J, theta, T).
+    """
+    if J > 1:
+        x0 = 0.05  # initial position (left attractor)
+    else:
+        x0 = 0.5-theta
+    xT = 0.5 + theta
+    x0, xT = 0.0, 0.5 + theta  # left attractor to right threshold
+    x_grid = np.linspace(x0, xT, n_points)
+    # Equation for the travel time integral
+    def travel_time(C):
+        integrand = lambda x: 1.0 / np.sqrt(drive(x, J, B)**2 + C)
+        val, _ = quad(integrand, x0, xT, limit=200)
+        return val - T  # we want this to equal zero
+
+    # Find C numerically so that the travel time equals T
+    sol = root_scalar(travel_time, bracket=[1e-10, 10.0], method='brentq')
+    C = sol.root
+
+    # Compute eta*(x)
+    # compute x(t)
+    fx = drive(x_grid, J, B)
+    dxdt = np.sqrt(fx**2 + C)
+    dt_dx = 1.0 / dxdt
+    t_grid = cumulative_trapezoid(dt_dx, x_grid, initial=0)
+    t_grid *= T / t_grid[-1]  # normalize to total duration T
+    # 5. compute eta*(t)
+    eta_t = dxdt - fx
+    return t_grid, x_grid, eta_t, C
+
+
+def plot_eta():
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    linestyles = ['solid', '--']
+    for i_j, J in enumerate([1.5, 2, 2.5]):
+        for i_th, theta in enumerate([0.05, 0.1]):
+            t, x_t, eta_t, C = optimal_eta_time(J, theta, T=10, n_points=1000)
+            plt.plot(t, eta_t, label=f'J={J}, θ={theta}, C={C:.3f}',
+                     linewidth=3, color=colormap[i_j],
+                     linestyle=linestyles[i_th])
+    plt.xlabel('time (t)')
+    plt.ylabel('η*(t)')
+    plt.title('Optimal noise η*(t) along escape trajectory')
+    plt.legend()
+    plt.show()
+
+
+def dependency_latency_amplitude_on_a(a_list=np.arange(0., 2., 1e-2)):
+    # time
+    t = np.arange(-10, 10, 1e-3)
+    peak = []; peak_analytical = []
+    latency = []
+    auc_vals = []
+    dt = np.diff(t)[0]
+    for a in a_list:
+        # optimal escape path
+        x = -np.sqrt(a) / np.sqrt(1 + np.exp(-2 * a * (t+0.5)))
+        # deterministic drift
+        f = x*a - x**3
+        # optimal noise (\eta)
+        eta = -2 * f
+        peak.append(np.max(eta))
+        peak_analytical.append(eta[np.searchsorted(t, -0.5)])
+        latency.append((np.argmax(eta)-len(t)//2)*dt)
+        auc_vals.append(np.trapz(eta/np.max(eta), t, dx=dt))
+    fig, ax = plt.subplots(ncols=3, figsize=(10, 3.5))
+    variables = [peak, latency, auc_vals]
+    labels = ['Peak', 'Latency', r'AUC (normalized $eta(t)$)']
+    for i_a, a in enumerate(ax):
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+        a.plot(a_list, variables[i_a], color='k', linewidth=4, label=r'Max($\eta(t)$)');  a.set_ylabel(labels[i_a])
+        a.set_xlabel('a')
+    ax[1].axhline(-0.5, color='r', alpha=0.3, linestyle='--', linewidth=3)
+    ax[0].plot(a_list, peak_analytical, color='gray', alpha=0.5, linestyle='--', linewidth=4,
+               label='Analytical')
+    ax[0].legend(frameon=False)
+    fig.tight_layout()
+
+
+def simple_optimal_eta_quartic_potential(a=1):
+    # time
+    t = np.linspace(-10, 5, 400)
+    # optimal escape path
+    x = -np.sqrt(a) / np.sqrt(1 + np.exp(-2 * a * (t+0.5)))
+    # deterministic drift
+    f = x*a - x**3
+    # optimal noise (\eta)
+    eta = -2 * f
+    # Potential
+    xv = np.linspace(-1.5, 1.5, 200)
+    V = 0.25*xv**4 - 0.5*xv**2*a
+    fig, ax = plt.subplots(ncols=1, nrows=4, figsize=(5, 10))
+    for i_a, ax_i in enumerate(ax):
+        ax_i.spines['right'].set_visible(False); ax_i.spines['top'].set_visible(False)
+    ax[0].plot(xv, V, color='k', linewidth=3)
+    ax[0].plot([-np.sqrt(a), 0, np.sqrt(a)],
+               [V[np.searchsorted(xv, -np.sqrt(a))],
+                V[np.searchsorted(xv, 0)],
+                V[np.searchsorted(xv, np.sqrt(a))]], color='r',
+               marker='o', linestyle='')
+    ax[0].set_xlabel('x')
+    ax[0].set_ylabel('Potential,\n' + r'$V(x)=-x^2/2+x^4/4$')
+    ax[1].plot(t, f, color='k', linewidth=3)
+    ax[1].set_ylabel(r'Drift,  $f(x)=x-x^3$')
+    ax[2].plot(t, x[::-1], linewidth=3, color='k')
+    ax[2].set_ylabel(r'Trajectory,  $x(t)$')
+    ax[3].plot(t, eta, linewidth=3, color='k')
+    ax[3].set_ylabel('Optimal escape noise, \n' + r'$\eta(t)=-2f(x)$')
+    ax[3].set_xlabel('Time before switch (s)')
+    fig.tight_layout()
+
+
+def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+                                tFrame=26, fps=60,
+                                steps_back=120, steps_front=20, avoid_first=True,
+                                n=4, load_simulations=True, normalize=False,
+                                sigma=None, pshuf_only=None):
+    title = r'$\sigma = 0$' if sigma is not None else r'$\sigma \neq 0$'
+    nFrame = 1546
+    ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    label = f'_sigma_{sigma}_' if sigma is not None else ''
+    fitted_params_all = [np.load(par) for par in pars]
+    fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]
+    df = load_data(data_folder + '/noisy/', n_participants='all')
+    noise_signal, choice, pshuffles = simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=nFrame, fps=fps,
+                                                              load_simulations=load_simulations,
+                                                              sigma_predefined=sigma)
+    x_all = np.load(SV_FOLDER + f'x_simulated_noise{label}.npy')
+    internal_noise_all = np.load(SV_FOLDER + f'internal_noise_simulated_noise{label}.npy')
+    subs = df.subject.unique()[:pshuffles.shape[0]]
+    x_values_all_subjects = np.empty((len(subs), steps_back+steps_front))
+    x_values_all_subjects[:] = np.nan
+    stim_values_all_subjects = np.empty((len(subs), steps_back+steps_front))
+    stim_values_all_subjects[:] = np.nan
+    internal_noise_values_all_subjects = np.empty((len(subs), steps_back+steps_front))
+    internal_noise_values_all_subjects[:] = np.nan
+    potential_value_all_subjects = np.empty((len(subs), steps_back+steps_front))
+    potential_value_all_subjects[:] = np.nan
+    for i_sub, subject in enumerate(subs):
+        df_sub = df.loc[df.subject == subject]
+        trial_index = df_sub.trial_index.unique()
+        x_vals_aligned_all_trials = np.empty((1, steps_back+steps_front))
+        x_vals_aligned_all_trials[:] = np.nan
+        stim_vals_aligned_all_trials = np.empty((1, steps_back+steps_front))
+        stim_vals_aligned_all_trials[:] = np.nan
+        internal_noise_vals_aligned_all_trials = np.empty((1, steps_back+steps_front))
+        internal_noise_vals_aligned_all_trials[:] = np.nan
+        potential_vals_aligned_all_trials = np.empty((1, steps_back+steps_front))
+        potential_vals_aligned_all_trials[:] = np.nan
+        for i_trial, trial in enumerate(trial_index):
+            if pshuf_only is not None:
+                if pshuffles[i_sub, i_trial] != pshuf_only:
+                    continue
+            values_x = x_all[i_sub, i_trial]
+            chi = noise_signal[i_sub, i_trial]
+            responses = choice[i_sub, i_trial]
+            internal_noise = internal_noise_all[i_sub, i_trial]
+            orders = rle(responses)
+            if avoid_first:
+                idx_1 = orders[1][1:][orders[2][1:] == 1]
+                idx_0 = orders[1][1:][orders[2][1:] == -1]
+            else:
+                idx_1 = orders[1][orders[2] == 1]
+                idx_0 = orders[1][orders[2] == -1]
+            idx_1 = idx_1[(idx_1 > steps_back) & (idx_1 < (len(responses))-steps_front)]
+            idx_0 = idx_0[(idx_0 > steps_back) & (idx_0 < (len(responses))-steps_front)]
+            # original order
+            x_vals_aligned = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
+            x_vals_aligned[:] = np.nan
+            stim_vals_aligned = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
+            stim_vals_aligned[:] = np.nan
+            internal_noise_vals_aligned = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
+            internal_noise_vals_aligned[:] = np.nan
+            potential_vals_aligned = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
+            potential_vals_aligned[:] = np.nan
+            parameters_sub = fitted_params_all[i_sub]
+            j_eff = parameters_sub[0]*(1-pshuffles[i_sub, i_trial]) + parameters_sub[1]
+            b1 = parameters_sub[2]
+            for i, idx in enumerate(idx_1):
+                x_vals_aligned[i, :] = values_x[idx - steps_back:idx+steps_front]
+                stim_vals_aligned[i, :] = chi[idx - steps_back:idx+steps_front]
+                internal_noise_vals_aligned[i, :] = internal_noise[idx - steps_back:idx+steps_front]
+                potential = potential_mf(x_vals_aligned[i, :], j_eff,
+                                         bias=b1*stim_vals_aligned[i, :], n=1)
+                potential_vals_aligned[i, :] =(potential-np.nanmean(potential)) / (np.max(np.abs(potential))-np.min(np.abs(potential)))
+            for i, idx in enumerate(idx_0):
+                x_vals_aligned[i+len(idx_1), :] =\
+                    1-values_x[idx - steps_back:idx+steps_front]
+                stim_vals_aligned[i, :] = chi[idx - steps_back:idx+steps_front]*-1
+                internal_noise_vals_aligned[i, :] = internal_noise[idx - steps_back:idx+steps_front]*-1
+                potential = potential_mf(x_vals_aligned[i, :], j_eff,
+                                          bias=b1*stim_vals_aligned[i, :], n=1)
+                potential_vals_aligned[i, :] = (potential-np.nanmean(potential)) / (np.max(np.abs(potential))-np.min(np.abs(potential)))
+                # potential_vals_aligned[i, :] = drive(x_vals_aligned[i, :], j_eff,
+                #                                       b1*stim_vals_aligned[i, :])
+            x_vals_aligned_all_trials = np.row_stack((x_vals_aligned_all_trials, x_vals_aligned))
+            potential_vals_aligned_all_trials = np.row_stack((potential_vals_aligned_all_trials, potential_vals_aligned))
+            stim_vals_aligned_all_trials = np.row_stack((stim_vals_aligned_all_trials, stim_vals_aligned))
+            internal_noise_vals_aligned_all_trials =\
+                np.row_stack((internal_noise_vals_aligned_all_trials, internal_noise_vals_aligned))
+            
+        x_vals_aligned_all_trials = x_vals_aligned_all_trials[1:]
+        x_values_all_subjects[i_sub] = np.nanmean(x_vals_aligned_all_trials, axis=0)
+        stim_vals_aligned_all_trials = stim_vals_aligned_all_trials[1:]
+        stim_values_all_subjects[i_sub] = np.nanmean(stim_vals_aligned_all_trials, axis=0)
+        internal_noise_vals_aligned_all_trials = internal_noise_vals_aligned_all_trials[1:]
+        internal_noise_values_all_subjects[i_sub] = np.nanmean(internal_noise_vals_aligned_all_trials, axis=0)
+        potential_vals_aligned_all_trials = potential_vals_aligned_all_trials[1:]
+        potential_value_all_subjects[i_sub] = np.nanmean(potential_vals_aligned_all_trials, axis=0)
+    theta = [pars[3] for pars in fitted_params_all]
+    median_theta = 0.5 + np.nanmean(theta)*np.array([-1, 1])
+    diff_theta = 2*np.array(theta)
+    fig, ax = plt.subplots(ncols=2, nrows=4, figsize=(10, 11))
+    fig.suptitle(title, fontsize=16)
+    ax = ax.flatten()
+    variables = [x_values_all_subjects, stim_values_all_subjects, internal_noise_values_all_subjects,
+                 potential_value_all_subjects]
+    labels = ['App. posterior q']*2 + ['Stimulus noise B(t)']*2 + ['Internal noise']*2 + ['Potential']*2
+    var = 0
+    [ax[1].axhline(val, color='r', linestyle='--', alpha=0.2, linewidth=2, zorder=1) for val in median_theta]
+    ax[1].axhline(0.5, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
+    # ylims = [[0.25, 0.75], [-0.2, 0.5], [-0.5, 1.5]]
+    
+    func_x = lambda t, k1:  -1 / np.sqrt(1 + k1*np.exp(-2 * (t+ndt)))
+    
+    if normalize:
+        ax[0].axhline(0., color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
+    else:
+        ax[0].axhline(0.5, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
+    for i_a, a in enumerate(ax):
+        # a.set_ylim(ylims[var][0], ylims[var][1])
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+        if i_a >= 2:
+            a.axhline(0., color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
+        a.set_xlabel('Time before switch (s)'); a.set_ylabel(labels[i_a])
+        if i_a % 2 == 0:
+            for i_sub, subject in enumerate(subs):
+                x_plot = np.arange(-steps_back, steps_front, 1)/fps
+                if i_a == 0 and normalize:
+                    minvar = np.min(variables[var][i_sub])
+                    maxvar = np.max(variables[var][i_sub])
+                    y_plot = (variables[var][i_sub]-0.5)/(maxvar-minvar)
+                else:
+                    y_plot = variables[var][i_sub]
+                a.plot(x_plot, y_plot, color='firebrick',
+                       linewidth=2, alpha=0.1)
+            continue
+        y_plot = np.nanmean(variables[var], axis=0)
+        # if var == 1:
+        #     x_plot_for_eta = np.arange(-steps_back*2, steps_front*2, 1)/60
+        #     eta = optimal_escape_eta(1.2, x_plot_for_eta+0.5)
+        #     ax2 = a.twinx()
+        #     ax2.plot(x_plot_for_eta/10, eta, color='darkgreen', linestyle='--', linewidth=3)
+        #     ax2.spines['top'].set_visible(False)
+        y_err = np.nanstd(variables[var], axis=0)/np.sqrt(len(subs))
+        a.plot(x_plot, y_plot, color='k', linewidth=4)
+        a.fill_between(x_plot, y_plot-y_err, y_plot+y_err, color='k', alpha=0.2)
+        var += 1
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + f'simulated_variables_noise_trials{label}.png', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'simulated_variables_noise_trials{label}.svg', dpi=200, bbox_inches='tight')
+
+
+def plot_optimal_eta_b_vs_0(ntrials=10, j=1):
+    time = np.arange(0, 25, 1e-3)
+    dt = np.diff(time)[0]
+    noisyframes = 15 // dt // 60
+    nFrame = len(time)
+    time_interp = np.arange(0, nFrame+noisyframes, noisyframes)*dt
+    time = np.arange(0, nFrame, 1)*dt
+    noise_exp = np.random.randn(len(time_interp), ntrials)
+    noise_signal = np.array([scipy.interpolate.interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
+    eta_0 = optimal_escape_eta(2, time+1, stim=None)
+    all_etas_stim = []
+    for i in range(ntrials):
+        stim = noise_signal[:, i]*0.03
+        eta_stim = optimal_escape_eta(j, time+1, stim=stim)
+        all_etas_stim.append(eta_stim)
+    eta_stim = np.nanmean(all_etas_stim, axis=0)
+    fig, ax = plt.subplots(ncols=2, figsize=(7, 4))
+    ax[0].plot(time, eta_0, color='k', linewidth=3)
+    ax[1].plot(time, eta_stim, color='k', linewidth=3)
+    for a in ax:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+        a.axhline(0, color='k', linestyle='--', linewidth=3, alpha=0.2)
+    ax[1].set_ylim(ax[0].get_ylim())
+    fig.tight_layout()
 
 
 def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
@@ -6026,12 +6381,15 @@ def plot_cylinder(cyl=True, dot_prop=1., ndots=300):
     fig.savefig(SV_FOLDER + label + 'cartoon.svg', dpi=400, bbox_inches='tight')
 
 
-def get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=27, t_dur=15):
+def get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=27, t_dur=15, null=False):
     set_N_cpus(8)
     print(len(pars), ' fitted subjects')
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
     fitted_params_all = [np.load(par) for par in pars]
-    fitted_params_all = [[params[0], params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]
+    if not null:
+        fitted_params_all = [[params[0], params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]
+    if null:
+        fitted_params_all = [[params[0], params[1], params[3], params[2], ndt] for params in fitted_params_all]
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
@@ -6040,8 +6398,13 @@ def get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=27, t_
     bics = []
     for i_s, subject in enumerate(subjects):
         print('Fitting subject ', subject)
-        J1, J0, B, THETA, SIGMA, NDT = fitted_params_all[i_s]
-        model = model_known_params_pyddm(J1=J1, J0=J0, B=B, THETA=THETA, SIGMA=SIGMA, NDT=NDT, n=n, t_dur=t_dur)
+        if null:
+            J0, B, THETA, SIGMA, NDT = fitted_params_all[i_s]
+            model = null_model_known_params_pyddm(J0=J0, B=B, THETA=THETA, SIGMA=SIGMA, NDT=NDT, n=n, t_dur=t_dur)
+        else:
+            J1, J0, B, THETA, SIGMA, NDT = fitted_params_all[i_s]
+            model = model_known_params_pyddm(J1=J1, J0=J0, B=B, THETA=THETA, SIGMA=SIGMA, NDT=NDT, n=n, t_dur=t_dur)
+        
         df_sub = df.loc[(df.subject == subject) & (df.response > 0)]
         pshuffles = df_sub.pShuffle.values
         freqs = df_sub.freq.values*df_sub.initial_side.values
@@ -6068,20 +6431,20 @@ def get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=27, t_
 def compare_likelihoods_models(load=True, bic=False):
     if not load:
         pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
-        likelihood_with_ndt, bic_with_ndt = get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=27, t_dur=15)
+        likelihood_with_ndt, bic_with_ndt = get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=105, t_dur=13)
         np.save(SV_FOLDER + 'likelihood_model_with_ndt.npy', likelihood_with_ndt)
         np.save(SV_FOLDER + 'bic_model_with_ndt.npy', bic_with_ndt)
-        pars2 = glob.glob(SV_FOLDER + 'fitted_params/' + '*.npy')
-        likelihood_without_ndt, bic_without_ndt = get_likelihood(pars2, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=27, t_dur=15)
-        np.save(SV_FOLDER + 'likelihood_model_without_ndt.npy', likelihood_without_ndt)
-        np.save(SV_FOLDER + 'bic_model_without_ndt.npy', bic_without_ndt)
+        # pars2 = glob.glob(SV_FOLDER + 'fitted_params/null_model_params/' + '*.npy')
+        # likelihood_null_model, bic_null_model = get_likelihood(pars2, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=105, t_dur=20, null=True)
+        # np.save(SV_FOLDER + 'likelihood_null_model.npy', likelihood_null_model)
+        # np.save(SV_FOLDER + 'bic_null_model.npy', bic_null_model)
     if load:
-        likelihood_without_ndt = np.array(np.load(SV_FOLDER + 'likelihood_model_without_ndt.npy'))
-        bic_without_ndt = np.array(np.load(SV_FOLDER + 'bic_model_without_ndt.npy'))
+        likelihood_null_model = np.array(np.load(SV_FOLDER + 'likelihood_null_model.npy'))
+        bic_null_model = np.array(np.load(SV_FOLDER + 'bic_null_model.npy'))
         likelihood_with_ndt = np.array(np.load(SV_FOLDER + 'likelihood_model_with_ndt.npy'))
         bic_with_ndt = np.array(np.load(SV_FOLDER + 'bic_model_with_ndt.npy'))
     fig5, ax5 = plt.subplots(ncols=1, figsize=(3.5, 4))
-    losses = [bic_without_ndt, bic_with_ndt] if bic else [likelihood_without_ndt, likelihood_with_ndt]
+    losses = [bic_null_model, bic_with_ndt] if bic else [likelihood_null_model, likelihood_with_ndt]
     ax5.spines['right'].set_visible(False); ax5.spines['top'].set_visible(False)
     sns.barplot(losses, palette=['peru', 'cadetblue'], ax=ax5)
     pvalue = scipy.stats.mannwhitneyu(losses[0], losses[1]).pvalue
@@ -6089,21 +6452,23 @@ def compare_likelihoods_models(load=True, bic=False):
     barplot_annotate_brackets(0, 1, pvalue, [0, 1], heights, yerr=None, dh=.2, barh=.02, fs=10,
                               maxasterix=3, ax=ax5)
     sns.stripplot(losses, color='k', ax=ax5, size=3)
-    ax5.set_xticks([0, 1], ['Without NDT', 'With NDT'])
+    ax5.set_xticks([0, 1], ['Null model', 'Model with J1'])
     ylabel = 'BIC' if bic else 'NLH'
     ax5.set_ylabel(ylabel)
     fig5.tight_layout()
     fig5, ax5 = plt.subplots(ncols=1, figsize=(2., 4))
-    losses = [bic_without_ndt-bic_with_ndt] if bic else [likelihood_without_ndt-likelihood_with_ndt]
+    losses = [bic_null_model-bic_with_ndt] if bic else [likelihood_null_model-likelihood_with_ndt]
     ax5.spines['right'].set_visible(False); ax5.spines['top'].set_visible(False)
     sns.barplot(losses, palette=['peru', 'cadetblue'], ax=ax5)
     sns.stripplot(losses, color='k', ax=ax5, size=3)
     ax5.axhline(0, color='k', linestyle='--', linewidth=2, alpha=0.4)
-    ax5.text(0.5, 4, 'Better', rotation=90, fontsize=13)
-    ax5.text(0.5, -15, 'Worse', rotation=90, fontsize=13)
+    # minval = (np.min(losses)-5) / (np.min(losses)-5 + np.max(losses)+5)
+    # maxval = (np.max(losses)-5) / (np.min(losses)-5 + np.max(losses)+5)
+    ax5.text(0.8, 0.42, 'Better', rotation=90, fontsize=13, transform=ax5.transAxes)
+    ax5.text(0.8, 0.18, 'Worse', rotation=90, fontsize=13, transform=ax5.transAxes)
     ax5.set_xlim(-0.5, 0.8)
-    ax5.set_xticks([0], ['Without NDT - With NDT'])
-    ax5.set_ylim(-20, 62)
+    ax5.set_xticks([0], ['Null - Original'])
+    ax5.set_ylim(np.min(losses)-5, np.max(losses)+5)
     ylabel = r'$\Delta$BIC' if bic else r'$\Delta$NLH'
     ax5.set_ylabel(ylabel)
     fig5.tight_layout()
@@ -6289,7 +6654,8 @@ def plot_dominance_durations(data_folder=DATA_FOLDER,
     ax3.set_ylabel('Dominance (s)'); fig3.tight_layout()
 
 
-def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=26):
+def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=26,
+                              fps=60):
     """
     Compute probability of L→R and R→L switches over time,
     averaged across subjects, grouped by frequency and pshuffle condition.
@@ -6318,9 +6684,9 @@ def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=2
 
     n_subj, n_trials, n_time = stim.shape
     t_norm = np.linspace(0, 1, n_time - 1)  # assume fixed ascending-descending sweep
-    
+
     for f in np.unique(freq):
-        deltat = T_trial / n_bins
+        deltat = T_trial / n_bins * 60 / fps
         for ps in np.unique(pshuffle):
             p_LR_sum = np.zeros(n_bins)
             p_RL_sum = np.zeros(n_bins)
@@ -6332,6 +6698,10 @@ def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=2
                 mask = (freq[subj] == f) & (pshuffle[subj] == ps)
                 stim_sel = stim[subj, mask]
                 choice_sel = choice[subj, mask]
+                choice_0110 = choice_sel.copy()
+                choice_0110[choice_0110 == 0] = np.nan
+                choice_0110[choice_0110 == -1] = 0
+                bins, r01, r10, _, _, _ = compute_switch_rate_from_array_dir(choice_0110, fps=60, bin_size=1/n_bins)
 
                 if stim_sel.size == 0:
                     continue
@@ -6342,8 +6712,8 @@ def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=2
                     switch_LR = (c[:-1] == -1) & (c[1:] == 1)
                     switch_RL = (c[:-1] == 1) & (c[1:] == -1)
 
-                    p_LR, _ = np.histogram(t_norm[switch_LR], bins=bin_edges, range=(0, T_trial))
-                    p_RL, _ = np.histogram(t_norm[switch_RL], bins=bin_edges, range=(0, T_trial))
+                    p_LR, _ = np.histogram(t_norm[switch_LR], bins=bin_edges)
+                    p_RL, _ = np.histogram(t_norm[switch_RL], bins=bin_edges)
                     count, _ = np.histogram(t_norm, bins=bin_edges)
 
                     p_LR_s += p_LR
@@ -6403,7 +6773,7 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
         pshuffles_per_sub[i_s] = pshuffles
         freqs_per_sub[i_s] = frequencies
         all_stims[i_s] = stimlist
-    df_switches = compute_switch_prob_group(all_stims, choices_all_subject, freqs_per_sub, pshuffles_per_sub, n_bins=n_bins)
+    df_switches = compute_switch_prob_group(all_stims, choices_all_subject, freqs_per_sub, pshuffles_per_sub, n_bins=n_bins, fps=fps)
     fig, axes = plt.subplots(ncols=2, figsize=(7.5, 4.))
     titles = ['Freq = 2', 'Freq = 4']
     for i_ax, ax in enumerate(axes):
@@ -6441,6 +6811,20 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
+    simple_optimal_eta_quartic_potential(a=0.5)
+    simple_optimal_eta_quartic_potential(a=1.)
+    simple_optimal_eta_quartic_potential(a=1.5)
+    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+                                tFrame=26, fps=60,
+                                steps_back=200, steps_front=20, avoid_first=True,
+                                n=4, load_simulations=True, normalize=False, sigma=None,
+                                pshuf_only=None)
+    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+                                tFrame=26, fps=60,
+                                steps_back=200, steps_front=20, avoid_first=True,
+                                n=4, load_simulations=True, normalize=False, sigma=0,
+                                pshuf_only=None)
+    # compare_likelihoods_models(load=True, bic=True)
     # plot_dominance_durations(data_folder=DATA_FOLDER,
     #                           ntraining=8, freq=2)
     # plot_dominance_durations(data_folder=DATA_FOLDER,
@@ -6455,9 +6839,9 @@ if __name__ == '__main__':
     # plot_params_distros(ndt=True)
     # plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
     #                       ntraining=8, window_conv=1, fps=200)
-    plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
-                          fps=200, n=4, ntraining=8, tFrame=26,
-                          window_conv=5, n_bins=80)
+    # plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
+    #                       fps=200, n=4, ntraining=8, tFrame=26,
+    #                       window_conv=5, n_bins=80)
     # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                               steps_back=150, steps_front=20,
     #                               shuffle_vals=[1, 0.7, 0],
@@ -6465,12 +6849,12 @@ if __name__ == '__main__':
     #                               filter_subjects=True, n=4)
     # compare_parameters_two_experiments()
     # plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
-    #                                      shuffle_vals=[1., 0.7, 0.], ntrials=36,
-    #                                      steps_back=150, steps_front=20, avoid_first=True,
-    #                                      tFrame=26, window_conv=1,
-    #                                      fps=60, ax=None, hysteresis_area=True,
-    #                                      normalize_variables=True, ratio=1,
-    #                                      load_simulations=True)
+    #                                       shuffle_vals=[1., 0.7, 0.], ntrials=36,
+    #                                       steps_back=150, steps_front=20, avoid_first=True,
+    #                                       tFrame=26, window_conv=1,
+    #                                       fps=60, ax=None, hysteresis_area=True,
+    #                                       normalize_variables=True, ratio=1,
+    #                                       load_simulations=True)
     # for variable in  ['B1']:
     #     plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                             steps_back=120, steps_front=20,
