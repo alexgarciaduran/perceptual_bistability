@@ -40,7 +40,7 @@ import statsmodels.formula.api as smf
 from scipy.stats import pearsonr, zscore
 from scipy.signal import sawtooth
 from scipy.optimize import curve_fit, root_scalar
-from scipy.integrate import quad, cumulative_trapezoid
+from scipy.integrate import quad, cumulative_trapezoid, solve_bvp
 import itertools
 from pyddm import set_N_cpus
 from pyddm.models.loss import LossLikelihood, LossBIC
@@ -952,8 +952,12 @@ def get_blist(freq, nFrame):
 
 def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                      ntraining=8, coupling_levels=[0, 0.3, 1],
-                     window_conv=10, bin_size=0.1, switch_01=True,
-                     only_ascending=False):
+                     window_conv=10, bin_size=0.1, switch_01=False):
+    """
+    Plots switch rate(t) across subjects, conditioning on coupling.
+    Subject s_2 has a lot of switches.
+    """
+    only_ascending = switch_01
     nFrame = tFrame*fps
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
@@ -964,11 +968,6 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     
     timebins = np.arange(0, tFrame+bin_size, bin_size)
     xvals = timebins[:-1] + bin_size/2
-    # frame → time mapping
-    # frame_times = np.linspace(0, tFrame, nFrame, endpoint=False)
-    # # interpolate array values at bin times
-    # array_at_bins_2 = np.interp(timebins, frame_times, barray_2)
-    # array_at_bins_4 = np.interp(timebins, frame_times, barray_4)
 
     fig, axes = plt.subplots(ncols=2, figsize=(7.5, 4.))
     titles = ['Freq = 2', 'Freq = 4']
@@ -993,7 +992,9 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
         convolved_vals4 = np.convolve(val_4, np.ones(window_conv)/window_conv, "same")
         axes[0].plot(xvals , convolved_vals2, color=colormap[i_c], linewidth=3, label=f'{1-coupling}')
         axes[1].plot(xvals/2, convolved_vals4, color=colormap[i_c], linewidth=3)
-    axes[0].legend(frameon=True, title='p(shuffle)'); axes[0].set_ylabel(r'Switch rate L$\rightarrow$R, (Hz)')
+    label_1 = 'R' if switch_01 else 'L'
+    label_2 = 'L' if switch_01 else 'R'
+    axes[0].legend(frameon=True, title='p(shuffle)'); axes[0].set_ylabel(fr'Switch rate {label_1}$\rightarrow${label_2}, (Hz)')
     fig.tight_layout()
     for ax in axes:
         pos_ax = ax.get_position()
@@ -1017,6 +1018,26 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     ax2.set_ylabel('Stim.(t)')
     fig.savefig(SV_FOLDER + 'switch_rate.png', dpi=400, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'switch_rate.svg', dpi=400, bbox_inches='tight')
+    inc_switches = []
+    fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    for i_c, coupling in enumerate(coupling_levels):
+    # pick one coupling level (e.g. i_c = 0) and ascending responses
+        bins, mean012, sem01, mean102, sem10, per_sub_rates_01, per_sub_rates_10 =\
+            average_switch_rates_dir(responses_2[i_c], fps=fps, bin_size=bin_size, join=True,
+                                     only_ascending=only_ascending)
+        idx_bins = (bins > 17.5)*(bins < 22.5)
+        switches10 = np.nansum(per_sub_rates_10[:, idx_bins], axis=1)
+        idx_bins = (bins > 3.5)*(bins < 8.5)
+        switches01 = np.nansum(per_sub_rates_01[:, idx_bins], axis=1)
+        sum_switches = switches01+switches10
+        inc_switches.append(sum_switches)
+    inc_switches = np.array(inc_switches)
+    sns.barplot(inc_switches.T, palette=colormap, ax=ax, errorbar="se")
+    sns.stripplot(inc_switches.T, color='k', ax=ax)
+    ax.set_xticks([0, 1, 2], [1., 0.7, 0.])
+    ax.set_xlabel('p(shuffle'); ax.set_ylabel('Incongruent switches')
+    fig.tight_layout()
 
 
 def join_trial_responses(subj, only_ascending=False):
@@ -1046,16 +1067,19 @@ def average_switch_rates_dir(responses, fps=60, bin_size=1.0, join=True,
     If join=True, concatenates asc+desc before counting.
     """
     per_sub_rates_01, per_sub_rates_10 = [], []
+    per_sub_counts_01, per_sub_counts_10 = [], []
     bins_ref = None
 
     for subj in responses:
         arr = join_trial_responses(subj, only_ascending=False) if join else subj["asc"]
-        bins, r01, r10, _, _, _ = compute_switch_rate_from_array_dir(
+        bins, r01, r10, counts_01, counts_10, _ = compute_switch_rate_from_array_dir(
             arr, fps=fps, bin_size=bin_size)
         if bins_ref is None:
             bins_ref = bins
         per_sub_rates_01.append(r01)
         per_sub_rates_10.append(r10)
+        per_sub_counts_01.append(counts_01)
+        per_sub_counts_10.append(counts_10)
 
     per_sub_rates_01 = np.vstack(per_sub_rates_01)
     per_sub_rates_10 = np.vstack(per_sub_rates_10)
@@ -1065,8 +1089,7 @@ def average_switch_rates_dir(responses, fps=60, bin_size=1.0, join=True,
     mean10 = np.nanmean(per_sub_rates_10, axis=0)
     sem10 = np.nanstd(per_sub_rates_10, axis=0, ddof=0) / np.sqrt(per_sub_rates_10.shape[0])
 
-    return bins_ref, mean01, sem01, mean10, sem10, per_sub_rates_01, per_sub_rates_10
-
+    return bins_ref, mean01, sem01, mean10, sem10, np.vstack(per_sub_counts_01), np.vstack(per_sub_counts_10)
 
 
 def get_switch_indices_with_dir(arr):
@@ -1085,7 +1108,8 @@ def get_switch_indices_with_dir(arr):
 
 
 
-def compute_switch_rate_from_array_dir(response_array, fps=60, bin_size=1.0):
+def compute_switch_rate_from_array_dir(response_array, fps=60, bin_size=1.0,
+                                       min_interval=0.3):
     """
     Like compute_switch_rate_from_array but separates 0→1 and 1→0 switches.
     """
@@ -1099,6 +1123,8 @@ def compute_switch_rate_from_array_dir(response_array, fps=60, bin_size=1.0):
 
     for trial in response_array:
         idx_01, idx_10 = get_switch_indices_with_dir(trial)
+
+
         if idx_01.size > 0:
             times = idx_01 / fps
             h, _ = np.histogram(times, bins=bins)
@@ -1802,6 +1828,90 @@ def compute_incongruent_switches(df, nFrame=1560, dt=1/60):
             mean_per_sub_coupling[idx_psh, i_sub] = inc_switchrate[idx_psh]
 
     return pd.DataFrame(results)
+
+
+def get_correlation_consecutive_dominance_durations(data_folder=DATA_FOLDER, fps=60, tFrame=26):
+    df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=True)
+    subs = df.subject.unique()
+    responses_all = np.load(SV_FOLDER + 'responses_simulated_noise.npy')
+    map_resps = {-1:1, 0:0, 1:2}
+    corrs_all_subjects = []
+    corrs_all_subjects_simul = []
+    corr_per_coupling = {1.: [], 0.7: [], 0.: []}
+    corr_per_coupling_simul = {1.: [], 0.7: [], 0.: []}
+    pshuffs = [1., 0.7, 0.]
+    for i_sub, subject in enumerate(subs):
+        df_sub = df.loc[df.subject == subject]
+        prev_doms = []
+        nxt_doms = []
+        prev_doms_simul = []
+        nxt_doms_simul = []
+        trial_index = df_sub.trial_index.unique()
+        prev_dom_coup = {1.: [], 0.7: [], 0.: []}
+        nxt_dom_coup = {1.: [], 0.7: [], 0.: []}
+        prev_dom_coup_simul = {1.: [], 0.7: [], 0.: []}
+        nxt_dom_coup_simul = {1.: [], 0.7: [], 0.: []}
+        for i_trial, trial in enumerate(trial_index):
+            df_trial = df_sub.loc[df_sub.trial_index == trial]
+            responses = df_trial.responses.values
+            responses_simul = [map_resps[resp] for resp in responses_all[i_sub, i_trial]]
+            psh = df_trial.pShuffle.values[0]
+            for i_r, r in enumerate([responses, responses_simul]):
+                change = np.r_[True, np.diff(r) != 0, True]
+                starts = np.where(change[:-1])[0]
+                ends = np.where(change[1:])[0]
+                lengths = np.array(ends - starts)
+                [prev_doms, prev_doms_simul][i_r].append(lengths[:-1])
+                [nxt_doms, nxt_doms_simul][i_r].append(lengths[1:])
+                [prev_dom_coup, prev_dom_coup_simul][i_r][psh].append(lengths[:-1])
+                [nxt_dom_coup, nxt_dom_coup_simul][i_r][psh].append(lengths[1:])
+        nxt_doms = np.concatenate(nxt_doms)/fps
+        prev_doms = np.concatenate(prev_doms)/fps
+        nxt_doms_simul = np.concatenate(nxt_doms_simul)/fps
+        prev_doms_simul = np.concatenate(prev_doms_simul)/fps
+        corrs_all_subjects.append(np.corrcoef(prev_doms, nxt_doms)[0][1])
+        corrs_all_subjects_simul.append(np.corrcoef(prev_doms_simul, nxt_doms_simul)[0][1])
+        for ps in pshuffs:
+            prev_coup = np.concatenate(prev_dom_coup[ps]) / fps 
+            next_coup = np.concatenate(nxt_dom_coup[ps]) / fps 
+            corr_per_coupling[ps].append(np.corrcoef(prev_coup, next_coup)[0][1])
+            prev_coup_simul = np.concatenate(prev_dom_coup_simul[ps]) / fps 
+            next_coup_simul = np.concatenate(nxt_dom_coup_simul[ps]) / fps 
+            corr_per_coupling_simul[ps].append(np.corrcoef(prev_coup_simul, next_coup_simul)[0][1])
+    fig, ax = plt.subplots(1, figsize=(4., 3.5))
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    sns.kdeplot(corrs_all_subjects, color='k', linewidth=3, label='Data',
+                bw_adjust=0.8)
+    sns.kdeplot(corrs_all_subjects_simul, color='firebrick', linewidth=3,
+                label='Simulation', bw_adjust=0.8)
+    ax.legend(frameon=False); ax.set_xlabel('Consecutive dominance correlation')
+    fig.tight_layout()
+    fig, ax = plt.subplots(1, figsize=(4., 3.5))
+    ax.axhline(0, color='k', linestyle='--', alpha=0.3, linewidth=3, zorder=1)
+    ax.axvline(0, color='k', linestyle='--', alpha=0.3, linewidth=3, zorder=1)
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    ax.plot(corrs_all_subjects, corrs_all_subjects_simul, color='k', marker='o', linestyle='')
+    r, p = pearsonr(corrs_all_subjects, corrs_all_subjects_simul)
+    minval = np.min([corrs_all_subjects, corrs_all_subjects_simul])
+    maxval = np.max([corrs_all_subjects, corrs_all_subjects_simul])
+    ax.plot([minval-0.1, maxval+0.1], [minval-0.1, maxval+0.1],
+            color='k', linestyle='--', alpha=0.3, linewidth=3)
+    ax.set_ylim(minval-0.05, maxval+0.05); ax.set_xlim(minval-0.05, maxval+0.05)
+    ax.annotate(f'r = {r:.3f}\np={p:.0e}', xy=(.04, 0.8), xycoords=ax.transAxes)
+    ax.set_xlabel('r(data)'); ax.set_ylabel('r(simul)')
+    fig.tight_layout()
+    fig, ax = plt.subplots(ncols=2, figsize=(8., 3.5), sharex=True)
+    for a in ax:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+        a.set_xlabel('Consecutive dom. correlation')
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    for i_psh, ps in enumerate(pshuffs):
+        sns.kdeplot(corr_per_coupling[ps], color=colormap[i_psh], linewidth=3, label=ps,
+                    bw_adjust=0.8, ax=ax[0])
+        sns.kdeplot(corr_per_coupling_simul[ps], color=colormap[i_psh], linewidth=3, label=ps,
+                    bw_adjust=0.8, ax=ax[1])
+    ax[0].legend(frameon=False, title='p(shuffle)');
+    fig.tight_layout()
 
 
 def plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
@@ -2902,6 +3012,8 @@ def simulator_5_params(params, freq, nFrame=1560, fps=60,
     pending_choice = None      # choice scheduled but not yet applied
     pending_time = None        # when to apply it
     ndt_frames = int(ndt / dt)
+    # ndt_frames = int(np.random.normal(ndt, 0.05) / dt)  # 50 ms std
+    # ndt_frames = max(1, ndt_frames)
     
     for t in range(1, nFrame):
         # apply pending choice if NDT has elapsed
@@ -4035,8 +4147,8 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
                 descending = response_raw[~asc_mask].T
         
                 if np.abs(freqval) == 4:
-                    trial_descending_subjects_4[[i_trial, ntrials], i_sh] = descending
-                    trial_ascending_subjects_4[[i_trial, ntrials], i_sh] = ascending
+                    trial_descending_subjects_4[[i_trial, i_trial+ntrials], i_sh] = descending
+                    trial_ascending_subjects_4[[i_trial, i_trial+ntrials], i_sh] = ascending
                 else:
                     trial_descending_subjects_2[i_trial, i_sh] = descending
                     trial_ascending_subjects_2[i_trial, i_sh] = ascending
@@ -4717,16 +4829,16 @@ def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
 
 def plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
                           ntraining=8, n=4, window_conv=None, fps=60):
-    np.random.seed(50)  # 24, 42, 13, 1234, 11  10with1000
+    np.random.seed(50)  # 24, 42, 13, 1234, 11, 50  10with1000
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     print(len(pars), ' fitted subjects')
     fitted_params_all = [np.load(par) for par in pars]
-    fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]
+    fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], np.random.normal(ndt, 0.05)] for params in fitted_params_all]
     # print('J1, J0, B1, Sigma, Threshold')
     simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=fps,
                        sv_folder=SV_FOLDER, ntraining=ntraining,
-                       plot=True, simulate=False, use_j0=True, subjects=None,
+                       plot=True, simulate=True, use_j0=True, subjects=None,
                        fitted_params_all=fitted_params_all, window_conv=window_conv)
 
 
@@ -4865,6 +4977,34 @@ def drive(q, j, b):
     return sigmoid(2*j*(2*q-1)+2*b)-q
 
 
+def f_prime(q, j, b=0.0):
+    """Derivative of the drift term."""
+    s = sigmoid(2*j*(2*q - 1) + 2*b)
+    return 4* j * s * (1 - s) - 1
+
+
+def f_double_prime(x, J, B):
+    sig = 1 / (1 + np.exp(-2*J*(2*x - 1) - 2*B))
+    return 16*(J**2)*sig*(1 - sig)*(1 - 2*sig)
+
+
+def instanton_rhs(t, y, J, B, D):
+    x, dx = y
+    fx = drive(x, J, B)
+    fxp = f_prime(x, J, B)
+    fxx = f_double_prime(x, J, B)
+    ddx = fx * fxp + D * fxx
+    return np.vstack((dx, ddx))
+
+
+def bc(y0, yT, x0, xT):
+    return np.array([y0[0] - x0, yT[0] - xT])
+
+
+def optimal_eta(x, dx, J, B, D):
+    return (dx - drive(x, J, B)) / np.sqrt(2*D)
+
+
 def optimal_escape_eta(j,  time, stim=None):
     fun_to_minimize = lambda q: sigmoid(2*j*(2*q-1))-q
     val1 = fsolve(fun_to_minimize, 0)+5e-3
@@ -4877,6 +5017,49 @@ def optimal_escape_eta(j,  time, stim=None):
         x[t] = x[t-1] - drive(x[t-1], j, b=stim[t])*dt
     eta = -2*drive(x, j, b=stim)
     return eta
+
+
+def optimal_escape_eta_with_all_functional(j=1, theta=0.):
+    B = 0.0
+    D = 0.01
+    if j < 1:
+        x0 = 0.5-theta
+    else:
+        x0 = 0.0
+    xT = 0.5 + theta
+
+    # --- Initial mesh and guess --------------------------------------------
+    t = np.linspace(0, 3, 200)
+    y_init = np.zeros((2, t.size))
+    y_init[0] = np.linspace(x0, xT, t.size)
+
+    # --- Solve BVP ----------------------------------------------------------
+    sol = solve_bvp(lambda t, y: instanton_rhs(t, y, j, B, D),
+                    lambda y0, yT: bc(y0, yT, x0, xT),
+                    t, y_init)
+
+    if sol.success:
+        x_opt = sol.y[0]
+        dx_opt = sol.y[1]
+        time_vals = sol.x
+        eta_opt = (dx_opt - drive(x_opt, j, B)) / np.sqrt(2*D)
+
+        plt.figure(figsize=(8, 4))
+        plt.subplot(121)
+        plt.plot(time_vals, x_opt, label="x(t)")
+        plt.title("Optimal path")
+        plt.xlabel("t"); plt.ylabel("x")
+        plt.legend()
+
+        plt.subplot(122)
+        plt.plot(time_vals, eta_opt, label="η(t)")
+        plt.title("Optimal noise")
+        plt.xlabel("t"); plt.ylabel("η(t)")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("BVP failed:", sol.message)
 
 
 def optimal_eta_time(J, theta, T=1.0, B=0.0, n_points=400):
@@ -5084,17 +5267,19 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                 internal_noise_vals_aligned[i, :] = internal_noise[idx - steps_back:idx+steps_front]
                 potential = potential_mf(x_vals_aligned[i, :], j_eff,
                                          bias=b1*stim_vals_aligned[i, :], n=1)
-                potential_vals_aligned[i, :] =(potential-np.nanmean(potential)) / (np.max(np.abs(potential))-np.min(np.abs(potential)))
+                # potential_vals_aligned[i, :] =(potential-np.nanmean(potential)) / (np.max(np.abs(potential))-np.min(np.abs(potential)))
+                potential_vals_aligned[i, :] = drive(x_vals_aligned[i, :], j_eff,
+                                                     b1*stim_vals_aligned[i, :])
             for i, idx in enumerate(idx_0):
                 x_vals_aligned[i+len(idx_1), :] =\
                     1-values_x[idx - steps_back:idx+steps_front]
                 stim_vals_aligned[i, :] = chi[idx - steps_back:idx+steps_front]*-1
                 internal_noise_vals_aligned[i, :] = internal_noise[idx - steps_back:idx+steps_front]*-1
-                potential = potential_mf(x_vals_aligned[i, :], j_eff,
-                                          bias=b1*stim_vals_aligned[i, :], n=1)
-                potential_vals_aligned[i, :] = (potential-np.nanmean(potential)) / (np.max(np.abs(potential))-np.min(np.abs(potential)))
-                # potential_vals_aligned[i, :] = drive(x_vals_aligned[i, :], j_eff,
-                #                                       b1*stim_vals_aligned[i, :])
+                # potential = potential_mf(x_vals_aligned[i, :], j_eff,
+                #                          bias=b1*stim_vals_aligned[i, :], n=1)
+                # potential_vals_aligned[i, :] = (potential-np.nanmean(potential)) / (np.max(np.abs(potential))-np.min(np.abs(potential)))
+                potential_vals_aligned[i, :] = drive(x_vals_aligned[i, :], j_eff,
+                                                     b1*stim_vals_aligned[i, :])
             x_vals_aligned_all_trials = np.row_stack((x_vals_aligned_all_trials, x_vals_aligned))
             potential_vals_aligned_all_trials = np.row_stack((potential_vals_aligned_all_trials, potential_vals_aligned))
             stim_vals_aligned_all_trials = np.row_stack((stim_vals_aligned_all_trials, stim_vals_aligned))
@@ -5117,7 +5302,7 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
     ax = ax.flatten()
     variables = [x_values_all_subjects, stim_values_all_subjects, internal_noise_values_all_subjects,
                  potential_value_all_subjects]
-    labels = ['App. posterior q']*2 + ['Stimulus noise B(t)']*2 + ['Internal noise']*2 + ['Potential']*2
+    labels = ['App. posterior q']*2 + ['Stimulus noise B(t)']*2 + ['Internal noise']*2 + ['Drive']*2
     var = 0
     [ax[1].axhline(val, color='r', linestyle='--', alpha=0.2, linewidth=2, zorder=1) for val in median_theta]
     ax[1].axhline(0.5, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
@@ -6431,13 +6616,13 @@ def get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=27, t_
 def compare_likelihoods_models(load=True, bic=False):
     if not load:
         pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
-        likelihood_with_ndt, bic_with_ndt = get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=105, t_dur=13)
+        likelihood_with_ndt, bic_with_ndt = get_likelihood(pars, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=105, t_dur=20)
         np.save(SV_FOLDER + 'likelihood_model_with_ndt.npy', likelihood_with_ndt)
         np.save(SV_FOLDER + 'bic_model_with_ndt.npy', bic_with_ndt)
-        # pars2 = glob.glob(SV_FOLDER + 'fitted_params/null_model_params/' + '*.npy')
-        # likelihood_null_model, bic_null_model = get_likelihood(pars2, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=105, t_dur=20, null=True)
-        # np.save(SV_FOLDER + 'likelihood_null_model.npy', likelihood_null_model)
-        # np.save(SV_FOLDER + 'bic_null_model.npy', bic_null_model)
+        pars2 = glob.glob(SV_FOLDER + 'fitted_params/null_model_params/' + '*.npy')
+        likelihood_null_model, bic_null_model = get_likelihood(pars2, n=4, data_folder=DATA_FOLDER, ntraining=8, nbins=105, t_dur=20, null=True)
+        np.save(SV_FOLDER + 'likelihood_null_model.npy', likelihood_null_model)
+        np.save(SV_FOLDER + 'bic_null_model.npy', bic_null_model)
     if load:
         likelihood_null_model = np.array(np.load(SV_FOLDER + 'likelihood_null_model.npy'))
         bic_null_model = np.array(np.load(SV_FOLDER + 'bic_null_model.npy'))
@@ -6459,16 +6644,14 @@ def compare_likelihoods_models(load=True, bic=False):
     fig5, ax5 = plt.subplots(ncols=1, figsize=(2., 4))
     losses = [bic_null_model-bic_with_ndt] if bic else [likelihood_null_model-likelihood_with_ndt]
     ax5.spines['right'].set_visible(False); ax5.spines['top'].set_visible(False)
-    sns.barplot(losses, palette=['peru', 'cadetblue'], ax=ax5)
+    sns.barplot(losses, palette=['yellowgreen'], ax=ax5)
     sns.stripplot(losses, color='k', ax=ax5, size=3)
     ax5.axhline(0, color='k', linestyle='--', linewidth=2, alpha=0.4)
-    # minval = (np.min(losses)-5) / (np.min(losses)-5 + np.max(losses)+5)
-    # maxval = (np.max(losses)-5) / (np.min(losses)-5 + np.max(losses)+5)
-    ax5.text(0.8, 0.42, 'Better', rotation=90, fontsize=13, transform=ax5.transAxes)
-    ax5.text(0.8, 0.18, 'Worse', rotation=90, fontsize=13, transform=ax5.transAxes)
+    ax5.text(0.8, 0.27, 'Better', rotation=90, fontsize=13, transform=ax5.transAxes)
+    ax5.text(0.8, 0.04, 'Worse', rotation=90, fontsize=13, transform=ax5.transAxes)
     ax5.set_xlim(-0.5, 0.8)
     ax5.set_xticks([0], ['Null - Original'])
-    ax5.set_ylim(np.min(losses)-5, np.max(losses)+5)
+    ax5.set_ylim(np.min(losses)-15, np.max(losses)+5)
     ylabel = r'$\Delta$BIC' if bic else r'$\Delta$NLH'
     ax5.set_ylabel(ylabel)
     fig5.tight_layout()
@@ -6682,11 +6865,11 @@ def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=2
     bin_edges = np.linspace(0, 1, n_bins + 1)
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
-    n_subj, n_trials, n_time = stim.shape
+    n_subj, n_trials, n_time = stim.shape      # seconds per bin
     t_norm = np.linspace(0, 1, n_time - 1)  # assume fixed ascending-descending sweep
 
     for f in np.unique(freq):
-        deltat = T_trial / n_bins * 60 / fps
+        deltat = T_trial / n_bins
         for ps in np.unique(pshuffle):
             p_LR_sum = np.zeros(n_bins)
             p_RL_sum = np.zeros(n_bins)
@@ -6698,10 +6881,6 @@ def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=2
                 mask = (freq[subj] == f) & (pshuffle[subj] == ps)
                 stim_sel = stim[subj, mask]
                 choice_sel = choice[subj, mask]
-                choice_0110 = choice_sel.copy()
-                choice_0110[choice_0110 == 0] = np.nan
-                choice_0110[choice_0110 == -1] = 0
-                bins, r01, r10, _, _, _ = compute_switch_rate_from_array_dir(choice_0110, fps=60, bin_size=1/n_bins)
 
                 if stim_sel.size == 0:
                     continue
@@ -6748,6 +6927,117 @@ def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=2
             results.append(df)
 
     return pd.concat(results, ignore_index=True)
+
+
+def get_switch_indices(arr):
+    """
+    Detect switches in a response array (0/1 with NaN).
+    Returns two arrays of indices:
+      - idx_01: where a 1→2 switch occurred
+      - idx_10: where a 2→1 switch occurred
+    """
+    prev = arr[:-1]
+    nxt = arr[1:]
+    valid = (~np.isnan(prev)) & (~np.isnan(nxt))
+    idx_01 = np.where(valid & (prev == 1) & (nxt == 2))[0] + 1
+    idx_10 = np.where(valid & (prev == 2) & (nxt == 1))[0] + 1
+    return idx_01, idx_10
+
+
+def compute_switch_rate_since_switch(data_folder=DATA_FOLDER, shuffle_vals=[1., 0.7, 0.], tFrame=26,
+                                     fps=60, steps_front=400, bin_size=0.25, simulated=True, steps_back=100):
+    """
+    Compute and plot the switch rate as a function of time since each perceptual switch,
+    separately for each pShuffle condition.
+    """
+
+    nFrame = int(fps * tFrame)
+    dt = 1 / fps
+    time_since_switch = np.arange(-steps_back, steps_front) * dt  # seconds
+
+    df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=True)
+    subs = df.subject.unique()
+
+
+    responses_all = np.load(SV_FOLDER + 'responses_simulated_noise.npy')
+    map_resps = {-1:1, 0:0, 1:2}
+    
+    # Store subject-level means per pShuffle
+    subject_means = {ps: [] for ps in shuffle_vals}
+
+    for i_sub, subject in enumerate(subs):
+        df_sub = df.loc[df.subject == subject]
+        trial_index = df_sub.trial_index.unique()
+        all_switch_segments = []
+        all_pshuffle_labels = []
+
+        for i_trial, trial in enumerate(trial_index):
+            df_trial = df_sub.loc[df_sub.trial_index == trial]
+            if not simulated:
+                responses = df_trial.responses.values
+            if simulated:
+                responses = np.array([map_resps[resp] for resp in responses_all[i_sub, i_trial]])
+            # get switch indices
+            idx_01, idx_10 = get_switch_indices(responses)
+            all_switches = np.sort(np.concatenate([idx_01, idx_10]))
+
+            # keep only those with enough frames ahead
+            all_switches = all_switches[(all_switches < len(responses) - steps_front) &
+                                        (all_switches >= steps_back)]
+
+            for idx in all_switches:
+                seg = responses[idx-steps_back:idx + steps_front]
+                all_switch_segments.append(seg)
+                all_pshuffle_labels.append(df_trial.pShuffle.values[0])
+        # === Compute subject-level mean per pShuffle ===
+        all_switch_segments = np.vstack(all_switch_segments)
+        all_pshuffle_labels = np.array(all_pshuffle_labels)
+        for ps in shuffle_vals:
+            
+            mask = all_pshuffle_labels == ps
+            if not np.any(mask):
+                continue
+            mean_seg = np.nanmean(all_switch_segments[mask], axis=0)
+    
+            # === Bin the signal over time for smoothing ===
+            bin_frames = int(bin_size * fps)
+            total_steps = steps_back + steps_front
+            n_bins = total_steps // bin_frames
+            binned = [np.nanmean(mean_seg[i * bin_frames:(i + 1) * bin_frames])
+                      for i in range(n_bins)]
+            subject_means[ps].append(binned)
+
+    # === Group-level averaging ===
+    bin_centers = (np.arange(n_bins) * bin_frames + bin_frames / 2 - steps_back) * dt
+    group_mean = {ps: np.nanmean(subject_means[ps], axis=0) for ps in shuffle_vals if len(subject_means[ps]) > 0}
+    group_sem = {ps: np.nanstd(subject_means[ps], axis=0) / np.sqrt(len(subject_means[ps])) for ps in shuffle_vals if len(subject_means[ps]) > 0}
+
+    fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
+    # ax.set_ylim(-0.02, 1.02)
+    ax.axhline(1.5, color='k', linewidth=3, linestyle='--', alpha=0.2)
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    cmap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+
+    for color, ps in zip(cmap, group_mean.keys()):
+
+        # mean_rate = np.nanmean(switch_prob[mask], axis=0) / dt  # Hz
+        # sem_rate = np.nanstd(switch_prob[mask] / dt, axis=0) / np.sqrt(np.sum(mask))
+
+        # # bin using mean
+        # mean_rate_binned = [np.nanmean(mean_rate[i * bin_frames:(i + 1) * bin_frames])
+        #                     for i in range(n_bins)]
+        # sem_rate_binned = [np.nanmean(sem_rate[i * bin_frames:(i + 1) * bin_frames])
+        #                    for i in range(n_bins)]
+        plt.plot(bin_centers, group_mean[ps], lw=4, color=color, label=ps)
+        plt.fill_between(bin_centers,
+                          group_mean[ps] - group_sem[ps],
+                          group_mean[ps] + group_sem[ps],
+                          color=color, alpha=0.3)
+    # plt.ylim(1.44, 1.54)
+    plt.xlabel("Time since switch (s)")
+    plt.ylabel("Switch rate (Hz)")
+    plt.legend(title="p(shuffle)", frameon=False)
+    plt.tight_layout()
 
 
 def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
@@ -6811,19 +7101,27 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
-    simple_optimal_eta_quartic_potential(a=0.5)
-    simple_optimal_eta_quartic_potential(a=1.)
-    simple_optimal_eta_quartic_potential(a=1.5)
-    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-                                tFrame=26, fps=60,
-                                steps_back=200, steps_front=20, avoid_first=True,
-                                n=4, load_simulations=True, normalize=False, sigma=None,
-                                pshuf_only=None)
-    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-                                tFrame=26, fps=60,
-                                steps_back=200, steps_front=20, avoid_first=True,
-                                n=4, load_simulations=True, normalize=False, sigma=0,
-                                pshuf_only=None)
+    # compute_switch_rate_since_switch(data_folder=DATA_FOLDER, shuffle_vals=[1., 0.7, 0.], tFrame=26,
+    #                                   fps=60, steps_front=350, bin_size=0.3, simulated=False,
+    #                                   steps_back=0)
+    # compute_switch_rate_since_switch(data_folder=DATA_FOLDER, shuffle_vals=[1., 0.7, 0.], tFrame=26,
+    #                                   fps=60, steps_front=350, bin_size=0.3, simulated=True,
+    #                                   steps_back=0)
+    # optimal_escape_eta_with_all_functional(j=1, theta=0.)
+    # get_correlation_consecutive_dominance_durations(data_folder=DATA_FOLDER, fps=60, tFrame=26)
+    # simple_optimal_eta_quartic_potential(a=0.5)
+    # simple_optimal_eta_quartic_potential(a=1.)
+    # simple_optimal_eta_quartic_potential(a=1.5)
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=60,
+    #                             steps_back=200, steps_front=20, avoid_first=True,
+    #                             n=4, load_simulations=False, normalize=False, sigma=None,
+    #                             pshuf_only=None)
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=60,
+    #                             steps_back=200, steps_front=20, avoid_first=True,
+    #                             n=4, load_simulations=False, normalize=False, sigma=0,
+    #                             pshuf_only=None)
     # compare_likelihoods_models(load=True, bic=True)
     # plot_dominance_durations(data_folder=DATA_FOLDER,
     #                           ntraining=8, freq=2)
@@ -6840,8 +7138,8 @@ if __name__ == '__main__':
     # plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
     #                       ntraining=8, window_conv=1, fps=200)
     # plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
-    #                       fps=200, n=4, ntraining=8, tFrame=26,
-    #                       window_conv=5, n_bins=80)
+    #                        fps=200, n=4, ntraining=8, tFrame=26,
+    #                        window_conv=5, n_bins=50)
     # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                               steps_back=150, steps_front=20,
     #                               shuffle_vals=[1, 0.7, 0],
@@ -6849,13 +7147,13 @@ if __name__ == '__main__':
     #                               filter_subjects=True, n=4)
     # compare_parameters_two_experiments()
     # plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
-    #                                       shuffle_vals=[1., 0.7, 0.], ntrials=36,
-    #                                       steps_back=150, steps_front=20, avoid_first=True,
-    #                                       tFrame=26, window_conv=1,
-    #                                       fps=60, ax=None, hysteresis_area=True,
-    #                                       normalize_variables=True, ratio=1,
-    #                                       load_simulations=True)
-    # for variable in  ['B1']:
+    #                                      shuffle_vals=[1., 0.7, 0.], ntrials=36,
+    #                                      steps_back=150, steps_front=20, avoid_first=True,
+    #                                      tFrame=26, window_conv=1,
+    #                                      fps=60, ax=None, hysteresis_area=True,
+    #                                      normalize_variables=True, ratio=1,
+    #                                      load_simulations=True)
+    # for variable in ['J0', 'J1', 'B1', 'SIGMA', 'THETA']:
     #     plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                             steps_back=120, steps_front=20,
     #                                             shuffle_vals=[1, 0.7, 0],
@@ -6915,9 +7213,9 @@ if __name__ == '__main__':
     #                             sv_folder=SV_FOLDER, simulate=True,
     #                             load_net=False, not_plot_and_return=False,
     #                             pyddmfit=True, transform=False)
-    # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-    #                   ntraining=8, coupling_levels=[0, 0.3, 1],
-    #                   window_conv=5, bin_size=0.35, switch_01=False)
+    plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+                     ntraining=8, coupling_levels=[0, 0.3, 1],
+                     window_conv=5, bin_size=0.35, switch_01=False)
     # plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8)
     # get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
     #                                   ntraining=8, coupling_levels=[0, 0.3, 1])
