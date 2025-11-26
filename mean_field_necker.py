@@ -29,6 +29,7 @@ import seaborn as sns
 import pandas as pd
 import cv2
 import torch
+from tqdm import tqdm
 # import fastkde
 
 mpl.rcParams['font.size'] = 16
@@ -2056,7 +2057,7 @@ def plot_boltzmann_distro(j, noise, b=0, ax=None, color='r', cumsum=False,
     else:
         yvals = distro
     ax.plot(q,  yvals / np.sum(distro),
-            color=color, label='analytical')
+            color=color, label='analytical', linewidth=3)
 
 
 def second_derivative_potential(q, j, b=0, n=3.):
@@ -3734,6 +3735,41 @@ def plot_boltzmann_distro_pdf(j, noise, b=0, ax=None):
     ax.set_ylabel('p(q(x=1))')
 
 
+def tau_coupling_hysteresis(b_list=np.linspace(-0.53, 0.53, 501),
+                            save_folder=DATA_FOLDER, sigma=0,
+                            dt=0.1, simulate=False):
+    b_list = np.concatenate((b_list[:-1], b_list[::-1]))
+    j_list = np.arange(0, 0.35, 5e-3)
+    taulist = np.arange(0.1, 6, 5e-2)
+    if simulate:
+        hyst_width_array = np.zeros((len(j_list), len(taulist)))
+        for i_t, tau in enumerate(tqdm(taulist)):
+            for i_j, j in enumerate(j_list):
+                x = 0.1
+                for i in range(5):
+                    x = gn.sigmoid(2*j*4*(2*x-1)+2*b_list[0])
+                vec = [x]
+                for i in range(len(b_list)-1):
+                    x = x + dt*(gn.sigmoid(2*j*4*(2*x-1)+2*b_list[i])-x)/tau + sigma*np.random.randn()*np.sqrt(dt/tau)
+                    vec.append(x)
+                idx_asc = np.argmin(np.abs(np.array(vec)[:len(vec)//2]-0.5))
+                idx_desc = np.argmin(np.abs(np.array(vec)[len(vec)//2:]-0.5))
+                hystval = b_list[:len(vec)//2][idx_asc]-b_list[len(vec)//2:][idx_desc]
+                hyst_width_array[i_j, i_t] = hystval
+        np.save(DATA_FOLDER + 'hyst_width_vs_J_tau.npy', hyst_width_array)
+    else:
+        hyst_width_array = np.load(DATA_FOLDER + 'hyst_width_vs_J_tau.npy')
+    fig, ax = plt.subplots(1)
+    im = ax.imshow(hyst_width_array.T, origin='lower',
+                   extent=[0., 0.35, 0.1, 6], aspect='auto', cmap='plasma',
+                   vmin=0)
+    ax.set_yticks([0.1, 6], ['Slow', 'Fast'])
+    plt.colorbar(im, ax=ax, label='Hysteresis width')
+    ax.set_xlabel('Coupling, J')
+    ax.set_ylabel('Stimulus-to-dynamics timescale')
+    fig.tight_layout()
+
+
 def plot_hysteresis_different_taus(j=0.36,
                                    b_list=np.linspace(-0.53, 0.53, 501),
                                    save_folder=DATA_FOLDER,
@@ -3759,36 +3795,38 @@ def plot_hysteresis_different_taus(j=0.36,
             vec.append(x)
         ax.plot(b_list, vec, linewidth=4, color='midnightblue', label=tau,
                 linestyle=lsts[i_t])
-    taulist_2 = [0.2, 1]
+    taulist_2 = [3, 6]
     # hyst_dist_analytic = []
     # n = 3
     # delta = np.sqrt(1-1/(j*n))
     # b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j*delta)/2
     # b_crit2 = (np.log((1+delta)/(1-delta))-2*n*j*delta)/2
+    ax2.axvline(1/4, color='gray', linestyle='--', alpha=0.6, lw=2)
     j_list = np.arange(0, 0.4, 1e-2)
     for i_t, tau in enumerate(taulist_2):
         hyst_dist_simul = []
         for j in j_list:
             x = 0.1
             for i in range(5):
-                x = gn.sigmoid(2*j*3*(2*x-1)+2*b_list[0])
+                x = gn.sigmoid(2*j*4*(2*x-1)+2*b_list[0])
             vec = [x]
             for i in range(len(b_list)-1):
-                x = x + dt*(gn.sigmoid(2*j*3*(2*x-1)+2*b_list[i])-x)/tau + sigma*np.random.randn()*np.sqrt(dt/tau)
+                x = x + dt*(gn.sigmoid(2*j*4*(2*x-1)+2*b_list[i])-x)/tau + sigma*np.random.randn()*np.sqrt(dt/tau)
                 vec.append(x)
             idx_asc = np.argmin(np.abs(np.array(vec)[:len(vec)//2]-0.5))
             idx_desc = np.argmin(np.abs(np.array(vec)[len(vec)//2:]-0.5))
             hystval = b_list[:len(vec)//2][idx_asc]-b_list[len(vec)//2:][idx_desc]
             hyst_dist_simul.append(hystval)
-        ax2.plot(j_list, hyst_dist_simul, color='k', linewidth=3,
-                 linestyle=['--', 'solid'][i_t], label=['Slow', 'Fast'][i_t])
+        ax2.plot(j_list, hyst_dist_simul, color='k', linewidth=5,
+                 linestyle=['--', 'solid'][i_t], label=['Slow stimulus', 'Fast stimulus'][i_t])
     ax.set_xlabel('Sensory evidence, B(t)')
     ax.legend(title=r'$\tau$', frameon=False)
     ax.set_ylim(-0.05, 1.05)
     ax.set_ylabel('Approximate posterior q(x=1)')
     ax2.set_xlabel('Coupling, J')
-    ax2.legend(title=r'$\tau$', frameon=False)
+    ax2.legend(frameon=False)
     ax2.set_ylabel('Hysteresis width')
+    ax2.set_ylim(0, np.max(hyst_dist_simul)+1e-2)
     # ax2.set_yscale('log')
     fig.tight_layout()
     fig.savefig(save_folder + 'hysteresis_taus.png', dpi=200, bbox_inches='tight')
@@ -5838,6 +5876,7 @@ def predictions_hysteresis_coupling(b_list=[0, 0.1, 0.2], sigma=0.05,
                label='Ascending')
         a.plot(j_array[half_len:], q_all[i_a][half_len:], color='r', linewidth=4,
                label='Descending')
+        a.axvline(1/4, color='gray', linestyle='--', alpha=0.5, lw=2)
         a.set_title(f'B = {b_list[i_a]}')
         a.set_xlabel('Coupling, J(t)')
         a.set_ylim(-0.1, 1.1)
@@ -5845,8 +5884,47 @@ def predictions_hysteresis_coupling(b_list=[0, 0.1, 0.2], sigma=0.05,
     fig.tight_layout()
 
 
+def plot_cartoon_potential_boltzmann(b=0.05, noise=0.15):
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(4, 4), sharex=True)
+    ax = ax.flatten()
+    q = np.arange(-0.2, 1.2, 0.001)
+    for i_j, j in enumerate([0.1, 0.38]):
+        pot = potential_mf_neighs(q, j, bias=b, neighs=4)
+        distro = np.exp(-2*pot/noise**2)
+        ax[i_j].plot(q, pot,
+                     color='k', linewidth=4)
+        ax[i_j+2].plot(q, distro / np.sum(distro),
+                         color='k', linewidth=4)
+    ax[0].set_title('Monostable', fontsize=15)
+    ax[1].set_title('Bistable', fontsize=15)
+    ax[0].set_ylabel(r'$V(q)$')
+    ax[2].set_ylabel(r'$p(q)$')
+    ax[-1].set_xlabel(r'$q$')
+    ax[-2].set_xlabel(r'$q$')
+    for a in ax:
+        a.axvline(0.5, color='k', linestyle='--', alpha=0.3)
+        a.set_yticks([]); a.set_xticks([0, 0.5, 1])
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    fig.tight_layout()
+    plt.subplots_adjust(wspace=0.3, hspace=0.3)
+    fig.savefig(DATA_FOLDER + 'boltzmann_potential_cartoon.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'boltzmann_potential_cartoon.svg', dpi=400, bbox_inches='tight')
+
+
 if __name__ == '__main__':
     print('Mean-Field inference')
+    plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
+    # plot_hysteresis_different_taus(j=0.36,
+    #                                 b_list=np.linspace(-0.53, 0.53, 2001),
+    #                                 save_folder=DATA_FOLDER,
+    #                                 tau_list=[0.1,  1], sigma=0,
+    #                                 dt=0.05)
+    # tau_coupling_hysteresis(b_list=np.linspace(-0.53, 0.53, 2001),
+    #                         save_folder=DATA_FOLDER, sigma=0,
+    #                         dt=0.05, simulate=False)
+    # predictions_hysteresis_coupling(b_list=[0, 0.05, 0.1], sigma=0.001,
+    #                                 ini_cond=None)
     # mf_dyn_sys_circle(n_iters=100, b=0.)
     # plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
     # plot_density_map_2d_mf(j=5, b=0, noise=0.1, tau=0.02, time_end=3000, dt=5e-3)
@@ -5868,7 +5946,7 @@ if __name__ == '__main__':
     #                                       theta=theta)
     # plot_solutions_mfield(j_list=np.arange(0.001, 1.01, 0.001), stim=0, N=3,
     #                       plot_approx=False)
-    plot_3_examples_mf_evolution(avg=True)
+    # plot_3_examples_mf_evolution(avg=True)
     # examples_pot()
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0., 1.005, 0.001),
     #                        num_iter=200, neigh_list=np.arange(3, 11),
@@ -5958,3 +6036,4 @@ if __name__ == '__main__':
     #                                         long=True, cylinder=True, inset=False,
     #                                         barplot=True)
     # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
+    
