@@ -46,6 +46,13 @@ from pyddm import set_N_cpus
 from pyddm.models.loss import LossLikelihood, LossBIC
 from pyddm.functions import get_model_loss
 from mpl_toolkits.mplot3d import Axes3D
+from sklearn.linear_model import LogisticRegression
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from scipy.ndimage import gaussian_filter, zoom
+from scipy.interpolate import griddata
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
+
+
 
 
 mpl.rcParams['font.size'] = 16
@@ -454,12 +461,13 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     hyst_width_2 = np.zeros((len(coupling_levels), len(responses_2[0])))
     nsubs = hyst_width_2.shape[1]
     if ndt_list is not None:
-        hysteresis, max_hists = \
-            get_argmax_ndt_hyst_per_subject(responses_2, responses_4, barray_2, barray_4, coupling_levels,
-                                            tFrame=tFrame, fps=fps, window_conv=window_conv,
-                                            ndtlist=ndt_list)
-        hysteresis_across_coupling = np.mean(hysteresis, axis=0)
-        delay_per_subject = ndt_list[np.argmax(hysteresis_across_coupling, axis=1)]
+        # hysteresis, max_hists = \
+        #     get_argmax_ndt_hyst_per_subject(responses_2, responses_4, barray_2, barray_4, coupling_levels,
+        #                                     tFrame=tFrame, fps=fps, window_conv=window_conv,
+        #                                     ndtlist=ndt_list)
+        # hysteresis_across_coupling = np.mean(hysteresis, axis=0)
+        # delay_per_subject = ndt_list[np.argmax(hysteresis_across_coupling, axis=1)]
+        delay_per_subject = np.int32(60*np.load(DATA_FOLDER + 'kernel_latency_average.npy'))
     else:
         delay_per_subject = [0]*nsubs
     # --- FREQ = 2 ---
@@ -494,7 +502,7 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
                        label=f"{1-coupling:.1f}")
             ax[0].plot(x_desc, y_desc, color=colormap[i_c], linewidth=4)
     sns.barplot(hyst_width_2.T, palette=colormap, ax=ax2, errorbar='se')
-    ax2.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.54)
+    ax2.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.8)
     hyst_width_4 = np.zeros((len(coupling_levels), len(responses_2[0])))
     # --- FREQ = 4 ---
     for i_c, coupling in enumerate(coupling_levels):
@@ -526,21 +534,28 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
             ax[1].plot(x_asc, y_asc, color=colormap[i_c], linewidth=4)
             ax[1].plot(x_desc, y_desc, color=colormap[i_c], linewidth=4)
     sns.barplot(hyst_width_4.T, palette=colormap, ax=ax4, errorbar="se")
-    ax4.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.54)
+    ax4.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.8)
     heights = np.nanmean(hyst_width_2.T, axis=0)
     bars = np.arange(3)
-    pv_sh012 = scipy.stats.ttest_ind(hyst_width_2[0], hyst_width_2[1]).pvalue
-    pv_sh022 = scipy.stats.ttest_ind(hyst_width_2[0], hyst_width_2[2]).pvalue
-    pv_sh122 = scipy.stats.ttest_ind(hyst_width_2[1], hyst_width_2[2]).pvalue
-    # pv_sh014 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[1]).pvalue
-    # pv_sh024 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[2]).pvalue
-    # pv_sh124 = scipy.stats.ttest_ind(hyst_width_4[1], hyst_width_4[2]).pvalue
+    pv_sh012 = scipy.stats.ttest_rel(hyst_width_2[0], hyst_width_2[1]).pvalue
+    pv_sh022 = scipy.stats.ttest_rel(hyst_width_2[0], hyst_width_2[2]).pvalue
+    pv_sh122 = scipy.stats.ttest_rel(hyst_width_2[1], hyst_width_2[2]).pvalue
+    pv_sh014 = scipy.stats.ttest_rel(hyst_width_4[0], hyst_width_4[1]).pvalue
+    pv_sh024 = scipy.stats.ttest_rel(hyst_width_4[0], hyst_width_4[2]).pvalue
+    pv_sh124 = scipy.stats.ttest_rel(hyst_width_4[1], hyst_width_4[2]).pvalue
     barplot_annotate_brackets(0, 1, pv_sh012, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
                               maxasterix=3, ax=ax2)
     barplot_annotate_brackets(0, 2, pv_sh022, bars, heights, yerr=None, dh=.39, barh=.05, fs=10,
                               maxasterix=3, ax=ax2)
     barplot_annotate_brackets(1, 2, pv_sh122, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
                               maxasterix=3, ax=ax2)
+    heights = np.nanmean(hyst_width_4.T, axis=0)
+    barplot_annotate_brackets(0, 1, pv_sh014, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
+                              maxasterix=3, ax=ax4)
+    barplot_annotate_brackets(0, 2, pv_sh024, bars, heights, yerr=None, dh=.35, barh=.05, fs=10,
+                              maxasterix=3, ax=ax4)
+    barplot_annotate_brackets(1, 2, pv_sh124, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
+                              maxasterix=3, ax=ax4)
     for a in ax2, ax4:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
@@ -625,15 +640,34 @@ def get_argmax_ndt_hyst_per_subject(responses_2, responses_4, barray_2, barray_4
     return hyst_widths, ndts_max
 
 
-def get_analytical_approximations_areas(shuffling_levels=np.array([0., 0.7, 1]),
-                                        b1=1, j1=1, tFrame=26):
-    temp = 1/((1-np.array(shuffling_levels)+1e-1)*8*j1)  # multiplied by parameter J1
+def get_analytical_approximations_areas(b1=1, jeff=1, tFrame=26):
+    temp = 1/(8*jeff)  # multiplied by parameter J1
     omega_2 = 2*np.pi/tFrame
     omega_4 = 4*np.pi/tFrame
     h_0 = 3*b1  # multiplied by parameter B1
     area_2 = 4*np.pi*(1/temp * np.exp(-2/temp))*h_0**2 * omega_2/(omega_2**2 + 1)
     area_4 = 4*np.pi*(1/temp * np.exp(-2/temp))*h_0**2 * omega_4/(omega_4**2 + 1)
     return area_2, area_4
+
+
+def get_analytical_approximation_hysteresis_per_participant():
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    print(len(pars), ' fitted subjects')
+    j1s = np.array([np.load(par)[0] for par in pars])
+    j0s = np.array([np.load(par)[1] for par in pars])
+    b1s = np.array([np.load(par)[2] for par in pars])
+    shuffling_levels = np.array([1., 0.7, 0.])
+    areas = {'f2': [], 'f4': []}
+    for sub in range(len(j1s)):
+        jeff = (1-shuffling_levels)*j1s[sub]+j0s[sub]+1e-10
+        area_2, area_4 = get_analytical_approximations_areas(b1=b1s[sub],
+                                                             jeff=jeff, tFrame=26)
+        areas['f2'].append(area_2)
+        areas['f4'].append(area_4)
+    fig, ax = plt.subplots(ncols=2)
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    sns.barplot(np.vstack(areas['f2']), palette=colormap, ax=ax[0], errorbar="se")
+    sns.barplot(np.vstack(areas['f4']), palette=colormap, ax=ax[1], errorbar="se")
 
 
 def noise_bf_switch_threshold(load_sims=False, thres_vals=np.arange(0, 0.5, 1e-2),
@@ -1857,16 +1891,23 @@ def get_correlation_consecutive_dominance_durations(data_folder=DATA_FOLDER, fps
             responses_simul = [map_resps[resp] for resp in responses_all[i_sub, i_trial]]
             psh = df_trial.pShuffle.values[0]
             for i_r, r in enumerate([responses, responses_simul]):
-                change = np.r_[True, np.diff(r) != 0, True]
+                r = np.array(r)
+                r = r[r != 0]
+                try:
+                    change = np.r_[True, np.diff(r) != 0, True]
+                except ValueError:
+                    continue
                 starts = np.where(change[:-1])[0]
                 ends = np.where(change[1:])[0]
-                lengths = np.array(ends - starts)
+                lengths = np.array(ends - starts)[:-1]
                 [prev_doms, prev_doms_simul][i_r].append(lengths[:-1])
                 [nxt_doms, nxt_doms_simul][i_r].append(lengths[1:])
                 [prev_dom_coup, prev_dom_coup_simul][i_r][psh].append(lengths[:-1])
                 [nxt_dom_coup, nxt_dom_coup_simul][i_r][psh].append(lengths[1:])
         nxt_doms = np.concatenate(nxt_doms)/fps
         prev_doms = np.concatenate(prev_doms)/fps
+        # plt.plot(prev_doms, nxt_doms, marker='o', linestyle='')
+        # plt.xlabel('Prev'); plt.ylabel('Next')
         nxt_doms_simul = np.concatenate(nxt_doms_simul)/fps
         prev_doms_simul = np.concatenate(prev_doms_simul)/fps
         corrs_all_subjects.append(np.corrcoef(prev_doms, nxt_doms)[0][1])
@@ -1880,10 +1921,9 @@ def get_correlation_consecutive_dominance_durations(data_folder=DATA_FOLDER, fps
             corr_per_coupling_simul[ps].append(np.corrcoef(prev_coup_simul, next_coup_simul)[0][1])
     fig, ax = plt.subplots(1, figsize=(4., 3.5))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
-    sns.kdeplot(corrs_all_subjects, color='k', linewidth=3, label='Data',
-                bw_adjust=0.8)
-    sns.kdeplot(corrs_all_subjects_simul, color='firebrick', linewidth=3,
-                label='Simulation', bw_adjust=0.8)
+    sns.histplot(corrs_all_subjects, color='k', linewidth=3, label='Data')
+    sns.histplot(corrs_all_subjects_simul, color='firebrick', linewidth=3,
+                 label='Simulation')
     ax.legend(frameon=False); ax.set_xlabel('Consecutive dominance correlation')
     fig.tight_layout()
     fig, ax = plt.subplots(1, figsize=(4., 3.5))
@@ -1906,10 +1946,10 @@ def get_correlation_consecutive_dominance_durations(data_folder=DATA_FOLDER, fps
         a.set_xlabel('Consecutive dom. correlation')
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     for i_psh, ps in enumerate(pshuffs):
-        sns.kdeplot(corr_per_coupling[ps], color=colormap[i_psh], linewidth=3, label=ps,
-                    bw_adjust=0.8, ax=ax[0])
-        sns.kdeplot(corr_per_coupling_simul[ps], color=colormap[i_psh], linewidth=3, label=ps,
-                    bw_adjust=0.8, ax=ax[1])
+        sns.histplot(corr_per_coupling[ps], color=colormap[i_psh], linewidth=3, label=ps,
+                    ax=ax[0])
+        sns.histplot(corr_per_coupling_simul[ps], color=colormap[i_psh], linewidth=3, label=ps,
+                    ax=ax[1])
     ax[0].legend(frameon=False, title='p(shuffle)');
     fig.tight_layout()
 
@@ -2085,10 +2125,10 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
             mean_vals_noise_switch_coupling[i_sh, :, i_sub] = averaged_and_convolved_values
             err_vals_noise_switch_coupling[i_sh, :, i_sub] = np.nanstd(mean_vals_noise_switch_all_trials, axis=0) / np.sqrt(mean_vals_noise_switch_all_trials.shape[0])
         mean_vals_noise_switch_all_shuffles_subject = mean_vals_noise_switch_all_shuffles_subject[1:]
-        x_plot = np.arange(-steps_back, 0, 1)/fps
+        x_plot = np.arange(-steps_back, steps_front, 1)/fps
         latency = (np.argmax(np.nanmean(mean_vals_noise_switch_all_trials[:, :-steps_front], axis=0))-steps_back)/fps
         peakval = np.nanmax(np.nanmean(mean_vals_noise_switch_all_trials[:, :-steps_front], axis=0))
-        kernel = np.nanmean(mean_vals_noise_switch_all_trials[:, :-steps_front], axis=0)
+        kernel = np.nanmean(mean_vals_noise_switch_all_trials, axis=0)
         # p0 = [1.0, 0.3, 0.2, 0.0]  # initial guess: A, tau(s), sigma(s), baseline
         # pars, cov = curve_fit(decision_kernel, x_plot, kernel, p0=p0)
         # A, tau, sigma, baseline = pars
@@ -2306,8 +2346,9 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     # for i_sub in range(len(subs)):
     #     y_plot = all_kernels[i_sub]
     #     ax.plot(x_plot, y_plot, color='k', linewidth=2, alpha=0.5)
-    x_plot = np.arange(-steps_back, 0, 1)/fps
+    x_plot = np.arange(-steps_back, steps_front, 1)/fps
     y_plot = np.nanmean(all_kernels, axis=0)
+    np.save(DATA_FOLDER + 'all_kernels_noise_switch_aligned.npy', all_kernels)
     ax.plot(x_plot, y_plot, color='k', linewidth=4, )
     err = np.nanstd(all_kernels, axis=0)/np.sqrt(len(subs))
     ax.fill_between(x_plot, y_plot-err, y_plot+err, color='k', alpha=0.2)
@@ -2936,10 +2977,10 @@ def simulator_5_params_sticky_bound(params, freq, nFrame=1560, fps=60,
     b_eff = stimulus*b_par
     noise = np.random.randn(nFrame)*sigma*np.sqrt(dt/tau)
     x = np.zeros(nFrame)
-    # x1 = (np.sign(b_eff[0])+1)/2
-    # for i in range(5):
-    #     x1 = sigmoid(2 * (j_eff * (2 * x1 - 1)))  # convergence
-    x[0] = 0.5
+    x1 = (np.sign(b_eff[0])+1)/2
+    for i in range(5):
+        x1 = sigmoid(2 * (j_eff * (2 * x1 - 1)+b_eff[0]))  # convergence
+    # x[0] = 0.5
     choice = np.zeros(nFrame)
     prev_choice = 0.0
     new_choice = 0.0
@@ -2989,7 +3030,7 @@ def simulator_5_params_sticky_bound(params, freq, nFrame=1560, fps=60,
 
 
 def simulator_5_params(params, freq, nFrame=1560, fps=60,
-                       return_choice=False):
+                       return_choice=False, ini_cond_convergence=None, tau=None):
     """
     Simulator. Takes set of `params` and simulates the system, returning summary statistics.
     Params: J_eff, B_eff, tau, threshold distance, noise
@@ -2998,13 +3039,17 @@ def simulator_5_params(params, freq, nFrame=1560, fps=60,
     stimulus = sawtooth(2 * np.pi * abs(freq)/2 * t/26, 0.5)*2*np.sign(freq)
     j_eff, b_par, th, sigma, ndt = params  # add ndt
     lower_bound, upper_bound = np.array([-1, 1])*th + 0.5
-    tau = 1
+    tau = 1 if tau is None else tau
     dt = 1/fps
     b_eff = stimulus*b_par
     noise = np.random.randn(nFrame)*sigma*np.sqrt(dt/tau)
     x = np.zeros(nFrame)
     x1 = (np.sign(b_eff[0])+1)/2
-    x1 = sigmoid(2 * (j_eff * (2 * x1 - 1)))  # convergence
+    if ini_cond_convergence is None:
+        x1 = x1
+    else:
+        for i in range(ini_cond_convergence):
+            x1 = sigmoid(2 * (j_eff * (2 * x1 - 1) + b_eff[0]))  # convergence
     x[0] = x1
 
     choice = np.zeros(nFrame)
@@ -3012,8 +3057,7 @@ def simulator_5_params(params, freq, nFrame=1560, fps=60,
     pending_choice = None      # choice scheduled but not yet applied
     pending_time = None        # when to apply it
     ndt_frames = int(ndt / dt)
-    # ndt_frames = int(np.random.normal(ndt, 0.05) / dt)  # 50 ms std
-    # ndt_frames = max(1, ndt_frames)
+
     
     for t in range(1, nFrame):
         # apply pending choice if NDT has elapsed
@@ -3777,6 +3821,82 @@ def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
     fig.tight_layout()
 
 
+def lmm_hysteresis_pshuffle(freq=2, plot_summary=False,
+                            slope_random_effect=False, plot_individual=False):
+    y2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
+    y4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
+    x = np.repeat(np.array([0, 0.3, 1.]), y2.shape[1]).reshape(y2.shape)
+    N, M = x.shape
+    if freq == 2:
+        y = y2
+    if freq == 4:
+        y = y4
+    df = pd.DataFrame({"x": x.flatten(),
+                       "y": y.flatten(),
+                       "subject": np.repeat(np.arange(M), N),
+                       "condition": np.tile(np.arange(N), M)})
+    re_formula = "~x" if slope_random_effect else "1"
+    model = smf.mixedlm("y ~ x", df, groups=df["subject"],
+                        re_formula=re_formula)
+    result = model.fit()
+    fe = result.fe_params
+    re = result.random_effects
+    # get intercepts/slopes per subject
+    intercepts = [fe["Intercept"] + eff.get("Group", 0) for subj, eff in re.items()]
+    slopes = [fe["x"] + eff.get("x", 0) for subj, eff in re.items()]
+    if plot_summary:
+        print(result.summary())
+        # fixed effects
+        intercept = result.fe_params["Intercept"]
+        slope = result.fe_params["x"]
+        
+        x_range = np.linspace(np.min(x), np.max(x), 100)
+        y_pred = intercept + slope * x_range
+        fig = plt.figure()
+        plt.xlabel('p(shuffle)')
+        plt.ylabel('Hysteresis area')
+        plt.plot(x_range, y_pred, color="black", linewidth=4, label="Fixed effect")
+        if plot_individual:
+            random_effects = result.random_effects
+            s = 0
+            for subj, re in random_effects.items():
+                subj_intercept = intercepts[s]
+                subj_slope = slopes[s]
+                plt.plot(x_range, subj_intercept + subj_slope * x_range,
+                          alpha=0.3, color='k')
+                s += 1
+        else:
+            cov = result.cov_params()
+        
+            var_intercept = cov.loc["Intercept", "Intercept"]
+            var_slope = cov.loc["x", "x"]
+            cov_intercept_slope = cov.loc["Intercept", "x"]
+            
+            y_range = np.linspace(min(df["x"]), max(df["x"]), 100)
+            
+            intercept = result.params["Intercept"]
+            slope = result.params["x"]
+            
+            y_pred = intercept + slope * y_range
+            
+            z_val = 1.96  # for 95% CI
+            
+            SE = np.sqrt(
+                var_intercept +
+                (y_range ** 2) * var_slope +
+                2 * y_range * cov_intercept_slope
+            )
+            
+            y_pred_lower = y_pred - z_val * SE
+            y_pred_upper = y_pred + z_val * SE
+    
+            
+            plt.fill_between(x_range, y_pred_lower, y_pred_upper, alpha=0.3,
+                             color='k')
+        plt.plot(x+np.random.randn(y2.shape[0], y2.shape[1])*0.01, y, color='k', marker='o', linestyle='')
+        fig.tight_layout()
+
+
 def lmm_hysteresis_dominance(freq=2, plot_summary=False,
                              slope_random_effect=False, plot_individual=False):
     y2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
@@ -3881,10 +4001,9 @@ def plot_dominance_versus_hysteresis():
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     pshuffles = [1., 0.7, 0.]
     sns.barplot(dominance.T, ax=ax2, palette=colormap, errorbar='se')
-    ax2.set_ylim(4, 7.5);  ax2.set_xticks([0, 1, 2], pshuffles)
+    ax2.set_ylim(4, 9.5);  ax2.set_xticks([0, 1, 2], pshuffles)
     ax2.set_xlabel('p(shuffle'); ax2.set_ylabel('Dominance (s)')
     fig2.tight_layout()
-        
 
 
 def plot_noise_variables_versus_hysteresis():
@@ -3919,6 +4038,24 @@ def plot_noise_variables_versus_hysteresis():
         a.set_xlabel(xlabels[ia])
     ax[0].set_ylabel('Width, freq = 2')
     ax[3].set_ylabel('Width, freq = 4')
+    fig2, ax2 = plt.subplots(ncols=3, nrows=2, figsize=(10, 7))
+    ax2 = ax2.flatten()
+    for i in range(3):
+        vardom = mean_number_switchs_coupling[i]
+        varhyst = hyst_width_2[i]
+        r, p = pearsonr(vardom, varhyst)
+        ax2[i].annotate(f'r = {r:.3f}\np={p:.0e}', xy=(.04, 0.8), xycoords=ax2[i].transAxes)
+        ax2[i].plot(vardom, varhyst, color=colormap[i],
+                    **kwargs)
+        varhyst = hyst_width_4[i]
+        r, p = pearsonr(vardom, varhyst)
+        ax2[i+3].annotate(f'r = {r:.3f}\np={p:.0e}', xy=(.04, 0.8), xycoords=ax2[i+3].transAxes)
+        ax2[i+3].plot(vardom, varhyst, color=colormap[i],
+                    **kwargs)
+    ax2[4].set_xlabel('Dominance (s)')
+    ax2[0].set_ylabel('Hysteresis f=2')
+    ax2[3].set_ylabel('Hysteresis f=4')
+    fig2.tight_layout()
 
 
 def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
@@ -4072,6 +4209,154 @@ def get_log_likelihood_all_data(data_folder=DATA_FOLDER,
     return np.array(nllh), np.array(aics), np.array(bics)
 
 
+def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
+                                 sv_folder=SV_FOLDER,
+                                 ntraining=8, simulated_subject='s_1',
+                                 fps=60, idx_trial=1, ntrials=72, n=4,
+                                 nfreq=1, plot_response=False, fps_sim=200):
+    nFrame = fps*26
+    nFrame_sim = fps_sim*26
+    df = load_data(data_folder, n_participants='all', preprocess_data=True)
+    df = df.loc[df.trial_index > ntraining]
+    df_subject = df.loc[df.subject == simulated_subject]
+    trial_index = df_subject.trial_index.unique()
+    figsize = (7.5, 8) if nfreq == 2 else (6, 8)
+    fig_sim, ax_sim = plt.subplots(ncols=nfreq, nrows=3, figsize=figsize, sharex=True)
+    fig_dat, ax_dat = plt.subplots(ncols=nfreq, nrows=3, figsize=figsize, sharex=True)
+    example_shuffles = [0., 1.]
+    example_freqs = [2, 4][:nfreq]
+    fitted_params = [0.3, 0.1, 0.3, 0., 0.0, 0.5]
+    colormap = LinearSegmentedColormap.from_list('rg', ['darkgreen', 'gainsboro', 'r'], N=128)
+    crossing_2 = [6.5, 19.5]
+    crossing_4 = [3.25, 9.65, 16.15, 22.65]
+    crossings = [crossing_2, crossing_4]
+    if nfreq == 1:
+        ax_sim = np.expand_dims(ax_sim, axis=1)
+        ax_dat = np.expand_dims(ax_dat, axis=1)
+    ax_sim[0, 0].text(0.005, 0.14, 'Ascending',
+                      transform=ax_sim[0, 0].transAxes, rotation=35)
+    ax_sim[0, 0].text(0.75, 0.07, 'Descending',
+                      transform=ax_sim[0, 0].transAxes, rotation=-34)
+    for i_p, ps in enumerate(example_shuffles):
+        for i_fr, fr in enumerate(example_freqs):
+            t = np.arange(0, 26, 1/fps)
+            stim = sawtooth(2 * np.pi * abs(fr)/2 * t/26, 0.5)*2*np.sign(fr)
+            line = colored_line(t, stim, stim, ax_sim[0, i_fr],
+                                linewidth=4, cmap=colormap,
+                                norm=plt.Normalize(vmin=-2, vmax=2))
+            line = colored_line(t, stim, stim, ax_dat[0, i_fr],
+                                linewidth=4, cmap=colormap,
+                                norm=plt.Normalize(vmin=-2, vmax=2))
+            choice_dat = df_subject.loc[(df_subject.pShuffle == ps)&(df_subject.freq == fr)&(df_subject.initial_side==1)]
+            unique_tr_index = choice_dat.trial_index.unique()[idx_trial]
+            choices = choice_dat.loc[choice_dat.trial_index == unique_tr_index]
+            t_choices = get_response_array(choices)
+            j_eff = ((1-ps)*fitted_params[0] + fitted_params[1])*n
+            params = fitted_params[1:].copy()
+            params[0] = j_eff
+            choice, x = simulator_5_params(params=params, freq=fr, nFrame=nFrame_sim,
+                                           fps=fps_sim, return_choice=True, ini_cond_convergence=20,
+                                           tau=0.05)
+
+            ax_sim[i_p+1, i_fr].axhline(0.5, color='gray', linestyle=':', alpha=0.6,
+                                          linewidth=2)
+            for cross in crossings[i_fr]:
+                ax_sim[i_p+1, i_fr].axvline(cross, color='gray', linestyle='--', alpha=0.3)
+                ax_sim[0, i_fr].axvline(cross, color='gray', linestyle='--', alpha=0.3)
+                ax_dat[i_p+1, i_fr].axvline(cross, color='gray', linestyle='--', alpha=0.3)
+                ax_dat[0, i_fr].axvline(cross, color='gray', linestyle='--', alpha=0.3)
+            choice[choice == 1] = 1
+            choice[choice == -1] = 0.
+            time_sim = np.arange(nFrame_sim)/fps_sim
+            if plot_response:
+                ax_sim[i_p+1, i_fr].plot(time_sim, choice, color='k', linewidth=3,
+                                           label='choice')
+            x = np.clip(x, 0, 1)
+            line = colored_line(time_sim, x, x, ax_sim[i_p+1, i_fr],
+                                linewidth=4, cmap=colormap,
+                                norm=plt.Normalize(vmin=0, vmax=1),
+                                label='q')
+            ax_sim[i_p+1, i_fr].set_ylim(-0.05, 1.02)
+            ax_sim[i_p+1, i_fr].set_yticks([0., 0.5, 1.])
+            ax_dat[i_p+1, i_fr].set_ylim(1-0.05, 1+1.05)
+            ax_dat[i_p+1, i_fr].plot(t, t_choices, color='k', linewidth=3)
+            ax_dat[i_p+1, i_fr].set_xlim(-0.1, 26.1)
+            ax_sim[0, i_fr].set_yticks([-2, 0, 2], ['L', '0', 'R'])
+            ax_sim[0, i_fr].set_ylim(-2.05, 2.05)
+            ax_dat[0, i_fr].set_ylim(-2.05, 2.05)
+    j_eff_list = [0.4, 0.1]
+    b_list =  [-0.15, 0.15, 0.5, 0.2, 0.0, -0.2, -1]
+    ini_points = [0, 0, 1] # [1, 1, 1, 0]
+    offsets = [1e-2, 1e-2, 2e-2]
+    pos_y = [0.65, 0.95, 1.1]
+    pos_x = [0.06, 0.225, 0.41, 0.425, 0.54, 0.67, 0.75, 0.9]
+    for i_p in range(2):
+        j_eff = j_eff_list[i_p]
+        pos_idx = 0
+        for offset, ini_cond, b in zip(offsets, ini_points, b_list):
+            val = 1 if (pos_idx < 2 or pos_idx > 4) else 0.7
+            pos = [pos_x[pos_idx], pos_y[pos_idx], 0.18, 0.51]  # +0.23*((pos_idx % 2) == 0)*1.
+            sub_ax =  ax_sim[i_p+1, 0].inset_axes(
+                        pos, transform=ax_sim[i_p+1, 0].transAxes)
+            if pos_idx == 2:
+                sub_ax2 =  ax_sim[i_p+1, 0].inset_axes(
+                            [0.8, 1.2, 0.16, 0.4], transform=ax_sim[i_p+1, 0].transAxes)
+                sub_ax2.set_ylabel(r'$V(q)$')
+                sub_ax2.set_xlabel(r'$q$')
+                sub_ax2.spines['right'].set_visible(False)
+                sub_ax2.spines['top'].set_visible(False)
+                sub_ax2.set_xticks([0, 0.5, 1]); sub_ax2.set_yticks([])
+                sub_ax2.axvline(0.5, color='gray', linestyle=':', alpha=0.6)
+            sub_ax.axis('off')
+            q = np.arange(-0.2, 1.2, 1e-3)
+            v_xj = potential_mf(q, j_eff, b, n=n)
+            sub_ax.set_ylim(np.min(v_xj)-2*offset, np.max(v_xj))
+            sub_ax.plot(q, v_xj, color='k', linewidth=2)
+            fun_to_minimize = lambda q: sigmoid(2*n*j_eff*(2*q-1)+2*b)-q
+            val = fsolve(fun_to_minimize, ini_cond)
+            v_xj = potential_mf(val, j_eff, b, n=n)
+            sub_ax.axvline(0.5, color='gray', linestyle=':', alpha=0.6)
+            sub_ax.plot(val, v_xj+offset, color=COLORMAP(val), marker='o',
+                        markersize=7)
+            pos_idx += 1
+    ax_sim = ax_sim.flatten()
+    y_labels_sim = ['Depth cue, s(t)', '', r'Confidence, $q$' + '\nBistable regime', '',
+                    r'Confidence, $q$' + '\nMonostable regime', '']
+    y_labels_dat = ['Depth cue, s(t)', '', 'Response \nBistable regime', '',
+                    '', 'Response \nMonostable regime']
+    if nfreq == 1:
+        y_labels_sim = y_labels_sim[::2]
+        y_labels_dat = y_labels_dat[::2]
+
+    for i_a, a in enumerate(ax_sim):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_ylabel(y_labels_sim[i_a])
+    for i_a, a in enumerate(ax_sim[1:]):
+        a.set_xlim(0., 27)
+    ax_dat = ax_dat.flatten()
+    for i_a, a in enumerate(ax_dat):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_ylabel(y_labels_dat[i_a])
+    ax_sim[0].set_title('1 cycle', fontsize=15)
+    if nfreq > 1:
+        ax_sim[1].set_title('2 cycles', fontsize=15)
+        ax_sim[-2].set_xlabel('Time (s)')
+        ax_dat[1].set_title('2 cycles', fontsize=15)
+        ax_dat[-2].set_xlabel('Time (s)')
+    ax_sim[-1].set_xlabel('Time (s)')
+    ax_dat[0].set_title('1 cycle', fontsize=15)
+    ax_dat[-1].set_xlabel('Time (s)')
+    ax_sim[-1].set_xticks([])
+    fig_sim.tight_layout()
+    fig_dat.tight_layout()
+    fig_sim.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution.png', dpi=200, bbox_inches='tight')
+    fig_sim.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution.svg', dpi=200, bbox_inches='tight')
+    fig_dat.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution_responses_data.png', dpi=200, bbox_inches='tight')
+    fig_dat.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution_responses_data.svg', dpi=200, bbox_inches='tight')
+
+
 def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
                        sv_folder=SV_FOLDER, ntraining=8, n_simuls_network=50000,
                        plot=False, simulate=False, use_j0=False,
@@ -4092,6 +4377,8 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         pshuffles = df_subject.groupby('trial_index')['pShuffle'].mean().values
         ini_side = df_subject.groupby('trial_index')['initial_side'].mean().values
         frequencies = df_subject.groupby('trial_index')['freq'].mean().values*ini_side
+        pshuffles = np.repeat(pshuffles, ntrials // 72)
+        frequencies = np.repeat(frequencies, ntrials // 72)
         if simulate:
             choice_all = np.zeros((ntrials, nFrame))
             for trial in range(ntrials):
@@ -4121,6 +4408,8 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
             pshuffles = np.round(df_subject.groupby('trial_index')['pShuffle'].mean().values, 1)
             ini_side = np.round(df_subject.groupby('trial_index')['initial_side'].mean().values, 1)
             frequencies = np.round(df_subject.groupby('trial_index')['freq'].mean().values * ini_side, 2)
+            pshuffles = np.repeat(pshuffles, ntrials // 72)
+            frequencies = np.repeat(frequencies, ntrials // 72)
             choice_all = choices_all_subject[i_s]
             ntrials = len(frequencies)
             # trial-level accumulators
@@ -4216,9 +4505,9 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         ax_11.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.5)
         heights = np.nanmean(hyst_width_2.T, axis=0)
         bars = np.arange(3)
-        pv_sh012 = scipy.stats.ttest_ind(hyst_width_2[0], hyst_width_2[1]).pvalue
-        pv_sh022 = scipy.stats.ttest_ind(hyst_width_2[0], hyst_width_2[2]).pvalue
-        pv_sh122 = scipy.stats.ttest_ind(hyst_width_2[1], hyst_width_2[2]).pvalue
+        pv_sh012 = scipy.stats.ttest_rel(hyst_width_2[0], hyst_width_2[1]).pvalue
+        pv_sh022 = scipy.stats.ttest_rel(hyst_width_2[0], hyst_width_2[2]).pvalue
+        pv_sh122 = scipy.stats.ttest_rel(hyst_width_2[1], hyst_width_2[2]).pvalue
         barplot_annotate_brackets(0, 1, pv_sh012, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
                                   maxasterix=3, ax=ax_01)
         barplot_annotate_brackets(0, 2, pv_sh022, bars, heights, yerr=None, dh=.39, barh=.05, fs=10,
@@ -4827,23 +5116,25 @@ def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
         np.save(SV_FOLDER + f'fitted_params/fitted_with_preprocessed_data_more_bins/fitted_params_pyddm_{subject}_fixed_ndt_preprocessed.npy', params)
 
 
-def plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
-                          ntraining=8, n=4, window_conv=None, fps=60):
-    np.random.seed(50)  # 24, 42, 13, 1234, 11, 50  10with1000
+def plot_simulate_hysteresis_subject(data_folder=DATA_FOLDER, subject_name=None,
+                                     ntraining=8, n=4, window_conv=None, fps=60,
+                                     ntrials=72):
+    np.random.seed(50)  # 24, 42, 13, 1234, 11, **50**, 51, 100,   10with1000
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     print(len(pars), ' fitted subjects')
     fitted_params_all = [np.load(par) for par in pars]
-    fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], np.random.normal(ndt, 0.05)] for params in fitted_params_all]
+    fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]   # np.random.normal(ndt, 0.05)
     # print('J1, J0, B1, Sigma, Threshold')
     simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=fps,
-                       sv_folder=SV_FOLDER, ntraining=ntraining,
+                       sv_folder=SV_FOLDER, ntraining=ntraining, ntrials=ntrials,
                        plot=True, simulate=True, use_j0=True, subjects=None,
                        fitted_params_all=fitted_params_all, window_conv=window_conv)
 
 
 def simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=1546, fps=60,
                             load_simulations=True, sigma_predefined=None):
+    np.random.seed(50)  # 25, 50 (3 perc)
     ratio = int(nFrame/1546)
     nFrame = nFrame-ratio+1
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
@@ -5025,11 +5316,11 @@ def optimal_escape_eta_with_all_functional(j=1, theta=0.):
     if j < 1:
         x0 = 0.5-theta
     else:
-        x0 = 0.0
+        x0 = 0.01
     xT = 0.5 + theta
 
     # --- Initial mesh and guess --------------------------------------------
-    t = np.linspace(0, 3, 200)
+    t = np.linspace(0, 10, 200)
     y_init = np.zeros((2, t.size))
     y_init[0] = np.linspace(x0, xT, t.size)
 
@@ -5048,13 +5339,13 @@ def optimal_escape_eta_with_all_functional(j=1, theta=0.):
         plt.subplot(121)
         plt.plot(time_vals, x_opt, label="x(t)")
         plt.title("Optimal path")
-        plt.xlabel("t"); plt.ylabel("x")
+        plt.xlabel("Time, t"); plt.ylabel("x")
         plt.legend()
 
         plt.subplot(122)
         plt.plot(time_vals, eta_opt, label="η(t)")
         plt.title("Optimal noise")
-        plt.xlabel("t"); plt.ylabel("η(t)")
+        plt.xlabel("Time, t"); plt.ylabel("η(t)")
         plt.legend()
         plt.tight_layout()
         plt.show()
@@ -5374,6 +5665,70 @@ def plot_optimal_eta_b_vs_0(ntrials=10, j=1):
     fig.tight_layout()
 
 
+def plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
+                                     cumsum=False, npercentiles=4, sim_predict_dat=False):
+    x_plot = np.arange(-steps_back, steps_front, 1)/fps
+    kernels_data = np.load(DATA_FOLDER + 'all_kernels_noise_switch_aligned.npy')
+    kernels_simul = np.load(DATA_FOLDER + 'simulated_all_kernels_noise_switch_aligned.npy')
+    amplitude_simul = np.nanmax(kernels_simul, axis=1)
+    amplitude_data = np.nanmax(kernels_data, axis=1)
+    bins_perc = [i/npercentiles*100 for i in range(npercentiles+1)]
+    extra_for_all_vals = np.array([-1e-5] + [0]*(len(bins_perc)-2)+ [1e-5])
+    if sim_predict_dat:
+        amplitude_prediction = amplitude_simul
+        amplitude_to_plot = amplitude_data
+        kernels_to_plot = kernels_data
+        label = 'sim_to_dat_'
+    else:
+        amplitude_prediction = amplitude_simul
+        amplitude_to_plot = amplitude_simul
+        kernels_to_plot = kernels_simul
+        label = 'sim_to_sim_'
+    idxs = np.digitize(amplitude_prediction, np.percentile(amplitude_prediction, bins_perc)+extra_for_all_vals)-1
+    fig, ax = plt.subplots(1, figsize=(5.5, 4))
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    nbins = len(np.unique(idxs))
+    colormap = pl.cm.Oranges(np.linspace(0.3, 1, nbins))
+    if cumsum:
+        label = r'$\sum_{k=1}^t Noise(k)$'
+    else:
+        label = 'Noise (t)'
+    for i in range(nbins):
+        if cumsum:
+            average_across_subjects = np.cumsum(np.nanmean(kernels_to_plot[idxs == i], axis=0))
+            sem_across_subjects = np.nanstd(np.cumsum(kernels_to_plot[idxs == i], axis=1), axis=0) / np.sqrt(sum(idxs == i))
+        else:
+            average_across_subjects = np.nanmean(kernels_to_plot[idxs == i], axis=0)
+            sem_across_subjects = np.nanstd(kernels_to_plot[idxs == i], axis=0) / np.sqrt(sum(idxs == i))
+        ax.plot(x_plot, average_across_subjects, color=colormap[i],
+                linewidth=5, label=f'{i+1}{enums(i+1)}')
+        max_avg = np.nanmax(average_across_subjects)
+        ax.axhline(max_avg, color=colormap[i], linewidth=2, linestyle=':')
+        ax.fill_between(x_plot, average_across_subjects-sem_across_subjects,
+                        average_across_subjects+sem_across_subjects,
+                        color=colormap[i], alpha=0.1)
+    ax.set_xlabel('Time before switch (s)')
+    ax.set_ylabel(label); ax.legend(title='Percentile', frameon=False)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + label + 'kernel_noise_bf_switch_predicted_amplitude.png', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + label + 'kernel_noise_bf_switch_predicted_amplitude.svg', dpi=200, bbox_inches='tight')
+    fig, ax = plt.subplots(ncols=1, figsize=(5.5, 4))
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    if cumsum:
+        var_data = np.sum(kernels_data, axis=1)
+        var_simul = np.sum(kernels_simul, axis=1)
+        ax.set_xlabel('Cumulative sum data'); ax.set_ylabel('Cumulative sum simulation')
+    else:
+        var_data = amplitude_data
+        var_simul = amplitude_simul
+        ax.set_xlabel('Amplitude data'); ax.set_ylabel('Amplitude simulation')
+    ax.plot(var_data, var_simul, marker='o', linestyle='', color='k')
+    r, p = pearsonr(var_data, var_simul)
+    ax.annotate(f'r = {r:.3f}\np={p:.0e}', xy=(.04, 0.8), xycoords=ax.transAxes)
+    fig.tight_layout()
+
+
+
 def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
                                          shuffle_vals=[1., 0.7, 0.], ntrials=36,
                                          steps_back=120, steps_front=20, avoid_first=True,
@@ -5613,6 +5968,7 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
     #     ax.plot(x_plot, y_plot, color='k', linewidth=2, alpha=0.5)
     x_plot = np.arange(-steps_back, 0, 1)/fps
     y_plot = np.nanmean(all_kernels, axis=0)[:-steps_front]
+    np.save(DATA_FOLDER + 'simulated_all_kernels_noise_switch_aligned.npy', all_kernels)
     ax.plot(x_plot, y_plot, color='k', linewidth=4, )
     err = np.nanstd(all_kernels, axis=0)[:-steps_front]/np.sqrt(len(subs))
     ax.fill_between(x_plot, y_plot-err, y_plot+err, color='k', alpha=0.2)
@@ -5659,7 +6015,7 @@ def lmm_dominance_regime(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False):
     df = pd.DataFrame({"x": regimes,
                        "y": dominances,
                        "subject": subjects})
-    re_formula = "~x"
+    re_formula = "1"
     model = smf.mixedlm("y ~ x", df, groups=df["subject"],
                         re_formula=re_formula)
     result = model.fit()
@@ -5728,7 +6084,178 @@ def plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False
     fig5.tight_layout()
 
 
-def plot_noise_variables_vs_fitted_params(n=4, variable='dominance'):
+def hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
+                         freq=2, kde=False,
+                         point_per_subject_x_shuffle=False,
+                         simulated=False):
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    if simulated:
+        mean_dominance_shuffle = np.load(DATA_FOLDER + 'simulated_mean_number_switches_per_subject.npy')
+        label = 'simulated_'
+    else:
+        mean_dominance_shuffle = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+        label = ''
+    if freq == 4:
+        if not simulated:
+            file = 'hysteresis_width_freq_4.npy'
+        else:
+            file = 'hysteresis_width_f4_sims_fitted_params.npy'
+    if freq == 2:
+        if not simulated:
+            file = 'hysteresis_width_freq_2.npy'
+        else:
+            file = 'hysteresis_width_f2_sims_fitted_params.npy'
+    var = np.load(DATA_FOLDER + file)
+    print(len(pars), ' fitted subjects')
+    fitted_params_all = [np.load(par) for par in pars]
+    fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
+    unique_shuffle = np.array(unique_shuffle)
+    fitted_subs = fitted_params_all.shape[0]
+    jeffs = np.zeros((3, fitted_subs))
+    bistable_stim_dominance = []
+    monostable_stim_dominance = []
+    bistable_stim_hyst = []
+    monostable_stim_hyst = []
+    for i in range(fitted_subs):
+        jeffs[:, i] = (fitted_params_all[i][0]*(1-unique_shuffle)+fitted_params_all[i][1])
+        dom_bis = np.nanmean(mean_dominance_shuffle[:, i][jeffs[:, i] >= 1])
+        dom_mono = np.nanmean(mean_dominance_shuffle[:, i][jeffs[:, i] < 1])
+        hyst_bis = np.nanmean(var[:, i][jeffs[:, i] >= 1])
+        hyst_mono = np.nanmean(var[:, i][jeffs[:, i] < 1])
+        if not np.isnan(dom_bis):
+            bistable_stim_dominance.append(dom_bis)
+            bistable_stim_hyst.append(hyst_bis)
+        if not np.isnan(dom_mono):
+            monostable_stim_dominance.append(dom_mono)
+            monostable_stim_hyst.append(hyst_mono)
+    # definitions for the axes
+    left, width = 0.1, 0.65
+    bottom, height = 0.1, 0.65
+    spacing = 0.05
+    rect_scatter = [left, bottom, width, height]
+    rect_histx = [left, bottom + height + spacing, width, 0.2]
+    rect_histy = [left + width + spacing, bottom, 0.2, height]
+    
+    # start with a square Figure
+    fig = plt.figure(figsize=(5, 5))
+    
+    ax3 = fig.add_axes(rect_scatter)
+    ax_histx = fig.add_axes(rect_histx, sharex=ax3)
+    ax_histy = fig.add_axes(rect_histy, sharey=ax3)
+    ax3.spines['right'].set_visible(False)
+    ax3.spines['top'].set_visible(False)
+    if point_per_subject_x_shuffle:
+        jeffs = jeffs.flatten() > 1
+        mean_dominance_shuffle = mean_dominance_shuffle.flatten()
+        var = var.flatten()
+        monostable_stim_hyst = var[~jeffs]
+        bistable_stim_hyst = var[jeffs]
+        monostable_stim_dominance = mean_dominance_shuffle[~jeffs]
+        bistable_stim_dominance = mean_dominance_shuffle[jeffs]
+    alldom = np.concatenate((monostable_stim_dominance, bistable_stim_dominance))
+    allhyst = np.concatenate((monostable_stim_hyst, bistable_stim_hyst))
+    r, p = pearsonr(alldom, allhyst)
+    ax3.annotate(f'r = {r:.2f}\np = {p:.0e}', xy=(.02, 0.85), xycoords=ax3.transAxes)
+    # sns.kdeplot(x=bistable_stim_hyst, y=bistable_stim_dominance,
+    #             color='peru', ax=ax3, label='Bistable')
+    # sns.kdeplot(x=monostable_stim_hyst, y=monostable_stim_dominance,
+    #             color='cadetblue', ax=ax3, label='Monostable')
+    colormap = ['cadetblue', 'peru']; labels = ['Monostable', 'Bistable']
+    
+    variables_hyst = [monostable_stim_hyst, bistable_stim_hyst]
+    variables_dominance = [monostable_stim_dominance, bistable_stim_dominance]
+    for a in [ax_histx, ax_histy]:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+    ax_histx.spines['bottom'].set_visible(False)
+    ax_histy.spines['left'].set_visible(False)
+    plt.setp(ax_histx.get_xticklabels(), visible=False)
+    plt.setp(ax_histy.get_yticklabels(), visible=False)
+    for i in range(2):
+        meanx = np.mean(variables_hyst[i]); meany = np.mean(variables_dominance[i])
+        errx = np.std(variables_hyst[i]);  erry = np.std(variables_dominance[i])
+        ax3.errorbar(x=meanx, y=meany, xerr=errx, yerr=erry, color=colormap[i],
+                     marker='o', label=labels[i], markersize=9)
+        ax3.plot(variables_hyst[i], variables_dominance[i], color=colormap[i], linestyle='',
+                 marker='x', alpha=0.6, markersize=6)
+        if not kde:
+            sns.histplot(y=variables_dominance[i], color=colormap[i], ax=ax_histy,
+                        alpha=0.7, bins=np.linspace(0, 12, 20))
+            sns.histplot(variables_hyst[i], color=colormap[i], ax=ax_histx,
+                        alpha=0.7, bins=np.linspace(0, 3, 20))
+        if kde:
+            sns.kdeplot(y=variables_dominance[i], color=colormap[i], ax=ax_histy,
+                        linewidth=2, bw_adjust=0.5)
+            sns.kdeplot(variables_hyst[i], color=colormap[i], ax=ax_histx,
+                        linewidth=2, bw_adjust=0.5)
+    # ax3.set_yscale('log'); ax3.set_xscale('log')
+    if point_per_subject_x_shuffle:
+        if not simulated:
+            ax3.set_ylim(0, 15.9); ax3.set_xlim(0, 2.8)
+        else:
+            ax3.set_ylim(0, 6.5); ax3.set_xlim(0.3, 3.)
+    else:
+        ax3.set_ylim(0, 11.9); ax3.set_xlim(0, 2.9)
+    ax3.set_ylabel('Dominance (s)')
+    ax3.set_xlabel('Hysteresis');
+    ax3.legend(frameon=False, loc='lower left', bbox_to_anchor=[0.4, -0.02])
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + label + 'dominance_vs_hysteresis_classified.png', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + label + 'dominance_vs_hysteresis_classified.svg', dpi=300, bbox_inches='tight')
+    # do some clustering, n_centroids=2
+    # X = np.column_stack((alldom, allhyst))
+    # from sklearn.cluster import KMeans
+    # y_pred = KMeans(n_clusters=3, random_state=4).fit_predict(X)
+    # fig, ax = plt.subplots(1)
+    # ax.scatter(X[:, 0], X[:, 1], c=y_pred)
+
+
+def plot_hyst_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False,
+                       freq=2):
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    if simulations:
+        if freq == 2:
+            hyst_width = np.load(DATA_FOLDER + 'hysteresis_width_f2_sims_fitted_params.npy')
+        else:
+            hyst_width = np.load(DATA_FOLDER + 'hysteresis_width_f4_sims_fitted_params.npy')
+        dh = 0.45
+    else:
+        if freq == 2:
+            hyst_width = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
+        else:
+            hyst_width = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
+        dh = .3
+    print(len(pars), ' fitted subjects')
+    fitted_params_all = [np.load(par) for par in pars]
+    fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
+    unique_shuffle = np.array(unique_shuffle)
+    fitted_subs = fitted_params_all.shape[0]
+    jeffs = np.zeros((3, fitted_subs))
+    bistable_stim_hyst = []
+    monostable_stim_hyst = []
+    for i in range(fitted_subs):
+        jeffs[:, i] = (fitted_params_all[i][0]*(1-unique_shuffle)+fitted_params_all[i][1])
+        hyst_bis = np.nanmean(hyst_width[:, i][jeffs[:, i] >= 1])
+        hyst_mono = np.nanmean(hyst_width[:, i][jeffs[:, i] < 1])
+        if not np.isnan(hyst_bis):
+            bistable_stim_hyst.append(hyst_bis)
+        if not np.isnan(hyst_mono):
+            monostable_stim_hyst.append(hyst_mono)
+    fig5, ax5 = plt.subplots(ncols=1, figsize=(3.5, 4))
+    ax5.spines['right'].set_visible(False); ax5.spines['top'].set_visible(False)
+    sns.barplot([bistable_stim_hyst, monostable_stim_hyst], palette=['peru', 'cadetblue'], ax=ax5)
+    pvalue = scipy.stats.mannwhitneyu(bistable_stim_hyst, monostable_stim_hyst).pvalue
+    heights = [np.nanmean([bistable_stim_hyst, monostable_stim_hyst][k]) for k in range(2)]
+    barplot_annotate_brackets(0, 1, pvalue, [0, 1], heights, yerr=None, dh=dh, barh=.02, fs=10,
+                              maxasterix=3, ax=ax5)
+    sns.stripplot([bistable_stim_hyst, monostable_stim_hyst], color='k', ax=ax5, size=3)
+    ax5.set_xticks([0, 1], ['Bistable', 'Monostable'])
+    ax5.set_ylabel('Hysteresis width');
+    ax5.set_ylim(0, 2.8)
+    fig5.tight_layout()
+
+
+def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
+                                          fitted_variable='J'):
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     fitted_subs = len(pars)
     b1s = [np.load(par)[2] for par in pars]
@@ -5736,6 +6263,9 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance'):
     thetas = [np.load(par)[4] for par in pars]
     j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
     j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
+    variables = {'J': j0s+j1s, 'B': b1s, 'sigma': sigmas, 'theta': thetas,
+                 'J1': j1s, 'J0': j0s, 'B/sigma': b1s/sigmas,
+                 'theta/sigma': thetas/sigmas}
     labels = ['J1', 'J0', 'B1', 'Threshold', 'Sigma']
     if variable == 'dominance':
         file = 'mean_number_switches_per_subject.npy'
@@ -5754,12 +6284,12 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance'):
         label = 'Hysteresis freq=4'
     var = np.load(DATA_FOLDER + file)
     mean_duration_per_sub = np.nanmean(var, axis=0)[:fitted_subs]
-    rho, pval = pearsonr(j0s, mean_duration_per_sub)
+    rho, pval = pearsonr(variables[fitted_variable], mean_duration_per_sub)
     fig, ax = plt.subplots(1, figsize=(5, 4))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
-    ax.plot(j0s, mean_duration_per_sub, marker='o', linestyle='', color='k')
+    ax.plot(variables[fitted_variable], mean_duration_per_sub, marker='o', linestyle='', color='k')
     ax.set_title('r = ' + str(round(rho, 3)) + '\np = ' + str(round(pval, 5)))
-    ax.set_xlabel('Fitted J0')
+    ax.set_xlabel(variable)
     ax.set_ylabel(label)
     fig.tight_layout()
     fig, ax = plt.subplots(ncols=4, figsize=(14, 4))
@@ -5898,41 +6428,200 @@ def compare_parameters_two_experiments():
     fig.tight_layout()
     ax[0].legend(handles=handles, loc='upper center', frameon=False,
                  bbox_to_anchor=[0.7, 0.8])
+    fig.savefig(DATA_FOLDER + 'parameter_comparison_between_experiments.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'parameter_comparison_between_experiments.svg', dpi=400)
+    
+
+def analytical_bimodal_coef(j, sigma=0.2, n=4):
+    delta = 216*j**3 / (1-n*j)**2 * sigma**2
+    return 1/(3-delta)
 
 
-def hysteresis_vs_bimodality():
+def comparison_between_experiments_bis_mono(unique_shuffle=[1., 0.7, 0.],
+                                            estimator='mean', n=4):
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    mean_dominance_shuffle = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+    file_4 = 'hysteresis_width_freq_4.npy'
+    file_2 = 'hysteresis_width_freq_2.npy'
+    hyst_2 = np.load(DATA_FOLDER + file_2)
+    hyst_4 = np.load(DATA_FOLDER + file_4)
+    fitted_params_all = [np.load(par) for par in pars]
+    fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
+    unique_shuffle = np.array(unique_shuffle)
+    fitted_subs = fitted_params_all.shape[0]
+    jeffs = np.zeros((3, fitted_subs))
+    bistable_stim_dominance = []
+    monostable_stim_dominance = []
+    bistable_stim_hyst_2 = []
+    monostable_stim_hyst_2 = []
+    bistable_stim_hyst_4 = []
+    monostable_stim_hyst_4 = []
+    for i in range(fitted_subs):
+        jeffs[:, i] = (fitted_params_all[i][0]*(1-unique_shuffle)+fitted_params_all[i][1])
+        dom_bis = np.nanmean(mean_dominance_shuffle[:, i][jeffs[:, i] >= 1])
+        dom_mono = np.nanmean(mean_dominance_shuffle[:, i][jeffs[:, i] < 1])
+        hyst_bis_2 = np.nanmean(hyst_2[:, i][jeffs[:, i] >= 1])
+        hyst_mono_2 = np.nanmean(hyst_2[:, i][jeffs[:, i] < 1])
+        hyst_bis_4 = np.nanmean(hyst_4[:, i][jeffs[:, i] >= 1])
+        hyst_mono_4 = np.nanmean(hyst_4[:, i][jeffs[:, i] < 1])
+        if not np.isnan(dom_bis):
+            bistable_stim_dominance.append(dom_bis)
+            bistable_stim_hyst_2.append(hyst_bis_2)
+            bistable_stim_hyst_4.append(hyst_bis_4)
+        if not np.isnan(dom_mono):
+            monostable_stim_dominance.append(dom_mono)
+            monostable_stim_hyst_4.append(hyst_mono_4)
+            monostable_stim_hyst_2.append(hyst_mono_2)
+    # now for exp 1
     folder_bimodal = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/fitting/parameters/'  # Alex
     bimodal_coef = np.load(folder_bimodal + 'bimodality_coefficient.npy')
-    mean_peak_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
-    mean_peak_latency = np.load(DATA_FOLDER + 'mean_peak_latency_per_subject.npy')
+    folder_params_experiment_1 = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/fitting/parameters/'
+    folder_data_experiment_1 = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/fitting/data/'
+    all_df = load_data_experiment_1(data_folder=folder_data_experiment_1, n_participants='all')
+    subjects = all_df.subject.unique()
+    sarle_coef_bis = []
+    sarle_coef_mono = []
+    for i_sub, subject in enumerate(subjects):
+        params_experiment_1 = np.load(folder_params_experiment_1 + '/parameters_MF5_BADS' + subject + '.npy')
+        j_eff_exp1 = (params_experiment_1[0]*np.array(unique_shuffle) + params_experiment_1[1])*n
+        coef_bis = np.nanmean(bimodal_coef[:, i_sub][j_eff_exp1 >= 1])
+        coef_mono = np.nanmean(bimodal_coef[:, i_sub][j_eff_exp1 < 1])
+        if not np.isnan(coef_mono):
+            sarle_coef_mono.append(coef_mono)
+        if not np.isnan(coef_bis):
+            sarle_coef_bis.append(coef_bis)
+    colormap = ['cadetblue', 'peru']
+    variables_hyst_2 = [monostable_stim_hyst_2, bistable_stim_hyst_2]
+    variables_hyst_4 = [monostable_stim_hyst_4, bistable_stim_hyst_4]
+    variables_dominance = [monostable_stim_dominance, bistable_stim_dominance]
+    variables_coef = [sarle_coef_mono, sarle_coef_bis]
+    fig, ax = plt.subplots(ncols=4, nrows=1, figsize=(11.2, 4))
+    ax = ax.flatten()
+    sns.barplot(variables_coef, palette=colormap, errorbar='se', ax=ax[0], estimator=estimator)
+    sns.barplot(variables_hyst_2, palette=colormap, errorbar='se', ax=ax[1], estimator=estimator)
+    sns.barplot(variables_hyst_4, palette=colormap, errorbar='se', ax=ax[2], estimator=estimator)
+    sns.barplot(variables_dominance, palette=colormap, errorbar='se', ax=ax[3], estimator=estimator)
+    variables = [variables_coef, variables_hyst_2, variables_hyst_4, variables_dominance]
+    if estimator == 'mean':
+        dhs = [0.63, 0.7, 0.64, 0.64]
+    if estimator == 'median':
+        dhs = [0.63, 0.7, 0.72, 0.64]
+    for i_a, a in enumerate(ax):
+        if estimator == 'median':
+            heights = np.nanmedian(variables[i_a], axis=0)
+        else:
+            heights = np.nanmean(variables[i_a], axis=0)
+        bars = np.arange(2)
+        pv_sh01 = scipy.stats.mannwhitneyu(variables[i_a][0], variables[i_a][1]).pvalue
+        barplot_annotate_brackets(0, 1, pv_sh01, bars, heights, yerr=None, dh=dhs[i_a], barh=.01, fs=10,
+                                  maxasterix=3, ax=a)
+    ax[0].axhline(5/9, color='gray', linestyle='--', linewidth=3)
+    if estimator == 'mean':
+        ax[0].set_ylim(0.45, 0.72);  ax[1].set_ylim(0.85, 2.);
+        ax[2].set_ylim(1.6, 2.35); ax[3].set_ylim(5.5, 10.4)
+    if estimator == 'median':
+        ax[0].set_ylim(0.45, 0.72);  ax[1].set_ylim(0.85, 2.);
+        ax[2].set_ylim(1.6, 2.85); ax[3].set_ylim(5.5, 10.4)
+    ax[0].set_ylabel("Sarle's bimodality coefficient")
+    ax[3].set_ylabel("Dominance duration (s)")
+    ax[0].set_yticks([0.45, 0.5, 5/9, 0.6, 0.65, 0.7], ['0.45', '0.5', '5/9', '0.6', '0.65', '0.7'])
+    ax[1].set_ylabel('Hysteresis f=2'); ax[2].set_ylabel('Hysteresis f=4')
+    handles = [mpatches.Patch(color=colormap[0], label='Monostable'),
+               mpatches.Patch(color=colormap[1], label='Bistable')]
+    for a in ax:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+        a.set_xticks([])
+    fig.tight_layout()
+    ax[0].legend(handles=handles, loc='upper center', frameon=False,
+                 bbox_to_anchor=[0.6, 1.1])
+    fig.savefig(DATA_FOLDER + 'comparison_between_experiments_bistable_regime.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'comparison_between_experiments_bistable_regime.svg', dpi=400)
+
+
+def comparison_between_experiments(estimator='median', data_only=True):
+    folder_bimodal = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/fitting/parameters/'  # Alex
+    bimodal_coef = np.load(folder_bimodal + 'bimodality_coefficient.npy')
+    bimodal_coef_simul = np.load(folder_bimodal + 'bimodality_coefficient_simul.npy')
+
+    # mean_peak_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
+    # mean_peak_latency = np.load(DATA_FOLDER + 'mean_peak_latency_per_subject.npy')
     mean_number_switchs_coupling = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+    mean_number_switchs_coupling_simul = np.load(DATA_FOLDER + 'simulated_mean_number_switches_per_subject.npy')
     hyst_width_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
     hyst_width_4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
-    fig, ax = plt.subplots(ncols=3, figsize=(9.2, 4))
+    hyst_width_2_simul = np.load(DATA_FOLDER + 'hysteresis_width_f2_sims_fitted_params.npy')
+    hyst_width_4_simul = np.load(DATA_FOLDER + 'hysteresis_width_f4_sims_fitted_params.npy')
+    nrows = 1 if data_only else 2
+    height = 4 if data_only else 7
+    fig, ax = plt.subplots(ncols=4, nrows=nrows, figsize=(11.2, height))
+    ax = ax.flatten()
     for a in ax:
         a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
-    sns.barplot(bimodal_coef.T, palette=colormap, errorbar='se', ax=ax[0])
-    sns.barplot(hyst_width_2.T, palette=colormap, errorbar='se', ax=ax[1])
-    sns.barplot(mean_number_switchs_coupling.T, palette=colormap, errorbar='se', ax=ax[2])
-    ax[0].plot(np.nanmedian(bimodal_coef, axis=1), color='firebrick', linewidth=4)
-    ax[1].plot(np.nanmedian(hyst_width_2, axis=1), color='firebrick', linewidth=4)
-    ax[2].plot(np.nanmedian(mean_number_switchs_coupling, axis=1), color='firebrick', linewidth=4)
-    ax[0].axhline(5/9, color='gray', linestyle='--', linewidth=3)
-    ax[0].set_ylim(0.5, 0.67);  ax[1].set_ylim(0.85, 1.62);  ax[2].set_ylim(5.5, 9)
-    ax[0].set_ylabel("Snarle's bimodality coefficient")
-    ax[2].set_ylabel("Dominance duration (s)")
-    ax[0].set_yticks([0.5, 5/9, 0.6], ['0.5', '5/9', '0.6'])
-    ax[0].set_xticks([0, 1, 2], [1., 0.7, 0.]); ax[0].set_xlabel('p(shuffle)');
-    ax[2].set_xlabel('p(shuffle)')
-    ax[1].set_xlabel('p(shuffle)');  ax[1].set_ylabel('Hysteresis f=2')
-    handles = [mpatches.Patch(color=colormap[0], label='1.'),
-               mpatches.Patch(color=colormap[1], label='0.7'),
-               mpatches.Patch(color=colormap[2], label='0.')]
-    ax[0].legend(handles=handles,frameon=False,
-                 title='p(shuffle)')
-    fig.tight_layout()
+    sns.barplot(bimodal_coef.T, palette=colormap, errorbar='se', ax=ax[0], estimator=estimator)
+    sns.barplot(hyst_width_2.T, palette=colormap, errorbar='se', ax=ax[1], estimator=estimator)
+    sns.barplot(hyst_width_4.T, palette=colormap, errorbar='se', ax=ax[2], estimator=estimator)
+    sns.barplot(mean_number_switchs_coupling.T, palette=colormap, errorbar='se', ax=ax[3], estimator=estimator)
+    if not data_only:
+        sns.barplot(bimodal_coef_simul.T, palette=colormap, errorbar='se', ax=ax[4], estimator=estimator)
+        sns.barplot(hyst_width_2_simul.T, palette=colormap, errorbar='se', ax=ax[5], estimator=estimator)
+        sns.barplot(hyst_width_4_simul.T, palette=colormap, errorbar='se', ax=ax[6], estimator=estimator)
+        sns.barplot(mean_number_switchs_coupling_simul.T, palette=colormap, errorbar='se', ax=ax[7], estimator=estimator)
+    # sns.swarmplot(bimodal_coef.T, color='k', ax=ax[0])
+    # sns.swarmplot(hyst_width_2.T, color='k', ax=ax[1])
+    # sns.swarmplot(mean_number_switchs_coupling.T, color='k', ax=ax[2])
+    if estimator == 'mean':
+        ax[0].plot(np.nanmedian(bimodal_coef, axis=1), color='firebrick', linewidth=4)
+        ax[1].plot(np.nanmedian(hyst_width_2, axis=1), color='firebrick', linewidth=4)
+        ax[2].plot(np.nanmedian(hyst_width_4, axis=1), color='firebrick', linewidth=4)
+        ax[3].plot(np.nanmedian(mean_number_switchs_coupling, axis=1), color='firebrick', linewidth=4)
     
+    ax[0].axhline(5/9, color='gray', linestyle='--', linewidth=3)
+    xlim_ax0 = ax[0].get_xlim() + np.array((0., 0.35))
+    ax[0].set_xlim(xlim_ax0)
+    if not data_only:
+        ax[4].axhline(5/9, color='gray', linestyle='--', linewidth=3)
+    ax[0].set_ylim(0.475, 0.71);  ax[1].set_ylim(0.85, 1.68);
+    ax[2].set_ylim(1.6, 2.35); ax[3].set_ylim(5.5, 9.9)
+    if not data_only:
+        ax[4].set_ylim(0.48, 0.64);  ax[5].set_ylim(1.2, 1.62);  ax[7].set_ylim(1, 3.5)
+    ax[0].set_ylabel("Sarle's bimodality coefficient")
+    ax[3].set_ylabel("Dominance duration (s)")
+    ax[0].set_yticks([0.5, 5/9, 0.6, 0.65], ['0.5', '5/9', '0.6', '0.65'])
+    titles = ['Exp. 1\n', 'Exp. 2\nHysteresis (f=2)', 'Exp. 2\nHysteresis (f=4)', 'Exp. 2\nNoise trials']
+    variables = [bimodal_coef, hyst_width_2, hyst_width_4, mean_number_switchs_coupling]
+    for i_a, a in enumerate(ax):
+        if estimator == 'median':
+            heights = np.nanmedian(variables[i_a].T, axis=0)
+        else:
+            heights = np.nanmean(variables[i_a].T, axis=0)
+        bars = np.arange(3)
+        pv_sh01 = scipy.stats.ttest_rel(variables[i_a][0], variables[i_a][1]).pvalue
+        pv_sh02 = scipy.stats.ttest_rel(variables[i_a][0], variables[i_a][2]).pvalue
+        pv_sh12 = scipy.stats.ttest_rel(variables[i_a][1], variables[i_a][2]).pvalue
+        barplot_annotate_brackets(0, 1, pv_sh01, bars, heights, yerr=None, dh=.19, barh=.01, fs=10,
+                                  maxasterix=3, ax=a)
+        barplot_annotate_brackets(0, 2, pv_sh02, bars, heights, yerr=None, dh=.23, barh=.01, fs=10,
+                                  maxasterix=3, ax=a)
+        barplot_annotate_brackets(1, 2, pv_sh12, bars, heights, yerr=None, dh=.16, barh=.01, fs=10,
+                                  maxasterix=3, ax=a)
+        a.set_xticks([0, 1, 2], [1., 0.7, 0.])
+        if i_a < 4:
+            a.set_title(titles[i_a], fontsize=14, pad=15)
+    ax[0].set_xlabel('p(shuffle)');
+    ax[2].set_xlabel('p(shuffle)'); ax[3].set_xlabel('p(shuffle)')
+    ax[1].set_xlabel('p(shuffle)');  ax[1].set_ylabel('Hysteresis f=2'); ax[2].set_ylabel('Hysteresis f=4')
+    # handles = [mpatches.Patch(color=colormap[0], label='1.'),
+    #            mpatches.Patch(color=colormap[1], label='0.7'),
+    #            mpatches.Patch(color=colormap[2], label='0.')]
+    # ax[0].legend(handles=handles,frameon=False,
+    #              title='p(shuffle)')
+    ax[0].text(0.92, 0.42, 'Bimodal', rotation=90, fontsize=13, transform=ax[0].transAxes)
+    ax[0].text(0.92, 0.035, 'Unimodal', rotation=90, fontsize=13, transform=ax[0].transAxes)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'comparison_between_experiments.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'comparison_between_experiments.svg', dpi=400)
+
 
 def similarity_params(folder_2='ndt_fixed_15_tdur_good_comb'):
     pars_ndt = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
@@ -5990,13 +6679,14 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
                                   steps_back=60, steps_front=20,
                                   shuffle_vals=[1, 0.7, 0],
                                   avoid_first=False, window_conv=1,
-                                  filter_subjects=True, n=4):
+                                  filter_subjects=True, n=4, sub_alone=None,
+                                  ax=None):
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
     fitted_subs = len(pars)
-    # idxs = [(par[4] < 0.25)*(par[3] < 0.1) for par in fitted_params_all]
-    # fitted_params_all = fitted_params_all[idxs]
+    # idxs = [(par[2]/par[4] > 2) for par in fitted_params_all]
+    fitted_params_all = fitted_params_all  # [idxs]
     df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=filter_subjects)
     subs = df.subject.unique()[:fitted_subs]  # [idxs]
     print(subs, ', number:', len(subs))
@@ -6008,8 +6698,10 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     monostable_kernels = []
     bistable_kernels = []
     for i_sub, subject in enumerate(subs):
+        if sub_alone is not None:
+            if subject != sub_alone:
+                continue
         df_sub = df.loc[df.subject == subject]
-
         trial_index = df_sub.trial_index.unique()
         mean_vals_noise_switch_all_trials = np.empty((1, steps_back+steps_front))
         mean_vals_noise_switch_all_trials[:] = np.nan
@@ -6057,7 +6749,11 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
 
     print(avg_bistable)
     colormap = ['peru', 'cadetblue']; labels=['Bistable', 'Monostable']
-    fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
+    if ax is None:
+        fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
+        saveflag = True
+    else:
+        saveflag = False
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     ax.axhline(0, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
     for regime in range(2):
@@ -6072,12 +6768,13 @@ def plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
                 label=labels[regime], linewidth=3)
         ax.fill_between(x_plot, y_plot-err_plot, y_plot+err_plot, color=colormap[regime],
                         alpha=0.3)
-    ax.legend(frameon=False); ax.set_xlabel('Time before switch(s)')
+    ax.set_xlabel('Time before switch(s)')
     ax.set_ylabel('Noise')
-    fig.tight_layout()
-    fig.savefig(DATA_FOLDER + 'kernel_across_subjects.png', dpi=400)
-    fig.savefig(DATA_FOLDER + 'kernel_across_subjects.svg', dpi=400)
-
+    if saveflag:
+        ax.legend(frameon=False)
+        fig.tight_layout()    
+        fig.savefig(DATA_FOLDER + 'kernel_across_subjects.png', dpi=400)
+        fig.savefig(DATA_FOLDER + 'kernel_across_subjects.svg', dpi=400)
 
 
 def plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
@@ -6086,32 +6783,34 @@ def plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFra
                                            avoid_first=False, window_conv=1,
                                            filter_subjects=True, n=4, variable='J0',
                                            simulated=False,
-                                           pshuff=None):
+                                           pshuff=None, ax=None, fig=None, legend=False):
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     if variable == 'J0':
         var = [np.load(par)[1] for par in pars]
         bins = [-0.1, 0.12, 0.2, 1/2]
         # bins = np.percentile(var, (0, 25, 50, 75, 100))
-        colormap = pl.cm.Oranges(np.linspace(0.3, 1, len(bins)))
+        # colormap = pl.cm.Oranges(np.linspace(0.3, 1, len(bins)))
     if variable == 'B1':
         var = [np.load(par)[2] for par in pars]
         bins =  [0, 0.2, 0.6, 0.8]
         # bins = np.percentile(var, (0, 33, 66, 100))
-        colormap = pl.cm.Greens(np.linspace(0.3, 1, len(bins)))
+        # colormap = pl.cm.Greens(np.linspace(0.3, 1, len(bins)))
     if variable == 'THETA':
         var = [np.load(par)[4] for par in pars]
         bins = np.percentile(var, (0, 33, 66, 100))+np.array([-1e-6, 0, 0, 1e-6])
         bins = [0., 0.02, 0.3]
-        colormap = pl.cm.Blues(np.linspace(0.3, 1, len(bins)))
+        # colormap = pl.cm.Blues(np.linspace(0.3, 1, len(bins)))
     if variable == 'SIGMA':
         var = [np.load(par)[3] for par in pars]
         bins = np.percentile(var, (0, 1/3*100, 100*2/3, 100))+np.array([-1e-6, 0, 0, 1e-6])
         # bins = [0., 0.2, 0.26, 0.3]
-        colormap = pl.cm.Greens(np.linspace(0.3, 1, len(bins)))
+        # colormap = pl.cm.Greens(np.linspace(0.3, 1, len(bins)))
     if variable == 'J1':
         var = [np.load(par)[0] for par in pars]
         bins = np.percentile(var, (0, 1/3*100, 100*2/3, 100))+np.array([-1e-6, 0, 0, 1e-6])
-        colormap = pl.cm.Reds(np.linspace(0.3, 1, len(bins)))
+        # bins = np.percentile(var, (0, 1/4*100, 100*2/4, 100*3/4, 100))+np.array([-1e-6, 0, 0, 0, 1e-6])
+        # colormap = pl.cm.Reds(np.linspace(0.3, 1, len(bins)))
+    colormap = pl.cm.binary(np.linspace(0.3, 1, len(bins)))
     label_save_fig = '/kernel_vs_params/simulation' if simulated else '/kernel_vs_params/'
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
@@ -6170,8 +6869,11 @@ def plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFra
             mean_vals_noise_switch_all_trials = np.row_stack((mean_vals_noise_switch_all_trials, mean_vals_noise_switch))
         mean_vals_noise_switch_all_trials = mean_vals_noise_switch_all_trials[1:]
         mean_vals_noise_switch_coupling[idxs_variable[i_sub], :, i_sub] = np.nanmean(mean_vals_noise_switch_all_trials, axis=0)
-
-    fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
+    if ax is None:
+        fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
+        ax_none_flag = True
+    else:
+        ax_none_flag = False
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     ax.axhline(0, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
     for regime in range(nbins):
@@ -6185,11 +6887,14 @@ def plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFra
         ax.plot(x_plot, y_plot, color=colormap[regime], linewidth=3, label=f'{regime+1}{enums(regime+1)}')
         ax.fill_between(x_plot, y_plot-err_plot, y_plot+err_plot, color=colormap[regime],
                         alpha=0.3)
-    ax.legend(title=variable, frameon=False); ax.set_xlabel('Time before switch(s)')
-    ax.set_ylabel('Noise')
-    fig.tight_layout()
-    fig.savefig(DATA_FOLDER + label_save_fig + f'kernel_across_subjects_different_{variable}.png', dpi=400)
-    fig.savefig(DATA_FOLDER + label_save_fig + f'kernel_across_subjects_different_{variable}.svg', dpi=400)
+    ax.set_xlabel('Time before switch(s)')
+    if legend:
+        ax.legend(title=variable, frameon=False)
+    if ax_none_flag:
+        ax.set_ylabel('Noise')
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + label_save_fig + f'kernel_across_subjects_different_{variable}.png', dpi=400)
+        fig.savefig(DATA_FOLDER + label_save_fig + f'kernel_across_subjects_different_{variable}.svg', dpi=400)
 
 
 def enums(idx):
@@ -6632,7 +7337,7 @@ def compare_likelihoods_models(load=True, bic=False):
     losses = [bic_null_model, bic_with_ndt] if bic else [likelihood_null_model, likelihood_with_ndt]
     ax5.spines['right'].set_visible(False); ax5.spines['top'].set_visible(False)
     sns.barplot(losses, palette=['peru', 'cadetblue'], ax=ax5)
-    pvalue = scipy.stats.mannwhitneyu(losses[0], losses[1]).pvalue
+    pvalue = scipy.stats.ttest_rel(losses[0], losses[1]).pvalue
     heights = [np.nanmean(losses[k]) for k in range(2)]
     barplot_annotate_brackets(0, 1, pvalue, [0, 1], heights, yerr=None, dh=.2, barh=.02, fs=10,
                               maxasterix=3, ax=ax5)
@@ -6743,7 +7448,7 @@ def compute_dominance_durations(df):
 
 
 def plot_dominance_durations(data_folder=DATA_FOLDER,
-                             ntraining=8, freq=2):
+                             ntraining=8, freq=2, sem=False):
 
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
@@ -6828,7 +7533,14 @@ def plot_dominance_durations(data_folder=DATA_FOLDER,
 
     for i in range(3):
         meanx = np.mean(var[i]); meany = np.mean(mean_dominance_shuffle[i])
-        errx = np.std(var[i]); erry = np.std(mean_dominance_shuffle[i])
+        errx = np.std(var[i]);  erry = np.std(mean_dominance_shuffle[i])
+        if sem:
+            errx = errx / np.sqrt(len(var[i]))
+            erry = erry / np.sqrt(len(mean_dominance_shuffle[i]))
+            if freq == 2:
+                ax3.set_ylim(4, 11.5)
+            if freq == 4:
+                ax3.set_ylim(3, 6.9)
         ax3.errorbar(x=meanx, y=meany, xerr=errx, yerr=erry, color=colormap[i],
                      marker='o')
         ax3.plot(var[i], mean_dominance_shuffle[i], color=colormap[i], linestyle='',
@@ -7099,15 +7811,746 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
     fig.savefig(SV_FOLDER + 'simulated_hysteresis_switch_rate.svg', dpi=400, bbox_inches='tight')
 
 
+def plot_kernel_parameters_data_vs_model():
+    fig, ax = plt.subplots(ncols=5, nrows=2, figsize=(16, 6))
+    ax = ax.flatten()
+    i_a = 0
+    for a, variable in zip(ax, ['J0', 'J1', 'B1', 'SIGMA', 'THETA']):
+        plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+                                                steps_back=120, steps_front=20,
+                                                shuffle_vals=[1, 0.7, 0],
+                                                avoid_first=False, window_conv=1,
+                                                filter_subjects=True, n=4, variable=variable,
+                                                simulated=False, pshuff=None,
+                                                ax=a, fig=fig, legend=True)
+        plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+                                                steps_back=120, steps_front=20,
+                                                shuffle_vals=[1, 0.7, 0],
+                                                avoid_first=False, window_conv=1,
+                                                filter_subjects=True, n=4, variable=variable,
+                                                simulated=True, pshuff=None,
+                                                ax=ax[i_a+5], fig=fig, legend=False)
+        ax[i_a].set_title(variable, fontsize=14)
+        i_a += 1
+    ax[0].set_ylabel('Noise - data')
+    ax[5].set_ylabel('Noise - simulation')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'kernel_across_subjects_different_all_variables.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'kernel_across_subjects_different_all_variables.svg', dpi=400)
+
+
+def compute_logistic_regression(X, y):
+    clf = LogisticRegression(max_iter=1000, random_state=0).fit(X, y)
+    return clf.intercept_, clf.coef_
+
+
+def get_response_array(df):
+    # Define sampling
+    dt = 1/60  # sampling step (seconds)
+    eps = dt / 2
+    t_min = 0
+    t_max = df["keypress_seconds_offset"].max()
+    time = np.arange(t_min, t_max + dt, dt)
+    
+    # Initialize response array with baseline (e.g. 0)
+    response_array = np.zeros_like(time, dtype=int)
+    
+    # Fill in active responses
+    for _, row in df.iterrows():
+        onset, offset, resp = row["keypress_seconds_onset"], row["keypress_seconds_offset"], row["response"]
+        mask = (time >= onset - eps) & (time < offset + eps)
+        response_array[mask] = resp
+    
+    return response_array
+
+
+def logistic_regression_weights_over_time(data_folder=DATA_FOLDER,
+                                          fps=60, tFrame=26,
+                                          steps_back=120, steps_front=120,
+                                          simulated=False, pshuf_only=None,
+                                          ax=None, color=None, compute_regression=False):
+    """
+    Compute and plot the switch rate as a function of time since each perceptual switch,
+    separately for each pShuffle condition.
+    """
+    
+    dt = 1 / fps
+    time_since_switch = np.arange(-steps_back, steps_front) * dt  # seconds
+    label_simul = '_simul' if simulated else ''
+    if pshuf_only is not None:
+        label = f'_pshuffle_{pshuf_only}' + label_simul
+    else:
+        label = '_all' + label_simul
+    if compute_regression:
+        df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=True)
+        subs = df.subject.unique()
+        
+        
+        if simulated:
+            ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
+            ndt = np.repeat(ndt, len(subs))
+        else:
+            ndt = -np.load(DATA_FOLDER + 'kernel_latency_average.npy')
+        ndt_frames_all = np.int64(ndt / dt)
+        responses_all = np.load(SV_FOLDER + 'responses_simulated_noise.npy')
+        map_resps = {-1:1, 0:0, 1:2}
+    
+    
+        weights_per_subject = np.zeros((len(time_since_switch), len(subs)))
+        for i_sub, subject in enumerate(subs):
+            ndt_frames = 0
+            df_sub = df.loc[df.subject == subject]
+            trial_index = df_sub.trial_index.unique()
+            stim_all_trials = np.empty((1, steps_back+steps_front))
+            stim_all_trials[:] = np.nan
+            responses_all_trials = np.empty((1, steps_back+steps_front))
+            responses_all_trials[:] = np.nan
+            for i_trial, trial in enumerate(trial_index):
+                df_trial = df_sub.loc[df_sub.trial_index == trial]
+                if pshuf_only is not None:
+                    if df_trial.pShuffle.values[0] != pshuf_only:
+                        continue
+                chi = df_trial.stimulus.values
+                if not simulated:
+                    responses = df_trial.responses.values
+                if simulated:
+                    responses = np.array([map_resps[resp] for resp in responses_all[i_sub, i_trial]])
+                orders = rle(responses)
+                idx_1 = orders[1][1:][orders[2][1:] == 2]
+                idx_0 = orders[1][1:][orders[2][1:] == 1]
+                idx_1 = idx_1[(idx_1 > (steps_back + ndt_frames)) & (idx_1 < (len(responses))-(ndt_frames+steps_front))]
+                idx_0 = idx_0[(idx_0 > (steps_back+ndt_frames)) & (idx_0 < (len(responses))-(steps_front+ndt_frames))]
+                # original order
+                stimulus_trial = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
+                stimulus_trial[:] = np.nan
+                responses_trial = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
+                responses_trial[:] = np.nan
+                for i, idx in enumerate(idx_1):
+                    stimulus_trial[i, :] = chi[idx - steps_back:idx+steps_front]
+                    responses_trial[i, :] = responses[idx - steps_back+ndt_frames:idx+steps_front+ndt_frames]
+                for i, idx in enumerate(idx_0):
+                    stimulus_trial[i+len(idx_1), :] =\
+                        chi[idx - steps_back:idx+steps_front]
+                    responses_trial[i, :] = responses[idx - steps_back+ndt_frames:idx+steps_front+ndt_frames]
+                stim_all_trials = np.row_stack((stim_all_trials, stimulus_trial))
+                responses_all_trials = np.row_stack((responses_all_trials, responses_trial))
+            responses_all_trials = responses_all_trials[1:]
+            stim_all_trials = stim_all_trials[1:]
+            for i_t, t in enumerate(time_since_switch):
+                X, y = stim_all_trials[:, i_t], responses_all_trials[:, i_t]-1
+                idxs = (~np.isnan(y))*(y >= 0)*(~np.isnan(X))
+                X = X[idxs].reshape(-1, 1); y = y[idxs]
+                try:
+                    intercept, coefs = compute_logistic_regression(X, y)
+                except ValueError:
+                    coefs = np.nan
+                weights_per_subject[i_t, i_sub] = coefs
+        np.save(DATA_FOLDER + 'regression_weights' + label +'.npy', weights_per_subject)
+    else:
+        weights_per_subject = np.load(DATA_FOLDER + 'regression_weights' + label +'.npy')
+    if ax is None:
+        fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
+        if pshuf_only is not None:
+            ax.set_title('p(shuffle)=' + str(pshuf_only), fontsize=14)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.axhline(0, color='k', alpha=0.3, linestyle='--', linewidth=2)
+    # for sub in range(len(subs)):
+    #     ax.plot(time_since_switch, weights_per_subject[:, sub],
+    #             color='k', linewidth=1, alpha=0.1)
+    color = 'k' if color is None else color
+    ax.plot(time_since_switch, np.nanmean(weights_per_subject, axis=-1),
+            color=color, linewidth=4, label=pshuf_only)
+    ax.set_xlabel('Time from switch (s)'); ax.set_ylabel('Stimulus weight')
+
+
+def plot_regression_weights():
+    fig, ax = plt.subplots(ncols=2, nrows=1, figsize=(8, 4))
+    pshuffles = [1., 0.7, 0.]
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    for i_p, pshuffle in enumerate(pshuffles):
+        logistic_regression_weights_over_time(data_folder=DATA_FOLDER,
+                                                  fps=60, tFrame=26,
+                                                  steps_back=120, steps_front=120,
+                                                  simulated=False, pshuf_only=pshuffle,
+                                                  ax=ax[0], color=colormap[i_p], compute_regression=False)
+        logistic_regression_weights_over_time(data_folder=DATA_FOLDER,
+                                                  fps=60, tFrame=26,
+                                                  steps_back=120, steps_front=120,
+                                                  simulated=True, pshuf_only=pshuffle,
+                                                  ax=ax[1], color=colormap[i_p], compute_regression=False)
+    ax[0].legend(title='p(shuffle)', frameon=False)
+    ax[1].set_ylabel('')
+    fig.tight_layout()
+
+
+def kernel_different_regimes_all_subjects(data_folder=DATA_FOLDER,
+                                          fps=60, tFrame=26, ntraining=8):
+    nFrame = fps*tFrame
+    df = load_data(data_folder, n_participants='all', filter_subjects=True)
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+    fig2, ax2 = plt.subplots(ncols=4, nrows=int(np.ceil(len(subjects)/4)), figsize=(18, 20),
+                             sharex=True, sharey=True)
+    ax2 = ax2.flatten()
+    for i_s, sub in enumerate(subjects):
+        plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+                                      steps_back=150, steps_front=20,
+                                      shuffle_vals=[1, 0.7, 0],
+                                      avoid_first=True, window_conv=1,
+                                      filter_subjects=True, n=4, sub_alone=sub,
+                                      ax=ax2[i_s])
+        ax2[i_s].set_xticks([]);  ax2[i_s].set_yticks([])
+        ax2[i_s].set_xlabel('');  ax2[i_s].set_ylabel('')
+        ax2[i_s].axvline(0, color='k', alpha=0.3, linestyle='--')
+    ax2[-1].legend(frameon=False)
+    ax2[-1].set_ylabel('Noise')
+    ax2[-1].set_xlabel('Time before switch (s)')
+    ax2[-1].axvline(0, color='k', alpha=0.3, linestyle='--')
+    ax2[-1].spines['right'].set_visible(False)
+    ax2[-1].spines['top'].set_visible(False)
+    fig2.tight_layout()
+    fig2.savefig(SV_FOLDER + 'noise_kernel_different_regimes.png', dpi=200, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + 'noise_kernel_different_regimes.svg', dpi=200, bbox_inches='tight')
+
+
+def ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=10, fps=60,
+                          order_by_variable=False, zscore_variables=False):
+    x_plot = np.arange(-steps_back, steps_front, 1)/fps
+    sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
+    kernels_data = np.load(DATA_FOLDER + 'all_kernels_noise_switch_aligned.npy')
+    kernels_model = np.load(DATA_FOLDER + 'simulated_all_kernels_noise_switch_aligned.npy')
+    
+    
+    n_subs, n_t = kernels_data.shape
+    x_plot = np.arange(-steps_back, steps_front) / fps
+    
+    # --------------------------------------------------
+    # Ridge plot parameters
+    # --------------------------------------------------
+    offset = 6 if zscore_variables else 1.2
+    offset = offset * np.max(np.abs(kernels_data))   # vertical spacing
+    
+    fig = plt.figure(figsize=(3, 2 * n_subs))
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
+    j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
+    b1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
+    thetas = np.array([np.load(par)[1] for par in pars])  # /sigmas
+    sigmas = np.array([np.load(par)[0] for par in pars])  # /sigmas
+    kernel_ndt = np.load(DATA_FOLDER + 'kernel_latency_average.npy')
+    variables = {'J': j0s+j1s, 'B': b1s, 'sigma': sigmas, 'theta': thetas,
+                 'ndt': kernel_ndt, 'J1': j1s, 'J0': j0s, 'B/sigma': b1s/sigmas,
+                 'theta/sigma': thetas/sigmas}
+    if order_by_variable is not None:
+        variable = variables[order_by_variable]
+        idxs_by_variable = np.argsort(variable)
+    for i in range(n_subs):
+        if order_by_variable is not None:
+            idx = idxs_by_variable[i]
+        else:
+            idx = i
+        y0 = i * offset
+        plt.axhline(y0, color='gray', alpha=0.5, linestyle=':')
+        # data trace
+        y_plot = zscore(kernels_data[idx]) if zscore_variables else kernels_data[idx]
+        plt.plot(
+            x_plot,
+            y_plot + y0,
+            color="k",
+            lw=4,
+            label="data" if i == 0 else None
+        )
+
+        y_plot = zscore(kernels_model[idx]) if zscore_variables else kernels_model[idx]
+        # model trace
+        plt.plot(
+            x_plot,
+            y_plot + y0,
+            color="r",
+            lw=4,
+            alpha=0.8,
+            label="model" if i == 0 else None
+        )
+        # subject label
+        plt.text(x_plot[0] - 0.15*(x_plot[-1]-x_plot[0]),
+                 y0,
+                 f"S{idx+1}",
+                 va="center")
+    plt.axvline(0, linestyle='--', color='gray', alpha=0.3)
+    plt.xlabel("Time (s)")
+    plt.yticks([])
+    
+    plt.legend(loc="upper right", frameon=False)
+    sns.despine(left=True)
+    
+    plt.tight_layout()
+    plt.show()
+    label = 'z_scored_' if zscore_variables else ''
+    fig.savefig(SV_FOLDER + label + 'kernels_data_vs_model.png', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + label + 'kernels_data_vs_model.svg', dpi=200, bbox_inches='tight')
+
+
+def low_dimensional_projection_hyst_noise_vars():
+    from sklearn.decomposition import PCA
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    fitted_params_all = [np.load(par) for par in pars]
+    fitted_params_all = np.array([[params[0], params[1], params[2], params[4], params[3]] for params in fitted_params_all])
+    mean_peak_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
+    mean_peak_latency = np.load(DATA_FOLDER + 'mean_peak_latency_per_subject.npy')
+    mean_number_switchs_coupling = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+    hyst_width_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
+    hyst_width_4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
+    shuf = np.repeat(np.array([0, 0.3, 1.]), hyst_width_2.shape[1]).reshape(hyst_width_2.shape)
+    variables = np.vstack((mean_peak_amplitude.flatten(),
+                           mean_number_switchs_coupling.flatten(),
+                           mean_peak_latency.flatten(),
+                           hyst_width_2.flatten(),
+                           hyst_width_4.flatten()))
+    # scaling = manifold.MDS(n_components=2, max_iter=10000, normalized_stress=False,
+    #                   random_state=3)
+    scaling = PCA(n_components=2)
+    S_scaling = scaling.fit_transform(variables.T)
+    x, y = S_scaling.T
+    # color = hyst_width_2.flatten()
+    color = (fitted_params_all[:, 0]*(1-shuf) + fitted_params_all[:, 1]) > 1/4
+    fig, ax = plt.subplots(1)
+    ax.scatter(x, y, c=color, cmap='copper')
+    plt.xlabel('PC1'); plt.ylabel('PC2');
+    plt.title('Colored by H(J)_2')
+
+
+
+def plot_cool_neuron_sheet(n_examples=6, save=True, plot_different_orient=False):
+    # Generate smooth low-frequency “cloth-like” undulations
+    np.random.seed(21)  #41
+    height = 5 if not plot_different_orient else 12
+    fig = plt.figure(figsize=(4*n_examples, height))
+    for n_ex in range(n_examples):
+        # Grid for the sheet
+        n = 400
+        x = np.linspace(-2, 2, n)
+        y = np.linspace(-2, 2, n)
+        X, Y = np.meshgrid(x, y)
+    
+        Z_random = np.random.randn(*X.shape)
+        Z_smooth = gaussian_filter(Z_random, sigma=90)  # larger sigma -> smoother, gentle hills
+        Z_smooth *= 0.01  # amplitude of bending
+    
+        # Define thickness
+        thickness = 0.000015
+        Z_top = Z_smooth
+        Z_bottom = Z_smooth - thickness
+    
+        # --- Create high-res mask for neurons ---
+        high_res = 800   # high-resolution image for smooth circles
+        x_hr = np.linspace(-2, 2, high_res)
+        y_hr = np.linspace(-2, 2, high_res)
+        X_hr, Y_hr = np.meshgrid(x_hr, y_hr)
+        
+        # Base sheet RGB
+        sheet_hr = np.ones((high_res, high_res, 3))  # gray
+        
+        # Neuron parameters
+        num_neurons_side = 4
+        neuron_radius = 0.2
+        neuron_x = np.linspace(-1.5, 1.5, num_neurons_side)
+        neuron_y = np.linspace(-1.5, 1.5, num_neurons_side)
+        
+        # --- Random colors for connections ---
+        colors = [
+            np.array([0.1, 0.8, 0.1]),   # green
+            np.array([0.8, 0.1, 0.1]),   # red
+            np.array([0.2, 0.2, 0.2])    # dark gray
+        ]
+        
+        # Thickness of connection lines in the high-res texture
+        line_thickness = int(high_res * 0.007)
+        
+        # Neurons arranged in a square grid:
+        centers = [(nx, ny) for nx in neuron_x for ny in neuron_y]
+        Nside = len(neuron_x)
+        
+        # Convenience functions
+        x_to_idx = lambda v: np.argmin(np.abs(x_hr - v))
+        y_to_idx = lambda v: np.argmin(np.abs(y_hr - v))
+        # Loop through neuron grid using 2D indexing
+        for ix in range(Nside):
+            for iy in range(Nside):
+        
+                x1 = neuron_x[ix]
+                y1 = neuron_y[iy]
+        
+                # list neighbors: (dx,dy) relative indices
+                neighbor_offsets = [(1,0), (-1,0), (0,1), (0,-1)]
+        
+                for dx_idx, dy_idx in neighbor_offsets:
+        
+                    jx = ix + dx_idx
+                    jy = iy + dy_idx
+        
+                    # skip if out of bounds
+                    if jx < 0 or jx >= Nside or jy < 0 or jy >= Nside:
+                        continue
+        
+                    x2 = neuron_x[jx]
+                    y2 = neuron_y[jy]
+        
+                    # choose random color
+                    line_color = colors[np.random.choice(np.arange(len(colors)), p=[0.1, 0.1, 0.8])]
+        
+                    # direction
+                    dx = x2 - x1
+                    dy = y2 - y1
+                    dist = np.sqrt(dx*dx + dy*dy)
+                    ux = dx / dist
+                    uy = dy / dist
+        
+                    # start/end points at circle edges
+                    Ax = x1 + neuron_radius * ux
+                    Ay = y1 + neuron_radius * uy
+                    Bx = x2 - neuron_radius * ux
+                    By = y2 - neuron_radius * uy
+        
+                    # convert to pixel coordinates
+                    Ax_i = x_to_idx(Ax)
+                    Ay_i = y_to_idx(Ay)
+                    Bx_i = x_to_idx(Bx)
+                    By_i = y_to_idx(By)
+        
+                    # parametric line
+                    steps = int(dist * high_res / 2)
+                    t = np.linspace(0, 1, steps)
+        
+                    xs = Ax_i + (Bx_i - Ax_i) * t
+                    ys = Ay_i + (By_i - Ay_i) * t
+        
+                    # draw thick line
+                    for xi, yi in zip(xs.astype(int), ys.astype(int)):
+                        y0 = max(0, yi - line_thickness)
+                        y1_ = min(high_res, yi + line_thickness)
+                        x0 = max(0, xi - line_thickness)
+                        x1_ = min(high_res, xi + line_thickness)
+                        sheet_hr[y0:y1_, x0:x1_] = line_color
+
+        # plot neurons
+        for nx in neuron_x:
+            for ny in neuron_y:
+                mask = (X_hr - nx)**2 + (Y_hr - ny)**2 < neuron_radius**2
+                sheet_hr[mask] = [0.8, 0.8, 0.8]  # darker neurons
+                distance = np.sqrt((X_hr - nx)**2 + (Y_hr - ny)**2)
+                border_thickness = 0.05  # fraction of total range, adjust as needed
+                border_mask = np.logical_and(distance >= neuron_radius - border_thickness,
+                                             distance <= neuron_radius)
+                sheet_hr[border_mask] = [0, 0, 0]  # black border
+        # --- Interpolate down to surface grid size ---
+        factor = n / high_res
+        sheet = zoom(sheet_hr, (factor, factor, 1), order=1)  # bilinear interpolation
+        
+        
+        ax = fig.add_subplot(1+plot_different_orient*1,
+                             n_examples, n_ex+1, projection='3d')
+        
+        # Top sheet with neurons
+        ax.plot_surface(X, Y, Z_top, facecolors=sheet, edgecolor=None, antialiased=True,
+                        rstride=1, cstride=1, shade=False)
+        # Top edge
+        ax.plot(X[0, :], Y[0, :], Z_top[0, :], color='black', linewidth=4)
+        
+        # Bottom edge
+        ax.plot(X[-1, :], Y[-1, :], Z_top[-1, :], color='black', linewidth=4)
+        
+        # Left edge
+        ax.plot(X[:, 0], Y[:, 0], Z_top[:, 0], color='black', linewidth=4)
+        
+        # Right edge
+        ax.plot(X[:, -1], Y[:, -1], Z_top[:, -1], color='black', linewidth=4)
+        if plot_different_orient:
+            ax2 = fig.add_subplot(2, n_examples, n_ex+1+n_examples, projection='3d')
+            ax2.plot_surface(X, Y, Z_top, facecolors=sheet, edgecolor=None, antialiased=True,
+                             rstride=1, cstride=1)
+            ax2.plot_surface(X, Y, Z_bottom, color='gray', edgecolor=None, antialiased=True)
+        
+        # Bottom sheet
+        ax.plot_surface(X, Y, Z_bottom, color='white', edgecolor=None, antialiased=True)
+        
+        # Black edges for thickness
+        edges = [(0, slice(None)), (-1, slice(None)), (slice(None), 0), (slice(None), -1)]
+        for edge in edges:
+            if isinstance(edge[0], int):
+                xs = X[edge[0], :]
+                ys = Y[edge[0], :]
+                zt = Z_top[edge[0], :]
+                zb = Z_bottom[edge[0], :]
+            else:
+                xs = X[:, edge[1]]
+                ys = Y[:, edge[1]]
+                zt = Z_top[:, edge[1]]
+                zb = Z_bottom[:, edge[1]]
+            verts = [list(zip(xs, ys, zb)) + list(zip(xs[::-1], ys[::-1], zt[::-1]))]
+            ax.add_collection3d(Poly3DCollection(verts, facecolor='black', edgecolor=None))
+            if plot_different_orient:
+                ax2.add_collection3d(Poly3DCollection(verts, facecolor='black', edgecolor=None))
+        
+        # View
+        ax.view_init(elev=35, azim=35)
+        ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+        ax.set_box_aspect([1,1,0.3])
+        plt.show()
+        ax.axis('off')
+        if plot_different_orient:
+            ax2.view_init(elev=40, azim=35)
+            ax2.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+            ax2.set_box_aspect([1,1,0.3])
+            plt.show()
+            ax2.axis('off')
+    if save:
+        print('Saving PNG')
+        fig.savefig(SV_FOLDER + 'cartoon_neural_sheet.png', dpi=200, bbox_inches='tight')
+        print('Saving SVG')
+        fig.savefig(SV_FOLDER + 'cartoon_neural_sheet.svg', dpi=200, bbox_inches='tight')
+
+
+def plot_cool_factor_graph():
+    print('Plotting factor graph')
+    # ----------------- Parameters -----------------
+    n_neurons_side = 4
+    neuron_radius = 0.2
+    plane_z = 0.0
+    stimulus_z = -5.0
+    square_size = 0.1
+    square_offset = -3.5  # below neuron plane
+    connection_fraction = 0.18  # 20% of neighbor pairs
+    np.random.seed(14)
+    
+    # ----------------- Figure -----------------
+    fig = plt.figure(figsize=(10,8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # ----------------- Neuron positions -----------------
+    x_neurons = np.linspace(-1, 1, n_neurons_side)
+    y_neurons = np.linspace(-1, 1, n_neurons_side)
+    xx, yy = np.meshgrid(x_neurons, y_neurons)
+    xx = xx.flatten()
+    yy = yy.flatten()
+    neuron_positions = list(zip(xx, yy))
+    
+    # ----------------- Draw neurons -----------------
+    def draw_circle(ax, x0, y0, z0, r, n_points=50, facecolor='white', edgecolor='black'):
+        theta = np.linspace(0, 2*np.pi, n_points)
+        xs = x0 + r * np.cos(theta)
+        ys = y0 + r * np.sin(theta)
+        zs = np.full_like(xs, z0)
+        verts = [list(zip(xs, ys, zs))]
+        collection = Poly3DCollection(verts, facecolor=facecolor, edgecolor=edgecolor,
+                                      linewidth=2)
+        ax.add_collection3d(collection)
+    
+    for x, y in neuron_positions:
+        draw_circle(ax, x, y, plane_z, neuron_radius)
+    
+    # ----------------- Neighbor pairs -----------------
+    pairs = []
+    N = n_neurons_side
+    for i in range(N):
+        for j in range(N):
+            idx = i*N + j
+            # right neighbor
+            if j < N-1:
+                idx2 = i*N + (j+1)
+                pairs.append((idx, idx2))
+            # down neighbor
+            if i < N-1:
+                idx2 = (i+1)*N + j
+                pairs.append((idx, idx2))
+    
+    # ----------------- Randomly select 10% of pairs -----------------
+    n_select = max(1, int(len(pairs) * connection_fraction))
+    selected_pairs = np.random.choice(len(pairs), n_select, replace=False)
+    selected_pairs = [pairs[i] for i in selected_pairs]
+    
+    
+    # ----------------- Stimulus plane -----------------
+    xs = np.linspace(-1.5, 1.5, 2)
+    ys = np.linspace(-1.5, 1.5, 2)
+    XS, YS = np.meshgrid(xs, ys)
+    ZS = np.full_like(XS, stimulus_z)
+    ax.plot_surface(XS, YS, ZS, color='lightgray', alpha=0.1)
+    # Top edge
+    ax.plot(XS[0, :], YS[0, :], ZS[0, :], color='black', linewidth=3)
+    
+    # Bottom edge
+    ax.plot(XS[-1, :], YS[-1, :], ZS[-1, :], color='black', linewidth=3)
+    
+    # Left edge
+    ax.plot(XS[:, 0], YS[:, 0], ZS[:, 0], color='black', linewidth=3)
+    
+    # Right edge
+    ax.plot(XS[:, -1], YS[:, -1], ZS[:, -1], color='black', linewidth=3)
+    
+    # ----------------- Neurons plane -----------------
+    xs = np.linspace(-1.5, 1.5, 2)
+    ys = np.linspace(-1.5, 1.5, 2)
+    XS, YS = np.meshgrid(xs, ys)
+    ZS = np.full_like(XS, 0)
+    ax.plot_surface(XS, YS, ZS, color='white', alpha=0.)
+    # Top edge
+    ax.plot(XS[0, :], YS[0, :], ZS[0, :], color='black', linewidth=3)
+    
+    # Bottom edge
+    ax.plot(XS[-1, :], YS[-1, :], ZS[-1, :], color='black', linewidth=3)
+    
+    # Left edge
+    ax.plot(XS[:, 0], YS[:, 0], ZS[:, 0], color='black', linewidth=3)
+    
+    # Right edge
+    ax.plot(XS[:, -1], YS[:, -1], ZS[:, -1], color='black', linewidth=3)
+
+    # ----------------- Draw squares and connecting lines -----------------
+    for idx1, idx2 in selected_pairs:
+        x1, y1 = neuron_positions[idx1]
+        x2, y2 = neuron_positions[idx2]
+    
+        # midpoint square position
+        xm = (x1 + x2)/2
+        ym = (y1 + y2)/2
+        zm = plane_z + square_offset
+        xm += np.random.uniform(-0.1, 0.1)
+        ym += np.random.uniform(-0.1, 0.1)
+    
+        # square polygon
+        s = square_size / 2
+        verts = [
+            (xm, ym-s, zm-2*s),
+            (xm, ym+s, zm-2*s),
+            (xm, ym+s, zm+2*s),
+            (xm, ym-s, zm+2*s)
+        ]
+        square = Poly3DCollection([verts], facecolor='white', edgecolor='black')
+        ax.add_collection3d(square)
+    
+        # diagonal lines from neurons to square
+        ax.plot([x1, xm], [y1, ym], [plane_z, zm], color='black', linewidth=3)
+        ax.plot([x2, xm], [y2, ym], [plane_z, zm], color='black', linewidth=3)
+    
+        # vertical line from square to stimulus plane
+        ax.plot([xm, xm], [ym, ym], [zm, stimulus_z], color='blue', linewidth=3)
+    
+    
+    # ----------------- Figure adjustments -----------------
+    ax.set_box_aspect([1,1,0.5])
+    ax.view_init(elev=30, azim=120)
+    ax.dist = 15
+    ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+    plt.show()
+    ax.axis('off')
+
+
+
+def cartoon_2d_factor_graph():
+    from matplotlib.patches import Circle, Rectangle
+
+    np.random.seed(4)
+    
+    # ---------------------
+    #  Parameters
+    # ---------------------
+    N = 4  # neurons per side
+    neuron_r = 0.15
+    square_size = 0.25
+    plane_y = 1.0        # top plane (neurons)
+    stim_y = -1.5        # bottom plane (stimulus)
+    square_offset = -0.6 # relative to top plane
+    connection_fraction = 0.1  # 10% of pairs
+    
+    # ---------------------
+    #  Neuron grid positions
+    # ---------------------
+    xs = np.linspace(-2, 2, N)
+    ys = np.linspace(-2, 2, N)
+    XX, YY = np.meshgrid(xs, ys)
+    neuron_positions = list(zip(XX.flatten(), YY.flatten()))
+    
+    # ---------------------
+    #  Build neighbor pairs
+    # ---------------------
+    pairs = []
+    for i in range(N):
+        for j in range(N):
+            idx = i*N + j
+            # right neighbor
+            if j < N-1:
+                pairs.append((idx, idx+1))
+            # down neighbor
+            if i < N-1:
+                pairs.append((idx, idx+N))
+    
+    # Pick ~10% at random
+    k = max(1, int(len(pairs)*connection_fraction))
+    chosen = np.random.choice(len(pairs), k, replace=False)
+    chosen_pairs = [pairs[i] for i in chosen]
+    
+    # ---------------------
+    #  Plot
+    # ---------------------
+    fig, ax = plt.subplots(figsize=(8,8))
+    
+    # ---- Draw neurons ----
+    for (x,y) in neuron_positions:
+        circ = Circle((x, plane_y+y*0), neuron_r, 
+                      facecolor='white', edgecolor='black', linewidth=2)
+        ax.add_patch(circ)
+    
+    # ---- Draw chosen pair squares & connecting lines ----
+    for idx1, idx2 in chosen_pairs:
+        x1, y1 = neuron_positions[idx1]
+        x2, y2 = neuron_positions[idx2]
+    
+        # Midpoint (square position)
+        xm = 0.5*(x1 + x2)
+        ym = plane_y + square_offset
+    
+        # square
+        rect = Rectangle((xm-square_size/2, ym-square_size/2),
+                         square_size, square_size,
+                         facecolor='lightgray', edgecolor='black')
+        ax.add_patch(rect)
+    
+        # Diagonal lines to square
+        ax.plot([x1, xm], [plane_y, ym], color='black', linewidth=3)
+        ax.plot([x2, xm], [plane_y, ym], color='black', linewidth=3)
+    
+        # Vertical line to stimulus plane
+        ax.plot([xm, xm], [ym, stim_y], color='blue', linewidth=3)
+    
+    # ---- Draw stimulus plane ----
+    ax.plot([-2.5, 2.5], [stim_y, stim_y], color='black', linewidth=3)
+    ax.text(0, stim_y-0.2, "Stimulus Plane", ha='center', fontsize=14)
+    
+    # ---- Cosmetics ----
+    ax.set_xlim(-3, 3)
+    ax.set_ylim(-2.5, 2.5)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    
+    plt.show()
+
+
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
+    # plot_noise_variables_vs_fitted_params(n=4, variable='amplitude')
+    # ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=10, fps=60,
+    #                       zscore_variables=True, order_by_variable=None)
+    # kernel_different_regimes_all_subjects(data_folder=DATA_FOLDER,
+    #                                       fps=60, tFrame=26, ntraining=8)
+    # plot_regression_weights()
     # compute_switch_rate_since_switch(data_folder=DATA_FOLDER, shuffle_vals=[1., 0.7, 0.], tFrame=26,
     #                                   fps=60, steps_front=350, bin_size=0.3, simulated=False,
     #                                   steps_back=0)
     # compute_switch_rate_since_switch(data_folder=DATA_FOLDER, shuffle_vals=[1., 0.7, 0.], tFrame=26,
     #                                   fps=60, steps_front=350, bin_size=0.3, simulated=True,
     #                                   steps_back=0)
-    # optimal_escape_eta_with_all_functional(j=1, theta=0.)
+    # optimal_escape_eta_with_all_functional(j=1.2, theta=0.15)
     # get_correlation_consecutive_dominance_durations(data_folder=DATA_FOLDER, fps=60, tFrame=26)
     # simple_optimal_eta_quartic_potential(a=0.5)
     # simple_optimal_eta_quartic_potential(a=1.)
@@ -7123,10 +8566,21 @@ if __name__ == '__main__':
     #                             n=4, load_simulations=False, normalize=False, sigma=0,
     #                             pshuf_only=None)
     # compare_likelihoods_models(load=True, bic=True)
+    # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
+    #                               steps_back=120, steps_front=20,
+    #                               shuffle_vals=[1, 0.7, 0],
+    #                               avoid_first=False, window_conv=1,
+    #                               filter_subjects=True, n=4, sub_alone=None,
+    #                               ax=None)
     # plot_dominance_durations(data_folder=DATA_FOLDER,
-    #                           ntraining=8, freq=2)
+    #                           ntraining=8, freq=2, sem=True)
     # plot_dominance_durations(data_folder=DATA_FOLDER,
-    #                           ntraining=8, freq=4)
+    #                           ntraining=8, freq=4, sem=True)
+    # hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
+    #                      freq=2, kde=True,
+    #                      point_per_subject_x_shuffle=True, simulated=False)
+    # comparison_between_experiments_bis_mono(unique_shuffle=[1., 0.7, 0.],
+    #                                         estimator='mean', n=4)
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                                     simulated=False)
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
@@ -7135,24 +8589,34 @@ if __name__ == '__main__':
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
     # plot_noise_variables_vs_fitted_params(n=4, variable='freq4')
     # plot_params_distros(ndt=True)
-    # plot_simulate_subject(data_folder=DATA_FOLDER, subject_name=None,
-    #                       ntraining=8, window_conv=1, fps=200)
+    # comparison_between_experiments(estimator='median', data_only=True)
+    # plot_simulate_hysteresis_subject(data_folder=DATA_FOLDER, subject_name=None,
+    #                                   ntraining=8, window_conv=10, fps=200,
+    #                                   ntrials=72)
+    # cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
+    #                               sv_folder=SV_FOLDER,
+    #                               ntraining=8, simulated_subject='s_36',
+    #                               fps=60, idx_trial=2, ntrials=72, nfreq=1,
+    #                               plot_response=False)
+    plot_cool_neuron_sheet(n_examples=1, save=False,
+                            plot_different_orient=False)
+    plot_cool_factor_graph()
+    cartoon_2d_factor_graph()
     # plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
-    #                        fps=200, n=4, ntraining=8, tFrame=26,
-    #                        window_conv=5, n_bins=50)
-    # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                               steps_back=150, steps_front=20,
-    #                               shuffle_vals=[1, 0.7, 0],
-    #                               avoid_first=True, window_conv=1,
-    #                               filter_subjects=True, n=4)
+    #                         fps=200, n=4, ntraining=8, tFrame=26,
+    #                         window_conv=5, n_bins=50)
     # compare_parameters_two_experiments()
     # plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
-    #                                      shuffle_vals=[1., 0.7, 0.], ntrials=36,
-    #                                      steps_back=150, steps_front=20, avoid_first=True,
-    #                                      tFrame=26, window_conv=1,
-    #                                      fps=60, ax=None, hysteresis_area=True,
-    #                                      normalize_variables=True, ratio=1,
-    #                                      load_simulations=True)
+    #                                       shuffle_vals=[1., 0.7, 0.], ntrials=36,
+    #                                       steps_back=150, steps_front=10, avoid_first=True,
+    #                                       tFrame=26, window_conv=1,
+    #                                       fps=60, ax=None, hysteresis_area=True,
+    #                                       normalize_variables=True, ratio=1,
+    #                                       load_simulations=True)
+    # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
+    #                                   cumsum=False, npercentiles=3, sim_predict_dat=False)
+    # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
+    #                                   cumsum=False, npercentiles=3, sim_predict_dat=True)
     # for variable in ['J0', 'J1', 'B1', 'SIGMA', 'THETA']:
     #     plot_kernel_different_parameter_values(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                             steps_back=120, steps_front=20,
@@ -7166,9 +8630,6 @@ if __name__ == '__main__':
     #                                             avoid_first=False, window_conv=1,
     #                                             filter_subjects=True, n=4, variable=variable,
     #                                             simulated=True, pshuff=None)
-    # plot_example(theta=[0.1, 0, 0.5, 0.1, 0.5], data_folder=DATA_FOLDER,
-    #              fps=60, tFrame=18, model='MF', prob_flux=False,
-    #              freq=4, idx=2)
     # noise_bf_switch_coupling(load_sims=True, coup_vals=np.arange(0.05, 0.35, 1e-2),  # np.array((0.13, 0.17, 0.3))
     #                           nFrame=100000, fps=60, noisyframes=30,
     #                           n=4.0, steps_back=60, steps_front=20,
@@ -7213,9 +8674,9 @@ if __name__ == '__main__':
     #                             sv_folder=SV_FOLDER, simulate=True,
     #                             load_net=False, not_plot_and_return=False,
     #                             pyddmfit=True, transform=False)
-    plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-                     ntraining=8, coupling_levels=[0, 0.3, 1],
-                     window_conv=5, bin_size=0.35, switch_01=False)
+    # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+    #                  ntraining=8, coupling_levels=[0, 0.3, 1],
+    #                  window_conv=5, bin_size=0.35, switch_01=False)
     # plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8)
     # get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
     #                                   ntraining=8, coupling_levels=[0, 0.3, 1])
