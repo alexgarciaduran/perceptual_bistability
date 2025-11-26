@@ -225,7 +225,7 @@ class optimization:
         return nlh_fbp
 
 
-    def nlh_boltzmann_mf(self, pars, n=3.92, eps=1e-3, conts_distro=1e-2,
+    def nlh_boltzmann_mf(self, pars, n=3.92, eps=1e-4, conts_distro=1e-2,
                          penalization_nan=0, dq=1e-2):
         coupling, stim_str, confidence = self.coupling, self.stim_str, self.confidence
         if len(pars) == 4:
@@ -248,7 +248,7 @@ class optimization:
 
         # Vectorized potential (pot_mf_i) for all i and all q
         # pot_mf = (q*q) / 2 - log_term / (4* n * j)  # Shape: (500, 100)
-        pot_mf = np.where(j > 5e-2, (q*q) / 2 - log_term / (4* n * j),
+        pot_mf = np.where(np.abs(j) > 1e-2, (q*q) / 2 - log_term / (4* n * j + 1e-10),
                           q*q/2 - q*sigmoid(2*b))
 
         # Apply Boltzmann distribution function over the potential values (vectorized)
@@ -260,8 +260,8 @@ class optimization:
         j = np.array(j).reshape(-1)  # Reshape j to shape (500, 1)
         b = np.array(b).reshape(-1)  # Reshape b to shape (500, 1)
         pot_mf_fun = lambda q: np.where(
-                            j > 5e-2,
-                            q*q/2 - np.log(1+np.exp(2*n*(j*(2*q-1))+b*2))/(4*n*j), 
+                            np.abs(j) > 1e-2,
+                            q*q/2 - np.log(1+np.exp(2*n*(j*(2*q-1))+b*2))/(4*n*j+1e-10), 
                             q*q/2 - q*sigmoid(2*b))
         bmann_distro_log = lambda potential: -2*np.array(potential) / (noise*noise)
         log_likelihood = np.log((1-eps)*np.exp(bmann_distro_log(pot_mf_fun(confidence)))/norm_cte + eps*conts_distro)
@@ -340,7 +340,7 @@ class optimization:
             fun = self.nlh_boltzmann_mf
             assert len(x0) == 4, 'x0 should have 4 values (J, B1, bias, noise)'
             if method != 'BADS':
-                bounds = Bounds([0., -0.2, -.7, 0.1], [2, 2, .8, 0.6])
+                bounds = Bounds([0., -0.2, -.8, 0.1], [0.6, 1, .8, 0.4])
             if method == 'BADS':
                 lb = [0., -0.2, -0.8, 0.01]
                 ub = [1.3, 2, 0.8, 0.5]
@@ -350,7 +350,7 @@ class optimization:
             fun = self.nlh_boltzmann_mf
             assert len(x0) == 5, 'x0 should have 5 values (J1, Jbias, B1, bias, noise)'
             if method != 'BADS':
-                bounds = Bounds([0., -0.4, -0.2, -.7, 0.1], [2, 0.6, 2, .8, 0.6])
+                bounds = Bounds([0., -0.4, -0.2, -.8, 0.1], [0.6, 0.6, 1, .8, 0.4])
             if method == 'BADS':
                 lb = [0, 0., -0.2, -0.8, 0.01]
                 ub = [2., 1.5, 2, 0.8, 0.5]
@@ -1317,6 +1317,7 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
     # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
     df_sub_null = data_model_null.dropna().reset_index()
     stim_str = np.array([-1, 0, 1])
+    cmap = pl.cm.binary(np.linspace(0.3, 1, 4)) if variable == 'abs_confidence' else COLORMAP
     if plot_all:
         fig, ax = plt.subplots(ncols=3, nrows=3, figsize=(12, 10))
         ax = ax.flatten()
@@ -1325,17 +1326,20 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
     for i_c, c in enumerate([0, 0.3, 1]):
         if subject == 'all' or subject is None:
             df_data_coup = df_sub_final.loc[(df_sub_final.coupling == c)]
-            df_data_coup['confidence'] = df_data_coup.groupby('subject')['confidence'].apply(scipy.stats.zscore)
+            df_data_coup[variable] = df_data_coup.groupby('subject')[variable].apply(scipy.stats.zscore)
             df_model_coup = df_sub_model.loc[(df_sub_model.coupling == c)]
-            df_model_coup['confidence'] = df_model_coup.groupby('subject')['confidence'].apply(scipy.stats.zscore)
+            df_model_coup[variable] = df_model_coup.groupby('subject')[variable].apply(scipy.stats.zscore)
             df_null_coup = df_sub_null.loc[(df_sub_null.coupling == c)]
-            df_null_coup['confidence'] = df_null_coup.groupby('subject')['confidence'].apply(scipy.stats.zscore)
+            df_null_coup[variable] = df_null_coup.groupby('subject')[variable].apply(scipy.stats.zscore)
             s = 0.4
         else:
             df_data_coup = df_sub_final.loc[(df_sub_final.coupling == c) & (df_sub_final.subject == subject)]
             df_model_coup = df_sub_model.loc[(df_sub_model.coupling == c) & (df_sub_model.subject == subject)]
             df_null_coup = df_sub_null.loc[(df_sub_null.coupling == c) & (df_sub_null.subject == subject)]
             s = 2
+        if variable == 'abs_confidence':
+            for df_var in [df_data_coup, df_model_coup, df_null_coup]:
+                df_var['stim_str'] = np.abs(df_var.stim_str.values)
         if annot:
             skewness = scipy.stats.skew(df_data_coup.loc[df_data_coup.stim_str == 0, variable])
             kurtosis = scipy.stats.kurtosis(
@@ -1356,12 +1360,12 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
             ax[i_c].set_title(f'Bimodal coef. = {beta},\npval = {p:.3e}', fontsize=14)
         if model_density:
             sns.violinplot(df_model_coup, x='stim_str', y=variable, ax=ax[i_c],
-                           palette=COLORMAP, hue='stim_str',
+                           palette=cmap, hue='stim_str',
                            legend=False, inner=None, split=False, bw_adjust=bw,
                            linewidth=0, cut=0)
         else:
             sns.violinplot(df_data_coup, x='stim_str', y=variable, ax=ax[i_c],
-                           palette=COLORMAP, hue='stim_str',
+                           palette=cmap, hue='stim_str',
                            legend=False, inner=None, split=False, bw_adjust=bw,
                            linewidth=0, cut=0)
         sns.swarmplot(df_data_coup, x='stim_str', y=variable, ax=ax[i_c],
@@ -1371,13 +1375,13 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
         # ax[i_c].plot([0, 3, 6], stim_str*slope+intercept, color='gray', linestyle='--', alpha=0.7)
         if plot_all:
             sns.violinplot(df_model_coup, x='stim_str', y=variable, ax=ax[i_c+3],
-                           palette=COLORMAP, hue='stim_str',
+                           palette=cmap, hue='stim_str',
                            legend=False, inner=None, split=False, bw_adjust=bw,
                            linewidth=0)
             sns.swarmplot(df_model_coup, x='stim_str', y=variable, ax=ax[i_c+3],
                           color='k', size=s, legend=False, alpha=0.8)
             sns.violinplot(df_null_coup, x='stim_str', y=variable, ax=ax[i_c+6],
-                           palette=COLORMAP, hue='stim_str',
+                           palette=cmap, hue='stim_str',
                            legend=False, inner=None, split=False, bw_adjust=bw,
                            linewidth=0)
             sns.swarmplot(df_null_coup, x='stim_str', y=variable, ax=ax[i_c+6],
@@ -1396,7 +1400,10 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
             a.set_yticks([0, 0.5, 1])
             a.axhline(1, color='gray', linestyle='--', alpha=0.7)
             a.axhline(0, color='gray', linestyle='--', alpha=0.7)
-    ax[2].set_xticks([0, 3, 6])
+    if variable == 'abs_confidence':
+        ax[2].set_xticks([0, 3])
+    else:
+        ax[2].set_xticks([0, 3, 6])
     ax[2].set_xlabel('Stimulus evidence')
     if subject == 'all':
         ax[1].set_ylabel('z-scored confidence')
@@ -1405,6 +1412,76 @@ def plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11'
     fig.tight_layout()
     fig.savefig(SV_FOLDER + 'conf_vs_stim_data_density_plot_model.png', dpi=150, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'conf_vs_stim_data_density_plot_model.svg', dpi=150, bbox_inches='tight')
+
+
+def plot_abs_confidence_vs_stim_density(method='BADS', variable='abs_confidence', subject='all',
+                                        bw=0.5, annot=False, model_density=False):
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    data_orig, data_model_orig, data_model_null =\
+        load_all_data(all_df, model='MF5', method=method, sv_folder=SV_FOLDER)
+    data_orig['decision'] = (data_orig.response.values+1)/2
+    data_model_orig['decision'] = (data_model_orig.decision.values+1)/2
+    data_model_null['decision'] = (data_model_null.decision.values+1)/2
+    df_sub_final = data_orig.dropna().reset_index()
+    # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
+    df_sub_model = data_model_orig.dropna().reset_index()
+    # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
+    df_sub_null = data_model_null.dropna().reset_index()
+    stim_str = np.array([-1, 0, 1])
+    cmap = pl.cm.binary(np.linspace(0.3, 1, 4)) if variable == 'abs_confidence' else COLORMAP
+    fig, ax = plt.subplots(ncols=1, nrows=3, figsize=(4, 8))
+    for i_c, c in enumerate([0, 0.3, 1]):
+        if subject == 'all' or subject is None:
+            df_data_coup = df_sub_final.loc[(df_sub_final.coupling == c)]
+            # df_data_coup[variable] = df_data_coup.groupby('subject')[variable].apply(scipy.stats.zscore)
+            df_model_coup = df_sub_model.loc[(df_sub_model.coupling == c)]
+            # df_model_coup[variable] = df_model_coup.groupby('subject')[variable].apply(scipy.stats.zscore)
+            df_null_coup = df_sub_null.loc[(df_sub_null.coupling == c)]
+            # df_null_coup[variable] = df_null_coup.groupby('subject')[variable].apply(scipy.stats.zscore)
+            s = 0.4
+        else:
+            df_data_coup = df_sub_final.loc[(df_sub_final.coupling == c) & (df_sub_final.subject == subject)]
+            df_model_coup = df_sub_model.loc[(df_sub_model.coupling == c) & (df_sub_model.subject == subject)]
+            df_null_coup = df_sub_null.loc[(df_sub_null.coupling == c) & (df_sub_null.subject == subject)]
+            s = 2
+        if variable == 'abs_confidence':
+            for df_var in [df_data_coup, df_model_coup, df_null_coup]:
+                df_var['abs_confidence'] = (2*df_var.confidence-1)*np.sign(df_var.stim_str + np.random.randn()*1e-6)
+                df_var['stim_str'] = np.abs(df_var.stim_str.values)
+        if annot:
+            skewness = scipy.stats.skew(df_data_coup.loc[df_data_coup.stim_str == 0, variable])
+            kurtosis = scipy.stats.kurtosis(
+                df_data_coup.loc[df_data_coup.stim_str == 0, variable], fisher=True)
+            n = len(df_data_coup)
+            val_sum = 3*(n-1)**2 / ((n-2)*(n-3))
+            beta = round((skewness**2 + 1)/(kurtosis+val_sum), 4)
+            stat, p = diptest(df_data_coup.loc[df_data_coup.stim_str == 0, variable])
+            print(p)
+            ax[i_c].set_title(f'Bimodal coef. = {beta},\npval = {p:.3e}', fontsize=14)
+        if model_density:
+            sns.kdeplot(df_model_coup, x=variable, ax=ax[i_c],
+                        palette=cmap, hue='stim_str',
+                        legend=False, bw_adjust=bw,
+                        linewidth=3, cut=0)
+        else:
+            sns.kdeplot(df_data_coup, x=variable, ax=ax[i_c],
+                        palette=cmap, hue='stim_str',
+                        legend=False, bw_adjust=bw,
+                        linewidth=3, cut=0)
+    for i_a, a in enumerate(ax):
+        # a.plot([0, 6], [0, 1], color='gray', linestyle='--', alpha=0.7)
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        if i_a < 2:
+            a.set_xticks([])
+            a.set_xlabel('')
+        if i_a != 1:
+            a.set_ylabel('')
+    ax[2].set_xlabel('Confidence')
+    ax[1].set_ylabel('Density')
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'conf_vs_stim_data_density_plot_model_abs_conf.png', dpi=150, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'conf_vs_stim_data_density_plot_model_abs_conf.svg', dpi=150, bbox_inches='tight')
 
 
 def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
@@ -1419,6 +1496,8 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     datastim0['state'] = 0
     datastim_model0['state'] = 0
     arr_betavals = np.zeros((3, len(subjects)))
+    arr_betavals_simul = np.zeros((3, len(subjects)))
+    arr_pvals = np.zeros((3, len(subjects)))
     coupvals = np.zeros((3, len(subjects)))
     # jcritvals = np.zeros((len(subjects)))
     if method == 'BADS':
@@ -1427,14 +1506,24 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
         appendix = ''
     for i_s, sub in enumerate(subjects):
         dataframe = datastim0.copy().loc[(datastim0['subject'] == sub)]
+        df_model =  datastim_model0.copy().loc[(datastim_model0['subject'] == sub)]
         for i_c, c in enumerate([0., 0.3, 1]):
-            skewness = scipy.stats.skew(dataframe.loc[dataframe.coupling == c, 'confidence'])
+            df_data_coup = dataframe.loc[dataframe.coupling == c]
+            df_model_coup = df_model.loc[df_model.coupling == c]
+            skewness = scipy.stats.skew(df_data_coup['confidence'])
             kurtosis = scipy.stats.kurtosis(
-                dataframe.loc[dataframe.coupling == c, 'confidence'], fisher=True)
+                df_data_coup['confidence'], fisher=True)
+            skewness_simuls = scipy.stats.skew(df_model_coup['confidence'])
+            kurtosis_simuls = scipy.stats.kurtosis(
+                df_model_coup['confidence'], fisher=True)
             n = len(dataframe)
             val_sum = 3*(n-1)**2 / ((n-2)*(n-3))
             beta = round((skewness**2 + 1)/(kurtosis+val_sum), 4)
+            beta_simuls = round((skewness_simuls**2 + 1)/(kurtosis_simuls+val_sum), 4)
             arr_betavals[i_c, i_s] = beta
+            arr_betavals_simul[i_c, i_s] = beta_simuls
+            stat, p = diptest(df_data_coup.loc[df_data_coup.stim_str == 0, 'confidence'])
+            arr_pvals[i_c, i_s] = p
         pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '.npy')
         if extra != 'null':
             b_eff = pars[3]
@@ -1490,6 +1579,7 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     ax2.spines['top'].set_visible(False)
     # state = np.array(state)
     np.save(SV_FOLDER + 'bimodality_coefficient.npy', arr_betavals)
+    np.save(SV_FOLDER + 'bimodality_coefficient_simul.npy', arr_betavals_simul)
     sns.violinplot(arr_betavals.T, ax=ax2, palette=cmap, cut=0, inner=None)
     sns.swarmplot(arr_betavals.T, color='k', size=3, legend=False, alpha=0.8)
     g = sns.lineplot(arr_betavals, color='k', alpha=0.2, legend=False, dashes=False)
@@ -2140,12 +2230,14 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
     print(np.mean(llh_all[2]))
     print('Median \Delta BIC (Null-Full):')
     print(np.median(llh_all[2]))
-    fig, ax = plt.subplots(1)
+    print('Proportion of subjects BIC > 0')
+    print(np.mean(llh_all[2]>0))
+    fig, ax = plt.subplots(1, figsize=(3, 3))
     if plot_all:
         ax.boxplot(llh_all.T)
         ax.set_xticks([1, 2, 3], ['Full', 'Null', 'Null-Full'], rotation=45)
     else:
-        ax.boxplot(llh_all[2])
+        sns.barplot([llh_all[2]], ax=ax, palette=['darkgreen'], errorbar='se')
     ax.axhline(0, linestyle='--', color='k', alpha=0.5)
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
@@ -2160,7 +2252,7 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
                     [llh_all[0, i_s], llh_all[1, i_s], llh_all[2, i_s]],
                      color='k', marker='o', linestyle='', markersize=4, alpha=0.6)
         else:
-            ax.plot([1+jitter[0]], [llh_all[2, i_s]],
+            ax.plot([jitter[0]], [llh_all[2, i_s]],
                      color='k', marker='o', linestyle='', markersize=4, alpha=0.6)
     if bic:
         ax.set_ylabel(r'$\Delta BIC$')
@@ -2176,7 +2268,7 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
         ax.set_ylim(np.min((np.min(llh_all[2])-200, -10)), y+200)
         ax.text(3, np.max(llh_all[2])+50, f"p = {p:.2e}", ha='center', va='bottom', color=col)
     else:
-        ax.text(1, np.max(llh_all[2])+10, f"p = {p:.2e}", ha='center', va='bottom', color='k')
+        ax.text(0, np.max(llh_all[2])+10, f"p = {p:.2e}", ha='center', va='bottom', color='k')
         if bic:
             ax.set_xticks([1], [r'$BIC(Null)-BIC(Full)$'])
         else:
@@ -2567,7 +2659,7 @@ def ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method='BADS',
 
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
-    # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method='BADS')
+    # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='MF', method='BADS')
     # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=1, extra='null')
     # fit_subjects(method=opt_algorithm, model='MF5', data_augmen=False, n_init=1, extra='')
     # fit_subjects(method=opt_algorithm, model='GS', data_augmen=False, n_init=1, extra='')
@@ -2580,11 +2672,11 @@ if __name__ == '__main__':
     # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                     subjects='separated')
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-    #                                bic=True)
+    #                                 bic=True)
     # plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
-    #                                data_only=True)
+    #                                 data_only=True)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=False)
     # plot_bic_across_models(sv_folder=SV_FOLDER, bic=True, method='BADS')
@@ -2601,10 +2693,10 @@ if __name__ == '__main__':
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF', method=opt_algorithm,
     #                     band_width=0.7, sort_by_j=True)
-    plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_11', plot_all=False,
-                            bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30
-    # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
-    #                                data_only=True)
+    # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_23', plot_all=False,
+    #                         bw=0.8, annot=False, model_density=True)  # good: 11, 7, 15, 18, 23, 30  --> 23 instead of 11
+    plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
+                                    data_only=True)
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
     #                   extra='null')
     # mcmc_all_subjects(plot=True, burn_in=100, iterations=1000, load_params=True,
