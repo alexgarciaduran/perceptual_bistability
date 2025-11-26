@@ -4,7 +4,7 @@ from scipy.integrate import quad
 import matplotlib.pyplot as plt
 
 # ---------- model params (change as needed) ----------
-J = 0.6        # coupling
+J = 0.3        # coupling
 N = 4.0        # N factor in your formula
 D = 0.1       # noise intensity (Kramers D)
 alpha = 1/60   # sweep rate (Bias units per second)
@@ -162,7 +162,7 @@ else:
         rsw_approx = None
 
 # ---------- optional: SDE simulation to estimate empirical switching distribution ----------
-do_sim = False
+do_sim = True
 if do_sim:
     import tqdm
     T = 200.0
