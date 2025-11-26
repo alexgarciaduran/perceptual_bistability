@@ -360,6 +360,7 @@ for n in range(len(overlap_vals)):
 
 fig, ax = plt.subplots(ncols=3, figsize=(15, 4.5))
 ax[0].plot(overlap_per_sim, test_per_sim, color='k', marker='o', linestyle='')
+ax[0].xlabel('Overlap')
 ax[1].plot(overlap_test_vs_pred, test_per_sim, color='k', marker='o', linestyle='')
 ax[2].plot(overlap_test_vs_pred, overlap_per_sim, color='k', marker='o', linestyle='')
 ax[0].set_ylabel('Test accuracy')
