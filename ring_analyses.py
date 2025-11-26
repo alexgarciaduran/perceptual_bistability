@@ -612,13 +612,15 @@ class ring:
         for t in range(1, n_iters):
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
+            idx_max = np.min((t, 10))
+            stim_t_1 = np.sum((stim[0:idx_max].T*np.exp(-(np.arange(idx_max))/0.5)).T, axis=0)
             if nstates == 2:
-                likelihood = self.compute_expectation_log_likelihood_ising(stim[t-1], q_mf, stim[t],
+                likelihood = self.compute_expectation_log_likelihood_ising(stim_t_1, q_mf, stim[t],
                                                                            discrete_stim=discrete_stim,
                                                                            noise=noise_stim, quartet=quartet,
                                                                            ratio=ratio)
             if nstates > 2:
-                likelihood = self.compute_expectation_log_likelihood_original(stim[t-1], q_mf, stim[t],
+                likelihood = self.compute_expectation_log_likelihood_original(stim_t_1, q_mf, stim[t],
                                                                              discrete_stim=discrete_stim,
                                                                              noise=noise_gaussian)
             var_m1 = np.exp(np.matmul(j_mat, q_mf) + b + likelihood*stim_weight)
@@ -2819,7 +2821,7 @@ def experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25,
     else:
         p_choices = np.load(DATA_FOLDER + f'simulations_choices_experiment_j_{j}_biasnm_{biasnm}_mixture.npy')
     fig, ax = plt.subplots(ncols=len(contrast), figsize=(16, 5))
-    percepts = ['CW', 'CCW', 'NM', 'no-resp']
+    percepts = ['CW', 'NM', 'CCW', 'no-resp']
     order = [0, 2, 1, 3]
     for i_c, cont in enumerate(contrast):
         ax[i_c].spines['top'].set_visible(False)
@@ -3212,7 +3214,7 @@ if __name__ == '__main__':
     # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
     #                         nsims=50, simulate=False, biasnm=0.5, j=0.4)
     experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                            nsims=50, simulate=False, biasnm=0.5, j=0.4)
+                            nsims=50, simulate=True, biasnm=0.5, j=0.2)
     # plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2, 2.5, 3],
     #                               jlist=[0, 0.4, 0.8, 1.2, 1.6, 1.8, 2], analytical=False)
     # experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
