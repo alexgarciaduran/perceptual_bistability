@@ -92,14 +92,61 @@ class ring:
         return p_s
 
 
+    # def compute_likelihood_continuous_stim(self, s_t_1, z, s_t=np.ones(6), noise=0.1):
+    #     phi = np.sum(1*(z[0] == 1)*s_t_1[0] + 1*(z[1] == 0)*s_t_1[1] + 1*(z[2] == -1)*s_t_1[2])
+    #     norms = np.sum((z[0] == 1)*1 + 1*(z[1] == 0) + (z[2] == -1)*1)
+    #     if norms != 0:
+    #         likelihood = 1/(noise*np.sqrt(2*np.pi))*np.exp(-(s_t[1]-phi/norms)**2/noise**2/2)
+    #     else:
+    #         likelihood = self.eps
+    #     return likelihood
     def compute_likelihood_continuous_stim(self, s_t_1, z, s_t=np.ones(6), noise=0.1):
-        phi = np.sum(1*(z[0] == 1)*s_t_1[0] + 1*(z[1] == 0)*s_t_1[1] + 1*(z[2] == -1)*s_t_1[2])
-        norms = np.sum((z[0] == 1)*1 + 1*(z[1] == 0) + (z[2] == -1)*1)
-        if norms != 0:
-            likelihood = 1/(noise*np.sqrt(2*np.pi))*np.exp(-(s_t[1]-phi/norms)**2/noise**2/2)
-        else:
-            likelihood = self.eps
+        # pick the 3 neighbors
+        # z = [z_{i-1}, z_i, z_{i+1}]
+        # s_prev is stim at t-1 for those locations
+        # s_curr is stim at t for the center
+    
+        # your original phi computation
+        phi = ( (z[0] == 1)*s_t_1[0] +
+                (z[1] == 0)*s_t_1[1] +
+                (z[2] == -1)*s_t_1[2] )
+    
+        norms = (z[0] == 1) + (z[1] == 0) + (z[2] == -1)
+    
+        if norms == 0:
+            return self.eps
+    
+        # --- KEY FIX: mean subtraction ---
+        phi -= np.mean([s_t_1[0], s_t_1[1], s_t_1[2]])
+        s_center = s_t[1] - np.mean(s_t)
+    
+        mu = phi / norms
+    
+        likelihood = (1/(noise*np.sqrt(2*np.pi))) * \
+                     np.exp(-0.5 * ((s_center - mu)/noise)**2)
+    
         return likelihood
+    
+    
+    def compute_likelihood_continuous_triple(
+        s_prev_local,  # length-3
+        z_triplet,     # length-3: [z_prev, z_i, z_next]
+        s_curr_local,
+        noise=0.1,
+        eps=1e-12
+        ):
+        # For each position j in {0,1,2} we shift s_prev_local by shift_j = z_triplet[j]
+        # and the predicted center is a weighted sum of the three shifted values (or correlation)
+        # Here I build a predicted center value:
+        # predicted_center = (w0*s_prev_local_shifted[0] + w1*s_prev_local_shifted[1] + w2*s_prev_local_shifted[2]) / norm_weights
+        s_shifts = np.empty(3)
+        for j in range(3):
+            s_shifts[j] = np.roll(s_prev_local, int(z_triplet[j]))[j]  # local element after each neighbor's shift
+        # for instance, predicted scalar:
+        predicted_center = (s_shifts[0] + s_shifts[1] + s_shifts[2]) / 3.0
+        diff = s_curr_local[1] - predicted_center
+        likelihood = (1.0 / (noise * np.sqrt(2*np.pi))) * np.exp(-0.5*(diff*diff)/(noise*noise))
+        return max(likelihood, eps)
     
     
     def compute_likelihood_continuous_stim_mixed(self, s_t_1, z, s_t=np.ones(6), noise=0.1):
@@ -173,23 +220,32 @@ class ring:
                     return np.log(epsilon)
 
     
-    def compute_likelihood_continuous_stim_ising(self, s_t_1, z, s_t=np.ones(3), noise=0.1,
-                                              epsilon=1e-2):
-        if z[0] == -1:
-            if z[2] == 1:
-                return np.log(epsilon)
-            else:
-                return -(s_t[1]-s_t_1[2])**2 / (2*noise**2)
-        if z[0] == 1:
-            if z[2] == 1:
-                return -(s_t[1]-s_t_1[0])**2 / (2*noise**2)
-            else:
-                return -(s_t[1]-s_t_1[0]*0.5-s_t_1[2]*0.5)**2 / (2*noise**2)
+    def compute_likelihood_continuous_stim_ising(self, s_t_1, z, s_t, noise=0.1, epsilon=1e-6,
+                                                 tritone=False):
+        """
+        s_t_1 : previous stimulus (neighbor values)
+        z     : latent states of [left, center, right] = [-1,1]
+        s_t   : current stimulus at center
+        """
+        if tritone:
+            z = -z
+        mu_vals = []
+        if z[0] == 1:  # left neighbor contributes
+            mu_vals.append(s_t_1[0])
+        if z[2] == -1:  # right neighbor contributes
+            mu_vals.append(s_t_1[2])
+        
+        if len(mu_vals) == 0:
+            return np.log(epsilon)  # no contributing neighbors
+        else:
+            mu = np.mean(mu_vals)  # weighted average could also be used
+            log_p = -((s_t[1] - mu)**2) / (2*noise**2)
+            return log_p - np.log(noise*np.sqrt(2*np.pi))
 
 
     def exp_kernel(self, tau=0.8):
         x = np.arange(self.ndots)
-        kernel = np.concatenate((np.exp(-(x-1)[:len(x)//2]/tau), (np.exp(-x[:len(x)//2]/tau))[::-1]))
+        kernel = np.concatenate((np.exp(-(x-1)[:int(np.floor(len(x)/2))]/tau), (np.exp(-x[:int(np.ceil(len(x)/2))]/tau))[::-1]))
         kernel[0] = 0
         return kernel / np.max(kernel)
 
@@ -341,7 +397,7 @@ class ring:
 
 
     def compute_expectation_log_likelihood_ising(self, s_t_1, q_z_prev, s_t, discrete_stim=True,
-                                                 noise=0.1, quartet=False, ratio=1):
+                                                  noise=0.1, quartet=False, ratio=1, tritone=False):
         # Number of possible latent states (e.g., 3 for CW, NM, CCW)
         num_states_z = q_z_prev.shape[1]
         num_variables = q_z_prev.shape[0]
@@ -360,9 +416,21 @@ class ring:
             for i_z, zstate in enumerate(z_states):
                 lh = 0
                 for startpoint in [-1, 0, 1]:
-                    i_prev = (i-1+startpoint) % num_variables
-                    i_next = (i+1+startpoint) % num_variables
-                    idx = (i+startpoint) % num_variables
+                    # compute shifted indices
+                    i_prev = i - 1 + startpoint
+                    idx = i + startpoint
+                    i_next = i + 1 + startpoint
+
+                    if tritone:  # not connected anymore as a ring
+                        if not (0 <= i_prev < num_variables and
+                                0 <= idx    < num_variables and
+                                0 <= i_next < num_variables):
+                            continue
+                    else:
+                        # circular wrapping (for ring/quartet)
+                        i_prev %= num_variables
+                        idx %= num_variables
+                        i_next %= num_variables
                     for ic, comb in enumerate(combinations):  # for all combinations of z_{i-1}, z_{i+1}
                         if startpoint == -1:
                             zn = np.ones(num_variables)
@@ -388,7 +456,6 @@ class ring:
                         idxs = [i_prev, idx, i_next]
                         # Get the probability of z from q_z_prev (approx. posterior)
                         # q_z_prev: num_variables x num_states_z (n_dots rows x 3 columns)
-        
                         # Get the CPT value for p(s_i | s, z)
                         if discrete_stim and not quartet:
                             p_s_given_z = np.log(self.compute_likelihood_vector(s_t_1, zn, s_t)[idx])  # CPT lookup based on s and z, takes p(s_i | s, z)
@@ -396,15 +463,83 @@ class ring:
                             # based on a normal distribution centered in the expectation of the stimulus given the combination of z
                             p_s_given_z = self.compute_likelihood_continuous_stim_ising(s_t_1[idxs], zn[idxs],
                                                                                         s_t[idxs], noise=noise,
-                                                                                        epsilon=self.eps)
+                                                                                        epsilon=self.eps, tritone=tritone)
                         if discrete_stim and quartet:
                             # based on a normal distribution centered in the expectation of the stimulus given the combination of z
                             p_s_given_z = self.compute_likelihood_quartet_stim_ising(s_t_1[idxs], zn[idxs],
-                                                                                     s_t[idxs], noise=noise,
-                                                                                     epsilon=self.eps, ratio=ratio, idxs=idxs)
+                                                                                      s_t[idxs], noise=noise,
+                                                                                      epsilon=self.eps, ratio=ratio, idxs=idxs)
                         lh += p_s_given_z*q_z_p*q_z_n
                 likelihood_c_all[i, i_z] = lh
         return likelihood_c_all
+
+    # def compute_expectation_log_likelihood_ising(self, s_t_1, q_z_prev, s_t,
+    #                                              discrete_stim=True,
+    #                                              quartet=False, ratio=1,
+    #                                              noise=0.1, tritone=False):
+    #     """
+    #     MF expected log-likelihood for 1D Ising chain,
+    #     neighbors contribute only if their latent state is +1 (CW).
+    
+    #     Parameters
+    #     ----------
+    #     s_t_1 : array-like, shape (num_variables,)
+    #         Previous stimulus
+    #     q_z_prev : array-like, shape (num_variables, 2)
+    #         MF posterior over latent states (+1/-1)
+    #     s_t : array-like, shape (num_variables,)
+    #         Current stimulus
+    #     noise : float
+    #         Gaussian noise
+    #     tritone : bool
+    #         Open boundaries if True, circular if False
+    #     epsilon : float
+    #         Small floor value for log-likelihood when no neighbors contribute
+    #     """
+    #     num_variables = q_z_prev.shape[0]
+    #     z_states = [1, -1]  # CW=+1, CCW=-1
+    #     likelihood_c_all = np.zeros((num_variables, 2))
+    
+    #     for i in range(num_variables):
+    #         for i_z, z_i in enumerate(z_states):
+    #             lh = 0.0
+    
+    #             # neighbor indices
+    #             if tritone:
+    #                 left_idx  = i-1 if i-1 >= 0 else i
+    #                 right_idx = i+1 if i+1 < num_variables else i
+    #             else:
+    #                 left_idx  = (i-1) % num_variables
+    #                 right_idx = (i+1) % num_variables
+    
+    #             # loop over neighbor states
+    #             for z_left in z_states:
+    #                 for z_right in z_states:
+    #                     # MF probabilities
+    #                     q_left  = q_z_prev[left_idx, 0 if z_left==1 else 1]
+    #                     q_right = q_z_prev[right_idx, 0 if z_right==1 else 1]
+    
+    #                     # weighted contribution of neighbors
+    #                     mu_vals = []
+    #                     if z_left == 1:
+    #                         mu_vals.append(s_t_1[left_idx])
+    #                     if z_right == -1:
+    #                         mu_vals.append(s_t_1[right_idx])
+    
+    #                     # compute likelihood
+    #                     if len(mu_vals) > 0:
+    #                         mu = np.mean(mu_vals)
+    #                         log_p = -((s_t[i] - mu)**2) / (2*noise**2)
+    #                     else:
+    #                         log_p = np.log(self.eps)
+    
+    #                     # MF expectation
+    #                     lh += log_p * q_left * q_right
+    
+    #             likelihood_c_all[i, i_z] = lh
+    
+    #     return likelihood_c_all
+
 
 
     def stim_creation(self, s_init=[0, 1], n_iters=100, true='NM'):
@@ -573,24 +708,28 @@ class ring:
     def mean_field_sde(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=3, b=np.zeros(3),
                        true='NM', noise=0.2, plot=False, stim_weight=1, ini_cond=None,
                        discrete_stim=True, s=[1, 0], noise_stim=0.05, coh=None,
-                       stim_stamps=1, noise_gaussian=0.1, return_all=False, quartet=False,
-                       ratio=1):
+                       stim_stamps=1, noise_gaussian=0.1, return_all=False, quartet=False, tritone=False,
+                       ratio=1, erase_middle_tritone=False, colors=False, idx_dot_plot=None):
         t_end = n_iters*dt
         kernel = self.exp_kernel()
         n_dots = self.ndots
-        if discrete_stim:
-            if coh is None:
-                stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
-            if coh is not None:
-                if type(s) is list:
-                    stim = self.dummy_stim_creation(n_iters=n_iters, true=true, coh=coh,
-                                                    timesteps_between=stim_stamps)
-                else:
-                    stim = self.stim_creation_ctrast_coh(n_iters=n_iters, timesteps_between=stim_stamps,
-                                                         true=true, coh=coh, d=s/2)
-        else:
-            stim = self.stim_creation_ou_process(true=true, noise=noise_stim, s_init=s,
-                                                 n_iters=n_iters, dt=dt)
+        if not tritone:
+            if discrete_stim:
+                if coh is None:
+                    stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true)
+                if coh is not None:
+                    if type(s) is list:
+                        stim = self.dummy_stim_creation(n_iters=n_iters, true=true, coh=coh,
+                                                        timesteps_between=stim_stamps)
+                    else:
+                        stim = self.stim_creation_ctrast_coh(n_iters=n_iters, timesteps_between=stim_stamps,
+                                                             true=true, coh=coh, d=s/2)
+            else:
+                stim = self.stim_creation_ou_process(true=true, noise=noise_stim, s_init=s,
+                                                     n_iters=n_iters, dt=dt)
+        if tritone:
+            stim = self.stim_creation_tritone(n_iters=n_iters, timesteps_between=stim_stamps,
+                                              erase_middle=erase_middle_tritone)
         if discrete_stim and coh is not None:
             discrete_stim = False
         if type(s) is list:
@@ -598,7 +737,7 @@ class ring:
         else:
             s = np.repeat(np.array(s).reshape(-1, 1), n_dots, axis=1).T.flatten()
         if ini_cond is None:
-            q_mf = np.clip(np.random.randn(n_dots, nstates)*1e-1+0.5, 0, 1)
+            q_mf = np.clip(np.random.randn(n_dots, nstates)*5e-2+0.5, 0, 1)
         else:
             ini_cond = np.array(ini_cond)
             q_mf = np.repeat(ini_cond.reshape(-1, 1), self.ndots, axis=1).T
@@ -607,18 +746,26 @@ class ring:
         np.fill_diagonal(j_mat, 0)
         q_mf_arr = np.zeros((n_dots, nstates, n_iters))
         q_mf_arr[:, :, 0] = q_mf
-        s_arr = np.zeros((n_dots, n_iters))
-        s_arr[:, 0] = s
         for t in range(1, n_iters):
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
-            idx_max = np.min((t, 10))
-            stim_t_1 = np.sum((stim[0:idx_max].T*np.exp(-(np.arange(idx_max))/0.5)).T, axis=0)
+            if tritone:
+                stim_t_1 = stim[0]
+            else:
+                # Number of timesteps to look back
+                idx_max = min(t, 10)
+                # Exponential kernel
+                exp_kernel = np.exp(-np.arange(idx_max)/2)[::-1]  # reverse it so recent steps have higher weight
+                exp_kernel /= exp_kernel.sum()  # normalize so weights sum to 1
+                # Select the last idx_max timesteps ending at t-1
+                stim_segment = stim[t-idx_max:t]
+                # Weighted sum
+                stim_t_1 = np.sum(stim_segment * exp_kernel[:, None], axis=0)  # assumes stim is 2D: (time, features)
             if nstates == 2:
                 likelihood = self.compute_expectation_log_likelihood_ising(stim_t_1, q_mf, stim[t],
                                                                            discrete_stim=discrete_stim,
                                                                            noise=noise_stim, quartet=quartet,
-                                                                           ratio=ratio)
+                                                                           ratio=ratio, tritone=tritone)
             if nstates > 2:
                 likelihood = self.compute_expectation_log_likelihood_original(stim_t_1, q_mf, stim[t],
                                                                              discrete_stim=discrete_stim,
@@ -632,6 +779,9 @@ class ring:
             if return_all:
                 return q_mf_arr
         if plot:
+            if tritone:
+                q_mf_arr = q_mf_arr[2:n_dots-2]
+                stim = stim[:, 2:n_dots-2]
             time = np.arange(0, t_end, dt)
             fig, ax = plt.subplots(nrows=nstates+2, figsize=(8, 12))
             for i_a, a in enumerate(ax.flatten()):
@@ -654,7 +804,7 @@ class ring:
             #              bbox_inches='tight')
             ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
                          vmin=0, vmax=1)
-            ax[0].set_yticks(np.arange(self.ndots), np.arange(self.ndots)+1)
+            ax[0].set_yticks(np.arange(stim.shape[1]), np.arange(stim.shape[1])+1)
             ax[0].set_ylabel('Dots')
             ax[0].set_xlabel('Time (s)')
             if not quartet:
@@ -694,19 +844,34 @@ class ring:
             if true not in ['combination', '2combination', 'combination_reverse']:
                 title = true
             ax[0].set_title(title)
-            for dot in range(n_dots):
+            if idx_dot_plot is None:
+                rng = range(q_mf_arr.shape[0])
+            else:
+                rng = [idx_dot_plot]
+            for dot in rng:
                 if dot % 2 == 0:
                     linestyle = ':'
                 else:
                     linestyle = 'solid'
-                ax[2].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5,
-                           linestyle=linestyle)
-                ax[3].plot(time, q_mf_arr[dot, 1, :], color='k', linewidth=2.5,
-                           linestyle=linestyle)
-                if nstates == 3:
-                    ax[4].plot(time, q_mf_arr[dot, 2, :], color='b', linewidth=2.5,
+                if not colors:
+                    ax[2].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5,
                                linestyle=linestyle)
+                    ax[3].plot(time, q_mf_arr[dot, 1, :], color='k', linewidth=2.5,
+                               linestyle=linestyle)
+                    if nstates == 3:
+                        ax[4].plot(time, q_mf_arr[dot, 2, :], color='b', linewidth=2.5,
+                                   linestyle=linestyle)
+                if colors:
+                    ax[2].plot(time, q_mf_arr[dot, 0, :], linewidth=2.5,
+                               linestyle=linestyle, label=dot+1)
+                    ax[3].plot(time, q_mf_arr[dot, 1, :], linewidth=2.5,
+                               linestyle=linestyle)
+                    if nstates == 3:
+                        ax[4].plot(time, q_mf_arr[dot, 2, :], linewidth=2.5,
+                                   linestyle=linestyle)
             fig.suptitle(f'Coupling J = {j}', fontsize=16)
+            if colors:
+                ax[2].legend(title='Dot', ncol=2, frameon=False)
             # plt.figure()
             # plt.plot(np.max(np.abs(np.diff(stim.T, axis=0)), axis=0))
             # plt.ylim(0, 2)
@@ -1221,7 +1386,28 @@ class ring:
                     roll_n = 0
             s = np.roll(s, roll_n)
             sv.append(s)
+        return np.row_stack((sv))
+    
+    
+    def stim_creation_tritone(self, n_iters=100, timesteps_between=50, erase_middle=False):
+        """
+        """
+        s_init = [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0]
+        if erase_middle:
+            s_final = [0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0]
+        else:
+            s_final = [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0]
+        s = s_init
+        sv = [s]
+        for i in range(n_iters-1):
+            if i >= timesteps_between:
+                s = s_final
+            sv.append(s)
         return np.row_stack((sv)) 
+
+
+def clamp_index(i, n):
+    return max(0, min(n-1, i))
 
 
 def psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=200, j_list=[0, 0.4, 0.8],
@@ -3110,6 +3296,47 @@ def mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-
     fig.savefig(DATA_FOLDER + 'proportion_vertical_vs_aspect_ratio.svg', dpi=200, bbox_inches='tight')
 
 
+def plot_tritone_example(duration_first_period=20, n_iters=200):
+    np.random.seed(1234)
+    q_mf_paradox = ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.1, tau=1, n_iters=n_iters, j=1,
+                                                                true='CW', noise=0.0, plot=False,
+                                                                discrete_stim=True, s=None,
+                                                                b=[0., 0.], noise_stim=0.1, coh=0,
+                                                                nstates=2, quartet=False, ratio=1, tritone=True,
+                                                                stim_stamps=duration_first_period, colors=True,
+                                                                erase_middle_tritone=False,
+                                                                return_all=True)
+    q_mf_paradox_lower = np.nanmean(q_mf_paradox[2:6, 1], axis=0)
+    q_mf_paradox_upper = np.nanmean(q_mf_paradox[7:11, 1], axis=0)
+    q_mf_ambiguous = ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.1, tau=1, n_iters=n_iters, j=1,
+                                                                  true='CW', noise=0.0, plot=False,
+                                                                  discrete_stim=True, s=None,
+                                                                  b=[0., 0], noise_stim=0.25, coh=0,
+                                                                  nstates=2, quartet=False, ratio=1,
+                                                                  tritone=True,
+                                                                  stim_stamps=duration_first_period, colors=True,
+                                                                  erase_middle_tritone=True,
+                                                                  return_all=True)
+    q_mf_ambiguous_lower = np.nanmean(q_mf_ambiguous[2:6, 1], axis=0)
+    q_mf_ambiguous_upper = np.nanmean(q_mf_ambiguous[7:11, 1], axis=0)
+    # plotting
+    fig, ax = plt.subplots(ncols=2, figsize=(7.5, 4))
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_xlabel('Time steps')
+        a.axvline(duration_first_period, color='gray', linestyle=':', alpha=0.5,
+                  linewidth=2)
+        a.set_ylim(-0.05, 1.05)
+    ax[0].set_ylabel('q(increase)')
+    ax[0].plot(q_mf_paradox_lower, color='k', linewidth=3, label='Lower')
+    ax[0].plot(q_mf_paradox_upper, color='k', linestyle='--', linewidth=3, label='Upper')
+    ax[0].legend(frameon=False)
+    ax[1].plot(q_mf_ambiguous_lower, color='r', linewidth=3)
+    ax[1].plot(q_mf_ambiguous_upper, color='r', linestyle='--', linewidth=3)
+    fig.tight_layout()
+
+
 if __name__ == '__main__':
     # number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
     #                         jlist=np.arange(0, 1.05, 0.05).round(4),
@@ -3138,15 +3365,16 @@ if __name__ == '__main__':
     #                            sigma=0.05, eps=0.1)
     # diagram_critical_j_vs_bias(j_list=np.arange(-1, 1, 1e-2), a_list=np.arange(0, 0.5, 5e-3),
     #                            sigma=0.1, eps=1e-2)
-    # ss = [[0., 1.]]*2
+    # ss = [[0., 1.]]*1
+    
     # ss = [[0.45, 0.55]]
     # # # ss = [[0.47, 0.53]]*5
     # for i in range(len(ss)):
     #     # epsmax = np.exp(-1/2)
-    #     ring(epsilon=0.01, n_dots=8).mean_field_sde(dt=0.1, tau=0.2, n_iters=300, j=0.,
+    #     ring(epsilon=0.01, n_dots=8).mean_field_sde(dt=0.1, tau=0.5, n_iters=300, j=1,
     #                                                 true='CW', noise=0., plot=True,
     #                                                 discrete_stim=True, s=ss[i],
-    #                                                 b=[0, 0.5, 0], noise_stim=0.0,
+    #                                                 b=[0, 0.5, 0], noise_stim=0.,
     #                                                 coh=0., nstates=3, stim_stamps=1)
     # ring(epsilon=0.2, n_dots=8).mean_field_sde(dt=0.1, tau=0.2, n_iters=200, j=0.,
     #                                            true='CW', noise=0.1, plot=True,
@@ -3179,6 +3407,7 @@ if __name__ == '__main__':
     #                                               true='CCW', noise=0.01, plot=True,
     #                                               discrete_stim=True, s=[0., 1],
     #                                               b=[0., 0., 0.], noise_stim=0.0, coh=0.2)
+    
     # ring(epsilon=1e-2, n_dots=4).mean_field_sde(dt=0.01, tau=0.1, n_iters=100, j=0.,
     #                                             true='CW', noise=0.0, plot=True,
     #                                             discrete_stim=True, s=[0., 1],
@@ -3213,8 +3442,12 @@ if __name__ == '__main__':
     #                         nsims=50, simulate=False, biasnm=0., j=0.4)
     # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
     #                         nsims=50, simulate=False, biasnm=0.5, j=0.4)
-    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                            nsims=50, simulate=True, biasnm=0.5, j=0.2)
+    # for biasnm in [0.5]:
+    #     print(f'B_NM = {biasnm}')
+    #     for j in [0., 0.2, 0.4]:
+    #         print(f'Coupling, J = {j}')
+    #         experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+    #                                 nsims=50, simulate=False, biasnm=biasnm, j=j)
     # plot_phase_diagrams_vs_biasnm(biasnmlist=[0, 0.5, 1, 1.5, 2, 2.5, 3],
     #                               jlist=[0, 0.4, 0.8, 1.2, 1.6, 1.8, 2], analytical=False)
     # experiment_reduced_simulations(contrast=[0.1, 0.2, 0.3, 0.4],
@@ -3227,3 +3460,20 @@ if __name__ == '__main__':
     #                           alist=np.arange(0, 1.02, 2e-2), biasnm=1,
     #                           resimulate=False, ax=None, cbar=False, fig=None, j=0.8,
     #                           plot=True, analytical=False)
+    plot_tritone_example(duration_first_period=20)
+    # ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.1, tau=1, n_iters=500, j=0.5,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=None,
+    #                                             b=[0., 0.], noise_stim=0.25, coh=0,
+    #                                             nstates=2, quartet=False, ratio=1,
+    #                                             tritone=True,
+    #                                             stim_stamps=50, colors=True,
+    #                                             erase_middle_tritone=False)
+    # ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.1, tau=1, n_iters=500, j=0.5,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=None,
+    #                                             b=[0.5, 0.], noise_stim=0.25, coh=0,
+    #                                             nstates=2, quartet=False, ratio=1,
+    #                                             tritone=True,
+    #                                             stim_stamps=50, colors=True,
+    #                                             erase_middle_tritone=True)
