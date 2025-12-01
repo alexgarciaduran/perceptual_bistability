@@ -425,7 +425,7 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
 
 def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling_levels,
                           tFrame=26, fps=60, window_conv=None,
-                          ndt_list=np.arange(100), unfold_time=False):
+                          ndt_list=np.arange(100)):
     """
     Make a 2-panel plot:
       - Left:  freq=2
@@ -567,8 +567,8 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     np.save(DATA_FOLDER + 'switch_time_diff_freq_2.npy', switch_time_diff_2)
     np.save(DATA_FOLDER + 'switch_time_diff_freq_4.npy', switch_time_diff_4)
     # ax2[0].set_ylabel('Hysteresis width')
-    ax[0].set_xlabel('Sensory evidence, B(t)')
-    ax[1].set_xlabel('Sensory evidence, B(t)')
+    ax[0].set_xlabel('Depth cue, s(t)')
+    ax[1].set_xlabel('Depth cue, s(t)')
     ax[0].set_ylabel('P(rightward)')
     ax[0].legend(title='p(shuffle)', frameon=False,
                  bbox_to_anchor=[-0.02, 1.07], loc='upper left')
@@ -1185,8 +1185,7 @@ def compute_switch_rate_from_array_dir(response_array, fps=60, bin_size=1.0,
 
 def plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                             ntraining=8, coupling_levels=[0, 0.3, 1],
-                            window_conv=None, ndt_list=np.arange(-50, 50),
-                            unfold_time=False):
+                            window_conv=None, ndt_list=np.arange(-50, 50)):
     df = load_data(data_folder, n_participants='all')
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
@@ -1196,7 +1195,7 @@ def plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     
     plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling_levels,
                           tFrame=tFrame, fps=fps, window_conv=window_conv,
-                          ndt_list=ndt_list, unfold_time=unfold_time)
+                          ndt_list=ndt_list)
 
 
 def plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
@@ -1304,8 +1303,8 @@ def hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
             #                [0.5, 1.06], color=colormap[i_c], alpha=0.7, linestyle='--')
             #     ax[1].plot([hist_val_4-0.53]*2,
             #                [0.5, 1.06], color=colormap[i_c], alpha=0.7, linestyle='--')
-    ax[0].set_xlabel('Sensory evidence, B(t)')
-    ax[1].set_xlabel('Sensory evidence, B(t)')
+    ax[0].set_xlabel('Depth cue, s(t)')
+    ax[1].set_xlabel('Depth cue, s(t)')
     ax[0].set_ylabel('Proportion of rightward responses')
     ax[0].legend(title='p(shuffle)', frameon=False)
     ax[0].set_title('Freq = 2', fontsize=14)
@@ -1390,10 +1389,10 @@ def hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
     ax2[-1].set_ylim(-0.4, 0.7)
     ax2[-1].set_ylabel('Noise')
     ax2[-1].set_xlabel('Time before switch (s)')
-    ax[i_s*2].set_xlabel('Sensory evidence, B(t)')
-    ax[i_s*2+1].set_xlabel('Sensory evidence, B(t)')
-    ax[i_s*2-1].set_xlabel('Sensory evidence, B(t)')
-    ax[i_s*2-2].set_xlabel('Sensory evidence, B(t)')
+    ax[i_s*2].set_xlabel('Depth cue, s(t)')
+    ax[i_s*2+1].set_xlabel('Depth cue, s(t)')
+    ax[i_s*2-1].set_xlabel('Depth cue, s(t)')
+    ax[i_s*2-2].set_xlabel('Depth cue, s(t)')
     ax[0].set_ylabel('Proportion of rightward responses')
     ax[0].legend(title='p(shuffle)', frameon=False)
     ax[0].set_title('Freq = 2', fontsize=14)
@@ -1411,43 +1410,50 @@ def hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
 
 def hysteresis_basic_plot_simulation(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
                                      fps=60, nsubs=20,
-                                     n=4, nsims=100, b_list=np.linspace(-0.5, 0.5, 501)):
+                                     n=4, nsims=100, b_list=np.linspace(-0.5, 0.5, 501),
+                                     simul=False):
     b_list_2 = np.concatenate((b_list[:-1], b_list[1:][::-1]))
     b_list_4 = np.concatenate((b_list[:-1][::2], b_list[1:][::-2], b_list[:-1][::2], b_list[1:][::-2]))
     nFrame = len(b_list_2)
     dt  = 1/fps
     time = np.arange(0, nFrame, 1)*dt
-    tau = 0.1
-    indep_noise = np.sqrt(dt/tau)*np.random.randn(nFrame, nsims, nsubs)*0.07
-    choice = np.zeros((len(coup_vals), nFrame, nsims, 2, nsubs))
-    for i_j, j in enumerate(coup_vals):
-        for freq in range(2):
-            stimulus = [b_list_2, b_list_4][freq]
-            for sub in range(nsubs):
-                for sim in range(nsims):
-                    x = 0.02  # assume we start close to q ~ 0 (always L --> R)
-                    vec = [x]
-                    for t in range(1, nFrame):
-                        x = x + dt*(sigmoid(2*j*n*(2*x-1)+2*stimulus[t]*0.3)-x)/tau + indep_noise[t, sim, sub]
-                        vec.append(x)
-                        if x < 0.4:
-                            ch = 0.
-                        if x > 0.6:
-                            ch = 1.
-                        if 0.4 <= x <= 0.6 and t > 0:
-                            ch = choice[i_j, t-1, sim, freq, sub]
-                        choice[i_j, t, sim, freq, sub] = ch
-    np.save(DATA_FOLDER + 'choice_hysteresis_large_tau.npy', choice)
-    fig, ax = plt.subplots(ncols=2, nrows=1, figsize=(7.5, 4))
+    tau = 0.01
+    if simul:
+        indep_noise = np.sqrt(dt/tau)*np.random.randn(nFrame, nsims, nsubs)*0.07
+        choice = np.zeros((len(coup_vals), nFrame, nsims, 2, nsubs))
+        for i_j, j in enumerate(coup_vals):
+            for freq in range(2):
+                stimulus = [b_list_2, b_list_4][freq]
+                for sub in range(nsubs):
+                    for sim in range(nsims):
+                        x = np.random.rand()*0.5  # assume we start close to q ~ 0 (always L --> R)
+                        for i in range(2):
+                            x = sigmoid(2*j*n*(2*x-1)+2*stimulus[0]*0.3)
+                        vec = [x]
+                        for t in range(1, nFrame):
+                            x = x + dt*(sigmoid(2*j*n*(2*x-1)+2*stimulus[t]*0.3)-x)/tau + indep_noise[t, sim, sub]
+                            vec.append(x)
+                            if x < 0.49999:
+                                ch = 0.
+                            if x > 0.50999:
+                                ch = 1.
+                            if 0.49999 <= x <= 0.50999 and t > 0:
+                                ch = choice[i_j, t-1, sim, freq, sub]
+                            choice[i_j, t, sim, freq, sub] = ch
+        np.save(DATA_FOLDER + 'choice_hysteresis_large_tau.npy', choice)
+    else:
+        choice = np.load(DATA_FOLDER + 'choice_hysteresis_large_tau.npy')
+    fig, ax = plt.subplots(ncols=2, nrows=1, figsize=(9.5, 4))
     for a in ax:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
         a.set_ylim(-0.025, 1.08)
         a.set_yticks([0, 0.5, 1])
-        a.set_xticks([-0.5, 0, 0.5], [-1, 0, 1])
+        a.set_xticks([-0.5, 0, 0.5], ['L', '0', 'R' ])
         # a.tick_params(axis='x', rotation=45)
-    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    colormap = ['cadetblue', 'peru']
     lsts = ['solid', 'solid']
+    labels = ['Monostable', 'Bistable']
     for i_c, coupling in enumerate(coup_vals):
         for freq in range(2):
             stimulus = [b_list_2, b_list_4][freq]
@@ -1461,15 +1467,15 @@ def hysteresis_basic_plot_simulation(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
             
             response = np.convolve(response, np.ones(1)/1, 'same')
             ax[freq].plot(stimulus, response, color=colormap[i_c], linewidth=4,
-                          label=round(coupling, 1), linestyle=lsts[freq])
+                          label=labels[i_c], linestyle=lsts[freq])
         if i_c == 2:
             ax[0].axhline(0.5, color=colormap[i_c], alpha=0.7, linestyle='--')
             ax[1].axhline(0.5, color=colormap[i_c], alpha=0.7, linestyle='--')
-    ax[0].set_xlabel('Sensory evidence, B(t)')
+    ax[0].set_xlabel('Depth cue, s(t)')
     ax[1].set_yticks([0, 0.5, 1], ['', '', ''])
-    ax[1].set_xlabel('Sensory evidence, B(t)')
-    ax[0].set_ylabel('Proportion of rightward responses')
-    ax[0].legend(title='Coupling, J', frameon=False)
+    ax[1].set_xlabel('Depth cue, s(t)')
+    ax[0].set_ylabel('P(rightward)')
+    ax[0].legend(frameon=False)
     ax[0].set_title('Freq = 2', fontsize=14)
     ax[1].set_title('Freq = 4', fontsize=14)
     fig.tight_layout()
@@ -2372,7 +2378,7 @@ def experiment_example(nFrame=1560, fps=60, noisyframes=15):
         a.spines['top'].set_visible(False)
     ax[1].set_xlabel('Time (s)')
     ax[1].set_ylabel('Noise')
-    ax[0].set_ylabel('Sensory evidence, B(t)')
+    ax[0].set_ylabel('Depth cue, s(t)')
     difficulty_time_ref_2 = np.linspace(2, -2, nFrame//2)
     stimulus = np.concatenate(([difficulty_time_ref_2, -difficulty_time_ref_2]))
     ax[0].axhline(0, color='k', linestyle='--', alpha=0.3)
@@ -2980,7 +2986,8 @@ def simulator_5_params_sticky_bound(params, freq, nFrame=1560, fps=60,
     x1 = (np.sign(b_eff[0])+1)/2
     for i in range(5):
         x1 = sigmoid(2 * (j_eff * (2 * x1 - 1)+b_eff[0]))  # convergence
-    # x[0] = 0.5
+    x1 = lower_bound if np.sign(freq) == 1 else upper_bound
+    x[0] = x1
     choice = np.zeros(nFrame)
     prev_choice = 0.0
     new_choice = 0.0
@@ -3044,7 +3051,8 @@ def simulator_5_params(params, freq, nFrame=1560, fps=60,
     b_eff = stimulus*b_par
     noise = np.random.randn(nFrame)*sigma*np.sqrt(dt/tau)
     x = np.zeros(nFrame)
-    x1 = (np.sign(b_eff[0])+1)/2
+    x1 = lower_bound if np.sign(freq) == 1 else upper_bound
+    # x1 = (np.sign(b_eff[0])+1)/2
     if ini_cond_convergence is None:
         x1 = x1
     else:
@@ -4040,18 +4048,33 @@ def plot_noise_variables_versus_hysteresis():
     ax[3].set_ylabel('Width, freq = 4')
     fig2, ax2 = plt.subplots(ncols=3, nrows=2, figsize=(10, 7))
     ax2 = ax2.flatten()
+    pshuffles = [1, 0.7, 0.]
     for i in range(3):
+        ax2[i].set_title(f'p(shuffle) = {pshuffles[i]}', fontsize=15)
         vardom = mean_number_switchs_coupling[i]
         varhyst = hyst_width_2[i]
+        y_lims = [np.min(varhyst)-0.4, np.max(varhyst)+0.4]
+        x_lims = [np.min(vardom)-1, np.max(vardom)+1]
+        ax2[i].set_ylim(y_lims)
+        ax2[i].set_xlim(x_lims)
+        ax2[i].plot(x_lims, y_lims, color='gray', alpha=0.5, linewidth=3, linestyle='--')
         r, p = pearsonr(vardom, varhyst)
         ax2[i].annotate(f'r = {r:.3f}\np={p:.0e}', xy=(.04, 0.8), xycoords=ax2[i].transAxes)
         ax2[i].plot(vardom, varhyst, color=colormap[i],
                     **kwargs)
         varhyst = hyst_width_4[i]
+        y_lims = [np.min(varhyst)-0.4, np.max(varhyst)+0.4]
+        ax2[i+3].set_ylim(y_lims)
+        ax2[i+3].set_xlim(x_lims)
+        ax2[i+3].plot(x_lims, y_lims, color='gray', alpha=0.5, linewidth=3, linestyle='--')
         r, p = pearsonr(vardom, varhyst)
         ax2[i+3].annotate(f'r = {r:.3f}\np={p:.0e}', xy=(.04, 0.8), xycoords=ax2[i+3].transAxes)
         ax2[i+3].plot(vardom, varhyst, color=colormap[i],
                     **kwargs)
+    ax2 = ax2.flatten()
+    for a in ax2:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
     ax2[4].set_xlabel('Dominance (s)')
     ax2[0].set_ylabel('Hysteresis f=2')
     ax2[3].set_ylabel('Hysteresis f=4')
@@ -4259,7 +4282,7 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
                                            tau=0.05)
 
             ax_sim[i_p+1, i_fr].axhline(0.5, color='gray', linestyle=':', alpha=0.6,
-                                          linewidth=2)
+                                        linewidth=2)
             for cross in crossings[i_fr]:
                 ax_sim[i_p+1, i_fr].axvline(cross, color='gray', linestyle='--', alpha=0.3)
                 ax_sim[0, i_fr].axvline(cross, color='gray', linestyle='--', alpha=0.3)
@@ -4320,10 +4343,12 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
                         markersize=7)
             pos_idx += 1
     ax_sim = ax_sim.flatten()
-    y_labels_sim = ['Depth cue, s(t)', '', r'Confidence, $q$' + '\nBistable regime', '',
-                    r'Confidence, $q$' + '\nMonostable regime', '']
-    y_labels_dat = ['Depth cue, s(t)', '', 'Response \nBistable regime', '',
-                    '', 'Response \nMonostable regime']
+    y_labels_sim = [r'Confidence, $q$' + '\nBistable regime', '',
+                    r'Confidence, $q$' + '\nMonostable regime', '',
+                    'Depth cue, s(t)', '',]
+    y_labels_dat = ['Response \nBistable regime', '',
+                    '', 'Response \nMonostable regime',
+                    'Depth cue, s(t)', '']
     if nfreq == 1:
         y_labels_sim = y_labels_sim[::2]
         y_labels_dat = y_labels_dat[::2]
@@ -4339,7 +4364,7 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
         a.set_ylabel(y_labels_dat[i_a])
-    ax_sim[0].set_title('1 cycle', fontsize=15)
+    # ax_sim[0].set_title('1 cycle', fontsize=15)
     if nfreq > 1:
         ax_sim[1].set_title('2 cycles', fontsize=15)
         ax_sim[-2].set_xlabel('Time (s)')
@@ -4386,7 +4411,7 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
                 params = fitted_params[1:].copy()
                 params[0] = j_eff
                 choice, _ = simulator_5_params(params=params, freq=frequencies[trial], nFrame=nFrame,
-                                               fps=fps, return_choice=True)
+                                               fps=fps, return_choice=True, ini_cond_convergence=2)
                 choice_all[trial, :] = choice
             np.save(sv_folder + f'choice_matrix_subject_{subject}.npy', choice_all)
         else:
@@ -4500,9 +4525,9 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         left, bottom, width, height = [0.9, 0.27, 0.12, 0.2]
         ax_11 = f2.add_axes([left, bottom, width, height])
         sns.barplot(hyst_width_2.T, palette=colormap, ax=ax_01, errorbar='se')
-        ax_01.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.5)
+        ax_01.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.6)
         sns.barplot(hyst_width_4.T, palette=colormap, ax=ax_11, errorbar='se')
-        ax_11.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.5)
+        ax_11.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.6)
         heights = np.nanmean(hyst_width_2.T, axis=0)
         bars = np.arange(3)
         pv_sh012 = scipy.stats.ttest_rel(hyst_width_2[0], hyst_width_2[1]).pvalue
@@ -4514,17 +4539,17 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
                                   maxasterix=3, ax=ax_01)
         barplot_annotate_brackets(1, 2, pv_sh122, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
                                   maxasterix=3, ax=ax_01)
-        # heights = np.nanmean(hyst_width_4.T, axis=0)
-        # bars = np.arange(3)
-        # pv_sh012 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[1]).pvalue
-        # pv_sh022 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[2]).pvalue
-        # pv_sh122 = scipy.stats.ttest_ind(hyst_width_4[1], hyst_width_4[2]).pvalue
-        # barplot_annotate_brackets(0, 1, pv_sh012, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
-        #                           maxasterix=3, ax=ax_11)
-        # barplot_annotate_brackets(0, 2, pv_sh022, bars, heights, yerr=None, dh=.39, barh=.05, fs=10,
-        #                           maxasterix=3, ax=ax_11)
-        # barplot_annotate_brackets(1, 2, pv_sh122, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
-        #                           maxasterix=3, ax=ax_11)
+        heights = np.nanmean(hyst_width_4.T, axis=0)
+        bars = np.arange(3)
+        pv_sh012 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[1]).pvalue
+        pv_sh022 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[2]).pvalue
+        pv_sh122 = scipy.stats.ttest_ind(hyst_width_4[1], hyst_width_4[2]).pvalue
+        barplot_annotate_brackets(0, 1, pv_sh012, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
+                                  maxasterix=3, ax=ax_11)
+        barplot_annotate_brackets(0, 2, pv_sh022, bars, heights, yerr=None, dh=.39, barh=.05, fs=10,
+                                  maxasterix=3, ax=ax_11)
+        barplot_annotate_brackets(1, 2, pv_sh122, bars, heights, yerr=None, dh=.2, barh=.05, fs=10,
+                                  maxasterix=3, ax=ax_11)
         for a in [ax_01, ax_11]:
             a.spines['right'].set_visible(False)
             a.spines['top'].set_visible(False)
@@ -4634,6 +4659,37 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         fig3.tight_layout()
         fig3.savefig(SV_FOLDER + 'simulated_hysteresis_f4_vs_f2.png', dpi=400, bbox_inches='tight')
         fig3.savefig(SV_FOLDER + 'simulated_hysteresis_f4_vs_f2.svg', dpi=400, bbox_inches='tight')
+        
+        fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(10., 7))
+        ax = ax.flatten()
+        for i in range(3):
+            corr_2 = pearsonr(hyst_width_2_data[i], hyst_width_2[i])
+            corr_4 = pearsonr(hyst_width_4_data[i], hyst_width_4[i])
+            minmax = [np.min([hyst_width_2_data[i], hyst_width_2[i]])-0.5,
+                       np.max([hyst_width_2_data[i], hyst_width_2[i]])+0.5]
+            ax[i].set_ylim(minmax)
+            ax[i].set_xlim(minmax)
+            ax[i].plot(minmax, minmax, color='k', linestyle='--', alpha=0.4, linewidth=4)
+            minmax = [np.min([hyst_width_4_data[i], hyst_width_4[i]])-0.5,
+                       np.max([hyst_width_4_data[i], hyst_width_4[i]])+0.5]
+            ax[i+3].set_ylim(minmax)
+            ax[i+3].set_xlim(minmax)
+            ax[i+3].plot(minmax, minmax, color='k', linestyle='--', alpha=0.4, linewidth=4)
+            ax[i].text(0.2, 2.8, f'r={round(corr_2.statistic, 2)} \np={corr_2.pvalue: .1e}')
+            ax[i+3].text(0.2, 2.8, f'r={round(corr_4.statistic, 2)} \np={corr_4.pvalue: .1e}')
+            ax[i+3].set_xlabel('Hysteresis data')
+            ax[i].set_title('Freq. = 2', fontsize=12); ax[i+3].set_title('Freq. = 4', fontsize=12)
+            ax[i].plot(hyst_width_2_data[i], hyst_width_2[i],
+                       marker='o', color=colormap[i], linestyle='')
+            ax[i+3].plot(hyst_width_4_data[i],
+                         hyst_width_4[i], marker='o', color=colormap[i], linestyle='')
+        ax[0].set_ylabel('Hysteresis simulations')
+        ax[3].set_ylabel('Hysteresis simulations')
+        for i_a, a in enumerate(ax):
+            a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+            a.set_ylim(0, 3.5); a.set_xlim(0, 3.5)
+            a.set_yticks([0, 1, 2, 3]); a.set_xticks([0, 1, 2, 3])
+        fig.tight_layout()
 
 
 def prepare_data_for_fitting(df_subject, fps=60, tFrame=26):
@@ -5128,7 +5184,7 @@ def plot_simulate_hysteresis_subject(data_folder=DATA_FOLDER, subject_name=None,
     # print('J1, J0, B1, Sigma, Threshold')
     simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=fps,
                        sv_folder=SV_FOLDER, ntraining=ntraining, ntrials=ntrials,
-                       plot=True, simulate=True, use_j0=True, subjects=None,
+                       plot=True, simulate=False, use_j0=True, subjects=None,
                        fitted_params_all=fitted_params_all, window_conv=window_conv)
 
 
@@ -6087,7 +6143,7 @@ def plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False
 def hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
                          freq=2, kde=False,
                          point_per_subject_x_shuffle=False,
-                         simulated=False):
+                         simulated=False, zscore_vars=False):
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     if simulated:
         mean_dominance_shuffle = np.load(DATA_FOLDER + 'simulated_mean_number_switches_per_subject.npy')
@@ -6106,6 +6162,13 @@ def hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
         else:
             file = 'hysteresis_width_f2_sims_fitted_params.npy'
     var = np.load(DATA_FOLDER + file)
+
+    if zscore_vars:
+        mean_dominance_shuffle = zscore(mean_dominance_shuffle, axis=1)
+        var = zscore(var, axis=1)
+        lab_zscore = 'z-scored '
+    else:
+        lab_zscore = ''
     print(len(pars), ' fitted subjects')
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = np.array([[n*params[0], n*params[1], params[2], params[4], params[3]] for params in fitted_params_all])
@@ -6188,15 +6251,16 @@ def hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
             sns.kdeplot(variables_hyst[i], color=colormap[i], ax=ax_histx,
                         linewidth=2, bw_adjust=0.5)
     # ax3.set_yscale('log'); ax3.set_xscale('log')
-    if point_per_subject_x_shuffle:
-        if not simulated:
-            ax3.set_ylim(0, 15.9); ax3.set_xlim(0, 2.8)
+    if not zscore_vars:
+        if point_per_subject_x_shuffle:
+            if not simulated:
+                ax3.set_ylim(0, 15.9); ax3.set_xlim(0, 2.8)
+            else:
+                ax3.set_ylim(0, 6.5); ax3.set_xlim(0.3, 3.)
         else:
-            ax3.set_ylim(0, 6.5); ax3.set_xlim(0.3, 3.)
-    else:
-        ax3.set_ylim(0, 11.9); ax3.set_xlim(0, 2.9)
-    ax3.set_ylabel('Dominance (s)')
-    ax3.set_xlabel('Hysteresis');
+            ax3.set_ylim(0, 11.9); ax3.set_xlim(0, 2.9)
+    ax3.set_ylabel(lab_zscore + 'Dominance (s)')
+    ax3.set_xlabel(lab_zscore + 'Hysteresis');
     ax3.legend(frameon=False, loc='lower left', bbox_to_anchor=[0.4, -0.02])
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + label + 'dominance_vs_hysteresis_classified.png', dpi=300, bbox_inches='tight')
@@ -7370,7 +7434,9 @@ def low_dimensional_projection():
     scaling = manifold.MDS(n_components=3, max_iter=5000, normalized_stress=False)
     S_scaling = scaling.fit_transform(fitted_params_all)
     x, y, z = S_scaling.T
+    
     color = fitted_params_all[:, 1]
+    # color = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy').mean(axis=0)
     ax = plt.figure().add_subplot(projection='3d')
     ax.scatter3D(x, y, z, c=color, cmap='copper')
     plt.xlabel('MDS-dim1'); plt.ylabel('MDS-dim2');
@@ -8576,9 +8642,14 @@ if __name__ == '__main__':
     #                           ntraining=8, freq=2, sem=True)
     # plot_dominance_durations(data_folder=DATA_FOLDER,
     #                           ntraining=8, freq=4, sem=True)
-    # hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
-    #                      freq=2, kde=True,
-    #                      point_per_subject_x_shuffle=True, simulated=False)
+    hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
+                          freq=2, kde=True,
+                          point_per_subject_x_shuffle=True, simulated=False,
+                          zscore_vars=False)
+    hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
+                          freq=2, kde=True,
+                          point_per_subject_x_shuffle=True, simulated=False,
+                          zscore_vars=True)
     # comparison_between_experiments_bis_mono(unique_shuffle=[1., 0.7, 0.],
     #                                         estimator='mean', n=4)
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
@@ -8598,10 +8669,10 @@ if __name__ == '__main__':
     #                               ntraining=8, simulated_subject='s_36',
     #                               fps=60, idx_trial=2, ntrials=72, nfreq=1,
     #                               plot_response=False)
-    plot_cool_neuron_sheet(n_examples=1, save=False,
-                            plot_different_orient=False)
-    plot_cool_factor_graph()
-    cartoon_2d_factor_graph()
+    # plot_cool_neuron_sheet(n_examples=1, save=False,
+    #                         plot_different_orient=False)
+    # plot_cool_factor_graph()
+    # cartoon_2d_factor_graph()
     # plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
     #                         fps=200, n=4, ntraining=8, tFrame=26,
     #                         window_conv=5, n_bins=50)
@@ -8680,9 +8751,9 @@ if __name__ == '__main__':
     # plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8)
     # get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
     #                                   ntraining=8, coupling_levels=[0, 0.3, 1])
-    # hysteresis_basic_plot_simulation(coup_vals=np.array((0., 0.3, 1))*0.27+0.02,
-    #                                  fps=60, nsubs=1, n=4, nsims=1000,
-    #                                  b_list=np.linspace(-0.5, 0.5, 501))
+    # hysteresis_basic_plot_simulation(coup_vals=np.array((0., 1))*0.32,
+    #                                  fps=150, nsubs=1, n=4, nsims=5000,
+    #                                  b_list=np.linspace(-0.5, 0.5, 1001), simul=False)
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                           steps_back=150, steps_front=10,
     #                           shuffle_vals=[1, 0.7, 0], violin=True, sub=None,
