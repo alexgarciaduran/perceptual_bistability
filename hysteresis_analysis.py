@@ -8642,14 +8642,14 @@ if __name__ == '__main__':
     #                           ntraining=8, freq=2, sem=True)
     # plot_dominance_durations(data_folder=DATA_FOLDER,
     #                           ntraining=8, freq=4, sem=True)
-    hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
-                          freq=2, kde=True,
-                          point_per_subject_x_shuffle=True, simulated=False,
-                          zscore_vars=False)
-    hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
-                          freq=2, kde=True,
-                          point_per_subject_x_shuffle=True, simulated=False,
-                          zscore_vars=True)
+    # hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
+    #                       freq=2, kde=True,
+    #                       point_per_subject_x_shuffle=True, simulated=False,
+    #                       zscore_vars=False)
+    # hyst_vs_dom_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4,
+    #                       freq=2, kde=True,
+    #                       point_per_subject_x_shuffle=True, simulated=False,
+    #                       zscore_vars=True)
     # comparison_between_experiments_bis_mono(unique_shuffle=[1., 0.7, 0.],
     #                                         estimator='mean', n=4)
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
@@ -8658,7 +8658,7 @@ if __name__ == '__main__':
     #                                                     simulated=True)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
-    # plot_noise_variables_vs_fitted_params(n=4, variable='freq4')
+    # plot_noise_variables_vs_fitted_params(n=4, variable='freq2')
     # plot_params_distros(ndt=True)
     # comparison_between_experiments(estimator='median', data_only=True)
     # plot_simulate_hysteresis_subject(data_folder=DATA_FOLDER, subject_name=None,
@@ -8669,10 +8669,6 @@ if __name__ == '__main__':
     #                               ntraining=8, simulated_subject='s_36',
     #                               fps=60, idx_trial=2, ntrials=72, nfreq=1,
     #                               plot_response=False)
-    # plot_cool_neuron_sheet(n_examples=1, save=False,
-    #                         plot_different_orient=False)
-    # plot_cool_factor_graph()
-    # cartoon_2d_factor_graph()
     # plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
     #                         fps=200, n=4, ntraining=8, tFrame=26,
     #                         window_conv=5, n_bins=50)
@@ -8774,6 +8770,6 @@ if __name__ == '__main__':
     #                                 load_net=False, not_plot_and_return=False)
     #     plt.close('all')
     # lmm_hysteresis_dominance(freq=2, plot_summary=True,
-    #                          slope_random_effect=False, plot_individual=False)
+    #                           slope_random_effect=False, plot_individual=True)
     # lmm_hysteresis_dominance(freq=2, plot_summary=True,
-    #                          slope_random_effect=True, plot_individual=True)
+    #                           slope_random_effect=True, plot_individual=True)
