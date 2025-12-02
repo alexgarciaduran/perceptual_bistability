@@ -5887,6 +5887,7 @@ def predictions_hysteresis_coupling(b_list=[0, 0.1, 0.2], sigma=0.05,
 def plot_cartoon_potential_boltzmann(b=0.05, noise=0.15):
     fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(4, 4), sharex=True)
     ax = ax.flatten()
+    # colormap = ['cadetblue', 'peru']
     q = np.arange(-0.2, 1.2, 0.001)
     for i_j, j in enumerate([0.1, 0.38]):
         pot = potential_mf_neighs(q, j, bias=b, neighs=4)
@@ -5914,7 +5915,7 @@ def plot_cartoon_potential_boltzmann(b=0.05, noise=0.15):
 
 if __name__ == '__main__':
     print('Mean-Field inference')
-    plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
+    # plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
     # plot_hysteresis_different_taus(j=0.36,
     #                                 b_list=np.linspace(-0.53, 0.53, 2001),
     #                                 save_folder=DATA_FOLDER,
@@ -5998,8 +5999,8 @@ if __name__ == '__main__':
     # bifurcation_hierarchical(b=0, varchange='ascending')
     # bifurcation_hierarchical(b=0, varchange='coupling')
     # alternation_rate_vs_accuracy(t_dur=1, tol=1e-8,
-    #                              j_list=np.arange(0.4, 2, 0.01),
-    #                              b=0.3, noise_list=[0.1, 0.15, 0.2, 0.25, 0.3])
+    #                               j_list=np.arange(0.4, 2, 0.01),
+    #                               b=0.3, noise_list=[0.1, 0.15, 0.2, 0.25, 0.3])
     # calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
     # boltzmann_2d_change_sigma(j=0.5, b=0)
@@ -6036,4 +6037,4 @@ if __name__ == '__main__':
     #                                         long=True, cylinder=True, inset=False,
     #                                         barplot=True)
     # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
-    
+
