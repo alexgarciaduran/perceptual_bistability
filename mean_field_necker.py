@@ -54,7 +54,7 @@ elif pc_name == 'alex_CRM':
 
 # theta matrix
 theta = gn.THETA
-COLORMAP = LinearSegmentedColormap.from_list('rg', ['darkgreen', 'gainsboro', 'firebrick'], N=128)
+COLORMAP = LinearSegmentedColormap.from_list('rg', ['darkgreen', 'gainsboro', 'crimson'], N=128)
 
 def mean_field(J, num_iter, sigma=1):
     #initialize random state of the cube
@@ -422,7 +422,7 @@ def plot_solutions_mfield(j_list=np.arange(0., 1.005, 0.001), stim=0, N=3, plot_
     plt.legend(frameon=False, bbox_to_anchor=[0.4, 0.8])
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'mf_solutions.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'mf_solutions.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'mf_solutions.pdf', dpi=400, bbox_inches='tight')
 
 
 def plot_solutions_mfield_neighbors(ax, j_list, color='k', stim=0, N=3):
@@ -547,7 +547,7 @@ def plot_crit_J_vs_B_neigh(j_list, num_iter=200,
                                          int(np.mean(neigh_list)),
                                          np.max(neigh_list)])
         fig.savefig(DATA_FOLDER+'/J_vs_NB_MF_vf.png', dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER+'/J_vs_NB_MF_vf.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER+'/J_vs_NB_MF_vf.pdf', dpi=400, bbox_inches='tight')
 
 
 
@@ -862,7 +862,7 @@ def plot_potentials_different_beta(j=0.5, beta_list=[-0.1, -0.05, 0, 0.05, 0.1])
     inset.set_xlabel('Sensory evidence, B')
     fig.savefig(DATA_FOLDER + 'potential_vs_B.png', dpi=100,
                 bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'potential_vs_B.svg', dpi=100,
+    fig.savefig(DATA_FOLDER + 'potential_vs_B.pdf', dpi=100,
                 bbox_inches='tight')
 
 
@@ -910,7 +910,7 @@ def plot_energy_barrier_vs_B(j=0.7, beta_list=np.arange(-0.05, 0.06, 0.01)):
     inset.set_ylabel('Potential V(q)')
     inset.set_xlabel('Approx. posterior q')
     fig.savefig(DATA_FOLDER + 'barrier_vs_B.png', dpi=200, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'barrier_vs_B.svg', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'barrier_vs_B.pdf', dpi=200, bbox_inches='tight')
 
 
 def mclaurin_expansion_pot(q, j ,b):
@@ -1035,7 +1035,7 @@ def plot_potentials_mf(j_list, bias=0, neighs=3):
     ax.legend(title='Coupling, J', bbox_to_anchor=(1., 0.9),
               frameon=False, labelspacing=0.2)
     fig.savefig(DATA_FOLDER + 'potentials_vs_q_v2.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'potentials_vs_q_v2.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'potentials_vs_q_v2.pdf', dpi=400, bbox_inches='tight')
 
 
 def saddle_node_bifurcation(j=0.4):
@@ -1225,7 +1225,7 @@ def plot_density_map_2d_mf(j=1, b=0, noise=0.15, tau=1, time_end=10000, dt=1e-2)
     ax.set_xlabel(r'$q_1$')
     ax.set_ylabel(r'$q_2$')
     fig.savefig(DATA_FOLDER + '2d_density_map.png', dpi=300, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + '2d_density_map.svg', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + '2d_density_map.pdf', dpi=300, bbox_inches='tight')
     fig2, ax2 = plt.subplots(1)
     x1 = np.arange(-0.2, 1.2, 5e-2)
     x2 = np.arange(-0.2, 1.2, 5e-2)
@@ -1240,7 +1240,7 @@ def plot_density_map_2d_mf(j=1, b=0, noise=0.15, tau=1, time_end=10000, dt=1e-2)
     ax2.set_xlabel(r'$q_2$')
     ax2.quiver(x, y, u1, u2)
     fig2.savefig(DATA_FOLDER + '2d_density_map_vector.png', dpi=300, bbox_inches='tight')
-    fig2.savefig(DATA_FOLDER + '2d_density_map_vector.svg', dpi=300, bbox_inches='tight')
+    fig2.savefig(DATA_FOLDER + '2d_density_map_vector.pdf', dpi=300, bbox_inches='tight')
 
 
 def plot_potential_and_vector_field_2d(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2,
@@ -1384,7 +1384,7 @@ def plot_mf_evolution_all_nodes(j=1, b=0, noise=0, tau=1, time_end=50, dt=5e-2,
     ax.set_xticks([0, 100])
     ax.set_title('J = ' + str(j) + ', B = ' + str(b), fontsize=12)
     if ylabel:
-        ax.set_ylabel(r'$q(x=1)$')
+        ax.set_ylabel(r'q(    in front)')  # \U0001F534
         ax.set_yticks([0, 0.5, 1])
     else:
         ax.set_yticks([])
@@ -1929,42 +1929,52 @@ def projection_mf_plot(theta, j=1, b=0, noise=0, tau=0.01):
     ax.plot3D(val_act[-1, 0], val_act[-1, 1], val_act[-1, 2], color='r', marker='x')
 
 
-def predictions_boltzmann_distro(j_list=[0.15, 0.5], n=3.92, noise=0.15,
+def predictions_boltzmann_distro(j_list=[0.15, 0.38], n=4, noise=0.15,
                                  b_list=[0, 0.4, 0.8, 1],
-                                 ntrials=1000, tmax=1, dt=0.01, tau=0.1, bw=0.8):
+                                 ntrials=1000, tmax=1, dt=0.01, tau=0.1, bw=0.8,
+                                 simulate=False):
     time = np.arange(0, tmax, dt)
-    signed_confidence_array = np.zeros((ntrials, len(b_list), len(j_list)))
-    for i_j, j in enumerate(j_list):
-        for i_b, b in enumerate(b_list):
-            for trial in range(ntrials):
-                weight_stim = 2*np.abs(np.random.rand()-0.5)
-                j_eff = j+np.random.rand()*0.1
-                b_signed = b*np.random.choice([-1, 1])*weight_stim
-                bias = np.random.randn()*0.1*2
-                x = np.random.rand()
-                for i in range(len(time)):
-                    x = x + dt*(gn.sigmoid(2*j_eff*n*(2*x-1)+2*b_signed + bias)-x)/tau + np.random.randn()*noise*np.sqrt(dt/tau)
-                signed_confidence_array[trial, i_b, i_j] = (2*x-1)*np.sign(b_signed+1e-6*np.random.randn())
+    if simulate:
+        signed_confidence_array = np.zeros((ntrials*2, len(b_list), len(j_list)))
+        for i_j, j in enumerate(j_list):
+            for i_b, b in enumerate(b_list):
+                for trial in range(ntrials):
+                    # weight_stim = 2*np.abs(np.random.rand()-0.5)
+                    weight_stim = np.random.rand()/1.2
+                    j_eff = j+np.random.rand()*0.1
+                    b_signed = b*np.random.choice([-1, 1])*weight_stim
+                    bias = np.random.randn()*0.2
+                    x = np.random.rand()
+                    for i in range(len(time)):
+                        x = x + dt*(gn.sigmoid(2*j_eff*n*(2*x-1)+2*b_signed + bias)-x)/tau + np.random.randn()*noise*np.sqrt(dt/tau)
+                    idx_bistab = (j_eff >= 1/n)*1
+                    signed_conf = (2*x-1)*np.sign(b_signed+1e-3*np.random.randn())
+                    signed_confidence_array[trial, i_b, idx_bistab] = signed_conf
+        np.save(DATA_FOLDER + 'signed_confidence_density_simulations.npy', signed_confidence_array)
+    else:
+        signed_confidence_array = np.load(DATA_FOLDER + 'signed_confidence_density_simulations.npy')
     colormap = pl.cm.gist_gray_r(np.linspace(0.3, 1, len(b_list)))
-    fig, ax = plt.subplots(ncols=2, figsize=(8, 4))
+    fig, ax = plt.subplots(ncols=2, figsize=(8, 4), sharex=True)
     for a in ax:
         a.spines['top'].set_visible(False)
         a.spines['right'].set_visible(False)
-        a.set_xlim(-1.7, 1.7)
+        a.set_xlim(-1.3, 1.3)
         a.set_xticks([-1, 0, 1])
-        a.set_ylim(-0.05, 1.6)
+        a.set_ylim(-0.05, 1.4)  # 1.6
         a.set_xlabel('')
     legendelements = []
     for ia in range(4):
-        sns.kdeplot(signed_confidence_array[:, ia, 0],
+        vals_mono = signed_confidence_array[:, ia, 0]
+        sns.kdeplot(vals_mono[vals_mono != 0],
                     alpha=1, lw=3., common_norm=False, ax=ax[0],
-                    legend=False, bw_adjust=bw, color=colormap[ia])
-        sns.kdeplot(signed_confidence_array[:, ia, 1],
+                    legend=False, bw_adjust=bw, color=colormap[ia], cut=0)
+        vals_bis = signed_confidence_array[:, ia, 1]
+        sns.kdeplot(vals_bis[vals_bis != 0],
                     alpha=1, lw=3., common_norm=False, ax=ax[1],
-                    legend=False, bw_adjust=bw, color=colormap[ia])
+                    legend=False, bw_adjust=bw, color=colormap[ia], cut=0)
         legendelements.append(Line2D([0], [0], color=colormap[ia],
                                      lw=3.5, label=b_list[ia]))
-    ax[0].legend(frameon=False, title='Stimulus\nstrength', handles=legendelements,
+    ax[0].legend(frameon=False, title='Depth cue s', handles=legendelements,
                  bbox_to_anchor=(0.4, 0.4))
     ax[1].set_ylabel('')
     ax[0].set_ylabel('Density of confidence', fontsize=19)
@@ -1975,8 +1985,8 @@ def predictions_boltzmann_distro(j_list=[0.15, 0.5], n=3.92, noise=0.15,
     ax[0].set_title('Monostable', fontsize=19)
     ax[1].set_title('Bistable', fontsize=19)
     fig.tight_layout()
-    fig.savefig(DATA_FOLDER + 'density_stim_str_prediction.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'density_stim_str_prediction.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'density_stim_str_prediction_v2.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'density_stim_str_prediction_v2.pdf', dpi=400, bbox_inches='tight')
 
 
 def potential_stim_str(stims=[0, 0.4, 0.8, 1], j_list=[0.15, 0.5]):
@@ -2002,7 +2012,7 @@ def potential_stim_str(stims=[0, 0.4, 0.8, 1], j_list=[0.15, 0.5]):
                      fontsize=19)
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'potentials_stim_str_prediction.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'potentials_stim_str_prediction.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'potentials_stim_str_prediction.pdf', dpi=400, bbox_inches='tight')
 
 
 def mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.2,
@@ -2519,7 +2529,7 @@ def convergence_time_vs_j(j_list=np.arange(1e-3, 2.5, 1e-2),
     ax[2].set_ylabel('Iterations for convergence')
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'coupling_use.png', dpi=300, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'coupling_use.svg', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'coupling_use.pdf', dpi=300, bbox_inches='tight')
 
 
 def accuracy_vs_noise(t_dur, noiselist=np.arange(0.001, 0.5, 1e-3),
@@ -3155,14 +3165,16 @@ def plot_3_examples_mf_evolution(avg=False):
         ax[i].spines['right'].set_visible(False)
         ax[i].spines['top'].set_visible(False)
         i += 1
-    ax[1].set_xlabel('Time (s)')
+    ax[1].set_xlabel('Time')
+    for a in ax:
+        a.set_xticks([])
     fig.tight_layout()
     ax_pos = ax[2].get_position()
     ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.13, ax_pos.y0+ax_pos.height*0.2,
                             ax_pos.width*0.1, ax_pos.height*0.7])
-    fig.colorbar(line, cax=ax_cbar, pad=0.3, aspect=7.5).set_label(label=r'$q(x=1)$', size=14) # add a color legend
+    fig.colorbar(line, cax=ax_cbar, pad=0.3, aspect=7.5).set_label(label='q(\U0001F534 front)', size=14) # add a color legend
     fig.savefig(DATA_FOLDER + 'example_dynamics.png', dpi=300, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'example_dynamics.svg', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'example_dynamics.pdf', dpi=300, bbox_inches='tight')
     # plt.subplots_adjust(wspace=0.2, bottom=0.16, top=0.88)
 
 
@@ -3231,7 +3243,7 @@ def plot_3d_solution_mf_vs_j_b(j_list, b_list, N=3,
         ax.set_ylabel('Approximate posterior, q(x=1)')
         fig.tight_layout()
         fig.savefig(DATA_FOLDER + 'solutions_diff_B_J.png', dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'solutions_diff_B_J.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'solutions_diff_B_J.pdf', dpi=400, bbox_inches='tight')
 
 
 def plot_slope_wells_vs_B(j_list=np.arange(0.6, 1.01, 0.1),
@@ -3515,7 +3527,7 @@ def plot_noise_before_switch(j, b, theta=theta, noise=0.1,
     #                 color='gray', alpha=0.3)
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'noise_before_switch.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'noise_before_switch.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'noise_before_switch.pdf', dpi=400, bbox_inches='tight')
 
 
 def mean_field_stim_change(j, b_list,
@@ -3667,7 +3679,7 @@ def plot_mf_hysteresis(j_list=[0.1, 0.25, 0.41],
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'hysteresis_cartoon.png', dpi=400,
                 bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'hysteresis_cartoon.svg', dpi=400,
+    fig.savefig(DATA_FOLDER + 'hysteresis_cartoon.pdf', dpi=400,
                 bbox_inches='tight')
     # plt.legend(title='J')
 
@@ -3830,10 +3842,10 @@ def plot_hysteresis_different_taus(j=0.36,
     # ax2.set_yscale('log')
     fig.tight_layout()
     fig.savefig(save_folder + 'hysteresis_taus.png', dpi=200, bbox_inches='tight')
-    fig.savefig(save_folder + 'hysteresis_taus.svg', dpi=200, bbox_inches='tight')
+    fig.savefig(save_folder + 'hysteresis_taus.pdf', dpi=200, bbox_inches='tight')
     fig2.tight_layout()
     fig2.savefig(save_folder + 'hysteresis_distance_taus.png', dpi=200, bbox_inches='tight')
-    fig2.savefig(save_folder + 'hysteresis_distance_taus.svg', dpi=200, bbox_inches='tight')
+    fig2.savefig(save_folder + 'hysteresis_distance_taus.pdf', dpi=200, bbox_inches='tight')
 
 
 def save_images_potential_hysteresis(j=0.39,
@@ -4274,7 +4286,7 @@ def examples_pot():
             k += 1
     fig.savefig(DATA_FOLDER + 'examples_potentials.png', dpi=400,
                 bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'examples_potentials.svg', dpi=400,
+    fig.savefig(DATA_FOLDER + 'examples_potentials.pdf', dpi=400,
                 bbox_inches='tight')
 
 
@@ -4631,7 +4643,7 @@ def pot_mf_illustration(j_list=[0.2, 0.4, 0.6], b_list=[-0.05, 0., 0.05]):
     ax[1].legend(title='Stim., B', frameon=False, labelspacing=0.1)
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'mf_potentials.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'mf_potentials.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'mf_potentials.pdf', dpi=400, bbox_inches='tight')
 
 
 def potential_approx_2d(j, minval=-0.25, maxval=0.25):
@@ -4807,7 +4819,7 @@ def example_dynamics_hierarchical_theta(theta=gn.THETA_HIER):
                             ax_pos.width*0.1, ax_pos.height*0.7])
     fig.colorbar(line, cax=ax_cbar, pad=0.3, aspect=7.5).set_label(label=r'$q(x=1)$', size=14) # add a color legend
     fig.savefig(DATA_FOLDER + 'example_dynamics_hierarchical.png', dpi=300, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'example_dynamics_hierarchical.svg', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'example_dynamics_hierarchical.pdf', dpi=300, bbox_inches='tight')
 
 
 def eigenvalue_matrix_desc_asc(varlist=np.arange(0, 2.01, 0.01)):
@@ -4995,7 +5007,7 @@ def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 
         # ax.text(0.47, 0.655, 'Data - Bistable', fontsize=12)
         # ax.text(0.47, 0.545, 'Data - Monostable', fontsize=12)
         fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.png', dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_noise_v2.pdf', dpi=400, bbox_inches='tight')
     if barplot:
         fig, ax = plt.subplots(figsize=(3.5, 3.2))
         colormap = pl.cm.Greens(np.linspace(0.3, 1, 2))
@@ -5035,7 +5047,7 @@ def cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.05, 0.1, 
         ax.spines['top'].set_visible(False)
         fig.tight_layout()
         fig.savefig(DATA_FOLDER + 'choice_probability_barplot.png', dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'choice_probability_barplot.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'choice_probability_barplot.pdf', dpi=400, bbox_inches='tight')
         
 
 
@@ -5071,7 +5083,7 @@ def cp_vs_coupling_random_neurons(j_list=np.arange(0, 0.6, 0.05), rand_neur_list
     # ax.set_ylabel('CPs')
     ax.axhline(0.5, color='gray', linestyle='--')
     fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_number_of_random_neurons.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_number_of_random_neurons.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'choice_probs_vs_coupling_and_number_of_random_neurons.pdf', dpi=400, bbox_inches='tight')
 
 
 def compute_time_resolved_cp(X, y, time_axis=2, cv_splits=10):
@@ -5198,7 +5210,7 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
         # ax.text(0.6, 0.19, 'Data - Monostable', fontsize=12)
         # ax2.set_xticks([0, 1], ['Monostable', 'Bistable'], fontsize=12, rotation=45)
         fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.png', dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_simuls.pdf', dpi=400, bbox_inches='tight')
     if barplot:
         fig, ax = plt.subplots(figsize=(3.5, 3.2))
         colormap = pl.cm.Greens(np.linspace(0.3, 1, 2))
@@ -5244,7 +5256,7 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
             legend_patch.set_hatch(hatch_map[class_name])
         fig.tight_layout()
         fig.savefig(DATA_FOLDER + 'interneuronal_correlation_barplot.png', dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'interneuronal_correlation_barplot.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'interneuronal_correlation_barplot.pdf', dpi=400, bbox_inches='tight')
 
 
 def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
@@ -5297,7 +5309,7 @@ def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
         a.set_xticks([])
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'interneuronal_correlation_cartoon_example_v2.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'interneuronal_correlation_cartoon_example_v2.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'interneuronal_correlation_cartoon_example_v2.pdf', dpi=400, bbox_inches='tight')
 
 
 def analytical_correlation_rsc(sigma=0.15, theta=theta):
@@ -5382,7 +5394,7 @@ def analytical_correlation_rsc(sigma=0.15, theta=theta):
     plt.legend(frameon=False)
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_analytical.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_analytical.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_analytical.pdf', dpi=400, bbox_inches='tight')
 
 
 def plot_rsc_vs_b_list_and_coupling(b_list=[0, 0.025, 0.05, 0.075],
@@ -5420,10 +5432,10 @@ def plot_rsc_vs_b_list_and_coupling(b_list=[0, 0.025, 0.05, 0.075],
     fig.tight_layout()
     if len(b_list) > 10:
         fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity.png', dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity.pdf', dpi=400, bbox_inches='tight')
     else:
         fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity_mono_bistable_stim.png', dpi=400, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity_mono_bistable_stim.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rSC_correlations_vs_disparity_mono_bistable_stim.pdf', dpi=400, bbox_inches='tight')
 
 
 def local_correlation_across_time(j=0.5, b=0, theta=theta,
@@ -5885,10 +5897,15 @@ def predictions_hysteresis_coupling(b_list=[0, 0.1, 0.2], sigma=0.05,
 
 
 def plot_cartoon_potential_boltzmann(b=0.05, noise=0.15):
-    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(4, 4), sharex=True)
+    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(4.2, 4), sharex=True)
     ax = ax.flatten()
     # colormap = ['cadetblue', 'peru']
     q = np.arange(-0.2, 1.2, 0.001)
+    for a in ax:
+        a.axvline(0.5, color='k', linestyle='--', alpha=0.3, linewidth=3)
+        a.set_yticks([]); a.set_xticks([0, 0.5, 1])
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
     for i_j, j in enumerate([0.1, 0.38]):
         pot = potential_mf_neighs(q, j, bias=b, neighs=4)
         distro = np.exp(-2*pot/noise**2)
@@ -5898,19 +5915,14 @@ def plot_cartoon_potential_boltzmann(b=0.05, noise=0.15):
                          color='k', linewidth=4)
     ax[0].set_title('Monostable', fontsize=15)
     ax[1].set_title('Bistable', fontsize=15)
-    ax[0].set_ylabel(r'$V(q)$')
-    ax[2].set_ylabel(r'$p(q)$')
+    ax[0].set_ylabel('Potential \n' + r'$V(q)$')
+    ax[2].set_ylabel('Density \n' + r'$p(q)$')
     ax[-1].set_xlabel(r'$q$')
     ax[-2].set_xlabel(r'$q$')
-    for a in ax:
-        a.axvline(0.5, color='k', linestyle='--', alpha=0.3)
-        a.set_yticks([]); a.set_xticks([0, 0.5, 1])
-        a.spines['right'].set_visible(False)
-        a.spines['top'].set_visible(False)
     fig.tight_layout()
     plt.subplots_adjust(wspace=0.3, hspace=0.3)
     fig.savefig(DATA_FOLDER + 'boltzmann_potential_cartoon.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'boltzmann_potential_cartoon.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'boltzmann_potential_cartoon.pdf', dpi=400, bbox_inches='tight')
 
 
 if __name__ == '__main__':
@@ -5947,7 +5959,7 @@ if __name__ == '__main__':
     #                                       theta=theta)
     # plot_solutions_mfield(j_list=np.arange(0.001, 1.01, 0.001), stim=0, N=3,
     #                       plot_approx=False)
-    # plot_3_examples_mf_evolution(avg=True)
+    plot_3_examples_mf_evolution(avg=True)
     # examples_pot()
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0., 1.005, 0.001),
     #                        num_iter=200, neigh_list=np.arange(3, 11),
@@ -6037,4 +6049,7 @@ if __name__ == '__main__':
     #                                         long=True, cylinder=True, inset=False,
     #                                         barplot=True)
     # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
-
+    # predictions_boltzmann_distro(j_list=[0.15, 0.37], n=4, noise=0.2,
+    #                              b_list=[0, 0.4, 0.8, 1],
+    #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
+    #                              simulate=False)
