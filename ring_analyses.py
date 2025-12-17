@@ -322,7 +322,7 @@ class ring:
 
 
     def compute_expectation_log_likelihood_original(self, s_t_1, q_z_prev, s_t, discrete_stim=True,
-                                                    noise=0.1):
+                                                    noise=0.1, tritone=False):
         """
         Compute the likelihood expectation over q_{i-1}(z_{i-1}) and q_{i+1}(z_{i+1})
         using the CPT (likelihood, Conditional Probabilities Table) and
@@ -353,9 +353,22 @@ class ring:
             for z_i_index in range(num_states_z):  # for each possible state of z_i (columns)
                 likelihood_contribution = 0
                 for startpoint in [-1, 0, 1]:  # to get i-2 and i+2
-                    i_prev = (i+startpoint-1) % num_variables
-                    i_next = (i+startpoint+1) % num_variables
-                    idx = (i+startpoint) % num_variables
+                    # compute shifted indices
+                    i_prev = i - 1 + startpoint
+                    idx = i + startpoint
+                    i_next = i + 1 + startpoint
+
+                    if tritone:  # not connected anymore as a ring
+                        if not (0 <= i_prev < num_variables and
+                                0 <= idx    < num_variables and
+                                0 <= i_next < num_variables):
+                            continue
+                    else:
+                        # circular wrapping (for ring/quartet)
+                        i_prev %= num_variables
+                        idx %= num_variables
+                        i_next %= num_variables
+                    
                     # iterate over all possible combinations of neighbors
                     for comb in combinations:  # for all combinations of z_{i-1}, z_{i+1}
                         if startpoint == -1:
@@ -769,7 +782,7 @@ class ring:
             if nstates > 2:
                 likelihood = self.compute_expectation_log_likelihood_original(stim_t_1, q_mf, stim[t],
                                                                              discrete_stim=discrete_stim,
-                                                                             noise=noise_gaussian)
+                                                                             noise=noise_gaussian, tritone=tritone)
             var_m1 = np.exp(np.matmul(j_mat, q_mf) + b + likelihood*stim_weight)
             q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + np.random.randn(n_dots, nstates)*noise*np.sqrt(dt/tau)
             q_mf_arr[:, :, t] = q_mf
@@ -833,6 +846,12 @@ class ring:
                 ax[2].text(t_end+n_iters/20*dt, 1/3-0.02, '1/3', color='r')
                 ax[2].text(t_end+n_iters/20*dt, 1/2+0.02, '1/2', color='r')
                 ax[3].axhline(1/3, color='k', alpha=0.4, linestyle='--', linewidth=2)
+            if tritone:
+                if nstates == 2:
+                    ax[2].set_ylabel(r'$q(z_i=UP)$'); ax[3].set_ylabel(r'$q(z_i=DOWN)$')
+                if nstates == 3:
+                    ax[2].set_ylabel(r'$q(z_i=UP)$'); ax[3].set_ylabel(r'$q(z_i=NM)$');
+                    ax[4].set_ylabel(r'$q(z_i=DOWN)$')
             ax[2].axhline(1/2, color='r', alpha=0.4, linestyle=':', linewidth=2)
             ax[3].axhline(1/2, color='k', alpha=0.4, linestyle=':', linewidth=2)
             if true == '2combination':
@@ -849,10 +868,16 @@ class ring:
             else:
                 rng = [idx_dot_plot]
             for dot in rng:
-                if dot % 2 == 0:
-                    linestyle = ':'
-                else:
-                    linestyle = 'solid'
+                if not tritone:
+                    if dot % 2 == 0:
+                        linestyle = ':'
+                    else:
+                        linestyle = 'solid'
+                if tritone:
+                    if dot > self.ndots//2-2:
+                        linestyle = ':'
+                    else:
+                        linestyle = 'solid'
                 if not colors:
                     ax[2].plot(time, q_mf_arr[dot, 0, :], color='r', linewidth=2.5,
                                linestyle=linestyle)
@@ -3299,9 +3324,9 @@ def mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-
 def plot_tritone_example(duration_first_period=20, n_iters=200):
     np.random.seed(1234)
     q_mf_paradox = ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.1, tau=1, n_iters=n_iters, j=1,
-                                                                true='CW', noise=0.0, plot=False,
+                                                                true='CW', noise=0.1, plot=False,
                                                                 discrete_stim=True, s=None,
-                                                                b=[0., 0.], noise_stim=0.1, coh=0,
+                                                                b=[0., 0.], noise_stim=0.2, coh=0,
                                                                 nstates=2, quartet=False, ratio=1, tritone=True,
                                                                 stim_stamps=duration_first_period, colors=True,
                                                                 erase_middle_tritone=False,
@@ -3309,9 +3334,9 @@ def plot_tritone_example(duration_first_period=20, n_iters=200):
     q_mf_paradox_lower = np.nanmean(q_mf_paradox[2:6, 1], axis=0)
     q_mf_paradox_upper = np.nanmean(q_mf_paradox[7:11, 1], axis=0)
     q_mf_ambiguous = ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.1, tau=1, n_iters=n_iters, j=1,
-                                                                  true='CW', noise=0.0, plot=False,
+                                                                  true='CW', noise=0.1, plot=False,
                                                                   discrete_stim=True, s=None,
-                                                                  b=[0., 0], noise_stim=0.25, coh=0,
+                                                                  b=[0., 0], noise_stim=0.2, coh=0,
                                                                   nstates=2, quartet=False, ratio=1,
                                                                   tritone=True,
                                                                   stim_stamps=duration_first_period, colors=True,
@@ -3335,6 +3360,27 @@ def plot_tritone_example(duration_first_period=20, n_iters=200):
     ax[1].plot(q_mf_ambiguous_lower, color='r', linewidth=3)
     ax[1].plot(q_mf_ambiguous_upper, color='r', linestyle='--', linewidth=3)
     fig.tight_layout()
+    # plotting
+    fig, ax = plt.subplots(ncols=2, figsize=(6, 3))
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_xlabel('Time steps')
+        a.set_ylim(-0.05, 1.05)
+        a.axhline(0.5, color='gray', linewidth=3, alpha=0.3, linestyle='--')
+        a.set_yticks([0, 0.5, 1])
+    ax[0].set_ylabel('q')
+    ax[0].plot(np.nanmean(q_mf_paradox[2:11, 0], axis=0), color='r', linewidth=4, label='q(increase)')
+    ax[0].plot(np.nanmean(q_mf_paradox[2:11, 1], axis=0), color='k', linewidth=4, label='q(decrease)')
+    ax[0].set_title('Original tritone', fontsize=15)
+    ax[1].set_title('Modified tritone', fontsize=15)
+    # ax[1].set_ylabel('q')
+    ax[1].plot(np.nanmean(q_mf_ambiguous[2:11, 0], axis=0), color='k', linewidth=4, label='q(increase)')
+    ax[1].plot(np.nanmean(q_mf_ambiguous[2:11, 1], axis=0), color='r', linewidth=4, label='q(decrease)')
+    ax[1].legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'tritone_example.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'tritone_example.svg', dpi=200, bbox_inches='tight')
 
 
 if __name__ == '__main__':
@@ -3460,20 +3506,20 @@ if __name__ == '__main__':
     #                           alist=np.arange(0, 1.02, 2e-2), biasnm=1,
     #                           resimulate=False, ax=None, cbar=False, fig=None, j=0.8,
     #                           plot=True, analytical=False)
-    plot_tritone_example(duration_first_period=20)
-    # ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.1, tau=1, n_iters=500, j=0.5,
-    #                                             true='CW', noise=0.0, plot=True,
-    #                                             discrete_stim=True, s=None,
-    #                                             b=[0., 0.], noise_stim=0.25, coh=0,
-    #                                             nstates=2, quartet=False, ratio=1,
-    #                                             tritone=True,
-    #                                             stim_stamps=50, colors=True,
-    #                                             erase_middle_tritone=False)
-    # ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.1, tau=1, n_iters=500, j=0.5,
-    #                                             true='CW', noise=0.0, plot=True,
-    #                                             discrete_stim=True, s=None,
-    #                                             b=[0.5, 0.], noise_stim=0.25, coh=0,
-    #                                             nstates=2, quartet=False, ratio=1,
-    #                                             tritone=True,
-    #                                             stim_stamps=50, colors=True,
-    #                                             erase_middle_tritone=True)
+    # plot_tritone_example(duration_first_period=1)
+    ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.05, tau=0.5, n_iters=500, j=1,
+                                                true='CW', noise=0.0, plot=True,
+                                                discrete_stim=True, s=None,
+                                                b=[0., 0., 0.], noise_stim=0.15, coh=0,
+                                                nstates=3, quartet=False, ratio=1,
+                                                tritone=True,
+                                                stim_stamps=50, colors=True,
+                                                erase_middle_tritone=False, noise_gaussian=0.15)
+    ring(epsilon=1e-2, n_dots=13).mean_field_sde(dt=0.05, tau=0.5, n_iters=500, j=1,
+                                                true='CW', noise=0.0, plot=True,
+                                                discrete_stim=True, s=None,
+                                                b=[0., 0., 0.], noise_stim=0.15, coh=0,
+                                                nstates=3, quartet=False, ratio=1,
+                                                tritone=True,
+                                                stim_stamps=50, colors=True,
+                                                erase_middle_tritone=True, noise_gaussian=0.15)
