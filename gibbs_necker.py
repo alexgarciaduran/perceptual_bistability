@@ -20,6 +20,7 @@ import matplotlib as mpl
 import cv2
 from matplotlib.lines import Line2D
 from sbi.inference import MNLE
+from matplotlib.colors import LinearSegmentedColormap
 from sbi.utils import MultipleIndependent
 import torch
 import pickle
@@ -64,7 +65,7 @@ plt.rcParams['xtick.labelsize']= 18
 plt.rcParams['ytick.labelsize']= 18
 
 # ---GLOBAL VARIABLES
-pc_name = 'alex_CRM'
+pc_name = 'alex'
 if pc_name == 'alex':
     DATA_FOLDER = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/gibbs_sampling_necker/data_folder/'  # Alex
     # C matrix:\
@@ -74,6 +75,8 @@ elif pc_name == 'alex_CRM':
     DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/'  # Alex CRM
 
 # THETA mat
+
+COLORMAP = LinearSegmentedColormap.from_list('rg', ['darkgreen', 'gainsboro', 'red'], N=128)
 
 THETA = np.array([[0 ,1 ,1 ,0 ,1 ,0 ,0 ,0], [1, 0, 0, 1, 0, 1, 0, 0],
                   [1, 0, 0, 1, 0, 0, 1, 0], [0, 1, 1, 0, 0, 0, 0, 1],
@@ -1011,6 +1014,8 @@ def plot_cylinder_true_posterior(j, stim, theta=THETA):
 
 def plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False,
                   save_fig=False, n_fig=0):
+    color_alignment = 'gray'
+    color_misalignment = 'gray'
     fig, ax = plt.subplots(1, figsize=(5, 10))
     nodes = np.zeros((rows, columns, layers))
     if q is None:
@@ -1023,11 +1028,11 @@ def plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4
     else:
         colormap_array_0 = q_0
         colormap_array_1 = q_1
-    colormap_back = pl.cm.copper(colormap_array_0)
-    colormap_front = pl.cm.copper(colormap_array_1)
+    colormap_back = LinearSegmentedColormap.from_list('rg', ['darkgreen', 'gainsboro', 'red'], N=128)
+    colormap_front = LinearSegmentedColormap.from_list('rg', ['darkgreen', 'gainsboro', 'red'], N=128)
     if states:
-        colormap_back = pl.cm.bwr(colormap_array_0)
-        colormap_front = pl.cm.bwr(colormap_array_1)
+        colormap_back = colormap_back(colormap_array_0)
+        colormap_front = colormap_front(colormap_array_1)
     x_nodes_front = nodes[:, :, 0] + np.arange(columns) - offset*np.sin(np.arange(columns)*np.pi/4)
     y_nodes_front = (nodes[:, :, 0].T + np.arange(rows)).T - offset*np.sin(np.arange(columns)*np.pi/4)
     x_nodes_back = nodes[:, :, 1] + np.arange(columns) + offset*(np.sin(np.arange(columns)*np.pi/4)+1)
@@ -1037,42 +1042,42 @@ def plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4
             if j % columns == 0 or j == (columns-1):
                 ax.plot([x_nodes_front[i, j], x_nodes_back[i, j]],
                         [y_nodes_front[i, j], y_nodes_back[i, j]],
-                        color='grey')
+                        color=color_misalignment, linewidth=1)
             if (j+1) < columns:
                 ax.plot([x_nodes_front[i, j], x_nodes_front[i, j+1]],
                         [y_nodes_front[i, j], y_nodes_front[i, j+1]],
-                        color='grey')
+                        color=color_alignment, linewidth=1, alpha=0.8)
                 ax.plot([x_nodes_back[i, j], x_nodes_back[i, j+1]],
                         [y_nodes_back[i, j], y_nodes_back[i, j+1]],
-                        color='grey')
+                        color=color_alignment, linewidth=1, alpha=0.8)
             if (i+1) < rows:
                 ax.plot([x_nodes_front[i, j], x_nodes_front[i+1, j]],
                         [y_nodes_front[i, j], y_nodes_front[i+1, j]],
-                        color='grey')
+                        color=color_alignment, linewidth=1, alpha=0.8)
                 ax.plot([x_nodes_back[i, j], x_nodes_back[i+1, j]],
                         [y_nodes_back[i, j], y_nodes_back[i+1, j]],
-                        color='grey')
+                        color=color_alignment, linewidth=1, alpha=0.8)
     i = 0
     for x_b, y_b, x_f, y_f in zip(x_nodes_back.flatten(), y_nodes_back.flatten(),
                                   x_nodes_front.flatten(), y_nodes_front.flatten()):
         ax.plot(x_b, y_b, marker='o', linestyle='', color=colormap_back[i],
-                markersize=8)
+                markersize=18)
         ax.plot(x_f, y_f, marker='o', linestyle='', color=colormap_front[i],
-                markersize=8)
+                markersize=18)
         i += 1
-    if np.sum(q) != 0 or states:
-        ax_pos = ax.get_position()
-        ax.set_position([ax_pos.x0-ax_pos.width*0.1, ax_pos.y0,
-                         ax_pos.width, ax_pos.height])
-        ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.92, ax_pos.y0+ax_pos.height*0.2,
-                                ax_pos.width*0.06, ax_pos.height*0.5])
-        mpl.colorbar.ColorbarBase(ax_cbar, cmap='copper')
-        if states:
-            mpl.colorbar.ColorbarBase(ax_cbar, cmap='bwr')
-        ax_cbar.set_title('J')
-        ax_cbar.set_yticks([0, 0.5, 1], [np.round(np.min(q), 4),
-                                         np.round((np.min(q)+np.max(q))/2, 4),
-                                         np.round(np.max(q), 4)])
+    # if np.sum(q) != 0 or states:
+    #     ax_pos = ax.get_position()
+    #     ax.set_position([ax_pos.x0-ax_pos.width*0.1, ax_pos.y0,
+    #                      ax_pos.width, ax_pos.height])
+    #     ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.92, ax_pos.y0+ax_pos.height*0.2,
+    #                             ax_pos.width*0.06, ax_pos.height*0.5])
+    #     mpl.colorbar.ColorbarBase(ax_cbar, cmap=COLORMAP)
+    #     if states:
+    #         mpl.colorbar.ColorbarBase(ax_cbar, cmap=COLORMAP)
+    #     ax_cbar.set_title('J')
+    #     ax_cbar.set_yticks([0, 0.5, 1], [np.round(np.min(q), 4),
+    #                                      np.round((np.min(q)+np.max(q))/2, 4),
+    #                                      np.round(np.max(q), 4)])
     # ax.plot(x_nodes_back, y_nodes_back, marker='o', linestyle='', color='k',
     #         markersize=8)
     # ax.plot(x_nodes_front, y_nodes_front, marker='o', linestyle='', color='k',
@@ -1080,7 +1085,7 @@ def plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4
     ax.axis('off')
     if save_fig:
         fig.savefig(DATA_FOLDER + "/gibbs_video_0495_zoom/" + str(n_fig) + '.png',
-                    dpi=100)
+                    dpi=400)
 
 
 def plot_states_cylinder(j_ex, stim, n_iter=201000, theta=THETA, burn_in=1000):
@@ -2231,8 +2236,11 @@ if __name__ == '__main__':
     # necker_spiking_n_indep_neurons(j=0.7, stim=0, n_iter=12501, burn_in=1,
     #                                ron=0.0001, roff=0.00005, dt=1e-2, go=1.7,
     #                                nneurons=4, noise=0.2)
-    # plot_cylinder(q=None, states=False, columns=5, rows=10, layers=2, offset=0.4, minmax_norm=False,
-    #               save_fig=False, n_fig=0)
+    q0 = np.random.randn(5, 5, 1)*0.1+0.5
+    q1 = np.random.randn(5, 5, 1)*0.1+0.5
+    q = np.concatenate((q0, q1), axis=2)
+    plot_cylinder(q=q, states=True, columns=5, rows=5, layers=2, offset=0.3, minmax_norm=False,
+                  save_fig=True, n_fig=12345)
     # hysteresis_necker(b_list=np.arange(-0.5, 0.5, 1e-2),
     #                       j_list=[0.1, 0.5, 0.8], burn_in=0,
     #                       n_iter=300, n_sims=300)
