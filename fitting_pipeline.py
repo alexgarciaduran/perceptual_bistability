@@ -1107,8 +1107,9 @@ def fit_subjects(method='BADS', model='MF', subjects='separated',
         #     data = dataframe[['pShuffle', 'confidence', 'evidence']]
         unique_vals = np.sort(dataframe['pShuffle'].unique())
         if extra != 'null':
-            dataframe['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
-                                        value= [1., 0.3, 0.])
+            # dataframe['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
+            #                             value= [1., 0.3, 0.])
+            dataframe['coupling'] = (1-dataframe['pShuffle'].values/100)**2
         else:
             dataframe['coupling'] = 1
         dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2  # necessary?
@@ -1140,7 +1141,7 @@ def fit_subjects(method='BADS', model='MF', subjects='separated',
             appendix = '_BADS'
         else:
             appendix = ''
-        np.save(SV_FOLDER + 'parameters_' + model + appendix + sub +  extra + '_v2.npy', params)
+        np.save(SV_FOLDER + 'parameters_' + model + appendix + sub +  extra + '_v3.npy', params)
 
 
 def plot_params_LBP5_vs_MF5():
@@ -1670,7 +1671,7 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
             arr_betavals_simul[i_c, i_s] = beta_simuls
             stat, p = diptest(df_data_coup.loc[df_data_coup.stim_str == 0, 'confidence'])
             arr_pvals[i_c, i_s] = p
-        pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '_v2.npy')
+        pars = np.load(SV_FOLDER + '/parameters_'+model+ appendix+ sub + extra + '_v3.npy')
         if extra != 'null':
             b_eff = pars[3]
             jcrit = compute_j_crit(j_list=np.arange(1/4, 0.8, 1e-4), b_list=[b_eff], num_iter=100)[0]
@@ -2363,8 +2364,9 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
             dataframe = all_df.copy().loc[all_df['subject'] == sub]
             unique_vals = np.sort(dataframe['pShuffle'].unique())
             if extra != 'null':
-                dataframe['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
-                                            value= [1., 0.3, 0.]) 
+                # dataframe['coupling'] = dataframe['pShuffle'].replace(to_replace=unique_vals,
+                #                             value= [1., 0.3, 0.]) 
+                dataframe['coupling'] = (1-dataframe['pShuffle'].values/100)**2
             else:
                 dataframe['coupling'] = 1
             dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
@@ -2378,7 +2380,7 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
                     appendix = '_BADS'
                 else:
                     appendix = ''
-                pars = np.load(sv_folder + '/parameters_'+model+ appendix+ sub + extra + '_v2.npy')
+                pars = np.load(sv_folder + '/parameters_'+model+ appendix+ sub + extra + '_v3.npy')
             # negative log likelihood
             if model in ['MF', 'MF5']:
                 nllh = optimization(data=data, n_iters=10).nlh_boltzmann_mf(pars=pars)
@@ -2577,7 +2579,8 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         dataframe = all_df.copy().loc[all_df['subject'] == sub]
         dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
         dataframe['abs_confidence'] = np.abs(dataframe.confidence-0.5)*2
-        df_sub = pd.concat((df_sub, dataframe[['stim_ev_cong', 'coupling', 'abs_confidence', 'subject', 'stim_str']]))
+        dataframe['zscore_abs_confidence'] = scipy.stats.zscore(np.abs(dataframe.confidence-0.5)*2)
+        df_sub = pd.concat((df_sub, dataframe[['zscore_abs_confidence', 'stim_ev_cong', 'coupling', 'abs_confidence', 'subject', 'stim_str', 'pShuffle', 'confidence']]))
         l = True if i_s == 0 else False
         sns.lineplot(dataframe, x=xvar, y='abs_confidence',
                      hue='coupling', ax=ax[i_s], legend=l, errorbar=('se'))
@@ -2614,16 +2617,19 @@ def plot_all_subjects(xvar='stim_ev_cong'):
     fig4.tight_layout()
     fig.savefig(SV_FOLDER + 'all_subjects_abs_conf.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'all_subjects_abs_conf.pdf', dpi=200, bbox_inches='tight')
-    fig2, ax2 = plt.subplots(1)
+    fig2, ax2 = plt.subplots(1, figsize=(4.5, 3.5))
     df_sub_final = df_sub.dropna().reset_index()
     # df_sub_final['abs_confidence'] = scipy.stats.zscore(df_sub_final.abs_confidence.values)
     # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
-    df_subject_avg = df_sub_final.groupby(['subject', 'stim_ev_cong', 'coupling'])['abs_confidence'].mean().reset_index()
+    df_subject_avg = df_sub_final.groupby(['subject', 'stim_ev_cong', 'pShuffle'])['zscore_abs_confidence'].mean().reset_index()
     # Plot
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
-    sns.lineplot(data=df_subject_avg, x='stim_ev_cong', y='abs_confidence', hue='coupling', ax=ax2,
-                 errorbar=('se'))
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue']
+    sns.lineplot(data=df_subject_avg, x='stim_ev_cong', y='zscore_abs_confidence', hue='pShuffle', ax=ax2,
+                 errorbar=('se'), palette=colormap, legend=True,
+                 linewidth=4)
+    ax2.legend(frameon=False, title='p(shuffle)')
     # Perform statistical tests at each stim_ev_cong level
     alpha = 0.01  # Significance threshold
     significant_x = []  # Store x positions where significant differences occur
@@ -2631,7 +2637,7 @@ def plot_all_subjects(xvar='stim_ev_cong'):
     significant_x3 = []
     df = df_subject_avg.copy()
     # stim_values = df['stim_ev_cong'].unique()
-    coupling_values = df['coupling'].unique()
+    coupling_values = df['pShuffle'].unique()
     
     for stim in [0, 0.4, 0.8, 1]:
         groups = []
@@ -2639,8 +2645,8 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         for coup in coupling_values:
             # Extract confidence values for each coupling at a given stim_ev_cong
             conf_values = df_subject_avg.loc[
-                (df_subject_avg['stim_ev_cong'] == stim) & (df_subject_avg['coupling'] == coup),
-                'abs_confidence'].values
+                (df_subject_avg['stim_ev_cong'] == stim) & (df_subject_avg['pShuffle'] == coup),
+                'zscore_abs_confidence'].values
             
             groups.append(conf_values)
     
@@ -2656,24 +2662,47 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         if p_val3 < alpha:
             significant_x2.append(stim)
     # Add horizontal lines on top for significant differences
-    colormap = sns.color_palette("rocket", as_cmap=True)
-    cmap = colormap([0, 0.5, 1])
+    # colormap = sns.color_palette("rocket", as_cmap=True)
+    # cmap = colormap([0, 0.5, 1])
     if significant_x:
         for i, sig_x in enumerate([significant_x, significant_x2, significant_x3]): 
-            y_max = 0.3 + i*0.04 # Position above highest confidence
+            y_max = -0.85 + i*0.08 # Position above highest confidence
             if sig_x == [0, 0.4, 0.8, 1] or sig_x == [0, 0.4, 0.8]:
                 ax2.plot(sig_x, [y_max]*len(sig_x),
-                         color=cmap[i], linewidth=4)
+                         color=colormap[i], linewidth=4)
             else:
                 for x in sig_x:
                     plt.plot([x - 0.2, x], [y_max, y_max],
-                             color=cmap[i], linewidth=4)  # Short line above plot
-    ax2.set_xlabel('Stim. ev. cong')
-    ax2.set_ylabel('Absolute confidence')
+                             color=colormap[i], linewidth=4)  # Short line above plot
+    ax2.set_xlabel('Depth cue congruence with choice')
+    ax2.set_ylabel('z-scored absolute confidence')
+    ax2.set_xticks([-1, -0.5, 0, 0.5, 1])
     fig2.tight_layout()
-    fig.savefig(SV_FOLDER + 'mean_across_all_subjects_abs_conf.png', dpi=200, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + 'mean_across_all_subjects_abs_conf.pdf', dpi=200, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + 'mean_across_all_subjects_abs_conf.png', dpi=200, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + 'mean_across_all_subjects_abs_conf.pdf', dpi=200, bbox_inches='tight')
 
+
+def psychometric_curve_all_subjects():
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(4.5, 3.5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    resp = (np.sign(all_df['confidence'].values)+1)/2
+    all_df['response'] = resp
+    vals = all_df.groupby(['subject', 'evidence', 'pShuffle'])['response'].mean().reset_index()
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue']
+    sns.lineplot(data=vals, x='evidence', y='response', hue='pShuffle', ax=ax,
+                 errorbar=('se'), palette=colormap, legend=True,
+                 linewidth=4)
+    ax.legend(frameon=False, title='p(shuffle)')
+    ax.set_xlabel('Depth cue, s')
+    ax.set_ylabel('p(right)')
+    ax.set_ylim(-0.05, 1.05); ax.set_xticks([-1, -0.5, 0, 0.5, 1])
+    # ax.tick_params("x", rotation=45)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'psychometric_curve_exp_confidence.png', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'psychometric_curve_exp_confidence.pdf', dpi=200, bbox_inches='tight')
+    
 
 def plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method='Powell',
                             variable='abs_confidence'):
@@ -3095,7 +3124,7 @@ def plot_pars_distros(sv_folder=SV_FOLDER,
         extra = 'null'
     pars_all = np.zeros((npars, 35))
     for i_s, sub in enumerate(subjects):
-        pars = np.load(sv_folder + '/parameters_'+model+ appendix+ sub + extra + '_v2.npy')
+        pars = np.load(sv_folder + '/parameters_'+model+ appendix+ sub + extra + '_v3.npy')
         pars_all[:, i_s] = pars    
     fig, ax = plt.subplots(ncols=npars, figsize=(14, 5))
     for i_a, a in enumerate(ax):
@@ -3109,10 +3138,10 @@ def plot_pars_distros(sv_folder=SV_FOLDER,
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='MF', method='BADS')
-    fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=10, extra='null')
+    # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=10, extra='null')
     fit_subjects(method=opt_algorithm, model='MF5', data_augmen=False, n_init=10, extra='')
-    fit_subjects(method=opt_algorithm, model='MF_PR', data_augmen=False, n_init=10, extra='null')
-    fit_subjects(method=opt_algorithm, model='MF5_PR', data_augmen=False, n_init=10, extra='')
+    # fit_subjects(method=opt_algorithm, model='MF_PR', data_augmen=False, n_init=10, extra='null')
+    # fit_subjects(method=opt_algorithm, model='MF5_PR', data_augmen=False, n_init=10, extra='')
     # simulate_subjects(sv_folder=SV_FOLDER, model='MF5', resimulate=True,
     #                   extra='', mcmc=False, method=opt_algorithm, data_augment=False,
     #                   plot_subs=False)
@@ -3122,9 +3151,7 @@ if __name__ == '__main__':
     # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                     subjects='separated')
     plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-                                   bic=True, dots=True)
-    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5_PR', method=opt_algorithm,
-                                   bic=True, dots=True)
+                                    bic=True, dots=True)
     # plot_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
