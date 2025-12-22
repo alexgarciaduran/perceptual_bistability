@@ -9,6 +9,7 @@ import pyddm
 import pyddm.plot
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 import seaborn as sns
 import pandas as pd
 import scipy
@@ -19,6 +20,7 @@ import matplotlib.pylab as pl
 from matplotlib.lines import Line2D
 import glob
 from sklearn.metrics import roc_curve, auc
+import statsmodels.api as sm
 from sklearn import manifold
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.model_selection import cross_val_score
@@ -52,6 +54,7 @@ from scipy.ndimage import gaussian_filter, zoom
 from scipy.interpolate import griddata
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 import mplcairo
+import matplotlib.animation as animation
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -969,12 +972,12 @@ def hysteresis_simulation_threshold(j=1.2, thres_vals=np.arange(0, 0.5, 1e-2),
     f2.tight_layout()
 
 
-def get_blist(freq, nFrame):
+def get_blist(freq, nFrame, maxval=2):
     if abs(freq) == 2:
-        difficulty_time_ref_2 = np.linspace(-2, 2, nFrame//2)
+        difficulty_time_ref_2 = np.linspace(-maxval, maxval, nFrame//2)
         stimulus = np.concatenate(([difficulty_time_ref_2, -difficulty_time_ref_2]))
     if abs(freq) == 4:
-        difficulty_time_ref_4 = np.linspace(-2, 2, nFrame//4)
+        difficulty_time_ref_4 = np.linspace(-maxval, maxval, nFrame//4)
         stimulus = np.concatenate(([difficulty_time_ref_4, -difficulty_time_ref_4,
                                     difficulty_time_ref_4, -difficulty_time_ref_4]))
     if freq < 0:
@@ -4398,6 +4401,7 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
     if subjects is None:
         subjects = df.subject.unique()[:len(fitted_params_all)]
     choices_all_subject = np.zeros((len(subjects), ntrials, nFrame))
+    x_all_subject = np.zeros((len(subjects), ntrials, nFrame))
     for i_s, subject in enumerate(subjects):
         fitted_params = fitted_params_all[i_s]
         print('Simulating subject', subject)
@@ -4411,17 +4415,22 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         frequencies = np.repeat(frequencies, ntrials // 72)
         if simulate:
             choice_all = np.zeros((ntrials, nFrame))
+            x_all = np.zeros((ntrials, nFrame))
             for trial in range(ntrials):
                 j_eff = (1-pshuffles[trial])*fitted_params[0] + fitted_params[1]*use_j0
                 params = fitted_params[1:].copy()
                 params[0] = j_eff
-                choice, _ = simulator_5_params(params=params, freq=frequencies[trial], nFrame=nFrame,
+                choice, x = simulator_5_params(params=params, freq=frequencies[trial], nFrame=nFrame,
                                                fps=fps, return_choice=True, ini_cond_convergence=2)
                 choice_all[trial, :] = choice
+                x_all[trial, :] = x
             np.save(sv_folder + f'choice_matrix_subject_{subject}.npy', choice_all)
+            np.save(sv_folder + f'confidence_matrix_subject_{subject}.npy', x_all)
         else:
             choice_all = np.load(sv_folder + f'choice_matrix_subject_{subject}.npy')
+            x_all = np.load(sv_folder + f'confidence_matrix_subject_{subject}.npy')
         choices_all_subject[i_s] = choice_all
+        x_all_subject[i_s] = x_all
     if plot:
         unique_shuffle = [1., 0.7, 0.]
         nshuffle = len(unique_shuffle)
@@ -4726,6 +4735,93 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
             a.set_ylim(0, 3.5); a.set_xlim(0, 3.5)
             a.set_yticks([0, 1, 2, 3]); a.set_xticks([0, 1, 2, 3])
         fig.tight_layout()
+        
+        # alignment window (in frames)
+        pre_switch = int(1.5 * fps)   # 500 ms before
+        post_switch = int(1.5 * fps)  # 500 ms after
+        T = pre_switch + post_switch
+        t_switch = np.arange(-pre_switch, post_switch) / fps
+        
+        # container: [shuffle][subject][event, time]
+        aligned_conf = [[[] for _ in subjects] for _ in unique_shuffle]
+        
+        for i_s, subject in enumerate(subjects):
+            choice_all = choices_all_subject[i_s]
+            x_all = x_all_subject[i_s]
+        
+            df_subject = df.loc[df.subject == subject]
+            ini_side = np.round(df_subject.groupby('trial_index')['initial_side'].mean().values, 1)
+            frequencies = np.round(df_subject.groupby('trial_index')['freq'].mean().values * ini_side, 2)
+            psh = np.round(df_subject.groupby('trial_index')['pShuffle'].mean().values, 1)
+            psh = np.repeat(psh, ntrials // 72)
+        
+            for i_trial in range(ntrials):
+                sh_idx = np.where(unique_shuffle == psh[i_trial])[0][0]
+                if abs(frequencies[i_trial]) != 4:
+                    continue
+                # binary choice
+                ch = choice_all[i_trial].copy()
+                ch[ch == 0] = np.nan
+                ch = (ch + 1) / 2
+        
+                # absolute confidence (CORRECT)
+                conf = np.abs(2*x_all[i_trial]-1)
+        
+                switch_idx = np.where(np.abs(np.diff(ch)) > 0)[0] + 1
+        
+                for t0 in switch_idx:
+                    if t0 > 20:
+                        if t0 - pre_switch < 0 or t0 + post_switch > nFrame:
+                            continue
+            
+                        aligned_conf[sh_idx][i_s].append(
+                            conf[t0 - pre_switch:t0 + post_switch]
+                        )
+        
+        # ------------------------------------------------------------
+        # Average: events → subjects → shuffle
+        # ------------------------------------------------------------
+        mean_conf = np.full((len(unique_shuffle), T), np.nan)
+        
+        for i_sh in range(len(unique_shuffle)):
+            subj_curves = []
+        
+            for i_s in range(len(subjects)):
+                events = aligned_conf[i_sh][i_s]
+        
+                if len(events) == 0:
+                    continue
+        
+                events = np.stack(events, axis=0)  # [n_events, T]
+                subj_curves.append(np.nanmean(events, axis=0))
+        
+            if len(subj_curves) > 0:
+                mean_conf[i_sh] = np.nanmean(np.stack(subj_curves, axis=0), axis=0)
+        
+        # ------------------------------------------------------------
+        # Plot
+        # ------------------------------------------------------------
+        fig_sw, ax_sw = plt.subplots(figsize=(5, 4))
+        
+        for i_sh, sh in enumerate(unique_shuffle):
+            ax_sw.plot(
+                t_switch,
+                mean_conf[i_sh],
+                color=colormap[i_sh],
+                linewidth=3,
+                label=f'p(shuffle)={sh}'
+            )
+        
+        ax_sw.axvline(0, color='k', linestyle='--', alpha=0.4)
+        ax_sw.set_xlabel('Time from switch (s)')
+        ax_sw.set_ylabel(r'Absolute confidence $|x|$')
+        ax_sw.set_ylim(bottom=0)
+        
+        ax_sw.spines['right'].set_visible(False)
+        ax_sw.spines['top'].set_visible(False)
+        ax_sw.legend(frameon=False)
+        
+        fig_sw.tight_layout()
 
 
 def prepare_data_for_fitting(df_subject, fps=60, tFrame=26):
@@ -5584,7 +5680,7 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                                 tFrame=26, fps=60,
                                 steps_back=120, steps_front=20, avoid_first=True,
                                 n=4, load_simulations=True, normalize=False,
-                                sigma=None, pshuf_only=None):
+                                sigma=None, pshuf_only=None, bis_mono=None):
     title = r'$\sigma = 0$' if sigma is not None else r'$\sigma \neq 0$'
     nFrame = 1546
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
@@ -5621,6 +5717,15 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         for i_trial, trial in enumerate(trial_index):
             if pshuf_only is not None:
                 if pshuffles[i_sub, i_trial] != pshuf_only:
+                    continue
+            if bis_mono is not None:
+                psh = pshuffles[i_sub, i_trial]
+                j0 = fitted_params_all[i_sub][1]
+                j1 = fitted_params_all[i_sub][0]
+                jeff = (1-psh)*j1+j0
+                if jeff < 1 and bis_mono == 'Bistable':
+                    continue
+                if jeff > 1 and bis_mono == 'Monostable':
                     continue
             values_x = x_all[i_sub, i_trial]
             chi = noise_signal[i_sub, i_trial]
@@ -8818,8 +8923,1131 @@ def cartoon_2d_factor_graph():
     plt.show()
 
 
+def assign_blocks(df, block_size=10):
+    df = df.copy()
+    block = df["trial_index"] // block_size + 1
+    block[block == 12] = 11.6
+    df["block"] = block
+    return df
+
+
+def extract_switches(df, sample_dt=0.01667):
+    """
+    df: behavioral dataframe with columns:
+        - 'trial_index'
+        - 'responses' (continuous keypress per timestep)
+    sample_dt: duration of each timestep in seconds
+    """
+    rows = []
+    # iterate over trials
+    for trial_idx, trial_df in df.groupby("trial_index"):
+        responses = trial_df["responses"].values
+        if len(responses) < 2:
+            continue
+        
+        # find switches
+        changes = np.where(responses[1:] != responses[:-1])[0] + 1
+        
+        for c in changes:
+            t_switch = c * sample_dt  # time relative to trial start
+            rows.append({
+                "trial_index": trial_idx,
+                "t_switch": t_switch,
+                "from": responses[c-1],
+                "to": responses[c]
+            })
+    
+    return pd.DataFrame(rows)
+
+
+def eye_tracker_save_align_data(data_folder=DATA_FOLDER, ntraining=8):
+    df_hyst = load_data(data_folder=data_folder, n_participants='all',
+                        filter_subjects=True)
+    df_noisy = load_data(data_folder=data_folder + '/noisy/', n_participants='all',
+                         filter_subjects=True)
+    subjects = df_hyst.subject.unique()
+    for i_s, sub in enumerate(subjects):
+        print(sub)
+        sub_path = 'sub' + sub[1:]
+        labs = [str(i) for i in range(12)] + ['11.6']
+        gaze_blocks = []
+        df_noisy_sub = df_noisy.loc[df_noisy.subject == sub]
+        df_hyst_sub = df_hyst.loc[df_hyst.subject == sub]
+        for i in range(1, 13):
+            path = DATA_FOLDER + 'all_data/HYSTERESIS_EXPERIMENT/' + sub_path + '/eye_tracker/' + sub_path + '_block_' + labs[i] + '_Gaze_Data.csv'
+            gaze_block = pd.read_csv(path)
+            gaze_blocks.append(gaze_block)
+        path_save_csv = DATA_FOLDER + '/aligned_eye_tracker_data/' + sub + '_aligned_Gaze_Data.csv'
+        _ = align_eye_tracking_blocks_hyst_noisy(gaze_blocks, df_noisy_sub, df_hyst_sub,
+                                                 trial_duration=27.,
+                                                 dt_noisy=1/60,
+                                                 save_csv=path_save_csv)
+
+def exp_fun(t, tau, k1, k2):
+    return np.exp(-t/tau)*k1+k2
+
+
+def compute_vergence(x_left, x_right, screen_width=1920,
+                     eye_to_screen_distance=700):
+    """
+    Compute vergence angle from gaze coordinates.
+
+    Args:
+        x_left, y_left: Gaze coordinates of left eye on screen (pixels)
+        x_right, y_right: Gaze coordinates of right eye on screen (pixels)
+        screen_width, screen_height: Screen dimensions (pixels)
+        eye_to_screen_distance: Distance from eyes to screen (mm)
+
+    Returns:
+        vergence_angle: Vergence angle in degrees
+    """
+    # Convert pixel coordinates to mm (assuming screen dimensions are in mm)
+    # You may need to adjust this based on your screen's physical size and resolution
+    screen_width_mm = 500  # Example: 500mm (adjust as needed)
+
+    # Convert pixel coordinates to mm
+    x_left_mm = (x_left) * screen_width_mm
+    x_right_mm = (x_right) * screen_width_mm
+
+    # Calculate horizontal angles for each eye
+    angle_left = np.degrees(np.arctan((x_left_mm - screen_width_mm/2) / eye_to_screen_distance))
+    angle_right = np.degrees(np.arctan((x_right_mm - screen_width_mm/2) / eye_to_screen_distance))
+
+    # Vergence is the difference between the two angles
+    vergence_angle = angle_left - angle_right
+
+    return vergence_angle
+
+
+def align_eye_tracking_blocks_hyst_noisy(
+    gaze_blocks,
+    df_noisy_sub,
+    df_hyst_sub,
+    trial_duration=27.,  # 26s trial + 1s trial delay
+    dt_noisy=1/60,
+    save_csv=None, threshold_detection=0.2, n_trials_block=10
+):
+    """
+    Align Tobii gaze samples to trial start times.
+    Ensures consistent trial_index (1..n_trials) and t_trial per sample.
+    """
+
+    all_aligned = []
+    def lowpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 5):
+        sos = scipy.signal.butter(poles, cutoff, 'lowpass', fs=sample_rate, output='sos')
+        filtered_data = scipy.signal.sosfiltfilt(sos, data)
+        return filtered_data
+    
+    def interp_nans(x):
+        x = np.asarray(x, float)
+        nans = np.isnan(x)
+        if nans.any():
+            x[nans] = np.interp(
+                np.flatnonzero(nans),
+                np.flatnonzero(~nans),
+                x[~nans]
+            )
+        return x
+    trial_idx_hyst = df_hyst_sub.trial_index.unique()
+    trial_idx_noisy = df_noisy_sub.trial_index.unique()
+    # --- Normalize gaze timestamps to seconds ---
+    first_tobii = min([g['SystemTS'].iloc[0] for g in gaze_blocks])
+    first_tobii_sec = first_tobii * 1e-6
+    for block_id, gaze_block in enumerate(gaze_blocks):
+        gaze_block = gaze_block.copy()
+        gaze_block['t_tobii'] = gaze_block['SystemTS'] * 1e-6 - first_tobii_sec
+        indices_change_trial = np.concatenate(([0], np.where(np.diff(gaze_block['t_tobii']) > threshold_detection)[0]))
+        n_samples = len(gaze_block)
+        trial_index = np.zeros(n_samples, dtype=int)
+        for i, start_idx in enumerate(indices_change_trial):
+            if i < len(indices_change_trial) - 1:
+                end_idx = indices_change_trial[i+1]
+            else:
+                end_idx = n_samples  # last trial goes to end of block
+            t_index = i + 1 + block_id*n_trials_block
+            trial_index[start_idx:end_idx] = t_index
+        gaze_block['trial_index'] = trial_index
+        t_trial = np.zeros(n_samples)
+        stimulus = np.zeros(n_samples)
+        for start_idx, trial_id in zip(indices_change_trial, range(len(indices_change_trial))):
+            trial_idx = i + 1 + block_id*n_trials_block
+            if trial_idx in trial_idx_hyst:
+                df_trial = df_hyst_sub.loc[df_hyst_sub.trial_index == trial_idx]
+                ini_side = df_trial['initial_side'].unique()
+                freq = df_trial['freq'].unique()*ini_side
+                stim = get_blist(freq=freq, nFrame=1560, maxval=3)
+            elif trial_idx in trial_idx_noisy:
+                stim = df_noisy_sub.loc[df_noisy_sub.trial_index == trial_idx, 'stimulus']
+            if trial_id < len(indices_change_trial) - 1:
+                end_idx = indices_change_trial[trial_id+1]
+            else:
+                end_idx = n_samples
+            # --- BACKWARD time, but positive ---
+            # t_end = gaze_block['t_tobii'].iloc[end_idx - 1]
+            # t_rel = trial_duration - (t_end - gaze_block['t_tobii'].iloc[start_idx:end_idx].values)
+
+            # t_trial[start_idx:end_idx] = t_rel
+            # t_trial[start_idx:end_idx] = gaze_block['t_tobii'].iloc[start_idx:end_idx].values - gaze_block['t_tobii'].iloc[start_idx]
+            # get actual timestamps
+            t_actual = gaze_block['t_tobii'].iloc[start_idx:end_idx].values
+            
+            # trial end is the last sample
+            t_end = t_actual[-1]
+            time_trial = trial_duration - (t_end - t_actual)
+            # compute backward trial time
+            t_trial[start_idx:end_idx] = time_trial
+            first0 = np.where(time_trial >= 0)[0][0]
+            start_idx_new = start_idx + first0
+            stimulus[start_idx_new:start_idx_new+len(stim)] = stim
+            
+            # create mask for valid trial time
+            valid_mask = (time_trial >= 0) & (time_trial <= 26)
+            valid_idx = np.where(valid_mask)[0]  # indices relative to start_idx
+            # --- Preprocess pupil trial by trial ---
+            for eye in ['LeftEye_Pupil', 'RightEye_Pupil']:
+                pupil = gaze_block[eye].iloc[start_idx:end_idx].values
+                pupil = interp_nans(pupil)
+                
+                # restrict to valid indices
+                pupil_valid = pupil[valid_idx]
+                time_valid = time_trial[valid_idx]
+                # exponential fit and subtraction
+                p0 = [np.median(time_valid), np.max(pupil_valid)-np.min(pupil_valid), np.min(pupil_valid)]
+                try:
+                    pars, _ = curve_fit(exp_fun, time_valid, pupil_valid, p0=p0)
+                    pupil_valid = pupil_valid - exp_fun(time_valid, *pars)
+                except:
+                    pass
+                # lowpass filter
+                pupil_valid = lowpass(pupil_valid, 6, 1/dt_noisy)
+                # z-score
+                pupil_valid = (pupil_valid - np.nanmean(pupil_valid)) / np.nanstd(pupil_valid)
+                gaze_block.loc[start_idx + valid_idx, eye+'_clean'] = pupil_valid
+        gaze_block['t_trial'] = np.clip(t_trial, -2, trial_duration)
+        gaze_block['stimulus'] = stimulus
+        gaze_block['abs_stimulus'] = np.abs(stimulus)
+        gaze_block['vergence_angle'] = compute_vergence(
+            gaze_block['LeftEye_X'], gaze_block['RightEye_X'],
+            screen_width=1920, eye_to_screen_distance=700
+        )
+
+        all_aligned.append(gaze_block)
+
+    gaze_aligned = pd.concat(all_aligned, ignore_index=True)
+    # Add average pupil
+    gaze_aligned['Pupil_average_clean'] = np.nanmean(
+        np.row_stack([gaze_aligned['LeftEye_Pupil_clean'], gaze_aligned['RightEye_Pupil_clean']]), axis=0
+    )
+    if save_csv:
+        gaze_aligned.to_csv(save_csv, index=False)
+
+    return gaze_aligned
+
+
+def plot_examples_subs_eye_tracker(data_folder=DATA_FOLDER,
+                                   ntrials=5, n_training=8, sub='s_31'):
+    df_all = load_data(data_folder=data_folder, n_participants='all',
+                   filter_subjects=False)
+    df = df_all.loc[(df_all.trial_index > n_training) & (df_all.subject == sub)]
+    t_index_unique = df.trial_index.unique()
+    ti_unique = np.random.choice(t_index_unique, ntrials)
+    path_save_csv = data_folder + '/aligned_eye_tracker_data/' + sub + '_aligned_Gaze_Data.csv'
+    eyetracker_data = pd.read_csv(path_save_csv)
+    fig, ax = plt.subplots(ncols=5, figsize=(3 + ntrials*4, 5))
+    for i_t, ti in enumerate(ti_unique):
+        eyetracker_data_ti = eyetracker_data.loc[eyetracker_data.trial_index == ti]
+        choices_hyst = get_response_array(df.loc[df.trial_index == ti])
+        time_choices = np.arange(0, 26, 1/60)
+        ax[i_t].plot(eyetracker_data_ti.t_trial, eyetracker_data_ti.LeftEye_Pupil,
+                     label='Left eye pupil', linewidth=3)
+        ax[i_t].plot(eyetracker_data_ti.t_trial, eyetracker_data_ti.RightEye_Pupil,
+                     label='Left eye pupil', linewidth=3)
+        ax2 = ax[i_t].twinx()
+        ax2.plot(time_choices, choices_hyst, color='k', linewidth=3)
+    ax[i_t].set_xlabel('Time (s)')
+
+
+
+def plot_pupil_around_switches_single_sub(data_folder=DATA_FOLDER,
+                                          sublist=['s_1'], n_training=8,
+                                          dt=1/60, t_before=0.5, t_after=0.5,
+                                          smooth_window=10):
+    # --- Identify switches ---
+    def get_switch_indices(responses):
+        responses = np.array(responses)
+        switches = np.where(responses[1:] != responses[:-1])[0] + 1
+        return switches
+
+    df_all = load_data(data_folder=data_folder, n_participants='all',
+                   filter_subjects=False)
+    if sublist is None:
+        sublist = df_all.subject.unique()
+        close_fig_flag = True
+    else:
+        close_fig_flag = False
+    conditions = np.sort(df_all['pShuffle'].unique())
+    all_subjects_epochs_left = {cond: [] for cond in conditions}
+    all_subjects_epochs_right = {cond: [] for cond in conditions}
+    for sub in sublist:
+        df = df_all.loc[(df_all.trial_index > n_training) & (df_all.subject == sub)]
+        path_save_csv = data_folder + '/aligned_eye_tracker_data/' + sub + '_aligned_Gaze_Data.csv'
+        eyetracker_data = pd.read_csv(path_save_csv)
+        fig, axes = plt.subplots(1, ncols=2, figsize=(8, 4), sharey=True)
+        colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+        for i_c, cond in enumerate(conditions):
+            df_cond = df[df['pShuffle'] == cond]
+            aligned_epochs_left = []
+            aligned_epochs_right = []
+    
+            # Loop over trials
+            for ti in df_cond.trial_index.unique():
+                trial_beh = df_cond[df_cond.trial_index == ti]
+                trial_resp = get_response_array(trial_beh)
+                trial_eye = eyetracker_data[eyetracker_data.trial_index == ti]
+                if len(trial_resp) == 0 or trial_eye.empty:
+                    continue
+                # Find switches
+                switch_indices = get_switch_indices(trial_resp)
+                for swi in switch_indices:
+                    t_switch = swi * dt
+                    mask = (trial_eye['t_trial'] >= t_switch - t_before) & (trial_eye['t_trial'] <= t_switch + t_after)
+                    # epoch_right = zscore(trial_eye.loc[mask, 'LeftEye_Pupil'].values)
+                    # epoch_left = zscore(trial_eye.loc[mask, 'RightEye_Pupil'].values)
+                    epoch_right = trial_eye.loc[mask, 'LeftEye_Pupil'].values
+                    epoch_left = trial_eye.loc[mask, 'RightEye_Pupil'].values
+                    epoch_right -= np.nanmean(epoch_right)
+                    epoch_left -= np.nanmean(epoch_left)
+                    t_epoch = trial_eye.loc[mask, 't_trial'].values - t_switch
+                    if len(epoch_left) > 0 and len(epoch_right) > 0:
+                        aligned_epochs_left.append(pd.DataFrame({'t': t_epoch, 'pupil': epoch_left}))
+                        aligned_epochs_right.append(pd.DataFrame({'t': t_epoch, 'pupil': epoch_right}))
+            all_epochs_left = pd.concat(aligned_epochs_left, ignore_index=True)
+            all_epochs_right = pd.concat(aligned_epochs_right, ignore_index=True)
+            all_subjects_epochs_left[cond].append(all_epochs_left)
+            all_subjects_epochs_right[cond].append(all_epochs_right)
+            # Bin by time
+            t_bins = np.arange(-t_before, t_after + dt, dt)
+            binned_left = all_epochs_left.groupby(np.digitize(all_epochs_left['t'], t_bins))['pupil'].mean()
+            binned_right = all_epochs_right.groupby(np.digitize(all_epochs_right['t'], t_bins))['pupil'].mean()
+            t_bin_centers = t_bins[:-1] + dt/2
+            pupil_smooth_left = scipy.signal.savgol_filter(binned_left.values, window_length=min(smooth_window, len(binned_left)|1), polyorder=5)
+            pupil_smooth_right = scipy.signal.savgol_filter(binned_right.values, window_length=min(smooth_window, len(binned_right)|1), polyorder=5)
+    
+            axes[0].plot(t_bin_centers, pupil_smooth_left, label=f'{cond}', color=colormap[i_c],
+                         linewidth=4)
+            axes[1].plot(t_bin_centers, pupil_smooth_right, label=f'{cond}', color=colormap[i_c],
+                         linewidth=4)
+        # axes.axvline(0, color='k', linestyle='--', label='Switch')
+        for a in axes:
+            a.axhline(0, color='k', linestyle='--')
+            a.axvline(0, color='k', linestyle='--')
+            a.set_xlabel('Time from switch (s)')
+            a.spines['right'].set_visible(False)
+            a.spines['top'].set_visible(False)
+        axes[0].set_ylabel('Pupil size')
+        axes[0].legend(frameon=False, title='p(shuffle)')
+        fig.tight_layout()
+        fig.savefig(data_folder + '/aligned_eye_tracker_data/plots/' + sub + '_pupil_at_switch.png', dpi=400, bbox_inches='tight')
+        fig.savefig(data_folder + '/aligned_eye_tracker_data/plots/' + sub + '_pupil_at_switch.pdf', dpi=400, bbox_inches='tight')
+        if close_fig_flag:
+            plt.close(fig)
+        
+
+def plot_pupil_across_subjects_simple(data_folder=DATA_FOLDER,
+                                      sublist=None,
+                                      n_training=8,
+                                      dt=1/60,
+                                      t_before=0.5,
+                                      condition='pShuffle',
+                                      t_after=0.5,
+                                      smooth_window=11,
+                                      polyorder=2,
+                                      pupil_col='Pupil_average_clean',
+                                      save_plot=True, freq=2, noisy=False,
+                                      plot_name='pupil_switch_avg.png',
+                                      velocity=False, n=4, zscore_values=True):
+    """
+    Plot pupil size aligned to all response switches, averaged per subject and then across subjects.
+
+    Parameters
+    ----------
+    data_folder : str
+        Folder containing behavioral and eye-tracker data
+    sublist : list of str
+        List of subjects to include. If None, uses all subjects
+    n_training : int
+        Number of initial trials to exclude
+    dt : float
+        Time step (seconds)
+    t_before, t_after : float
+        Time window before and after switch (seconds)
+    smooth_window : int
+        Window for Savitzky-Golay smoothing
+    polyorder : int
+        Polynomial order for Savitzky-Golay smoothing
+    pupil_cols : tuple
+        Pupil columns to plot ('LeftEye_Pupil','RightEye_Pupil')
+    save_plot : bool
+        Whether to save the figure
+    plot_name : str
+        File name for saving the figure
+    """
+    if noisy:
+        # --- Load behavioral data ---
+        df_all = load_data(data_folder=data_folder + '/noisy/', n_participants='all', filter_subjects=True)
+    else:
+        df_all = load_data(data_folder=data_folder, n_participants='all', filter_subjects=True)
+        if freq != 'all':
+            df_all = df_all.loc[df_all.freq == freq]
+    if sublist is None:
+        sublist = df_all.subject.unique()
+    
+    if 'X' in pupil_col or 'Y' in pupil_col:
+        xy_flag = True
+    else:
+        xy_flag = False
+    if velocity:
+        plot_name = 'velocity_' + plot_name
+    plot_name = condition + '_' + plot_name
+    # --- Dictionary to store per-subject averages ---
+    per_sub_avg = {pupil_col: {}}
+
+    # --- Helper functions ---
+    def get_switch_indices(responses):
+        responses = np.array(responses)
+        switches = np.where(responses[1:] != responses[:-1])[0] + 1
+        return switches
+
+    def extract_epoch(trial_eye, t_switch, pupil_col):
+        mask = (trial_eye['t_trial'] > t_switch - t_before) & (trial_eye['t_trial'] < t_switch + t_after)
+        epoch = trial_eye.loc[mask, pupil_col].values
+        t_epoch = trial_eye.loc[mask, 't_trial'].values - t_switch
+        if len(epoch) > 1:
+            if zscore_values:
+                epoch = zscore(epoch, nan_policy='omit')
+            if velocity:
+                epoch = np.gradient(epoch)
+            return pd.DataFrame({'t': t_epoch, 'pupil': epoch})
+        else:
+            return None
+    # --- Loop over subjects ---
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    fitted_params_all = [np.load(par) for par in pars]
+    j0s = [n*params[1] for params in fitted_params_all]
+    j1s = [n*params[0] for params in fitted_params_all]
+    for i_sub, sub in enumerate(sublist):
+        df = df_all.loc[(df_all.trial_index > n_training) & (df_all.subject == sub)]
+        if condition == 'regime':
+            df[condition] = (((1-df['pShuffle'])*j1s[i_sub] + j0s[i_sub]) > 1)*2-1
+        conditions = np.sort(df[condition].unique())
+        path_save_csv = os.path.join(data_folder, 'aligned_eye_tracker_data', f'{sub}_aligned_Gaze_Data.csv')
+        if not os.path.exists(path_save_csv):
+            continue
+        eyetracker_data = pd.read_csv(path_save_csv)
+
+        # --- Loop over conditions ---
+        for cond in conditions:
+            df_cond = df[df[condition]==cond]
+            aligned_epochs = []
+
+            for ti in df_cond.trial_index.unique():
+                trial_beh = df_cond[df_cond.trial_index==ti]
+                if noisy:
+                    trial_resp = trial_beh.responses.values
+                else:
+                    trial_resp = get_response_array(trial_beh)
+                trial_eye = eyetracker_data[eyetracker_data.trial_index==ti]
+                if len(trial_resp)==0 or trial_eye.empty:
+                    continue
+
+                switch_idx = get_switch_indices(trial_resp)
+                for swi in switch_idx:
+                    t_switch = swi * dt
+                    epoch_df = extract_epoch(trial_eye, t_switch, pupil_col)
+                    if epoch_df is not None:
+                        # subtract mean of first 20 points
+                        # epoch_df['pupil'] -= np.nanmean(epoch_df['pupil'][:20])
+                        # subtract first point
+                        # epoch_df['pupil'] -= epoch_df['pupil'][0]
+                        # z-score
+                        # if zscore_values:
+                        #     epoch_df['pupil'] = zscore(epoch_df['pupil'], nan_policy='omit')
+                        # if xy_flag:
+                        #     if noisy:
+                        #         resp_before = (trial_resp[swi-1]*2-1)
+                        #     else:
+                        #         resp_before = (trial_resp[swi-1]*2-1)*(trial_beh.initial_side)
+                        #     epoch_df['pupil'] *= resp_before
+                        aligned_epochs.append(epoch_df)
+
+            # --- Concatenate all epochs for this subject & condition ---
+            if len(aligned_epochs)==0:
+                continue
+            all_epochs = pd.concat(aligned_epochs, ignore_index=True)
+
+            # Bin and average
+            t_bins = np.arange(-t_before, t_after+dt, dt)
+            t_bin_centers = t_bins[:-1] + dt/2
+            bin_idx = np.digitize(all_epochs['t'], t_bins) - 1
+            valid = (bin_idx >= 0) & (bin_idx < len(t_bin_centers))
+            
+            binned = (
+                pd.DataFrame({
+                    'bin': bin_idx[valid],
+                    'pupil': all_epochs['pupil'].values[valid]
+                })
+                .groupby('bin')['pupil']
+                .mean()
+                .reindex(np.arange(len(t_bin_centers)))
+            )
+            
+            pupil_smooth = scipy.signal.savgol_filter(
+                binned.values, window_length=min(smooth_window, len(binned) | 1),
+                polyorder=polyorder)
+            # pupil_smooth = binned.values
+
+            if cond not in per_sub_avg[pupil_col]:
+                per_sub_avg[pupil_col][cond] = []
+            per_sub_avg[pupil_col][cond].append(pupil_smooth)
+    # --- Average across subjects ---
+    t_bins = np.arange(-t_before, t_after+dt, dt)
+    t_bin_centers = t_bins[:-1] + dt/2
+    fig, axes = plt.subplots(1, 1, figsize=(6, 4.5))
+    if condition == 'pShuffle':
+        colormap = ['midnightblue','royalblue','lightskyblue']
+    if condition == 'regime':
+        colormap = ['cadetblue', 'peru']
+
+    axes = [axes]
+
+    for i_p, pup_col in enumerate([pupil_col]):
+        for i_c, cond in enumerate(sorted(per_sub_avg[pupil_col].keys())):
+            # Convert to array (subjects x time)
+            data_array = np.array(per_sub_avg[pupil_col][cond])
+            grand_avg = np.nanmean(data_array, axis=0)
+            grand_error = np.nanstd(data_array, axis=0) / np.sqrt(len(sublist))
+            label_dict = {-1: 'Monostable', 1: 'Bistable'}
+            if condition == 'regime':
+                label = label_dict.get(cond, str(cond))
+            else:
+                label = str(cond)
+            axes[i_p].plot(t_bin_centers, grand_avg, color=colormap[i_c], linewidth=3, label=label)
+            axes[i_p].fill_between(t_bin_centers, grand_avg-grand_error,
+                                   grand_avg+grand_error, color=colormap[i_c], alpha=0.3)
+        axes[i_p].axvline(0, color='k', linestyle='--')
+        axes[i_p].axhline(0, color='k', linestyle='--')
+        axes[i_p].set_xlabel('Time from switch (s)')
+        axes[i_p].set_title(pupil_col, fontsize=15)
+        axes[i_p].spines['right'].set_visible(False)
+        axes[i_p].spines['top'].set_visible(False)
+    if xy_flag:
+        axes[0].set_ylabel('Distance')
+    else:
+        if velocity:
+            axes[0].set_ylabel('Pupil size velocity')
+        else:
+            axes[0].set_ylabel('Pupil size')
+    if pupil_col == 'vergence_angle':
+        axes[0].set_ylabel('Vergence angle (º)')
+    axes[0].legend(title='p(shuffle)', frameon=False)
+
+    fig.tight_layout()
+    if save_plot:
+        if noisy:
+            label_noisy = 'noise_trials_'
+            fig.suptitle('Noise trials', fontsize=16)
+        else:
+            label_noisy = 'hysteresis_trials_' + f'freq_{freq}_'
+            fig.suptitle('Hysteresis trials', fontsize=16)
+        fig.tight_layout()
+        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', label_noisy + plot_name)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=400, bbox_inches='tight')
+
+
+def plot_regression_subjects(data_folder=DATA_FOLDER,
+                             freq=2, noisy=False,
+                             t_before=1.25, t_after=1.25, compute=True,
+                             dt=1/60, align=True):
+    if noisy:
+        name_matrix = 'noise_trials_weight_matrix_linear_regression.npy'
+        name_intercept = 'noise_trials_intercept_linear_regression.npy'
+    else:
+        name_matrix = f'hysteresis_freq_{freq}_weight_matrix_linear_regression.npy'
+        name_intercept = f'hysteresis_freq_{freq}_intercept_linear_regression.npy'
+    path_shuffle_matrix = os.path.join(
+                        data_folder,
+                        'aligned_eye_tracker_data',
+                        name_matrix
+                        )
+    path_stim_matrix = os.path.join(
+        data_folder,
+        'aligned_eye_tracker_data',
+        'regression_weights',
+        'stim_' + name_matrix
+        )
+    path_abs_stim_matrix = os.path.join(
+        data_folder,
+        'aligned_eye_tracker_data',
+        'regression_weights',
+        'abs_stim_' + name_matrix
+        )
+    path_dstim_dt_matrix = os.path.join(
+        data_folder,
+        'aligned_eye_tracker_data',
+        'regression_weights',
+        'dstim_dt_' + name_matrix
+        )
+    path_intercept = os.path.join(
+        data_folder,
+        'aligned_eye_tracker_data',
+        'regression_weights',
+        name_intercept
+        )
+    if compute:
+        if noisy:
+            # --- Load behavioral data ---
+            df_all = load_data(data_folder=data_folder + '/noisy/', n_participants='all', filter_subjects=True)
+        else:
+            df_all = load_data(data_folder=data_folder, n_participants='all', filter_subjects=True)
+            if freq != 'all':
+                df_all = df_all.loc[df_all.freq == freq]
+        sublist = df_all.subject.unique()
+        shuffle_weights_matrix = []
+        stim_weights_matrix = []
+        abs_stim_weights_matrix = []
+        # dstim_dt_weights_matrix = []
+        intercept_all = []
+        for i_sub, sub in enumerate(sublist):
+            print('Subject ' + sub)
+            beta, pval, t, intercept = pupil_regression_raw_switches(
+                    data_folder=DATA_FOLDER,
+                    df_all=df_all,
+                    sublist=[sub],
+                    t_before=t_before,
+                    t_after=t_after, 
+                    noisy=noisy,
+                    align=align,
+                    regressors=('pShuffle', 'stimulus', 'abs_stimulus'), dt=dt)
+            shuffle_weights_matrix.append(beta['pShuffle'])
+            stim_weights_matrix.append(beta['stimulus'])
+            abs_stim_weights_matrix.append(beta['abs_stimulus'])
+            # dstim_dt_weights_matrix.append(beta['dstim_dt'])
+            intercept_all.append(intercept)
+        np.save(path_shuffle_matrix, shuffle_weights_matrix)
+        np.save(path_stim_matrix, stim_weights_matrix)
+        np.save(path_abs_stim_matrix, abs_stim_weights_matrix)
+        # np.save(path_dstim_dt_matrix, dstim_dt_weights_matrix)
+        np.save(path_intercept, intercept_all)
+    else:
+        shuffle_weights_matrix = np.load(path_shuffle_matrix, allow_pickle=True)
+        stim_weights_matrix = np.load(path_stim_matrix, allow_pickle=True)
+        abs_stim_weights_matrix = np.load(path_abs_stim_matrix, allow_pickle=True)
+        intercept_all = np.load(path_intercept, allow_pickle=True)
+        # dstim_dt_weights_matrix = np.load(path_dstim_dt_matrix, allow_pickle=True)
+    fig, ax = plt.subplots(ncols=4, figsize=(12, 4), sharey=True)
+    if align:
+        t_bins = np.arange(-t_before, t_after + dt, dt)
+    else:
+        t_bins = np.arange(0, 26 + dt, dt)
+    t = t_bins[:-1] + dt / 2
+    weights_matrices = np.array([intercept_all, shuffle_weights_matrix, stim_weights_matrix,
+                                 abs_stim_weights_matrix])
+    labels = ['Intercept', 'p(Shuffle)', 'Stimulus', '|Stimulus|', 'dstim/dt']
+    for i_a, a in enumerate(ax):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.axhline(0, color='gray', linestyle='--', alpha=0.4, linewidth=2)
+        a.axvline(0, color='gray', linestyle='--', alpha=0.4, linewidth=2)
+        a.plot(t, np.nanmean(weights_matrices[i_a], axis=0), color='k',
+                linewidth=4)
+        # for sub in range(weights_matrices[i_a].shape[0]):
+        #     a.plot(t, weights_matrices[i_a][sub], color='k', alpha=0.2)
+        significant = []
+        for i in range(len(t)):
+            weights_t = weights_matrices[i_a][:, i]
+            _, p = scipy.stats.ttest_1samp(weights_t, popmean=0)
+            significant.append(p < 0.05)
+        a.fill_between(t, -0.25, 0.25, where=significant, color='gray', alpha=0.2)
+        # n_boot = 1000
+        # boot_means = np.zeros((n_boot, len(t)))
+        # beta = weights_matrices[i_a]
+        # for b in range(n_boot):
+        #     sample_idx = np.random.choice(beta.shape[0], beta.shape[0], replace=True)
+        #     boot_means[b] = np.nanmean(beta[sample_idx], axis=0)
+
+        # lower = np.percentile(boot_means, 2.5, axis=0)
+        # upper = np.percentile(boot_means, 97.5, axis=0)
+        # a.fill_between(t, lower, upper, color='gray', alpha=0.3)
+
+        a.set_xlabel('Time before switch (s)')
+        a.set_ylabel(labels[i_a])
+    fig.suptitle('Regression weights (a.u.)', fontsize=15)
+    fig.tight_layout()
+
+
+def pupil_regression_raw_switches(
+    data_folder,
+    df_all,
+    sublist,
+    pupil_col='Pupil_average_clean',
+    regressors=('pShuffle', 'stimulus', 'abs_stimulus', 'time'),
+    n_training=8,
+    dt=1/60,
+    align=False,
+    t_before=0.5,
+    t_after=0.5,
+    noisy=False,
+    velocity=False,
+    n=4
+):
+
+    def get_switch_indices(responses):
+        responses = np.asarray(responses)
+        return np.where(responses[1:] != responses[:-1])[0] + 1
+
+    def extract_epoch(trial_eye, t_switch, pupil_col, align=True):
+        if align:
+            mask = (
+                (trial_eye['t_trial'] >= t_switch - t_before) &
+                (trial_eye['t_trial'] <= t_switch + t_after)
+            )
+        else:
+            mask = (
+                (trial_eye['t_trial'] >= 0) &
+                (trial_eye['t_trial'] <= 26))
+        if mask.sum() <= 1:
+            return None
+
+        pupil = trial_eye.loc[mask, pupil_col].values
+        stim = trial_eye.loc[mask, 'stimulus'].values
+        t_abs = trial_eye.loc[mask, 't_trial'].values
+        if align:
+            t_rel = trial_eye.loc[mask, 't_trial'].values - t_switch
+            # ker = np.exp(-np.arange(10)[::-1])
+            # pupil = np.convolve(pupil, ker/ker.sum(), mode='same')
+        else:
+            t_rel = t_abs.copy()
+
+
+        if velocity:
+            pupil = np.gradient(pupil)
+
+        return t_rel, pupil, stim, t_abs
+
+    raw_rows = []
+    if align:
+        t_bins = np.arange(-t_before, t_after + dt, dt)
+    else:
+        t_bins = np.arange(0, 26 + dt, dt)
+    t_centers = t_bins[:-1] + dt / 2
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    fitted_params_all = [np.load(par) for par in pars]
+    j0s = [n*params[1] for params in fitted_params_all]
+    j1s = [n*params[0] for params in fitted_params_all]
+    for i_sub, sub in enumerate(sublist):
+        df = df_all.loc[
+            (df_all.subject == sub) &
+            (df_all.trial_index > n_training)
+        ]
+
+        path_eye = os.path.join(
+            data_folder,
+            'aligned_eye_tracker_data',
+            f'{sub}_aligned_Gaze_Data.csv'
+        )
+        if not os.path.exists(path_eye):
+            continue
+
+        eyetracker_data = pd.read_csv(path_eye)
+
+        for ti in df.trial_index.unique():
+            trial_beh = df[df.trial_index == ti]
+
+            if noisy:
+                trial_resp = trial_beh.responses.values
+            else:
+                trial_resp = get_response_array(trial_beh)
+
+            if len(trial_resp) == 0:
+                continue
+
+            trial_eye = eyetracker_data[
+                eyetracker_data.trial_index == ti
+            ]
+            if trial_eye.empty:
+                continue
+            if align:
+                switch_idx = get_switch_indices(trial_resp)
+    
+                for swi in switch_idx:
+                    t_switch = swi * dt
+    
+                    out_avg = extract_epoch(trial_eye, t_switch, pupil_col)
+                    if out_avg is None or out_avg is None:
+                        continue
+    
+                    t, pupil, stim, t_abs = out_avg
+    
+                    pupil = zscore(pupil, nan_policy='omit')
+    
+                    bin_idx = np.digitize(t, t_bins) - 1
+    
+                    for i, b in enumerate(bin_idx):
+                        if b < 0 or b >= len(t_centers):
+                            continue
+                        pshuf = trial_beh['pShuffle'].iloc[0]
+                        # get regime: 1 if bistable 0 if monostable
+                        jeff = (1-pshuf)*j1s[i_sub] + j0s[i_sub]
+                        regime = (jeff > 1)*1
+                        raw_rows.append({
+                            't_bin': b,
+                            'time': t_abs[i],
+                            'pupil': pupil[i],
+                            'pShuffle': pshuf,  # -np.mean([0, 0.7, 1])
+                            'effective_coupling': jeff,
+                            'regime': regime,
+                            'stimulus': stim[i],
+                            'abs_stimulus': abs(stim[i]),
+                            'subject': sub,
+                            'abs_stim_regime': regime*abs(stim[i]),
+                            'dstim_dt': np.gradient(stim)[i]/dt,
+                            'dstim_dt_regime': np.gradient(stim)[i]/dt * regime
+                        })
+            else:
+                out_avg = extract_epoch(trial_eye, 0, pupil_col, align=align)
+                if out_avg is None or out_avg is None:
+                    continue
+
+                t, pupil, stim, t_abs = out_avg
+
+                pupil = zscore(pupil, nan_policy='omit')
+
+                bin_idx = np.digitize(t, t_bins) - 1
+                for i, b in enumerate(bin_idx):
+                    if b < 0 or b >= len(t_centers):
+                        continue
+                    pshuf = trial_beh['pShuffle'].iloc[0]
+                    # get regime: 1 if bistable 0 if monostable
+                    jeff = (1-pshuf)*j1s[i_sub] + j0s[i_sub]
+                    regime = (jeff > 1)*1
+                    raw_rows.append({
+                        't_bin': b,
+                        'time': t_abs[i],
+                        'pupil': pupil[i],
+                        'pShuffle': pshuf-np.mean([0, 0.7, 1]),
+                        'effective_coupling': jeff,
+                        'regime': regime,
+                        'stimulus': stim[i],
+                        'abs_stimulus': abs(stim[i]),
+                        'subject': sub,
+                        'abs_stim_regime': regime*abs(stim[i]),
+                        'dstim_dt': np.gradient(stim)[i]/dt,
+                        'dstim_dt_regime': np.gradient(stim)[i]/dt * regime
+                        
+                    })
+
+    raw_df = pd.DataFrame(raw_rows)
+
+    beta = {r: np.zeros(len(t_centers)) for r in regressors}
+    pval = {r: np.zeros(len(t_centers)) for r in regressors}
+    intercept = np.zeros(len(t_centers))
+
+    for b in range(len(t_centers)):
+        df_b = raw_df[raw_df.t_bin == b]
+        if len(df_b) < len(regressors) + 2:
+            for r in regressors:
+                beta[r][b] = np.nan
+                pval[r][b] = np.nan
+            intercept[b] = np.nan
+            continue
+
+        y = zscore(df_b['pupil'].values, nan_policy='omit')
+        X = df_b[list(regressors)].values
+        X = sm.add_constant(X)
+
+        res = sm.OLS(y, X, missing='drop').fit()
+
+        intercept[b] = res.params[0]
+        for i, r in enumerate(regressors):
+            beta[r][b] = res.params[i + 1]
+            pval[r][b] = res.pvalues[i + 1]
+
+    return beta, pval, t_centers, intercept
+
+
+def plot_xy_heatmap_fixation(data_folder=DATA_FOLDER, sub='s_1'):
+    path_eye = os.path.join(
+        data_folder,
+        'aligned_eye_tracker_data',
+        f'{sub}_aligned_Gaze_Data.csv'
+    )
+    eyetracker_data = pd.read_csv(path_eye)
+    x_right = eyetracker_data['RightEye_X']
+    y_right = eyetracker_data['RightE_Y']
+    x_left = eyetracker_data['LeftEye_X']
+    y_left = eyetracker_data['LeftEye_Y']
+    x = np.nanmean([x_left, x_right], axis=0)
+    y = np.nanmean([y_left, y_right], axis=0)
+    x_centered = x - 0.5
+    y_centered = y - 0.5
+    idx_non_nan = (~np.isnan(x_centered))*(~np.isnan(y_centered))
+    x_centered = x_centered[idx_non_nan]
+    y_centered = y_centered[idx_non_nan]
+    heatmap, xedges, yedges = np.histogram2d(x_centered, y_centered, bins=100,
+                                             range=[[-1, 1], [-1, 1]], normed=True)
+    plt.figure()
+    plt.imshow(heatmap.T, origin='lower', cmap='hot',
+               extent = [-1, 1, -1, 1],
+               aspect='auto')
+    plt.xlabel('X (a.u.)')
+    plt.ylabel('Y (a.u.)')
+    plt.title('Gaze heatmap')
+    plt.tight_layout()
+    plt.colorbar(label='Gaze density')
+    plt.show()
+
+
+def plot_xy_heatmap_switch(data_folder=DATA_FOLDER, pshuffle='all',
+                           t_before=1.0, t_after=1.0, dt=1/60,
+                           sublist=None, noisy=False, freq=2):
+    if noisy:
+        df_all = load_data(data_folder=data_folder + '/noisy/', n_participants='all', filter_subjects=True)
+    else:
+        df_all = load_data(data_folder=data_folder, n_participants='all', filter_subjects=True)
+        if freq != 'all':
+            df_all = df_all.loc[df_all.freq == freq]
+    if sublist is None:
+        sublist = df_all.subject.unique()
+
+    # --- Helper functions ---
+    def get_switch_indices(responses):
+        responses = np.array(responses)
+        return np.where(responses[1:] != responses[:-1])[0] + 1
+
+    heatmaps_per_cond = {}
+
+    for sub in sublist:
+        df = df_all.loc[df_all.subject == sub]
+        if pshuffle != 'all':
+            df = df.loc[df.pShuffle == pshuffle]
+        path_eye = os.path.join(data_folder, 'aligned_eye_tracker_data', f'{sub}_aligned_Gaze_Data.csv')
+        if not os.path.exists(path_eye):
+            continue
+        trial_data = pd.read_csv(path_eye)
+
+        conditions = np.sort(df['pShuffle'].unique())
+
+        for cond in conditions:
+            df_cond = df[df['pShuffle'] == cond]
+            # --- Collect all gaze points around switches ---
+            x_all = []
+            y_all = []
+
+            for ti in df_cond.trial_index.unique():
+                trial_beh = df_cond[df_cond.trial_index == ti]
+                trial_eye = trial_data[trial_data.trial_index == ti]
+                if trial_eye.empty:
+                    continue
+
+                # responses
+                if noisy:
+                    trial_resp = trial_beh.responses.values
+                else:
+                    trial_resp = get_response_array(trial_beh)
+
+                switch_idx = get_switch_indices(trial_resp)
+                for swi in switch_idx:
+                    t_switch = swi * dt
+                    mask = (trial_eye['t_trial'] >= t_switch - t_before) & (trial_eye['t_trial'] <= t_switch + t_after)
+                    if mask.sum() == 0:
+                        continue
+
+                    x_trial = np.nanmean([trial_eye.loc[mask, 'LeftEye_X'],
+                                          trial_eye.loc[mask, 'RightEye_X']], axis=0)
+                    y_trial = np.nanmean([trial_eye.loc[mask, 'LeftEye_Y'],
+                                          trial_eye.loc[mask, 'RightE_Y']], axis=0)
+
+                    x_all.append(x_trial)
+                    y_all.append(y_trial)
+
+            if len(x_all) == 0:
+                continue
+
+            # --- Concatenate all trials for this condition ---
+            x_all = np.concatenate(x_all)
+            y_all = np.concatenate(y_all)
+            idx_valid = (~np.isnan(x_all)) & (~np.isnan(y_all))
+            x_all = x_all[idx_valid]
+            y_all = y_all[idx_valid]
+
+            # --- Compute heatmap ---
+            heatmap, xedges, yedges = np.histogram2d(x_all, y_all, bins=100, range=[[0,1],[0,1]])
+            heatmaps_per_cond[cond] = heatmaps_per_cond.get(cond, []) + [heatmap]
+    # --- Average across subjects ---
+    avg_heatmaps = {}
+    for cond, heatmaps in heatmaps_per_cond.items():
+        avg_heatmaps[cond] = np.mean(np.stack(heatmaps), axis=0)
+
+    nconds = len(avg_heatmaps)
+    fig, axes = plt.subplots(1, nconds, figsize=(5*nconds, 5))
+
+    if nconds == 1:
+        axes = [axes]
+
+    for i, (cond, heatmap) in enumerate(sorted(avg_heatmaps.items())):
+        ax = axes[i]
+        im = ax.imshow(
+            heatmap.T, origin='lower', cmap='hot',
+            extent=[0,1,0,1], aspect='equal'
+        )
+        ax.set_title(f'Condition: {cond}')
+        ax.set_xlabel('X gaze')
+        ax.set_ylabel('Y gaze')
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label='Gaze density')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_gaze_heatmap_video(
+    data_folder=DATA_FOLDER,
+    sublist=['s_1'],
+    pshuffle='all',
+    dt=1/60,
+    t_before=1.0,
+    t_after=1.0,
+    bins=100,
+    smooth_sigma=1,
+    save_name='gaze_video.gif',
+    fps=30,
+    condition='pShuffle',
+    freq=2,
+    noisy=False
+):
+    """
+    Plot and save a heatmap video of gaze over time aligned to perceptual switches.
+    Averaging across subjects after computing per-subject heatmaps.
+    """
+    # --- Load behavioral data ---
+    if noisy:
+        df_subs = load_data(data_folder=data_folder + '/noisy/', n_participants='all', filter_subjects=True)
+    else:
+        df_subs = load_data(data_folder=data_folder, n_participants='all', filter_subjects=True)
+        if freq != 'all':
+            df_subs = df_subs.loc[df_subs.freq == freq]
+    if sublist is None:
+        sublist = df_subs.subject.unique()
+    if not noisy:
+        save_path = data_folder + '/aligned_eye_tracker_data/plots/' f'hysteresis_pshuf_{pshuffle}_freq_{freq}_' + save_name
+    if noisy: 
+        save_path = data_folder + '/aligned_eye_tracker_data/plots/' f'noise_pshuf_{pshuffle}_' + save_name
+    # Time frames
+    t_frames = np.arange(-t_before, t_after, dt)
+    n_frames = len(t_frames)
+
+    # Storage per subject
+    subject_heatmaps = []
+
+    # --- Loop over subjects ---
+    for sub in sublist:
+        df_all = df_subs.loc[df_subs.subject == sub]
+        if pshuffle != 'all':
+            df_all = df_all[df_all['pShuffle'] == pshuffle]
+
+        # Load eye-tracker data
+        path_eye = os.path.join(data_folder, 'aligned_eye_tracker_data', f'{sub}_aligned_Gaze_Data.csv')
+        if not os.path.exists(path_eye):
+            continue
+        eye_data = pd.read_csv(path_eye)
+
+        # Initialize heatmaps per frame for this subject
+        heatmaps = np.zeros((n_frames, bins, bins))
+
+        n_epochs = 0
+        for trial_idx in df_all.trial_index.unique():
+            trial_beh = df_all[df_all.trial_index == trial_idx]
+            trial_eye = eye_data[eye_data.trial_index == trial_idx]
+            if trial_eye.empty:
+                continue
+
+            # Responses
+            if noisy:
+                trial_resp = trial_beh.responses.values
+            else:
+                trial_resp = get_response_array(trial_beh)
+
+            switch_idx = np.where(np.diff(trial_resp) != 0)[0] + 1
+            for swi in switch_idx:
+                t_switch = swi * dt
+                mask = (trial_eye['t_trial'] >= t_switch - t_before) & (trial_eye['t_trial'] <= t_switch + t_after)
+                if mask.sum() == 0:
+                    continue
+
+                # Average eyes
+                x = np.nanmean([trial_eye['LeftEye_X'][mask], trial_eye['RightEye_X'][mask]], axis=0)
+                y = np.nanmean([trial_eye['LeftEye_Y'][mask], trial_eye['RightE_Y'][mask]], axis=0)
+                t_rel = trial_eye['t_trial'][mask].values - t_switch
+
+                # Interpolate to uniform frames
+                x_interp = np.interp(t_frames, t_rel, x)
+                y_interp = np.interp(t_frames, t_rel, y)
+
+                # Compute heatmap per frame
+                for i_frame in range(n_frames):
+                    valid = (~np.isnan(x_interp[i_frame])) & (~np.isnan(y_interp[i_frame]))
+                    if valid:
+                        h, _, _ = np.histogram2d(
+                            [x_interp[i_frame]], [y_interp[i_frame]], bins=bins, range=[[0,1],[0,1]]
+                        )
+                        heatmaps[i_frame] += h
+                n_epochs += 1
+
+        if n_epochs > 0:
+            # Normalize per subject
+            heatmaps /= n_epochs
+            # Smooth
+            # heatmaps = gaussian_filter(heatmaps, sigma=(0, smooth_sigma, smooth_sigma))
+            subject_heatmaps.append(heatmaps)
+
+    # --- Average across subjects ---
+    avg_heatmaps = np.mean(subject_heatmaps, axis=0)
+
+    # --- Plot video ---
+    fig, ax = plt.subplots(figsize=(6,6))
+    vmin, vmax = 0, np.max(avg_heatmaps)
+
+    def update(frame_idx):
+        ax.clear()
+        im = ax.imshow(avg_heatmaps[frame_idx].T, origin='lower', cmap='hot',
+                       extent=[0,1,0,1], vmin=vmin, vmax=vmax)
+        ax.set_title(f'Time: {t_frames[frame_idx]:.2f}s, p(shuffle)={pshuffle}', fontsize=12)
+        ax.set_xlabel('X gaze')
+        ax.set_ylabel('Y gaze')
+        return [im]
+
+    ani = animation.FuncAnimation(fig, update, frames=n_frames, blit=False)
+
+    ani.save(save_path, fps=fps, dpi=150, writer='pillow')
+    plt.close(fig)
+    print(f'Video saved to {save_path}')
+
+
+
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
+    # plot_regression_subjects(data_folder=DATA_FOLDER,
+    #                          freq=2, noisy=False,
+    #                          t_before=1., t_after=1., compute=True,
+    #                          dt=1/60, align=True)
+    # plot_regression_subjects(data_folder=DATA_FOLDER,
+    #                               freq=4, noisy=False,
+    #                               t_before=1., t_after=1., compute=True,
+    #                               dt=1/60, align=True)
+    # plot_regression_subjects(data_folder=DATA_FOLDER,
+    #                               freq=2, noisy=True,
+    #                               t_before=1., t_after=1., compute=True,
+    #                               dt=1/60, align=True)
     # experiment_example(nFrame=1560, fps=60, noisyframes=15)
     # plot_noise_variables_vs_fitted_params(n=4, variable='amplitude')
     # ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=10, fps=60,
@@ -8840,17 +10068,22 @@ if __name__ == '__main__':
     # simple_optimal_eta_quartic_potential(a=1.5)
     # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
     #                             tFrame=26, fps=60,
-    #                             steps_back=200, steps_front=20, avoid_first=True,
+    #                             steps_back=200, steps_front=100, avoid_first=True,
     #                             n=4, load_simulations=True, normalize=False, sigma=None,
-    #                             pshuf_only=None)
+    #                             pshuf_only=None, bis_mono='Monostable')
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=60,
+    #                             steps_back=200, steps_front=100, avoid_first=True,
+    #                             n=4, load_simulations=True, normalize=False, sigma=None,
+    #                             pshuf_only=None, bis_mono='Bistable')
     # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
     #                             tFrame=26, fps=60,
     #                             steps_back=200, steps_front=20, avoid_first=True,
     #                             n=4, load_simulations=True, normalize=False, sigma=0,
-    #                             pshuf_only=None)
-    compare_likelihoods_models(load=True, loss='AIC')
-    compare_likelihoods_models(load=True, loss='BIC')
-    compare_likelihoods_models(load=True, loss='NLH')
+    #                             pshuf_only=0.)
+    # compare_likelihoods_models(load=True, loss='AIC')
+    # compare_likelihoods_models(load=True, loss='BIC')
+    # compare_likelihoods_models(load=True, loss='NLH')
     # plot_kernel_different_regimes(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                               steps_back=120, steps_front=20,
     #                               shuffle_vals=[1, 0.7, 0],
