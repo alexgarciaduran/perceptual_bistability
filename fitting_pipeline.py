@@ -262,7 +262,7 @@ class optimization:
         log_term = np.log(1 + np.exp(exp_term))  # Shape: (500, 100)
 
         # Vectorized potential (pot_mf_i) for all i and all q
-        pot_mf = np.where(np.abs(j) > 1e-2, (q*q) / 2 - log_term / (4* n * j),
+        pot_mf = np.where(np.abs(j) > 1e-5, (q*q) / 2 - log_term / (4* n * j),
                           q*q/2 - q*sigmoid(2*b))
 
         # stable Boltzmann factor: subtract row-wise max
@@ -279,7 +279,7 @@ class optimization:
         j = np.array(j).reshape(-1)  # Reshape j to shape (500, 1)
         b = np.array(b).reshape(-1)  # Reshape b to shape (500, 1)
         pot_mf_fun = lambda q: np.where(
-                            np.abs(j) > 1e-2,
+                            np.abs(j) > 1e-5,
                             q*q/2 - np.log(1+np.exp(2*n*(j*(2*q-1))+b*2))/(4*n*j), 
                             q*q/2 - q*sigmoid(2*b))
         bmann_distro_log = lambda potential: -2*np.array(potential) / (noise*noise)
@@ -416,9 +416,9 @@ class optimization:
             if method != 'BADS':
                 bounds = Bounds([0., -0.2, -.8, 0.1], [0.6, 1, .8, 0.4])
             if method == 'BADS':
-                lb = [-0.5, -0.2, -0.8, 0.01]
+                lb = [-0.5, -0.2, -0.8, 0.05]
                 ub = [1., 1.5, 0.8, 0.4]
-                plb = [-0.1, 0.1, -0.6, 0.08]
+                plb = [-0.1, 0.1, -0.6, 0.12]
                 pub = [0.8, 0.9, 0.6, 0.35]
         if model == 'MF5':
             fun = self.nlh_boltzmann_mf
@@ -426,9 +426,9 @@ class optimization:
             if method != 'BADS':
                 bounds = Bounds([0., -0.4, -0.2, -.8, 0.1], [0.6, 0.6, 1, .8, 0.4])
             if method == 'BADS':
-                lb = [-0.5, -0.5, -0.2, -0.8, 0.01]
+                lb = [-0.5, -0.5, -0.2, -0.8, 0.05]
                 ub = [1., 1., 1.5, 0.8, 0.4]
-                plb = [-0.1, -0.1, 0.1, -0.6, 0.08]
+                plb = [-0.1, -0.1, 0.1, -0.6, 0.12]
                 pub = [0.8, 0.8, 0.9, 0.6, 0.35]
         if model == 'MF_PR':
             fun = self.nlh_boltzmann_mf_prev_response
@@ -624,7 +624,7 @@ def fit_data(optimizer, plot=True, model='MF', n_iters=200, method='nelder-mead'
         j0 = np.random.uniform(0., 0.6)
         b10 = np.random.uniform(0.1, 0.8)
         bias0 = np.random.uniform(-0.5, 0.5)
-        noise0 = np.random.uniform(0.12, 0.3)
+        noise0 = np.random.uniform(0.15, 0.3)
         if model == 'FBP':
             alpha0 = np.random.uniform(0.1, 1.4)
             x0 = [j0, b10, bias0, noise0, alpha0]
@@ -2124,13 +2124,13 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         ax[a].text(2, h_null[a]+0.1, f"{pvals_null[a]}", ha='center', va='bottom', color='k',
                    fontsize=12)
         x1, x2 = [0+eps, 1-eps]
-        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_o[a]).pvalue)
+        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_o[a]).pvalue*3)  # bonferroni correction
         y, h, col = max(map(max, np.column_stack((weights_o[a],
                                                   weights_model_o[a]))))+0.4, 0.05, 'k'
         ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
         ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
                    fontsize=12)
-        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_null[a]).pvalue)
+        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_null[a]).pvalue*3)  # bonferroni correction
         x1, x2 = [0-eps, 2+eps]
         y, h, col = max(map(max, np.column_stack((weights_o[a],
                                                   weights_model_o[a]))))+0.65, 0.05, 'k'
@@ -2138,6 +2138,7 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
                    fontsize=12)
         x1, x2 = [1+eps, 2-eps]
+        p = stars_pval(scipy.stats.ttest_rel(weights_model_o[a],  weights_model_null[a]).pvalue*3)  # bonferroni correction
         y, h, col = max(map(max, np.column_stack((weights_o[a],
                                                   weights_model_o[a]))))+0.4, 0.05, 'k'
         ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
@@ -3139,7 +3140,7 @@ if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='MF', method='BADS')
     # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=10, extra='null')
-    fit_subjects(method=opt_algorithm, model='MF5', data_augmen=False, n_init=10, extra='')
+    # fit_subjects(method=opt_algorithm, model='MF5', data_augmen=False, n_init=10, extra='')
     # fit_subjects(method=opt_algorithm, model='MF_PR', data_augmen=False, n_init=10, extra='null')
     # fit_subjects(method=opt_algorithm, model='MF5_PR', data_augmen=False, n_init=10, extra='')
     # simulate_subjects(sv_folder=SV_FOLDER, model='MF5', resimulate=True,
@@ -3150,9 +3151,13 @@ if __name__ == '__main__':
     #                   plot_subs=False)
     # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                     subjects='separated')
-    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-                                    bic=True, dots=True)
+    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
+    #                                bic=False, dots=True)
+    # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
+    #                                    data_only=True)
     # plot_all_subjects()
+    # plot_all_subjects(xvar='stim_ev_cong')
+    psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=True)
