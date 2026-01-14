@@ -3156,7 +3156,7 @@ if __name__ == '__main__':
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                    data_only=True)
     # plot_all_subjects()
-    # plot_all_subjects(xvar='stim_ev_cong')
+    plot_all_subjects(xvar='stim_ev_cong')
     psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
