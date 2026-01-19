@@ -2626,10 +2626,11 @@ def plot_all_subjects(xvar='stim_ev_cong'):
     # Plot
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
-    colormap = ['midnightblue', 'royalblue', 'lightskyblue']
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    df_subject_avg['pShuffle'] = df_subject_avg['pShuffle']/100
     sns.lineplot(data=df_subject_avg, x='stim_ev_cong', y='zscore_abs_confidence', hue='pShuffle', ax=ax2,
                  errorbar=('se'), palette=colormap, legend=True,
-                 linewidth=4)
+                 linewidth=4, hue_order=[1., 0.7, 0.])
     ax2.legend(frameon=False, title='p(shuffle)')
     # Perform statistical tests at each stim_ev_cong level
     alpha = 0.01  # Significance threshold
@@ -2691,10 +2692,11 @@ def psychometric_curve_all_subjects():
     resp = (np.sign(all_df['confidence'].values)+1)/2
     all_df['response'] = resp
     vals = all_df.groupby(['subject', 'evidence', 'pShuffle'])['response'].mean().reset_index()
-    colormap = ['midnightblue', 'royalblue', 'lightskyblue']
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    vals['pShuffle'] = vals['pShuffle']/100
     sns.lineplot(data=vals, x='evidence', y='response', hue='pShuffle', ax=ax,
                  errorbar=('se'), palette=colormap, legend=True,
-                 linewidth=4)
+                 linewidth=4, hue_order=[1., 0.7, 0.])
     ax.legend(frameon=False, title='p(shuffle)')
     ax.set_xlabel('Depth cue, s')
     ax.set_ylabel('p(right)')
@@ -3151,13 +3153,13 @@ if __name__ == '__main__':
     #                   plot_subs=False)
     # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                     subjects='separated')
-    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-    #                                bic=False, dots=True)
+    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
+                                    bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                    data_only=True)
     # plot_all_subjects()
-    plot_all_subjects(xvar='stim_ev_cong')
-    psychometric_curve_all_subjects()
+    # plot_all_subjects(xvar='stim_ev_cong')
+    # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=True)
@@ -3180,7 +3182,7 @@ if __name__ == '__main__':
     #                     band_width=0.7)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF', method=opt_algorithm,
     #                     band_width=0.7, sort_by_j=True)
-    # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_18', plot_all=False,
+    # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_23', plot_all=False,
     #                         bw=0.8, annot=False, model_density=True,
     #                         orient='Horizontal')  # good: 11, 7, 15, 18, 23, 30  --> 23 instead of 11
     # 15 is good for abs_confidence, 18 good for confidence
