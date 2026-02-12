@@ -5389,16 +5389,20 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
         fig.savefig(DATA_FOLDER + 'interneuronal_correlation_barplot.pdf', dpi=400, bbox_inches='tight')
 
 
-def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
-                             shift=0, jump=20, nreps=100, b1=0):
+def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1, tau=0.2,
+                             shift=0, jump=20, nreps=100, b1=0, add_symetric_RM=False):
     time = np.arange(0, t_dur+dt, dt)
-    np.random.seed(1234)
-    # W = np.random.randn(100, 100)
-    # W = (W + W.T) / 2   # make it symmetric
+    np.random.seed(1000)
     theta = get_regular_graph()
+    if add_symetric_RM:
+        W = np.random.randn(100, 100)
+        W = (W + W.T) / 2   # make it symmetric
+        theta = theta + W
     averages = np.zeros((2, theta.shape[0], nreps))
     neighbor_averages = np.zeros((2, nreps))
     single_averages = np.zeros((2, nreps))
+    t_cte = dt/tau
+    t_cte_noise = sigma*np.sqrt(t_cte)
     for simulation_id in tqdm(range(nreps)):
         vec1 = np.random.rand(theta.shape[0])
         vec2 = np.random.rand(theta.shape[0])
@@ -5407,8 +5411,8 @@ def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
         noise1 = np.random.randn(len(time)+shift, theta.shape[0])
         noise2 = np.random.randn(len(time)+shift, theta.shape[0])
         for t in range(len(time)+shift):
-            vec1 = vec1 + dt*(gn.sigmoid(2*j1*np.matmul(theta, 2*vec1-1)+2*b1*np.random.rand())-vec1)/0.2 + sigma*np.sqrt(dt/0.2)*noise1[t]
-            vec2 = vec2 + dt*(gn.sigmoid(2*j0*np.matmul(theta, 2*vec2-1)+2*b1*np.random.rand())-vec2)/0.2 + sigma*np.sqrt(dt/0.2)*noise2[t]
+            vec1 = vec1 + t_cte*(gn.sigmoid(2*j1*np.matmul(theta, 2*vec1-1)+2*b1*np.random.rand())-vec1) + t_cte_noise*noise1[t]
+            vec2 = vec2 + t_cte*(gn.sigmoid(2*j0*np.matmul(theta, 2*vec2-1)+2*b1*np.random.rand())-vec2) + t_cte_noise*noise2[t]
             if t >= shift:
                 vec1_arr[:, t-shift] = vec1
                 vec2_arr[:, t-shift] = vec2
@@ -5453,7 +5457,7 @@ def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
     for i_a, a in enumerate([ax[1, 1], ax[1, 0]]):
         a.plot([-3, 3], [-3, 3], color='gray', linestyle='--',
                alpha=0.7, linewidth=3)
-        a.annotate(f'r = {corrs[i_a]:.3f}\np={pvals[i_a]:.2e}', xy=(.04, 0.9), xycoords=ax.transAxes)
+        a.annotate(f'r = {corrs[i_a]:.3f}', xy=(.04, 0.9), xycoords=a.transAxes)
         a.set_xlabel('Single unit')
     
     ax[1, 1].plot(x1, y1,
@@ -6319,5 +6323,5 @@ if __name__ == '__main__':
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
-    plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.3, dt=1e-3, sigma=0.1,
-                             shift=0, jump=20, nreps=400)
+    plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.25, dt=1e-3, sigma=0.1,
+                             shift=0, jump=20, nreps=200, tau=0.5)
