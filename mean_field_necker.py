@@ -13,6 +13,7 @@ import os
 import gibbs_necker as gn
 from scipy.optimize import fsolve, curve_fit
 from scipy.integrate import solve_ivp
+from scipy.stats import zscore, pearsonr
 import numpy as np
 import matplotlib.pylab as pl
 import matplotlib as mpl
@@ -1528,7 +1529,7 @@ def solution_mf_sdo(j, b, theta, noise, tau):
 
 
 def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2,
-                          ini_cond=None):
+                          ini_cond=None, add_extra_shared_input=False):
     time = np.arange(0, time_end+dt, dt)
     if ini_cond is None:
         x = np.random.rand(theta.shape[0])  # initial_cond
@@ -1541,7 +1542,10 @@ def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2,
     noise_vec = np.random.randn(time.shape[0], theta.shape[0])*t_cte_noise*noise
     for t in range(1, time.shape[0]):
         x = x + dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1)) + 2*b) - x)/ tau +\
-            noise_vec[t] + np.random.randn()*0.05*t_cte_noise        # x = np.clip(x, 0, 1)
+            noise_vec[t]        # x = np.clip(x, 0, 1)
+        if add_extra_shared_input:
+            x = x + np.random.randn()*0.05*t_cte_noise
+        # cte input,  
         x_vec[t, :] = x  # np.clip(x, 0, 1)
     return time, x_vec
 
@@ -1564,7 +1568,7 @@ def solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau, time_end=50, dt=1e-2
     n_neighs = np.matmul(theta, np.ones(theta.shape[0]))
     for t in range(1, time.shape[0]):
         x_n = (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-n_neighs) + 2*b) - x)) / tau
-        ou_val = dt*(-ou_val / tau_n) + (np.random.randn(theta.shape[0])*noise*np.sqrt(dt/tau_n))
+        ou_val = ou_val + dt*(-ou_val / tau_n) + (np.random.randn(theta.shape[0])*noise*np.sqrt(dt/tau_n))
         x = x + x_n + ou_val
         # x = np.clip(x, 0, 1)
         x_vec[t, :] = x  # np.clip(x, 0, 1)
@@ -2573,35 +2577,35 @@ def accuracy_vs_noise(t_dur, noiselist=np.arange(0.001, 0.5, 1e-3),
             accuracy_0[ij, i_n] = pc0
             prob_trans_corr[ij, i_n] = pCE  # np.max((pC, 1-pC))
             prob_trans_incorr[ij, i_n] = pEC
-        deltap = []
-        for ij2, j2 in enumerate(jlist2):
-            x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
-            if b < 0:
-                x_stable_2, x_stable_1 = x_stable_1, x_stable_2
-            if np.abs(x_stable_1 - x_stable_2) <= tol:
-                continue
-            # P_{C, 0} = int_{x_E, x_0} exp(2V(x)/sigma^2) dx /
-            #            int_{x_E, x_C} exp(2V(x)/sigma^2) dx
-            pc0_numerator = scipy.integrate.quad(lambda q: np.exp(2*potential_mf(q, j, b)/noise**2),
-                                                 x_stable_2, init_cond)[0]
-            pc0_denom = scipy.integrate.quad(lambda q: np.exp(2*potential_mf(q, j, b)/noise**2),
-                                             x_stable_2, x_stable_1)[0]
-            pc0 = pc0_numerator/pc0_denom
-            # compute error transition rates k_CE, K_EC
-            k_EC = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
-            k_CE = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
-            k = k_EC+k_CE
-            pCS = k_CE/k  # stationary correct
-            # correct to error transition
-            pEC = (1-pCS)*(1-np.exp(-k*t_dur))
-            # error to correct transition
-            pCE = pCS*(1-np.exp(-k*t_dur))
-            # correct to correct
-            pCC = pCS*(1-np.exp(-k*t_dur))+np.exp(-k*t_dur)
-            # probability of correct
-            pC = pc0*pCC + (1-pc0)*pCE
-            deltap.append(pCE-pEC)
-        peakvals[ij2] = np.argmax(deltap)
+        # deltap = []
+        # for ij2, j2 in enumerate(jlist2):
+        #     x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
+        #     if b < 0:
+        #         x_stable_2, x_stable_1 = x_stable_1, x_stable_2
+        #     if np.abs(x_stable_1 - x_stable_2) <= tol:
+        #         continue
+        #     # P_{C, 0} = int_{x_E, x_0} exp(2V(x)/sigma^2) dx /
+        #     #            int_{x_E, x_C} exp(2V(x)/sigma^2) dx
+        #     pc0_numerator = scipy.integrate.quad(lambda q: np.exp(2*potential_mf(q, j, b)/noise**2),
+        #                                          x_stable_2, init_cond)[0]
+        #     pc0_denom = scipy.integrate.quad(lambda q: np.exp(2*potential_mf(q, j, b)/noise**2),
+        #                                      x_stable_2, x_stable_1)[0]
+        #     pc0 = pc0_numerator/pc0_denom
+        #     # compute error transition rates k_CE, K_EC
+        #     k_EC = k_i_to_j(j, x_stable_1, x_unstable, noise, b)
+        #     k_CE = k_i_to_j(j, x_stable_2, x_unstable, noise, b)
+        #     k = k_EC+k_CE
+        #     pCS = k_CE/k  # stationary correct
+        #     # correct to error transition
+        #     pEC = (1-pCS)*(1-np.exp(-k*t_dur))
+        #     # error to correct transition
+        #     pCE = pCS*(1-np.exp(-k*t_dur))
+        #     # correct to correct
+        #     pCC = pCS*(1-np.exp(-k*t_dur))+np.exp(-k*t_dur)
+        #     # probability of correct
+        #     pC = pc0*pCC + (1-pc0)*pCE
+        #     deltap.append(pCE-pEC)
+        # peakvals[ij2] = np.argmax(deltap)
     fig, ax = plt.subplots(ncols=3, figsize=(12, 5))
     colors = ['k', 'r', 'b']
     for a in ax:
@@ -4410,6 +4414,7 @@ def plot_mf_sims_8d(j=2, b=0, theta=theta, noise=0,
     n = 0
     colors = ['k', 'r']  # non-neighbor, neighbor,
     mat_diagonal_inside_cube = np.flipud(np.identity(theta.shape[0], dtype=int))
+    fig.tight_layout()
     for i, j in combs:
         color = colors[theta[i, j]]
         if mat_diagonal_inside_cube[i, j]:
@@ -4434,10 +4439,9 @@ def plot_mf_sims_8d(j=2, b=0, theta=theta, noise=0,
                       Line2D([0], [0], color='g', lw=2, label='diagonal cube'),
                       Line2D([0], [0], color='r', lw=2, label='neighbors')]
     ax[0].legend(handles=legendelements, frameon=False)
-    fig.tight_layout()
 
 
-def calc_min_action_path_and_plot(j=0.5, b=0, noise=0.1, theta=theta, steps=20000,
+def calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=20000,
                                   tol_stop=1e-2, numiters=500, dt=5e-3):
     t, x, xs, x_unstable, action_vals = minimum_action_path(j, b, noise, theta=theta, numiters=numiters, dt=dt,
                                                             steps=steps, tol_stop=tol_stop)
@@ -4545,8 +4549,8 @@ def calc_min_action_path_and_plot(j=0.5, b=0, noise=0.1, theta=theta, steps=2000
         if mat_diagonal_inside_cube[i, j]:
             color = 'g'
         ax[n].plot(x[:, i].detach().numpy(), x[:, j].detach().numpy(), color=color)
-        ax[n].set_xlabel('q_'+ str(i+1))
-        ax[n].set_ylabel('q_'+str(j+1))
+        ax[n].set_xlabel(rf'$q_{i+1}$')
+        ax[n].set_ylabel(rf'$q_{j+1}$')
         n += 1
         ax2.plot(x[:, i].detach().numpy(), x[:, j].detach().numpy(), color='k')
         if theta[i, j]:
@@ -4893,7 +4897,7 @@ def bifurcation_hierarchical(b=0, varchange='descending'):
     plt.ylabel('Percept')
 
 
-def bcrit(j_list=np.arange(0, 1, 1e-3), n=3.92):
+def bcrit(j_list=np.arange(0, 1, 1e-3), n=4):
     delta = np.sqrt(1-1/(j_list*n))
     b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_list*delta)/2
     b_crit2 = (np.log((1+delta)/(1-delta))-2*n*j_list*delta)/2
@@ -5104,12 +5108,134 @@ def compute_time_resolved_cp(X, y, time_axis=2, cv_splits=10):
     return cp_time
 
 
+def compute_rCCG(X, theta, dt=0.01, max_lag=1.0):
+    """
+    Compute rCCG (relative cross-correlogram) for continuous signals.
+
+    Parameters
+    ----------
+    X : array [M, N, T]
+        Activity (trials x neurons x timepoints)
+    theta : array [N, N]
+        Binary mask for neuron pairs to include
+    dt : float
+        Time step of X
+    max_lag : float
+        Maximum lag (seconds) to compute
+
+    Returns
+    -------
+    lags : array [2*max_steps + 1]
+        Time lags in seconds
+    rCCG_vals : array [2*max_steps + 1]
+        rCCG averaged over selected neuron pairs
+        Bounded between -1 and 1
+    """
+    M, N, T = X.shape
+    max_steps = int(max_lag / dt)
+    lags = np.arange(-max_steps, max_steps + 1) * dt
+
+    # Demean signals per trial & neuron
+    X0 = X - X.mean(axis=2, keepdims=True)
+
+    # Precompute std per neuron across trials & time
+    stds = X0.std(axis=(0,2)) + 1e-12  # avoid divide by zero
+
+    # Preallocate CCG: [N, N, lags]
+    CCG = np.zeros((N, N, len(lags)))
+
+    # Compute cross-correlation for each pair (averaged across trials)
+    for i in range(N):
+        for j in range(N):
+            corr_trials = np.array([
+                np.correlate(X0[m,i], X0[m,j], mode='full') for m in range(M)
+            ])
+            # Average over trials
+            corr_mean = corr_trials.mean(axis=0) / T
+            mid = corr_mean.size // 2
+            CCG[i,j,:] = corr_mean[mid - max_steps : mid + max_steps + 1]
+
+    # Normalize each pair by product of stds → correlation
+    for i in range(N):
+        for j in range(N):
+            CCG[i,j,:] /= (stds[i] * stds[j])
+
+    # Only keep pairs selected by theta
+    theta_bool = theta.astype(bool)
+    np.fill_diagonal(theta_bool, 0)  # exclude self-pairs
+
+    i_idx, j_idx = np.where(theta_bool)
+
+    # Compute rCCG as average over selected pairs
+    rCCG_vals = CCG[i_idx, j_idx, :].mean(axis=0)
+
+    return lags, rCCG_vals
+
+
+def plot_cross_correlogram(sigma=0.2, nsims=50,
+                           j_list=[0.1, 0.33],
+                           b_list=[0, 0.1], time_end=2, simulate=False,
+                           load_CCG=True):
+    max_lag = 2  # seconds
+    dt = 1e-3      # time step
+    max_lag_steps = int(max_lag / dt)
+    lags = np.arange(-max_lag_steps, max_lag_steps + 1) * dt  # in seconds
+    theta = get_regular_graph(d=4, n=100)
+    # theta = theta + np.random.randn(theta.shape[0], theta.shape[1])*0.15
+    n_neurons = theta.shape[0]
+    if simulate:
+        time = np.arange(0, time_end+dt, dt)
+        activity_all = np.zeros((nsims, len(j_list), len(b_list), n_neurons, len(time)))
+        for i_j, j in enumerate(j_list):
+            for i_b, b in enumerate(b_list):
+                for sim in range(nsims):
+                    # time, x_vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise=sigma, tau=0.1,
+                    #                                                 time_end=time_end, dt=1e-2, tau_n=0.5)
+                    time, x_vec = solution_mf_sdo_euler(j, b, theta, noise=sigma, tau=0.1,
+                                                        time_end=time_end, dt=dt, add_extra_shared_input=True)
+                    activity_all[sim, i_j, i_b, : , :] = x_vec.T
+        np.save(DATA_FOLDER + 'activity_all_neurons_for_CCG.npy', activity_all)
+    else:
+        activity_all = np.load(DATA_FOLDER + 'activity_all_neurons_for_CCG.npy')
+    if not load_CCG:
+        CCG_all = np.zeros((len(lags), len(j_list), len(b_list)))
+        for i_j, j in enumerate(j_list):
+            for i_b, b in enumerate(b_list):
+                X = activity_all[:, i_j, i_b, :, :]
+                lags, CCG = compute_rCCG(X, theta, dt=dt, max_lag=max_lag)
+                CCG_all[:, i_j, i_b] = CCG
+        np.save(DATA_FOLDER + 'CCG_all.npy', CCG_all)
+    if load_CCG:
+        CCG_all = np.load(DATA_FOLDER + 'CCG_all.npy')
+
+    fig, ax = plt.subplots(ncols=3, figsize=(14, 4.5), sharey=True)
+    ax[0].plot(lags, CCG_all[:, 0, 0], color='lightblue', label='J=0.1', linewidth=3)
+    ax[0].plot(lags, CCG_all[:, 1, 0], color='midnightblue', label='J=0.33', linewidth=3)
+    ax[1].plot(lags, CCG_all[:, 0, 0], color='lightblue', label='J=0.1, B=0', linewidth=3)
+    ax[1].plot(lags, CCG_all[:, 0, 1], color='lightblue', label='J=0.1, B=0.1', linewidth=3, linestyle='--')
+    ax[2].plot(lags, CCG_all[:, 1, 0], color='midnightblue', label='J=0.33, B=0', linewidth=3)
+    ax[2].plot(lags, CCG_all[:, 1, 1], color='midnightblue', label='J=0.33, B=0.1', linewidth=3, linestyle='--')
+    # plt.xscale('log')
+    ax[0].set_ylabel('rCCG')
+    for a in ax:
+        a.axvline(0, color='k', linestyle='--')
+        a.axhline(0, color='k', linestyle='--')
+        a.set_xlabel('Lag (ms)')
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.legend(frameon=False)
+    fig.tight_layout()
+
+
 def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
                                            j_list=np.arange(0, 1.01, 0.02),
                                            nsims=50, load_data=True, sigma=0.1, long=True,
-                                           cylinder=False, theta=theta, inset=True, barplot=False):
+                                           cylinder=False, theta=theta, inset=True, barplot=False,
+                                           add_rand_matrix=False):
     if cylinder:
         theta = get_regular_graph(d=4, n=100)
+        if add_rand_matrix:
+            theta = theta + np.random.randn(theta.shape[0], theta.shape[1])*0.25
         lab_cylin = 'cylinder'
         b_list=np.arange(0, 0.2, 0.1)
         # j_list=np.arange(0, 0.62, 0.02)
@@ -5128,10 +5254,14 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
     else:
         print('Short stim.')
         time_end = 2
-        tau = 0.05
+        tau = 0.1
         label = 'short'
+    if add_rand_matrix:
+        extra = ''
+    else:
+        extra = '_original_matrix'
     if load_data:
-        rsc_matrix = np.load(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}.npy')
+        rsc_matrix = np.load(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}{extra}.npy')
     else:
         rsc_matrix = np.zeros((len(j_list), len(b_list), nsims))
         for i_j, j in enumerate(j_list):
@@ -5143,7 +5273,7 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
                                                         time_end=time_end, ou_noise=False,
                                                         cylinder=cylinder)
                     rsc_matrix[i_j, i_b, n] = rsc
-        np.save(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}.npy', rsc_matrix)
+        np.save(DATA_FOLDER + f'rsc_matrix_{sigma}{label}{lab_cylin}{extra}.npy', rsc_matrix)
     # fig, ax = plt.subplots(1)
     # im = ax.imshow(np.flipud(np.nanmean(rsc_matrix, axis=-1)), cmap='Reds', interpolation='gaussian',
     #                extent=[0, np.max(b_list), 0, np.max(j_list)], vmax=1)
@@ -5260,24 +5390,42 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
 
 
 def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
-                             shift=0, jump=20):
-    np.random.seed(100)
-    from scipy.stats import zscore
+                             shift=0, jump=20, nreps=100, b1=0):
     time = np.arange(0, t_dur+dt, dt)
-    theta = get_regular_graph() + np.random.randn()*0.0
-    vec1 = np.random.rand(theta.shape[0])
-    vec2 = np.random.rand(theta.shape[0])
-    vec1_arr = np.zeros((theta.shape[0], len(time)))
-    noise1 = np.random.randn(len(time)+shift, theta.shape[0])
-    noise2 = np.random.randn(len(time)+shift, theta.shape[0])
-    vec2_arr = np.zeros_like(vec1_arr)
-    for t in range(len(time)+shift):
-        vec1 = vec1 + dt*(gn.sigmoid(2*j1*np.matmul(theta, 2*vec1-1)+2*0.1*np.random.rand())-vec1)/0.1 + sigma*np.sqrt(dt/0.1)*noise1[t]
-        vec2 = vec2 + dt*(gn.sigmoid(2*j0*np.matmul(theta, 2*vec2-1)+2*0.1*np.random.rand())-vec2)/0.1 + sigma*np.sqrt(dt/0.1)*noise2[t]
-        if t >= shift:
-            vec1_arr[:, t-shift] = vec1
-            vec2_arr[:, t-shift] = vec2
-    vec2_arr = vec2_arr[::jump], vec1_arr = vec1_arr[::jump]
+    np.random.seed(1234)
+    # W = np.random.randn(100, 100)
+    # W = (W + W.T) / 2   # make it symmetric
+    theta = get_regular_graph()
+    averages = np.zeros((2, theta.shape[0], nreps))
+    neighbor_averages = np.zeros((2, nreps))
+    single_averages = np.zeros((2, nreps))
+    for simulation_id in tqdm(range(nreps)):
+        vec1 = np.random.rand(theta.shape[0])
+        vec2 = np.random.rand(theta.shape[0])
+        vec1_arr = np.zeros((theta.shape[0], len(time)))
+        vec2_arr = np.zeros((theta.shape[0], len(time)))
+        noise1 = np.random.randn(len(time)+shift, theta.shape[0])
+        noise2 = np.random.randn(len(time)+shift, theta.shape[0])
+        for t in range(len(time)+shift):
+            vec1 = vec1 + dt*(gn.sigmoid(2*j1*np.matmul(theta, 2*vec1-1)+2*b1*np.random.rand())-vec1)/0.2 + sigma*np.sqrt(dt/0.2)*noise1[t]
+            vec2 = vec2 + dt*(gn.sigmoid(2*j0*np.matmul(theta, 2*vec2-1)+2*b1*np.random.rand())-vec2)/0.2 + sigma*np.sqrt(dt/0.2)*noise2[t]
+            if t >= shift:
+                vec1_arr[:, t-shift] = vec1
+                vec2_arr[:, t-shift] = vec2
+            
+        # time averages per unit (you already had this)
+        avg1 = np.nanmean(vec1_arr, axis=1)
+        avg2 = np.nanmean(vec2_arr, axis=1)
+        
+        averages[0, :, simulation_id] = avg1
+        averages[1, :, simulation_id] = avg2
+        # choose neuron 0 (same as in example trace)
+        single_averages[0, simulation_id] = avg1[0]
+        single_averages[1, simulation_id] = avg2[0]
+        
+        neighbor_averages[0, simulation_id] = np.matmul(theta, avg1)[0]
+        neighbor_averages[1, simulation_id] = np.matmul(theta, avg2)[0]
+        # vec2_arr = vec2_arr[::jump]; vec1_arr = vec1_arr[::jump]
     fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(5, 4.5))
     colormap = ['mediumvioletred', 'forestgreen']
     ax[0, 1].plot(time, zscore(np.matmul(theta, vec1_arr)[0]), color=colormap[0], linewidth=3)
@@ -5287,17 +5435,43 @@ def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
     ax[0, 0].plot(time, zscore(vec2_arr[0]), color=colormap[1], linewidth=3,
                   label='Neuron i')
     ax[0, 0].legend(frameon=False)
-    ax[1, 1].plot(zscore(vec1_arr[0]), zscore(np.matmul(theta, vec1_arr)[0]),
-                  color='k', linestyle='', marker='o', markersize=3)
-    ax[1, 0].plot(zscore(vec2_arr[0]), zscore(np.matmul(theta, vec2_arr)[0]),
-                  color='k', linestyle='', marker='o', markersize=3)
-    corr1 = round(np.corrcoef(zscore(vec1_arr[0]), zscore(np.matmul(theta, vec1_arr)[0]))[0][1], 3)
-    corr2 = round(np.corrcoef(zscore(vec2_arr[0]), zscore(np.matmul(theta, vec2_arr)[0]))[0][1], 3)
-    corrs = [corr1, corr2]
+    
+    # condition j1
+    x1 = zscore(single_averages[0])
+    y1 = zscore(neighbor_averages[0])
+    
+    # condition j0
+    x2 = zscore(single_averages[1])
+    y2 = zscore(neighbor_averages[1])
+    
+    corr1, p1 = pearsonr(x1, y1)
+    corr2, p2 = pearsonr(x2, y2)
+    
+    corrs = [round(corr1, 3), round(corr2, 3)]
+    pvals = [round(p1, 6), round(p2, 6)]
+    
     for i_a, a in enumerate([ax[1, 1], ax[1, 0]]):
-        a.plot([-3, 3], [-3, 3], color='gray', linestyle='--', alpha=0.7, linewidth=4)
-        a.text(1.2, -1.8, rf'$\rho = $ {corrs[i_a]}', fontsize=12)
+        a.plot([-3, 3], [-3, 3], color='gray', linestyle='--',
+               alpha=0.7, linewidth=3)
+        a.annotate(f'r = {corrs[i_a]:.3f}\np={pvals[i_a]:.2e}', xy=(.04, 0.9), xycoords=ax.transAxes)
         a.set_xlabel('Single unit')
+    
+    ax[1, 1].plot(x1, y1,
+                  linestyle='', marker='o', markersize=2, color='k')
+    
+    ax[1, 0].plot(x2, y2,
+                  linestyle='', marker='o', markersize=2, color='k')
+    # ax[1, 1].plot(zscore(vec1_arr[0]), zscore(np.matmul(theta, vec1_arr)[0]),
+    #               color='k', linestyle='', marker='o', markersize=3)
+    # ax[1, 0].plot(zscore(vec2_arr[0]), zscore(np.matmul(theta, vec2_arr)[0]),
+    #               color='k', linestyle='', marker='o', markersize=3)
+    # corr1 = round(np.corrcoef(zscore(vec1_arr[0]), zscore(np.matmul(theta, vec1_arr)[0]))[0][1], 3)
+    # corr2 = round(np.corrcoef(zscore(vec2_arr[0]), zscore(np.matmul(theta, vec2_arr)[0]))[0][1], 3)
+    # corrs = [corr1, corr2]
+    # for i_a, a in enumerate([ax[1, 1], ax[1, 0]]):
+    #     a.plot([-3, 3], [-3, 3], color='gray', linestyle='--', alpha=0.7, linewidth=4)
+    #     a.text(1.2, -1.8, rf'$\rho = $ {corrs[i_a]}', fontsize=14)
+    #     a.set_xlabel('Single unit')
     ax[0, 0].set_ylabel('Activity')
     ax[0, 0].set_xlabel('Time')
     ax[0, 1].set_xlabel('Time')
@@ -5312,11 +5486,13 @@ def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1,
     fig.savefig(DATA_FOLDER + 'interneuronal_correlation_cartoon_example_v2.pdf', dpi=400, bbox_inches='tight')
 
 
-def analytical_correlation_rsc(sigma=0.15, theta=theta):
-    from scipy.linalg import solve_continuous_lyapunov
+def analytical_correlation_rsc(sigma=0.15, theta=theta, n=4):
+    theta = theta + np.random.randn(theta.shape[0], theta.shape[1])*0.0
+
+
     def find_fixed_point(J, B, theta, max_iter=500, tol=1e-9):
-        n = theta.shape[0]
-        x = np.full(n, 0.9)
+        nvar = theta.shape[0]
+        x = np.full(nvar, 0.9)
         for _ in range(max_iter):
             z = 2*J * theta @ (2*x - 1) + 2*B
             x_new = gn.sigmoid(z)
@@ -5327,12 +5503,12 @@ def analytical_correlation_rsc(sigma=0.15, theta=theta):
 
 
     def compute_correlation(J, B, theta, sigma=0.1, i=0):
-        n = theta.shape[0]
+        nvar = theta.shape[0]
         x_bar = find_fixed_point(J, B, theta)
         D = np.diag(x_bar * (1 - x_bar))
-        A = 4 * J * D @ theta - np.eye(n)
-        Q = sigma**2 * np.eye(n)
-        C = solve_continuous_lyapunov(A, -Q)
+        A = 4 * J * D @ theta - np.eye(nvar)
+        Q = sigma**2 * np.eye(nvar)
+        C = scipy.linalg.solve_continuous_lyapunov(A, -Q)
         # C = -scipy.linalg.inv(A)*sigma**2/ 2
         var_i = C[i, i]
         cov_i_sum_others = (np.sum(C[i, :]) - C[i, i])
@@ -5343,7 +5519,7 @@ def analytical_correlation_rsc(sigma=0.15, theta=theta):
     # Parameters
     i = 0
     
-    J_values = np.arange(0, 1, 0.01)
+    J_values = np.arange(0, 0.45, 0.01)
     B_values = np.arange(0, 1, 0.01)
     
     corr_grid = np.zeros((len(J_values), len(B_values)))
@@ -5362,7 +5538,6 @@ def analytical_correlation_rsc(sigma=0.15, theta=theta):
     plt.colorbar(im, label='Correlation ρ')
     plt.xlabel('Bias B')
     plt.ylabel('Coupling J')
-    n = 3
     j_list = J_values
     delta = np.sqrt(1-1/(j_list*n))
     b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_list*delta)/2
@@ -5371,8 +5546,8 @@ def analytical_correlation_rsc(sigma=0.15, theta=theta):
     plt.xlim(0,  B_values[-1])
     plt.show()
 
-    # Indices for B = 0, 0.1, 0.2
-    B_targets = [0.0, 0.1, 0.2]
+    # Indices for B = 0, 0.1
+    B_targets = [0.0, 0.1]
     B_indices = [np.argmin(np.abs(B_values - B)) for B in B_targets]
 
     # Plot correlation vs J for the selected B values
@@ -5380,7 +5555,7 @@ def analytical_correlation_rsc(sigma=0.15, theta=theta):
     colormap = pl.cm.Greens(np.linspace(0.3, 1, 3))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
-    ax.axvline(1/3, color=colormap[0], alpha=0.9, linestyle='--', linewidth=3)
+    ax.axvline(1/n, color=colormap[0], alpha=0.9, linestyle='--', linewidth=3)
     p = 0
     for B_val, idxB in zip(B_targets, B_indices):
         plt.plot(J_values, corr_grid[:, idxB], label=f'B = {B_val}',
@@ -5390,7 +5565,7 @@ def analytical_correlation_rsc(sigma=0.15, theta=theta):
     plt.ylabel('Correlation ρ')
     # ax.text(0.25, 0.05, 'Monostable', rotation='vertical', color='gray', alpha=0.9)
     # ax.text(0.36, 0.05, 'Bistable', rotation='vertical', color='gray', alpha=0.9)
-    plt.ylim(0, 1)
+    plt.ylim(-0.05, 0.7)
     plt.legend(frameon=False)
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'rsc_vs_coupling_B_analytical.png', dpi=400, bbox_inches='tight')
@@ -5454,7 +5629,6 @@ def local_correlation_across_time(j=0.5, b=0, theta=theta,
             mu_activity = x_vec[:, np.arange(theta.shape[0]) != i].sum(axis=1)  # [:, np.arange(theta.shape[0]) != i]
         if cylinder:  # MU: all neighbors of SU
             mu_activity = np.matmul(x_vec, theta).T
-            # mu_activity = 
         correlation_array[i] = np.corrcoef(su_activity, mu_activity)[0][1]
     # counts, vals = np.histogram(correlation_array, 20)
     # overall_corr = vals[np.argmax(counts)]
@@ -5925,6 +6099,89 @@ def plot_cartoon_potential_boltzmann(b=0.05, noise=0.15):
     fig.savefig(DATA_FOLDER + 'boltzmann_potential_cartoon.pdf', dpi=400, bbox_inches='tight')
 
 
+
+def even_int_logspace(start, stop, num):
+    vals = np.logspace(np.log10(start), np.log10(stop), num)
+    vals = np.round(vals).astype(int)
+
+    # Make them even
+    vals = 2 * np.round(vals / 2).astype(int)
+
+    # Keep within bounds and unique
+    vals = vals[(vals >= start) & (vals <= stop)]
+    return np.unique(vals)
+
+
+def spectral_gap_vs_d_m(d_list=np.arange(2, 10, 1),
+                        m_list=even_int_logspace(2, 1000, 100),
+                        noise=False,
+                        n_noise_sims=100, load=True):
+    label_noise = f'_noise_{noise}' if noise else ''
+    if not load:
+        lambdas_2 = np.zeros((len(d_list), len(m_list), n_noise_sims))
+        lambdas_1 = np.zeros((len(d_list), len(m_list), n_noise_sims))
+        for i_d, d in enumerate(d_list):
+            for i_m, m in enumerate(tqdm(m_list)):
+                if m <= d or (m*d) % 2 != 0:
+                    lambdas_1[i_d, i_m] = np.nan
+                    lambdas_2[i_d, i_m] = np.nan
+                    continue
+                lamb_2_list = []
+                lamb_1_list = []
+                for n in range(n_noise_sims):
+                    theta = get_regular_graph(d=d, n=m)
+                    if noise:
+                        W = np.random.randn(m, m)
+                        W = (W + W.T) / 2   # make it symmetric
+                        theta = theta + noise * W
+                    eigvals = np.linalg.eigvalsh(theta)
+                    eigvals = np.sort(np.real(eigvals))
+                    lambda_1 = eigvals[-1]
+                    lambda_2 = eigvals[-2]
+                    lamb_1_list.append(np.real(lambda_1))
+                    lamb_2_list.append(np.real(lambda_2))
+                lambdas_1[i_d, i_m, :] = lamb_1_list
+                lambdas_2[i_d, i_m, :] = lamb_2_list
+        np.save(DATA_FOLDER + f'lambda_1_adj_matrix{label_noise}.npy', lambdas_1)
+        np.save(DATA_FOLDER + f'lambda_2_adj_matrix{label_noise}.npy', lambdas_2)
+    if load:
+        lambdas_1 = np.load(DATA_FOLDER + f'lambda_1_adj_matrix{label_noise}.npy')
+        lambdas_2 = np.load(DATA_FOLDER + f'lambda_2_adj_matrix{label_noise}.npy')
+    lambdas_1 = np.nanmean(lambdas_1, axis=-1)
+    lambdas_2 = np.nanmean(lambdas_2, axis=-1)
+    spectral_gap = lambdas_1-lambdas_2
+    fig, ax = plt.subplots(ncols=3, figsize=(12, 3.6))
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_xlabel('M units')
+        a.set_xscale('log')
+        a.axvline(8, color='royalblue', linestyle='--', linewidth=4, alpha=0.5)
+        a.axvline(100, color='forestgreen', linestyle='--', linewidth=4, alpha=0.5)
+    colors = ['royalblue', 'forestgreen', 'firebrick']
+    labels = ['N=3, Necker', 'N=4, cylinder', 'N=5']
+    
+    for i_n, n in enumerate([3, 4, 5]):
+        ax[1].axhline(2*np.sqrt(n-1), color=colors[i_n], linestyle='--',
+                      linewidth=3, alpha=0.5)
+        ax[2].axhline(n-2*np.sqrt(n-1), color=colors[i_n], linestyle='--',
+                      linewidth=3, alpha=0.5)
+        ax[0].plot(m_list, lambdas_1[i_n+1, :], color=colors[i_n], linewidth=4,
+                   marker='o', label=labels[i_n])
+        ax[1].plot(m_list, lambdas_2[i_n+1, :], color=colors[i_n], linewidth=4,
+                   marker='o', label=labels[i_n])
+        ax[2].plot(m_list, spectral_gap[i_n+1, :], color=colors[i_n], linewidth=4,
+                   marker='o', label=labels[i_n])
+    ax[2].axhline(0, color='gray', linewidth=2, alpha=0.5, linestyle='--')
+    ax[2].legend(title='Neighbors', frameon=False)
+    ax[0].set_ylabel(r'$\lambda_1$')
+    ax[1].set_ylabel(r'$\lambda_2$')
+    ax[2].set_ylabel(r'Spectral gap, $\lambda_1-\lambda_2$')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + f'spectral_gap{label_noise}.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + f'spectral_gap{label_noise}.pdf', dpi=400, bbox_inches='tight')
+
+
 if __name__ == '__main__':
     print('Mean-Field inference')
     # plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
@@ -5959,7 +6216,7 @@ if __name__ == '__main__':
     #                                       theta=theta)
     # plot_solutions_mfield(j_list=np.arange(0.001, 1.01, 0.001), stim=0, N=3,
     #                       plot_approx=False)
-    plot_3_examples_mf_evolution(avg=True)
+    # plot_3_examples_mf_evolution(avg=True)
     # examples_pot()
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0., 1.005, 0.001),
     #                        num_iter=200, neigh_list=np.arange(3, 11),
@@ -6043,13 +6300,24 @@ if __name__ == '__main__':
     # cp_vs_coupling_noise(j_list=np.arange(0, 0.6, 0.05), noise_list=[0.15],
     #                       nsimuls=200, load_sims=True, inset=False, cylinder=True,
     #                       barplot=True)
+    # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
     # plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
     #                                         j_list=np.arange(0, 1.01, 0.02),
-    #                                         nsims=20, load_data=True, sigma=0.2,
+    #                                         nsims=20, load_data=False, sigma=0.2,
     #                                         long=True, cylinder=True, inset=False,
-    #                                         barplot=True)
-    # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
+    #                                         barplot=False, add_rand_matrix=True)
+    # plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
+    #                                         j_list=np.arange(0, 1.01, 0.02),
+    #                                         nsims=20, load_data=False, sigma=0.2,
+    #                                         long=True, cylinder=True, inset=False,
+    #                                         barplot=False, add_rand_matrix=False)
+    # plot_cross_correlogram(sigma=0.1, nsims=50,
+    #                        j_list=[0.1, 0.38],
+    #                        b_list=[0, 0.2], time_end=3, simulate=True,
+    #                        load_CCG=False)
     # predictions_boltzmann_distro(j_list=[0.15, 0.37], n=4, noise=0.2,
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
+    plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.3, dt=1e-3, sigma=0.1,
+                             shift=0, jump=20, nreps=400)
