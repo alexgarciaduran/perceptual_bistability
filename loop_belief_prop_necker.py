@@ -2216,9 +2216,9 @@ def log_potential(b, j_list=None, alpha=1, n=3,
             ax.set_ylim(-0.015, 0.07)
 
 
-def dyn_sys_fbp(logmess, j, b, alpha=1, n=3, dt=1e-1, noise=0.1):
-    logmess = logmess + dt*(1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(logmess*(n-alpha)+b)) - logmess) +\
-        np.sqrt(dt)*noise*np.random.randn()
+def dyn_sys_fbp(logmess, j, b, alpha=1, n=3, dt=1e-1, noise=0.1, tau=1.):
+    logmess = logmess + dt*(1/alpha * np.arctanh(np.tanh(alpha*j)*np.tanh(logmess*(n-alpha)+b)) - logmess)/tau +\
+        np.sqrt(dt/tau)*noise*np.random.randn()
     return logmess
 
 
