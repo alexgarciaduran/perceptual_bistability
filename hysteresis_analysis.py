@@ -24,6 +24,7 @@ import statsmodels.api as sm
 from sklearn import manifold
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.model_selection import cross_val_score
+import matplotlib.gridspec as gridspec
 from gibbs_necker import rle
 from mean_field_necker import colored_line
 from fitting_pipeline import load_data as load_data_experiment_1
@@ -44,6 +45,7 @@ from scipy.stats import pearsonr, zscore
 from scipy.signal import sawtooth
 from scipy.optimize import curve_fit, root_scalar
 from scipy.integrate import quad, cumulative_trapezoid, solve_bvp
+from scipy.interpolate import interp1d
 import itertools
 from pyddm import set_N_cpus
 from pyddm.models.loss import LossLikelihood, LossBIC
@@ -71,6 +73,10 @@ elif pc_name == 'alex_CRM':
     SV_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/hysteresis/'  # Alex CRM
 
 COLORMAP = LinearSegmentedColormap.from_list('rg', ['darkgreen', 'gainsboro', 'crimson'], N=128)
+
+
+def sigmoid_fit_lapse(B, B0, k, gamma, lam):
+    return gamma + (1 - gamma - lam) / (1 + np.exp(-k * (B - B0)))
 
 
 def preprocess_keypress_data(df, no_press_threshold=0.3):
@@ -398,8 +404,8 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
     text = stars_pval(data)
     # print(data)
 
-    lx, ly = center[num1]+1e-2, height[num1]
-    rx, ry = center[num2]-1e-2, height[num2]
+    lx, ly = center[num1]+2e-2, height[num1]
+    rx, ry = center[num2]-2e-2, height[num2]
 
     if yerr:
         ly += yerr[num1]
@@ -422,6 +428,46 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
         kwargs['fontsize'] = fs
 
     ax.text(*mid, text, **kwargs)
+
+
+
+def estimate_B50(b_vals, responses):
+    """
+    Fit a sigmoid to responses and return B50 (stimulus at 50% response)
+    clipped to [-2, 2] to avoid edge artifacts.
+    """
+    # Clip responses to avoid exactly 0 or 1
+    responses = np.clip(responses, 0.001, 0.999)
+    
+    # Bounds for B0 and slope k
+    bounds = (
+        [-2, 0, 0, 0],    # B0_lower, k_lower, gamma_lower, lambda_lower
+        [2, 10, 0.1, 0.1] # B0_upper, k_upper, gamma_upper, lambda_upper
+    )
+
+    try:
+        popt, _ = curve_fit(sigmoid_fit_lapse, b_vals, responses, bounds=bounds, p0=[0., 1., 0.05, 0.05])
+        B50 = np.clip(popt[0], -2., 2.)  # B0 is the 50% crossing
+    except RuntimeError:
+        # If fit fails, fallback to median
+        B50 = np.median(b_vals)
+
+    return B50
+
+
+def bin_responses(b_vals, responses, bin_width=0.2):
+    bins = np.arange(np.min(b_vals), np.max(b_vals)+bin_width, bin_width)
+    bin_centers = bins[:-1] + bin_width/2
+    binned_resp = np.zeros(len(bin_centers))
+    
+    for i in range(len(bins)-1):
+        idx = (b_vals >= bins[i]) & (b_vals < bins[i+1])
+        if np.any(idx):
+            binned_resp[i] = np.nanmean(responses[idx])
+        else:
+            binned_resp[i] = np.nan  # no data in bin
+    
+    return bin_centers, binned_resp
 
 
 def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling_levels,
@@ -460,6 +506,7 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
         a.spines['top'].set_visible(False)
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     hyst_width_2 = np.zeros((len(coupling_levels), len(responses_2[0])))
+    hyst_width_2_difference_b = np.zeros((len(coupling_levels), len(responses_2[0])))
     nsubs = hyst_width_2.shape[1]
     if ndt_list is not None:
         # hysteresis, max_hists = \
@@ -487,6 +534,17 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
             subj_means_desc.append(desc)
             hyst_width_2[i_c, i_s] = np.nansum(np.abs(desc[::-1]-asc), axis=0) * np.diff(barray_2[:nFrame//2])[0]
             switch_time_diff_2[i_c, i_s] = np.nanmean(subj_resp['switches_diff'])
+            
+            # compute width - not area
+            b_vals = barray_2[:nFrame//2]
+            # Estimate B50 via sigmoid
+            b_centers, binned_asc = bin_responses(b_vals, asc, bin_width=0.1)
+            B50_asc = estimate_B50(b_centers, binned_asc)
+            
+            b_centers, binned_desc = bin_responses(b_vals, desc[::-1], bin_width=0.1)
+            B50_desc = estimate_B50(b_centers, binned_desc)
+            
+            hyst_width_2_difference_b[i_c, i_s] = np.abs(B50_asc - B50_desc)
         if subj_means_asc:
             y_asc = np.nanmean(subj_means_asc, axis=0)
             y_desc = np.nanmean(subj_means_desc, axis=0)
@@ -505,6 +563,7 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     sns.barplot(hyst_width_2.T, palette=colormap, ax=ax2, errorbar='se')
     ax2.set_ylim(np.min(np.mean(hyst_width_2, axis=1))-0.25, np.max(np.mean(hyst_width_2, axis=1))+0.8)
     hyst_width_4 = np.zeros((len(coupling_levels), len(responses_2[0])))
+    hyst_width_4_difference_b = np.zeros((len(coupling_levels), len(responses_2[0])))
     # --- FREQ = 4 ---
     for i_c, coupling in enumerate(coupling_levels):
         subj_means_asc, subj_means_desc = [], []
@@ -519,6 +578,17 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
             subj_means_desc.append(desc)
             hyst_width_4[i_c, i_s] = np.nansum(np.abs(desc[::-1]-asc), axis=0) * np.diff(barray_4[:nFrame//2])[0]
             switch_time_diff_4[i_c, i_s] = np.nanmean(subj_resp['switches_diff'])
+            
+            # compute width - not area
+            b_vals = barray_4[:nFrame//4]
+            # Estimate B50 via sigmoid
+            b_centers, binned_asc = bin_responses(b_vals, asc, bin_width=0.1)
+            B50_asc = estimate_B50(b_centers, binned_asc)
+            
+            b_centers, binned_desc = bin_responses(b_vals, desc[::-1], bin_width=0.1)
+            B50_desc = estimate_B50(b_centers, binned_desc)
+            
+            hyst_width_4_difference_b[i_c, i_s] = np.abs(B50_asc - B50_desc)
         if subj_means_asc:
             y_asc = np.nanmean(subj_means_asc, axis=0)
             y_desc = np.nanmean(subj_means_desc, axis=0)
@@ -565,6 +635,8 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     # labels/titles
     np.save(DATA_FOLDER + 'hysteresis_width_freq_2.npy', hyst_width_2)
     np.save(DATA_FOLDER + 'hysteresis_width_freq_4.npy', hyst_width_4)
+    np.save(DATA_FOLDER + 'difference_b_hysteresis_width_freq_2.npy', hyst_width_2_difference_b)
+    np.save(DATA_FOLDER + 'difference_b_hysteresis_width_freq_4.npy', hyst_width_4_difference_b)
     np.save(DATA_FOLDER + 'switch_time_diff_freq_2.npy', switch_time_diff_2)
     np.save(DATA_FOLDER + 'switch_time_diff_freq_4.npy', switch_time_diff_4)
     # ax2[0].set_ylabel('Hysteresis width')
@@ -685,7 +757,7 @@ def noise_bf_switch_threshold(load_sims=False, thres_vals=np.arange(0, 0.5, 1e-2
         time_interp = np.arange(0, nFrame+noisyframes, noisyframes)*dt
         time = np.arange(0, nFrame, 1)*dt
         noise_exp = np.random.randn(len(time_interp), ntrials)*0.2
-        noise_signal = np.array([scipy.interpolate.interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
+        noise_signal = np.array([interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
 
         for i_j, th in enumerate(thres_vals):
             for trial in range(ntrials):
@@ -726,7 +798,7 @@ def noise_bf_switch_stim_weight(load_sims=False, stim_vals=np.arange(0, 2, 5e-2)
         time_interp = np.arange(0, nFrame+noisyframes, noisyframes)*dt
         time = np.arange(0, nFrame, 1)*dt
         noise_exp = np.random.randn(len(time_interp), ntrials)*0.2
-        noise_signal = np.array([scipy.interpolate.interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
+        noise_signal = np.array([interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
 
         for i_j, b1 in enumerate(stim_vals):
             for trial in range(ntrials):
@@ -1610,7 +1682,7 @@ def noise_bf_switch_coupling(load_sims=False, coup_vals=np.arange(0.05, 0.35, 1e
         time_interp = np.arange(0, nFrame+noisyframes, noisyframes)*dt
         time = np.arange(0, nFrame, 1)*dt
         noise_exp = np.random.randn(len(time_interp), ntrials)*0.2
-        noise_signal = np.array([scipy.interpolate.interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
+        noise_signal = np.array([interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
     
         
         for i_j, j in enumerate(coup_vals):
@@ -2371,7 +2443,7 @@ def experiment_example(nFrame=1560, fps=60, noisyframes=15):
     dt = 1/fps
     noise_exp = np.random.randn(nFrame // noisyframes+1)*0.1
     time_interp = np.arange(0, nFrame+1, noisyframes)*dt
-    noise_signal = scipy.interpolate.interp1d(time_interp, noise_exp)
+    noise_signal = interp1d(time_interp, noise_exp)
     time = np.arange(0, nFrame, 1)*dt
     fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(6, 4))
     for a in ax:
@@ -2515,7 +2587,7 @@ def compute_poisson_negative_log_likelihood_single_trial(responses, stimulus, co
                                        b=b_eff, n=n)
             # lambda_t = lambda_t_LR if resp_t == 1 else lambda_t_RL
         if switch_t == 0:
-            log_likelihood += -lambda_t*dt
+            log_dd += -lambda_t*dt
         if switch_t == 2:
             log_likelihood += np.log(np.max([1-np.exp(-lambda_t*dt), 1e-12]))
         nsteps += 1
@@ -3165,15 +3237,15 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
         x0 = np.array([0.2, 0.1, 0.2, 0.15])
         npars = 4
     if pyddmfit:
-        npars = 6
+        npars = 5
     nFrame = fps*tFrame
     orig_params = np.zeros((n_pars_to_fit, npars))
     recovered_params = np.zeros((n_pars_to_fit, npars))
     for par in tqdm.tqdm(range(ini_par, n_pars_to_fit)):
         # simulate
         if pyddmfit:
-            theta = np.load(sv_folder + 'param_recovery/pars_pyddm_prt_ndt' + str(par) + '.npy')
-            pars = np.load(sv_folder + f'param_recovery/recovered_params_pyddm_{par}_ndt.npy')
+            theta = np.load(sv_folder + 'param_recovery/pars_pyddm_prt' + str(par) + '.npy')
+            pars = np.load(sv_folder + f'param_recovery/recovered_params_pyddm_{par}.npy')
         else:
             theta = np.load(sv_folder + 'param_recovery/pars_5_prt' + str(par) + '.npy')
             if simulate:
@@ -3227,11 +3299,13 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
     if not_plot_and_return:
         return orig_params, recovered_params
     else:
-        fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(8, 5))
+        fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(15, 9))
         ax = ax.flatten()
         # labels = ['Jeff', ' B1',  'Tau', 'Thres.', 'sigma']
         if pyddmfit:
-            labels = ['J1', 'J0', ' B1', 'sigma', 'Thres.', 'NDT']
+            labels_reduced = [r'$J_1$', r'$J_0$', r'$B_1$', r'$\sigma$', r'$c$']
+            labels = [r'Coupling weight, $J_1$', r'Coupling bias, $J_0$',
+                      r'Stimulus weight, $B_1$', r'Noise, $\sigma$', r'Threshold, $c$']
         else:
             labels = ['Jeff', ' B1', 'Thres.', 'sigma']
         # xylims = [[0, 3], [0, 0.8], [0, 0.7], [0, 0.5], [0, 0.5]]
@@ -3241,41 +3315,26 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
                    markersize=5, linestyle='')
             maxval = np.nanmax([orig_params[:, i_a], recovered_params[:, i_a]])
             minval = np.nanmin([orig_params[:, i_a], recovered_params[:, i_a]])
-            a.set_xlim(minval-1e-2, maxval+1e-2)
-            a.set_ylim(minval-1e-2, maxval+1e-2)
-            a.plot([minval, maxval], [minval, maxval],
+            a.set_xlim(minval-1e-1, maxval+1e-1)
+            a.set_ylim(minval-1e-1, maxval+1e-1)
+            a.plot([minval-1e-1, maxval+1e-1], [minval-1e-1, maxval+1e-1],
                    color='k', linestyle='--',
                    alpha=0.3, linewidth=4)
             # a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
-            a.set_title(labels[i_a], fontsize=12)
-            a.set_xlabel('Original', fontsize=12)
-            a.set_ylabel('Recovered', fontsize=12)
+            a.set_title(labels[i_a])
+            a.set_xlabel('Original parameters')
+            a.set_ylabel('Recovered parameters')
             a.spines['right'].set_visible(False)
             a.spines['top'].set_visible(False)
-        # for a in [ax[-1]]:
-        #     b_over_sigma_orig = orig_params[:, 2]/orig_params[:, 3]
-        #     b_over_sigma_rec = recovered_params[:, 2]/recovered_params[:, 3]
-        #     a.plot(b_over_sigma_orig, b_over_sigma_rec, color='k', marker='o',
-        #            markersize=5, linestyle='')
-        #     notnanidx = np.isnan(b_over_sigma_orig+b_over_sigma_rec)
-        #     corr = np.corrcoef(b_over_sigma_orig[~notnanidx], b_over_sigma_rec[~notnanidx])[0][1]
-        #     maxval = np.nanmax([b_over_sigma_orig, b_over_sigma_rec])
-        #     minval = np.nanmin([b_over_sigma_orig, b_over_sigma_rec])
-        #     a.set_xlim(minval-1e-2, maxval+1e-2)
-        #     a.set_ylim(minval-1e-2, maxval+1e-2)
-        #     a.plot([minval, maxval], [minval, maxval],
-        #            color='k', linestyle='--',
-        #            alpha=0.3, linewidth=4)
-        #     # a.plot(xylims[i_a], xylims[i_a], color='k', alpha=0.3)
-        #     a.set_title(f'B1 / sigma, r={round(corr, 3)}', fontsize=12)
-        #     a.set_xlabel('Original', fontsize=12)
-        #     a.set_ylabel('Recovered', fontsize=12)
-        #     a.spines['right'].set_visible(False)
-        #     a.spines['top'].set_visible(False)
-        # ax[-1].axis('off')
+        ax[-1].axis('off')
         fig.tight_layout()
-        fig2, ax2 = plt.subplots(ncols=2)
-        ax2, ax = ax2
+        fig2 = plt.figure(figsize=(10, 4))
+        gs = gridspec.GridSpec(1, 3, width_ratios=[1, 1, 0.075], wspace=0.2)
+            
+        ax2  = fig2.add_subplot(gs[0])
+        ax = fig2.add_subplot(gs[1])
+        cax = fig2.add_subplot(gs[2])
+
         # define correlation matrix
         corr_mat = np.empty((npars, npars))
         corr_mat[:] = np.nan
@@ -3292,9 +3351,8 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
             cmap = 'Reds'
         im = ax.imshow(corr_mat.T, cmap=cmap, vmin=vmin, vmax=1)
         # tune panels
-        plt.colorbar(im, ax=ax, label='Correlation')
-        labels_reduced = labels
-        ax.set_xticks(np.arange(npars), labels, fontsize=12, rotation=45)  # , rotation='270'
+        plt.colorbar(im, cax=cax, label='Correlation')
+        ax.set_xticks(np.arange(npars), labels_reduced, fontsize=12)  # , rotation='270'
         ax.set_yticks(np.arange(npars), labels_reduced, fontsize=12)
         ax.set_xlabel('Original parameters', fontsize=14)
         # compute correlation matrix
@@ -3303,9 +3361,9 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
         mat_corr[mat_corr == 0] = np.nan
         # plot correlation matrix
         im = ax2.imshow(mat_corr, cmap=cmap, vmin=vmin, vmax=1)
-        ax2.step(np.arange(0, npars)-0.5, np.arange(0, npars)-0.5, color='k',
+        ax2.step(np.arange(0, npars+1)-0.5, np.arange(0, npars+1)-0.5, color='k',
                  linewidth=.7)
-        ax2.set_xticks(np.arange(npars), labels, fontsize=12, rotation=45)  # , rotation='270'
+        ax2.set_xticks(np.arange(npars), labels_reduced, fontsize=12)  # , rotation='270'
         ax2.set_yticks(np.arange(npars), labels, fontsize=12)
         ax2.set_xlabel('Inferred parameters', fontsize=14)
         ax2.set_ylabel('Inferred parameters', fontsize=14)
@@ -3834,7 +3892,7 @@ def correlation_recovery_vs_N_simuls(fps=60, tFrame=26,
 
 
 
-def lmm_hysteresis_pshuffle(freq=2, plot_summary=False,
+def lmm_hysteresis_pshuffle(freq=2, plot_summary=True,
                             slope_random_effect=False, plot_individual=False):
     y2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
     y4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
@@ -5270,7 +5328,7 @@ def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
     df = df.loc[df.trial_index > ntraining]
     subjects = df.subject.unique()
     bins = np.linspace(0, 26, nbins).round(2)
-    ndt = np.abs(np.median(np.load(SV_FOLDER + 'kernel_latency_average.npy')))
+    ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
     if subj_ini is not None:
         idx = np.where(subjects == subj_ini)[0][0]
         subjects = subjects[idx:]
@@ -5363,7 +5421,7 @@ def simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=1546, fps=6
                 params[0] = j_eff
                 df_sub_trial = df_sub.loc[df_sub.trial_index == trial]
                 stimulus = df_sub_trial.stimulus[:-14].values
-                stimulus = scipy.interpolate.interp1d(time, stimulus)(time_interp)
+                stimulus = interp1d(time, stimulus)(time_interp)
                 # stimulus = np.repeat(stimulus, np.ceil(nFrame/1546))
                 x = np.zeros(choices_subject.shape[1])
                 j_eff, b_par, th, sigma, ndt = params
@@ -5759,7 +5817,7 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
             parameters_sub = fitted_params_all[i_sub]
             j_eff = parameters_sub[0]*(1-pshuffles[i_sub, i_trial]) + parameters_sub[1]
             b1 = parameters_sub[2]
-            k = int(fps*1.5)
+            k = int(fps*0.25)
             for i, idx in enumerate(idx_1):
                 x_vals_aligned[i, :] = values_x[idx - steps_back:idx+steps_front]
                 stim_vals_aligned[i, :] = chi[idx - steps_back:idx+steps_front]
@@ -5804,7 +5862,7 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         median_theta = 0.5 + np.nanmedian(theta)*np.array([-1, 1])
     else:
         median_theta = 0.5 + np.nanmean(median_theta)*np.array([-1, 1])
-    fig, ax = plt.subplots(ncols=2, nrows=4, figsize=(10, 11))
+    fig, ax = plt.subplots(ncols=2, nrows=4, figsize=(10, 11), sharex=True)
     fig.suptitle(title, fontsize=16)
     ax = ax.flatten()
     variables = [x_values_all_subjects, stim_values_all_subjects, internal_noise_values_all_subjects,
@@ -5863,7 +5921,7 @@ def plot_optimal_eta_b_vs_0(ntrials=10, j=1):
     time_interp = np.arange(0, nFrame+noisyframes, noisyframes)*dt
     time = np.arange(0, nFrame, 1)*dt
     noise_exp = np.random.randn(len(time_interp), ntrials)
-    noise_signal = np.array([scipy.interpolate.interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
+    noise_signal = np.array([interp1d(time_interp, noise_exp[:, trial])(time) for trial in range(ntrials)]).T
     eta_0 = optimal_escape_eta(j, time+1, stim=None)
     all_etas_stim = []
     for i in range(ntrials):
@@ -7724,12 +7782,15 @@ def compare_likelihoods_models(load=True, loss='Likelihood'):
     if loss == 'BIC':
         loss_null_model = bic_null_model
         loss_original_model = bic_with_ndt
+        label = 'bic_difference'
     if loss == 'AIC':
-        loss_null_model = likelihood_null_model + 2*4
-        loss_original_model = likelihood_with_ndt + 2*4
+        loss_null_model = 2*likelihood_null_model + 2*4
+        loss_original_model = 2*likelihood_with_ndt + 2*4
+        label = 'aic_difference'
     if loss == 'NLH':
         loss_null_model = likelihood_null_model
         loss_original_model = likelihood_with_ndt
+        label = 'nllh_difference'
     losses = [loss_null_model, loss_original_model]
     ax5.spines['right'].set_visible(False); ax5.spines['top'].set_visible(False)
     sns.barplot(losses, palette=['mediumpurple', 'burlywood'], ax=ax5)
@@ -7760,6 +7821,9 @@ def compare_likelihoods_models(load=True, loss='Likelihood'):
     ylabel = r'$\Delta$' + loss
     ax5.set_ylabel(ylabel)
     fig5.tight_layout()
+    fig5.savefig(SV_FOLDER + f'{label}.png', dpi=400, bbox_inches='tight')
+    fig5.savefig(SV_FOLDER + f'{label}.pdf', dpi=400, bbox_inches='tight')
+    
 
 
 def low_dimensional_projection():
@@ -8513,7 +8577,7 @@ def ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=1
             y_plot + y0,
             color="k",
             lw=4,
-            label="data" if i == 0 else None
+            label="Data" if i == 0 else None
         )
 
         y_plot = zscore(kernels_model[idx]) if zscore_variables else kernels_model[idx]
@@ -8524,7 +8588,7 @@ def ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=1
             color="r",
             lw=4,
             alpha=0.8,
-            label="model" if i == 0 else None
+            label="Model" if i == 0 else None
         )
         # subject label
         plt.text(x_plot[0] - 0.15*(x_plot[-1]-x_plot[0]),
@@ -8533,13 +8597,14 @@ def ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=1
                  va="center")
     plt.axvline(0, linestyle='--', color='gray', alpha=0.3)
     plt.xlabel("Time (s)")
+    plt.ylim(np.min(y_plot)-0.4, np.max(y_plot+y0)+0.8)
     plt.yticks([])
     
-    plt.legend(loc="upper right", frameon=False)
+    plt.legend(loc="upper left", frameon=False, ncol=2, bbox_to_anchor=[0.02, 1.01])
     sns.despine(left=True)
     
     plt.tight_layout()
-    plt.show()
+    # plt.show()
     label = 'z_scored_' if zscore_variables else ''
     fig.savefig(SV_FOLDER + label + 'kernels_data_vs_model.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + label + 'kernels_data_vs_model.pdf', dpi=200, bbox_inches='tight')
@@ -9842,9 +9907,9 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
                                  sublist=None,
                                  n_training=8,
                                  dt=1/60,
-                                 t_before=1.5,
+                                 t_before=4,
                                  condition='pShuffle',
-                                 t_after=1.5,
+                                 t_after=4,
                                  smooth_window=11,
                                  polyorder=2,
                                  pupil_col='Pupil_average_clean',
@@ -9852,7 +9917,7 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
                                  plot_name='all_pupil_switch_avg.png',
                                  velocity=False, n=4,
                                  downsample_to=20, null=False, align=True,
-                                 region_interval=[-1.5, 1.5]):
+                                 region_interval=[-2, 2]):
     """
     Plot pupil size aligned to all response switches, averaged per subject and then across subjects.
 
@@ -10036,9 +10101,10 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
             
                 # --- Compute rate (events/sec) ---
                 pupil_smooth = binned_sum.values / (epochs_per_bin.values * dt_eff)
-                # pupil_smooth = scipy.signal.savgol_filter(
-                #     pupil_smooth, window_length=min(smooth_window, len(pupil_smooth) | 1),
-                #     polyorder=polyorder)
+                if not align:
+                    pupil_smooth = scipy.signal.savgol_filter(
+                        pupil_smooth, window_length=min(smooth_window, len(pupil_smooth) | 1),
+                        polyorder=polyorder)
             
             else:
                 # --- Continuous pupil: mean across epochs per bin ---
@@ -10162,6 +10228,9 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
     if pupil_col == 'saccade':
         y_max = 1.28 # Position above highest confidence
         axes[0].set_ylim(0.3, 1.3)
+    if pupil_col == 'speed':
+        y_max = 0.37 # Position above highest confidence
+        axes[0].set_ylim(0.24, 0.38)
     if 'Pupil' in pupil_col:
         y_max = 0.09
     if pupil_col == 'blink':
@@ -10201,10 +10270,10 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
     if save_plot:
         fig.tight_layout()
         for extension in ['.png', '.svg']:
-            save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', plot_name + extension)
+            save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'final_plots', plot_name + extension)
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             fig.savefig(save_path, dpi=400, bbox_inches='tight')
-    f2, ax2 = plt.subplots(1, figsize=(6, 4.5))
+    f2, ax2 = plt.subplots(1, figsize=(4, 3))
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
     if condition == 'pShuffle':
@@ -10227,16 +10296,17 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         if not velocity:
             if 'Pupil' in pupil_col:
                 barh = 0.03
-                dhs = [0.08, 0.08, 0.15]
+                dhs = [0.08, 0.08, 0.17]
             else:
                 barh = 0.03
-                dhs = [0.08, 0.08, 0.15]
+                dhs = [0.08, 0.08, 0.17]
         if velocity:
             dhs = [0.12, 0.12, 0.18]
         c = 0
         for c1, c2 in zip([0, 1, 0], [1, 2, 2]):
             pval = scipy.stats.ttest_rel(all_data[c1], all_data[c2]).pvalue
-            heights = np.max((np.zeros(3), np.nanmean(all_data, axis=1)+0.4*('Pupil' not in pupil_col)), axis=0)
+            cte = 0.4*('Pupil' not in pupil_col and 'speed' not in pupil_col) + 0.11*('speed' in pupil_col)
+            heights = np.max((np.zeros(3), np.nanmean(all_data, axis=1)+cte), axis=0)
             bars = [0, 1, 2]
             print(pval)
             barplot_annotate_brackets(c1, c2, pval, bars, heights,
@@ -10249,6 +10319,27 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
                 "group": (["Monostable"] * len(all_data[0][0])) + (["Bistable"] * len(all_data[1][0]))
             })
         sns.barplot(data=df, x="group", y="value", palette=colormap, ax=ax2)
+        pval = scipy.stats.ttest_ind(all_data[1][0], all_data[0][0]).pvalue
+        c = 0; c1 = 0; c2 = 1
+        plt.figure()
+        sns.kdeplot(all_data[0][0], color='peru')
+        sns.kdeplot(all_data[1][0], color='cadetblue')
+        cte = 0.4*('Pupil' not in pupil_col and 'speed' not in pupil_col) + 0.11*('speed' in pupil_col)
+        heights = np.max((np.zeros(2), [np.nanmean(all_data[0][0])+cte, np.nanmean(all_data[1][0])+cte]), axis=0)
+        bars = [0, 1]
+        if not velocity:
+            if 'Pupil' in pupil_col:
+                barh = 0.03
+                dhs = [0.08, 0.08, 0.17]
+            else:
+                barh = 0.03
+                dhs = [0.08, 0.08, 0.17]
+        if velocity:
+            dhs = [0.12, 0.12, 0.18]
+        barplot_annotate_brackets(c1, c2, pval, bars, heights,
+                                  yerr=None, dh=dhs[c], barh=barh, fs=10,
+                                  maxasterix=3, ax=ax2)
+        c += 1
         # sns.swarmplot(data=df, x="group", y="value", color='k', ax=ax2)
     if condition == 'pShuffle':
         ax2.set_xticks([0, 1, 2], [0., 0.7, 1.][::-1])
@@ -10264,18 +10355,24 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         ax2.set_ylabel('Maximum saccade rate (Hz)')
     if pupil_col == 'raw_blink':
         ax2.set_ylabel('Maximum proportion of closed eye')
+    if pupil_col == 'speed':
+        ax2.set_ylabel('Maximum eye speed')
     if pupil_col == 'raw_saccade':
         ax2.set_ylabel('Maximum proportion of eye in saccade')
     if save_plot:
         f2.tight_layout()
-        plot_name = condition + null_appendix + '_' + pupil_col + '_' 'average_window_v2.png'
+        if align:
+            align_label = ''
+        else:
+            align_label = 'full_time_'
+        plot_name = align_label + condition + null_appendix + '_' + pupil_col + '_' 'average_window_v2.png'
         if velocity:
             plot_name = 'velocity_' + plot_name
-        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', plot_name)
+        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'final_plots', plot_name)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         f2.savefig(save_path, dpi=400, bbox_inches='tight')
-        plot_name = condition + null_appendix + '_' + pupil_col + '_' + 'average_window_v2.svg'
-        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', plot_name)
+        plot_name = align_label + condition + null_appendix + '_' + pupil_col + '_' + 'average_window_v2.svg'
+        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'final_plots', plot_name)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         f2.savefig(save_path, dpi=400, bbox_inches='tight')
 
@@ -10350,11 +10447,11 @@ def plot_regression_subjects(data_folder=DATA_FOLDER,
                     t_after=t_after, 
                     noisy=noisy,
                     align=align,
-                    regressors=('pShuffle', 'blink', 'saccade'), dt=dt,
+                    regressors=('effective_coupling', 'abs_stimulus', 'stimulus'), dt=dt,
                     pupil_col=pupil_col)
-            shuffle_weights_matrix.append(beta['pShuffle'])
-            stim_weights_matrix.append(beta['blink'])
-            abs_stim_weights_matrix.append(beta['saccade'])
+            shuffle_weights_matrix.append(beta['effective_coupling'])
+            stim_weights_matrix.append(beta['stimulus'])
+            abs_stim_weights_matrix.append(beta['abs_stimulus'])
             # posterior_weights_matrix.append(beta['posterior'])
             intercept_all.append(intercept)
         np.save(path_shuffle_matrix, shuffle_weights_matrix)
@@ -11171,35 +11268,68 @@ def count_blinks_saccades_per_condition(data_folder=DATA_FOLDER, condition='pShu
     g.map_lower(corrfunc)
 
 
+def plot_all_eye_tracker():
+    for ds, col in zip([5, 20, 5, 5], ['saccade', 'Pupil_residual', 'blink', 'speed']):
+        for align in [False, True]:
+            for cond in ['regime', 'pShuffle']:
+                plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
+                                                  sublist=None,
+                                                  n_training=8,
+                                                  dt=1/60,
+                                                  t_before=4,
+                                                  condition=cond,
+                                                  t_after=4,
+                                                  smooth_window=5,
+                                                  polyorder=1,
+                                                  pupil_col=col,
+                                                  save_plot=True,
+                                                  plot_name=f'all_{col}_switch_avg.png',
+                                                  velocity=False, n=4,
+                                                  downsample_to=ds, null=False, align=align,
+                                                  region_interval=[-2, 2])
+                plt.close('all')
+
+
+def analytical_hysteresis_width_degeneration(n=4, freq=2, fps=60):
+    coup_vals = np.array([0., 0.3, 1.])
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    print(len(pars), ' fitted subjects')
+    j1s = np.array([np.load(par)[0] for par in pars])
+    j0s = np.array([np.load(par)[1] for par in pars])
+    hyst_width_analytical = []
+    ds = np.diff(get_blist(freq, 1560, 3))[0]
+    if freq == 2:
+        hyst_width_data = np.load(DATA_FOLDER + 'difference_b_hysteresis_width_freq_2.npy')
+    else:
+        hyst_width_data = np.load(DATA_FOLDER + 'difference_b_hysteresis_width_freq_4.npy')
+    for i in range(len(j1s)):
+        j_list = j1s[i]*coup_vals + j0s[i]
+        delta = np.sqrt(1-1/(j_list*n))
+        b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_list*delta)/2  #  + ds*0.5*fps
+        # we add the NDT
+        hyst_width_analytical.append(b_crit1*2)
+    hyst_width_analytical = np.array(hyst_width_analytical).T
+    # hyst_width_analytical[np.isnan(hyst_width_analytical)] = 0.5
+    fig, ax = plt.subplots(1, figsize=(4, 3.5))
+    for i in range(3):
+        plt.plot(hyst_width_analytical[i], hyst_width_data[i], marker='o',
+                 linestyle='', color='k')
+    an = hyst_width_analytical.flatten()
+    hyst_width_data = hyst_width_data.flatten()
+    idx_nan = np.isnan(an) + np.isnan(hyst_width_data) + np.isinf(an) + np.isinf(hyst_width_data)
+    r, p = pearsonr(an[~idx_nan], hyst_width_data[~idx_nan])
+    ax.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=ax.transAxes)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.set_xlabel('Analytical hysteresis width')
+    ax.set_ylabel('Empirical hysteresis width')
+    fig.tight_layout()
+
+
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
     # eye_tracker_save_align_data(data_folder=DATA_FOLDER, ntraining=8)
     # plot_histograms_saccades(data_folder=DATA_FOLDER)
-    # for col in ['saccade', 'pupil', 'blink', 'speed']:
-    #     for min_pup in [True, False]:
-    #         plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var_eye=col,
-    #                                         min_pupil=min_pup)
-    #         plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst4', var_eye=col,
-    #                                         min_pupil=min_pup)
-    #         plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='dominance', var_eye=col,
-    #                                         min_pupil=min_pup)
-    #         plt.close('all')
-    # plot_regression_subjects(data_folder=DATA_FOLDER,
-    #                           freq='all', noisy=False,
-    #                           t_before=2.5, t_after=2.5, compute=True,
-    #                           dt=1/60, align=True, pupil_col='switch')
-    # plot_regression_subjects(data_folder=DATA_FOLDER,
-    #                           freq=2, noisy=False,
-    #                           t_before=2.5, t_after=2.5, compute=True,
-    #                           dt=1/60, align=True, pupil_col='switch')
-    # plot_regression_subjects(data_folder=DATA_FOLDER,
-    #                           freq=4, noisy=False,
-    #                           t_before=2.5, t_after=2.5, compute=True,
-    #                           dt=1/60, align=True, pupil_col='switch')
-    # plot_regression_subjects(data_folder=DATA_FOLDER,
-    #                           freq=2, noisy=True,
-    #                           t_before=2.5, t_after=2.5, compute=True,
-    #                           dt=1/60, align=True, pupil_col='switch')
     # experiment_example(nFrame=1560, fps=60, noisyframes=15)
     # plot_noise_variables_vs_fitted_params(n=4, variable='amplitude')
     # ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=10, fps=60,
@@ -11218,16 +11348,16 @@ if __name__ == '__main__':
     # simple_optimal_eta_quartic_potential(a=0.5)
     # simple_optimal_eta_quartic_potential(a=1.)
     # simple_optimal_eta_quartic_potential(a=1.5)
-    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-                                tFrame=26, fps=200,
-                                steps_back=800, steps_front=500, avoid_first=True,
-                                n=4, load_simulations=True, normalize=False, sigma=None,
-                                pshuf_only=None, bis_mono='Monostable')
-    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-                                tFrame=26, fps=200,
-                                steps_back=800, steps_front=500, avoid_first=True,
-                                n=4, load_simulations=True, normalize=False, sigma=None,
-                                pshuf_only=None, bis_mono='Bistable')
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=200,
+    #                             steps_back=800, steps_front=500, avoid_first=True,
+    #                             n=4, load_simulations=True, normalize=False, sigma=None,
+    #                             pshuf_only=None, bis_mono='Monostable')
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=200,
+    #                             steps_back=800, steps_front=500, avoid_first=True,
+    #                             n=4, load_simulations=True, normalize=False, sigma=None,
+    #                             pshuf_only=None, bis_mono='Bistable')
     # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
     #                             tFrame=26, fps=60,
     #                             steps_back=200, steps_front=20, avoid_first=True,
@@ -11342,16 +11472,18 @@ if __name__ == '__main__':
     # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
     #                         window_conv=None, ndt_list=None)
+    # analytical_hysteresis_width_degeneration(n=4, freq=2)
+    # analytical_hysteresis_width_degeneration(n=4, freq=4)
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=29, sv_folder=SV_FOLDER)
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
     # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=12, ntraining=8, t_dur=13,
     #                subj_ini=None, nbins=54, fitting_method='bads')
-    # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
-    #                             n_pars_to_fit=30, n_sims_per_par=100,
-    #                             sv_folder=SV_FOLDER, simulate=True,
-    #                             load_net=False, not_plot_and_return=False,
-    #                             pyddmfit=True, transform=False)
+    parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
+                                n_pars_to_fit=100, n_sims_per_par=100,
+                                sv_folder=SV_FOLDER, simulate=True,
+                                load_net=False, not_plot_and_return=False,
+                                pyddmfit=True, transform=False, ini_par=0)
     # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                  ntraining=8, coupling_levels=[0, 0.3, 1],
     #                  window_conv=5, bin_size=0.35, switch_01=False)
@@ -11362,11 +11494,11 @@ if __name__ == '__main__':
     #                                  fps=150, nsubs=1, n=4, nsims=5000,
     #                                  b_list=np.linspace(-0.5, 0.5, 1001), simul=False)
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                           steps_back=150, steps_front=10,
-    #                           shuffle_vals=[1, 0.7, 0], violin=True, sub=None,
-    #                           avoid_first=True, window_conv=1,
-    #                           zscore_number_switches=False, 
-    #                           normalize_variables=True, hysteresis_area=True)
+    #                          steps_back=150, steps_front=10,
+    #                          shuffle_vals=[1, 0.7, 0], violin=True, sub=None,
+    #                          avoid_first=True, window_conv=1,
+    #                          zscore_number_switches=False, 
+    #                          normalize_variables=True, hysteresis_area=True)
     # hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
     #                                     fps=60, tFrame=26, data_folder=DATA_FOLDER,
     #                                     ntraining=8, arrows=False)
