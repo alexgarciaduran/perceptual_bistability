@@ -4,9 +4,9 @@ from scipy.integrate import quad
 import matplotlib.pyplot as plt
 
 # ---------- model params (change as needed) ----------
-J = 0.3        # coupling
+J = 0.5        # coupling
 N = 4.0        # N factor in your formula
-D = 0.1       # noise intensity (Kramers D)
+D = 0.05       # noise intensity (Kramers D)
 alpha = 1/60   # sweep rate (Bias units per second)
 x_lo, x_hi = 0.0, 1.0  # domain for x (sigma outputs in (0,1))
 
@@ -161,57 +161,59 @@ else:
         print("Error solving approx eq:", e)
         rsw_approx = None
 
-# ---------- optional: SDE simulation to estimate empirical switching distribution ----------
-do_sim = True
-if do_sim:
-    import tqdm
-    T = 200.0
-    dt = 0.001
-    nsteps = int(T/dt)
-    ntrials = 400
-    # sweep Bias linearly from Bias_min_est to Bias_max_est over time T
-    biases_time = np.linspace(Bias_min_est, Bias_max_est, nsteps)
-    switch_times = []
-    for tr in range(ntrials):
-        x = 0.1  # initial
-        for i in range(nsteps-1):
-            B = biases_time[i]
-            xi = np.sqrt(2*D/dt)*np.random.randn()
-            x = x + (sigma(u_of(x,B)) - x)*dt + xi*np.sqrt(dt)
-            # detect crossing to the right (x crosses 0.5)
-            if x>0.5:
-                t_switch = i*dt
-                switch_times.append(t_switch)
-                break
-    # convert times to Bias
-    from collections import Counter
-    Bias_switches = [Bias_min_est + (Bias_max_est-Bias_min_est)*(t/T) for t in switch_times]
-    print("Empirical mean switch Bias (forward):", np.mean(Bias_switches), "N events:", len(Bias_switches))
 
-# ---------- plotting diagnostic ----------
-# plot deltaV and log-rate across Bias
-if Bias_min_est is not None:
-    Bs_plot = np.linspace(Bias_min_est, Bias_max_est, 300)
-    deltaVs = []
-    rates = []
-    As = []
-    for B in Bs_plot:
-        val = barrier_and_prefactor(B)
-        if val is None:
-            deltaVs.append(np.nan); rates.append(np.nan); As.append(np.nan)
-        else:
-            deltaVs.append(val['deltaV'])
-            As.append(val['A'])
-            rates.append(val['A']*np.exp(-val['deltaV']/D))
-    plt.figure(figsize=(8,4))
-    plt.subplot(1,2,1)
-    plt.plot(Bs_plot, deltaVs, label='DeltaV')
-    if rsw_approx is not None: plt.axvline(rsw_approx, color='C3', linestyle='--', label='approx r_sw')
-    if rsw_full is not None: plt.axvline(rsw_full, color='C4', linestyle='--', label='full r_sw')
-    plt.legend(); plt.xlabel('Bias'); plt.title('Barrier ΔV')
-    plt.subplot(1,2,2)
-    plt.semilogy(Bs_plot, rates, label='Kramers rate')
-    plt.axhline(alpha, color='k', linestyle=':', label='alpha')
-    plt.legend(); plt.xlabel('Bias'); plt.title('Rate vs Bias')
-    plt.tight_layout()
-    plt.show()
+if __name__ == '__main__':
+    # ---------- optional: SDE simulation to estimate empirical switching distribution ----------
+    do_sim = True
+    if do_sim:
+        import tqdm
+        dt = 0.001
+        ntrials = 1000
+        T = (Bias_max_est - Bias_min_est)/alpha  # total time needed for sweep
+        nsteps = int(T/dt)
+        # sweep Bias linearly from Bias_min_est to Bias_max_est over time T
+        biases_time = np.linspace(Bias_min_est, Bias_max_est, nsteps)
+        switch_times = []
+        for tr in range(ntrials):
+            x = 0.1  # initial
+            for i in range(nsteps-1):
+                B = biases_time[i]
+                xi = np.sqrt(2*D/dt)*np.random.randn()
+                x = x + (sigma(u_of(x,B)) - x)*dt + xi*np.sqrt(dt)
+                # detect crossing to the right (x crosses 0.5)
+                if x>0.5:
+                    t_switch = i*dt
+                    switch_times.append(t_switch)
+                    break
+        # convert times to Bias
+        from collections import Counter
+        Bias_switches = [Bias_min_est + (Bias_max_est-Bias_min_est)*(t/T) for t in switch_times]
+        print("Empirical mean switch Bias (forward):", np.mean(Bias_switches), "N events:", len(Bias_switches))
+    
+    # ---------- plotting diagnostic ----------
+    # plot deltaV and log-rate across Bias
+    if Bias_min_est is not None:
+        Bs_plot = np.linspace(Bias_min_est, Bias_max_est, 300)
+        deltaVs = []
+        rates = []
+        As = []
+        for B in Bs_plot:
+            val = barrier_and_prefactor(B)
+            if val is None:
+                deltaVs.append(np.nan); rates.append(np.nan); As.append(np.nan)
+            else:
+                deltaVs.append(val['deltaV'])
+                As.append(val['A'])
+                rates.append(val['A']*np.exp(-val['deltaV']/D))
+        plt.figure(figsize=(8,4))
+        plt.subplot(1,2,1)
+        plt.plot(Bs_plot, deltaVs, label='DeltaV')
+        if rsw_approx is not None: plt.axvline(rsw_approx, color='C3', linestyle='--', label='approx r_sw')
+        if rsw_full is not None: plt.axvline(rsw_full, color='C4', linestyle='--', label='full r_sw')
+        plt.legend(); plt.xlabel('Bias'); plt.title('Barrier ΔV')
+        plt.subplot(1,2,2)
+        plt.semilogy(Bs_plot, rates, label='Kramers rate')
+        plt.axhline(alpha, color='k', linestyle=':', label='alpha')
+        plt.legend(); plt.xlabel('Bias'); plt.title('Rate vs Bias')
+        plt.tight_layout()
+        plt.show()
