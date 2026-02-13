@@ -180,9 +180,17 @@ def get_connections(node):
         return [3, 5, 6]
 
 
-def sigmoid(x):
-    return 1/(1+np.exp(-x))
+# def sigmoid(x):
+#     return 1/(1+np.exp(-x))
 
+
+def sigmoid(x):
+    x_clipped = np.clip(x, -100, 100)
+    return np.where(
+        x >= 0,
+        1 / (1 + np.exp(-x_clipped)),
+        np.exp(x_clipped) / (1 + np.exp(x_clipped))
+    )
 
 def k_val(x_vec, j_mat, stim=0):
     return np.matmul(np.matmul(x_vec.T, j_mat), x_vec)/2 + np.sum(stim*x_vec)
