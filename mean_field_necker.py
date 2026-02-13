@@ -18,8 +18,10 @@ import numpy as np
 import matplotlib.pylab as pl
 import matplotlib as mpl
 from matplotlib.transforms import Affine2D
+import matplotlib.gridspec as gridspec
 from matplotlib.markers import MarkerStyle
 from matplotlib.colors import LinearSegmentedColormap
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import sympy
 from matplotlib.lines import Line2D
 from sklearn.metrics import roc_curve, auc, roc_auc_score
@@ -1544,7 +1546,7 @@ def solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=50, dt=1e-2,
         x = x + dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1)) + 2*b) - x)/ tau +\
             noise_vec[t]        # x = np.clip(x, 0, 1)
         if add_extra_shared_input:
-            x = x + np.random.randn()*0.05*t_cte_noise
+            x = x + np.random.randn()*0.025*t_cte_noise
         # cte input,  
         x_vec[t, :] = x  # np.clip(x, 0, 1)
     return time, x_vec
@@ -1563,12 +1565,13 @@ def solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau, time_end=50, dt=1e-2
     x_vec[:] = np.nan
     x_vec[0, :] = x
     ou_vec[:] = np.nan
-    ou_val = np.random.rand(theta.shape[0])
+    ou_val = np.zeros(theta.shape[0])  # np.random.randn(theta.shape[0])
     ou_vec[0, :] = ou_val
-    n_neighs = np.matmul(theta, np.ones(theta.shape[0]))
+    noise_component = np.random.randn(time.shape[0], theta.shape[0])*noise*np.sqrt(2*dt/tau_n)
+    # n_neighs = np.matmul(theta, np.ones(theta.shape[0]))
     for t in range(1, time.shape[0]):
-        x_n = (dt*(gn.sigmoid(2*j*(2*np.matmul(theta, x)-n_neighs) + 2*b) - x)) / tau
-        ou_val = ou_val + dt*(-ou_val / tau_n) + (np.random.randn(theta.shape[0])*noise*np.sqrt(dt/tau_n))
+        x_n = dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1)) + 2*b) - x) / tau
+        ou_val = ou_val + dt*(-ou_val / tau_n) + noise_component[t]
         x = x + x_n + ou_val
         # x = np.clip(x, 0, 1)
         x_vec[t, :] = x  # np.clip(x, 0, 1)
@@ -5330,7 +5333,7 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
             ax2.spines['top'].set_visible(False)
             ax2.set_ylim(0.15, 0.45)
             ax2.set_xlim(-0.3, 2.3)
-            ax2.set_title('Experiments (V5/MT)\n Washmut 2019', fontsize=13)
+            ax2.set_title('Experiments (V5/MT)\n Wasmuht 2019', fontsize=13)
             ax2.plot(2, 0.42, '^', color=colormap[0], markersize=10)
             ax2.plot(1, 0.28, '^', color=colormap[1], markersize=10)
             ax2.plot(0, 0.23, '^', color='k', mfc='none', markersize=10)
@@ -5389,105 +5392,370 @@ def plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
         fig.savefig(DATA_FOLDER + 'interneuronal_correlation_barplot.pdf', dpi=400, bbox_inches='tight')
 
 
-def plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.5, dt=1e-3, sigma=0.1, tau=0.2,
-                             shift=0, jump=20, nreps=100, b1=0, add_symetric_RM=False):
+def plot_bifurcation_diag_neurons(seed=10, niters=5000,
+                                  j_list=np.arange(0, 0.25, 1e-2),
+                                  random_matrix_weight=0.25,
+                                  n_units=100, dt=1e-2,
+                                  nreps=5):
+    np.random.seed(seed)
+    theta = get_regular_graph(seed=seed, n=n_units)
+    W = np.random.randn(n_units, n_units)  # variance = 1
+    # to get 1 variance again, we must divide by \sqrt(2)
+    W = (W + W.T) / np.sqrt(2)   # make it symmetric
+    theta = theta + W*random_matrix_weight
+    neighs = (np.abs(theta) > random_matrix_weight)*1
+    solutions = np.zeros((len(j_list), n_units, nreps))
+    for i_j, j in enumerate(tqdm(j_list)):
+        for n in range(nreps):
+            x = np.random.rand(n_units)
+            two_j = 2 * j
+            tmp = np.empty_like(x)        # buffer for 2*x-1
+            inp = np.empty_like(x)        # buffer for theta @ tmp
+            for _ in range(niters):
+                # tmp = 2*x - 1
+                np.multiply(x, 2, out=tmp)
+                tmp -= 1
+
+                # inp = theta @ tmp
+                inp[:] = theta @ tmp
+
+                x += dt * (gn.sigmoid(two_j * inp) - x)
+            solutions[i_j, :, n] = x
+    plt.figure()
+    for unit in range(n_units):
+        for n in range(nreps):
+            plt.plot(j_list, solutions[:, unit, n], alpha=0.3, color='k')
+
+
+def plot_scatter_and_add_correlations(var_1, var_2, ax, color='k',
+                                      idx_neuron=None):
+    ax.plot(var_1, var_2, color=color, marker='o', linestyle='', markersize=4)
+    if idx_neuron is not None:
+        ax.plot(var_1[idx_neuron], var_2[idx_neuron], color='r',
+                marker='*', linestyle='', markersize=10)
+    r, p = pearsonr(var_1, var_2)
+    ax.annotate(f'r = {r:.2f}\np={p:.1e}', xy=(0.05, 0.95), xycoords=ax.transAxes,
+                fontsize=14)
+
+
+def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
+                             shift=0, nreps=500, tau=0.2, seed=10,
+                             add_symetric_RM=False, b1=0, simulate=False,
+                             idx_neuron=0, ou=True, choice_time_before=0.25,
+                             random_matrix_weight=0.25,
+                             absolute_cps_rsc=False):
+    # good seeds: 10, 50, 60, 123, 55
     time = np.arange(0, t_dur+dt, dt)
-    np.random.seed(1000)
-    theta = get_regular_graph()
+    np.random.seed(seed)
+    theta = get_regular_graph(seed=seed, n=100)
+    neighs = theta
+    choice_steps_before = int(choice_time_before / dt)
+    label_matrix = ''
     if add_symetric_RM:
-        W = np.random.randn(100, 100)
-        W = (W + W.T) / 2   # make it symmetric
-        theta = theta + W
-    averages = np.zeros((2, theta.shape[0], nreps))
-    neighbor_averages = np.zeros((2, nreps))
-    single_averages = np.zeros((2, nreps))
-    t_cte = dt/tau
-    t_cte_noise = sigma*np.sqrt(t_cte)
-    for simulation_id in tqdm(range(nreps)):
-        vec1 = np.random.rand(theta.shape[0])
-        vec2 = np.random.rand(theta.shape[0])
-        vec1_arr = np.zeros((theta.shape[0], len(time)))
-        vec2_arr = np.zeros((theta.shape[0], len(time)))
-        noise1 = np.random.randn(len(time)+shift, theta.shape[0])
-        noise2 = np.random.randn(len(time)+shift, theta.shape[0])
-        for t in range(len(time)+shift):
-            vec1 = vec1 + t_cte*(gn.sigmoid(2*j1*np.matmul(theta, 2*vec1-1)+2*b1*np.random.rand())-vec1) + t_cte_noise*noise1[t]
-            vec2 = vec2 + t_cte*(gn.sigmoid(2*j0*np.matmul(theta, 2*vec2-1)+2*b1*np.random.rand())-vec2) + t_cte_noise*noise2[t]
-            if t >= shift:
-                vec1_arr[:, t-shift] = vec1
-                vec2_arr[:, t-shift] = vec2
+        f, a = plt.subplots(ncols=4, figsize=(10, 3.5))
+        a[0].imshow(theta, vmin=-1.5, vmax=1.5, cmap='bwr')
+
+        W = np.random.randn(100, 100)  # variance = 1
+        # to get 1 variance again, we must divide by \sqrt(2)
+        W = (W + W.T) / np.sqrt(2)   # make it symmetric
+        theta = theta + W*random_matrix_weight
+        neighs = (np.abs(theta) > random_matrix_weight)*1
+        a[1].imshow(theta, vmin=-1.5, vmax=1.5, cmap='bwr')
+        a[2].imshow(W*random_matrix_weight, vmin=-1.5, vmax=1.5, cmap='bwr')
+        a[3].imshow(neighs, vmin=-1.5, vmax=1.5, cmap='bwr')
+        
+        titles = [r'$\theta$', r'$W = \theta + \alpha X$', r'$\alpha X$', 'Neighbors']
+        for i_a, a_ind in enumerate(a):
+            a_ind.axis('off')
+            a_ind.set_title(titles[i_a], fontsize=14)
+        label_matrix = '_added_random_matrix'
+        f.tight_layout()
+        f.savefig(DATA_FOLDER + f'all_matrices{label_matrix}.png', dpi=200, bbox_inches='tight')
+        f.savefig(DATA_FOLDER + f'all_matrices{label_matrix}.pdf', dpi=200, bbox_inches='tight')
+    if simulate:
+        single_averages = np.zeros((2, theta.shape[0], nreps))
+        neighbor_averages = np.zeros((2, theta.shape[0], nreps))
+        choices = np.zeros((2, nreps))
+        for simulation_id in tqdm(range(nreps)):
+            vec1_arr = np.zeros((theta.shape[0], len(time)))
+            vec2_arr = np.zeros((theta.shape[0], len(time)))
+            if ou:
+                _, vec1_arr, _ = solution_mf_sdo_euler_OU_noise(j=j1, b=0, theta=theta, noise=sigma, tau=tau, time_end=t_dur, dt=dt,
+                                                             tau_n=0.1, approx_init=False)
+                _, vec2_arr, _ = solution_mf_sdo_euler_OU_noise(j=j0, b=0, theta=theta, noise=sigma, tau=tau, time_end=t_dur, dt=dt,
+                                                             tau_n=0.1, approx_init=False)
+            else:
+                _, vec1_arr = solution_mf_sdo_euler(j=j1, b=0, theta=theta, noise=sigma,
+                                                    tau=tau, time_end=t_dur, dt=dt,
+                                                    add_extra_shared_input=False)
+                _, vec2_arr = solution_mf_sdo_euler(j=j0, b=0, theta=theta, noise=sigma,
+                                                    tau=tau, time_end=t_dur, dt=dt,
+                                                    add_extra_shared_input=False)
+            vec1_arr = vec1_arr.T
+            vec2_arr = vec2_arr.T
+
+            # time averages per unit (you already had this)
+            avg1 = np.nanmean(vec1_arr, axis=1)
+            avg2 = np.nanmean(vec2_arr, axis=1)
             
-        # time averages per unit (you already had this)
-        avg1 = np.nanmean(vec1_arr, axis=1)
-        avg2 = np.nanmean(vec2_arr, axis=1)
-        
-        averages[0, :, simulation_id] = avg1
-        averages[1, :, simulation_id] = avg2
-        # choose neuron 0 (same as in example trace)
-        single_averages[0, simulation_id] = avg1[0]
-        single_averages[1, simulation_id] = avg2[0]
-        
-        neighbor_averages[0, simulation_id] = np.matmul(theta, avg1)[0]
-        neighbor_averages[1, simulation_id] = np.matmul(theta, avg2)[0]
-        # vec2_arr = vec2_arr[::jump]; vec1_arr = vec1_arr[::jump]
-    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(5, 4.5))
-    colormap = ['mediumvioletred', 'forestgreen']
-    ax[0, 1].plot(time, zscore(np.matmul(theta, vec1_arr)[0]), color=colormap[0], linewidth=3)
-    ax[0, 1].plot(time, zscore(vec1_arr[0]), color=colormap[1], linewidth=3)
-    ax[0, 0].plot(time, zscore(np.matmul(theta, vec2_arr)[0]), color=colormap[0], linewidth=3,
+            # choose neuron 0 (same as in example trace)
+            single_averages[0, :, simulation_id] = np.nanmean(vec1_arr, axis=1)
+            single_averages[1, :, simulation_id] = np.nanmean(vec2_arr, axis=1)
+            
+            neighbor_averages[0, :, simulation_id] = np.matmul(neighs, avg1)
+            neighbor_averages[1, :, simulation_id] = np.matmul(neighs, avg2)
+    
+            choices[0, simulation_id] = (np.sign(np.nanmean(vec1_arr[-choice_steps_before:])-0.5)+1)/2
+            choices[1, simulation_id] = (np.sign(np.nanmean(vec2_arr[-choice_steps_before:])-0.5)+1)/2
+        np.save(DATA_FOLDER + f'vec2_arr_simulated{label_matrix}.npy', vec2_arr)
+        np.save(DATA_FOLDER + f'vec1_arr_simulated{label_matrix}.npy', vec1_arr)
+        np.save(DATA_FOLDER + f'simulated_choices_neurons{label_matrix}.npy', choices)
+        np.save(DATA_FOLDER + f'simulated_neigh_averages_neurons{label_matrix}.npy', neighbor_averages)
+        np.save(DATA_FOLDER + f'simulated_single_averages{label_matrix}.npy', single_averages)
+    else:
+        choices = np.load(DATA_FOLDER + f'simulated_choices_neurons{label_matrix}.npy')
+        neighbor_averages = np.load(DATA_FOLDER + f'simulated_neigh_averages_neurons{label_matrix}.npy')
+        single_averages = np.load(DATA_FOLDER + f'simulated_single_averages{label_matrix}.npy')
+        vec2_arr = np.load(DATA_FOLDER + f'vec2_arr_simulated{label_matrix}.npy')
+        vec1_arr = np.load(DATA_FOLDER + f'vec1_arr_simulated{label_matrix}.npy')
+    # first compute everything
+    all_cps_high = []
+    all_cps_low = []
+    all_corr_high = []
+    all_corr_low = []
+    for i in range(theta.shape[0]):
+        x_low = single_averages[1, i]
+        x_high = single_averages[0, i]
+        roc_high = roc_auc_score(choices[0], x_high)
+        roc_low = roc_auc_score(choices[1], x_low)
+        if absolute_cps_rsc:
+            all_cps_high.append(np.abs(roc_high - 0.5)+0.5)
+            all_cps_low.append(np.abs(roc_low-0.5)+0.5)
+        else:
+            all_cps_high.append(roc_high)
+            all_cps_low.append(roc_low)
+        # low coupling (left)
+        x_low = zscore(single_averages[1, i])
+        y_low = zscore(neighbor_averages[1, i])
+        # high coupling (right)
+        x_high = zscore(single_averages[0, i])
+        y_high = zscore(neighbor_averages[0, i])
+        corr_low, p_low = pearsonr(x_low, y_low)
+        corr_high, p_high = pearsonr(x_high, y_high)
+        if absolute_cps_rsc:
+            all_corr_high.append(np.abs(corr_high))
+            all_corr_low.append(np.abs(corr_low))
+        else:
+            all_corr_high.append(corr_high)
+            all_corr_low.append(corr_low)
+    
+    # concat all activity
+    X = np.concatenate([
+        single_averages[0].T,
+        single_averages[1].T
+        ], axis=0)
+    
+    eigvals, eigvects = np.linalg.eig(theta)
+    eigvals = np.sort(eigvals)
+    
+
+    pca = PCA(n_components=1).fit(X)
+    if absolute_cps_rsc:
+        components_0 = components_1 = np.abs(pca.components_[0])   # neuron loadings for PC1
+        eigvect_1 = np.abs(eigvects.T[0])   # will act as neuron loadings for PC1
+    else:
+        components_0 = components_1 = pca.components_[0]   # neuron loadings for PC1
+        eigvect_1 = eigvects.T[0]   # will act as neuron loadings for PC1
+    
+    deg_in = np.sum(theta, axis=1)
+    cov_high = np.cov(single_averages[0])
+    cov_low = np.cov(single_averages[1])
+
+    if idx_neuron in ['mean', 'median']:
+        # Stack features → shape (N_neurons, 4)
+        X = np.column_stack([
+            all_cps_high,
+            all_cps_low,
+            all_corr_high,
+            all_corr_low
+        ])
+        # Mean across neurons → shape (4,)
+        fun = np.mean if idx_neuron == 'mean' else np.median
+        mu = fun(X, axis=0)
+        # Distance of each neuron to the mean profile
+        dist = np.linalg.norm(X - mu, axis=1)
+        # Index of neuron closest to the mean
+        idx_neuron = np.argmin(dist)
+    
+    f1, a1 = plt.subplots(ncols=2, nrows=3, figsize=(6, 8), sharey=True)
+    a1 = a1.flatten()
+    for a in a1:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    mean_cov_low = all_corr_low
+    mean_cov_high = all_corr_high
+    eigvect_1 = -eigvect_1 if (~absolute_cps_rsc and eigvect_1[np.argmin(components_0)] > 0) else eigvect_1
+    for i_var, var_1 in enumerate([eigvect_1, deg_in, mean_cov_high, mean_cov_low, all_cps_high, all_cps_low]):
+        plot_scatter_and_add_correlations(var_1, var_2=components_0, ax=a1[i_var], color='k',
+                                          idx_neuron=idx_neuron)
+    a1[0].set_ylabel('PC1 loading')
+    a1[0].set_xlabel(r'Eigenvector, $v_1$')
+    a1[1].set_xlabel(r'$d_i = \sum_j W_{ij}$')
+    a1[2].set_xlabel('Correlation (J big)')
+    a1[3].set_xlabel('Correlation (J small)')
+    a1[4].set_xlabel('CP (J big)')
+    a1[5].set_xlabel('CP (J small)')
+    f1.tight_layout()
+
+    fig, ax = plt.subplots(ncols=2, nrows=3, figsize=(5, 7))
+    colormap = ['k', 'gray']
+    ax[0, 1].plot(time, zscore(np.matmul(neighs, vec1_arr)[idx_neuron]), color=colormap[0], linewidth=3)
+    ax[0, 1].plot(time, zscore(vec1_arr[idx_neuron]), color=colormap[1], linewidth=3)
+    ax[0, 0].plot(time, zscore(np.matmul(neighs, vec2_arr)[idx_neuron]), color=colormap[0], linewidth=3,
                   label='Neighbors')
-    ax[0, 0].plot(time, zscore(vec2_arr[0]), color=colormap[1], linewidth=3,
+    ax[0, 0].plot(time, zscore(vec2_arr[idx_neuron]), color=colormap[1], linewidth=3,
                   label='Neuron i')
-    ax[0, 0].legend(frameon=False)
     
-    # condition j1
-    x1 = zscore(single_averages[0])
-    y1 = zscore(neighbor_averages[0])
+    # low coupling (left)
+    x_low = zscore(single_averages[1, idx_neuron])
+    y_low = zscore(neighbor_averages[1, idx_neuron])
     
-    # condition j0
-    x2 = zscore(single_averages[1])
-    y2 = zscore(neighbor_averages[1])
+    # high coupling (right)
+    x_high = zscore(single_averages[0, idx_neuron])
+    y_high = zscore(neighbor_averages[0, idx_neuron])
     
-    corr1, p1 = pearsonr(x1, y1)
-    corr2, p2 = pearsonr(x2, y2)
+    corr_low, p_low = pearsonr(x_low, y_low)
+    corr_high, p_high = pearsonr(x_high, y_high)
     
-    corrs = [round(corr1, 3), round(corr2, 3)]
-    pvals = [round(p1, 6), round(p2, 6)]
+    corrs = [round(corr_high, 5), round(corr_low, 5)]
+    # pvals = [round(p1, 6), round(p2, 6)]
     
     for i_a, a in enumerate([ax[1, 1], ax[1, 0]]):
         a.plot([-3, 3], [-3, 3], color='gray', linestyle='--',
                alpha=0.7, linewidth=3)
-        a.annotate(f'r = {corrs[i_a]:.3f}', xy=(.04, 0.9), xycoords=a.transAxes)
-        a.set_xlabel('Single unit')
+        a.annotate(f'r = {corrs[i_a]:.2f}', xy=(.04, 1.01), xycoords=a.transAxes)
+        # a.set_xlabel('Single unit')
     
-    ax[1, 1].plot(x1, y1,
+    ax[1, 1].plot(x_high, y_high,
                   linestyle='', marker='o', markersize=2, color='k')
     
-    ax[1, 0].plot(x2, y2,
+    ax[1, 0].plot(x_low, y_low,
                   linestyle='', marker='o', markersize=2, color='k')
-    # ax[1, 1].plot(zscore(vec1_arr[0]), zscore(np.matmul(theta, vec1_arr)[0]),
-    #               color='k', linestyle='', marker='o', markersize=3)
-    # ax[1, 0].plot(zscore(vec2_arr[0]), zscore(np.matmul(theta, vec2_arr)[0]),
-    #               color='k', linestyle='', marker='o', markersize=3)
-    # corr1 = round(np.corrcoef(zscore(vec1_arr[0]), zscore(np.matmul(theta, vec1_arr)[0]))[0][1], 3)
-    # corr2 = round(np.corrcoef(zscore(vec2_arr[0]), zscore(np.matmul(theta, vec2_arr)[0]))[0][1], 3)
-    # corrs = [corr1, corr2]
-    # for i_a, a in enumerate([ax[1, 1], ax[1, 0]]):
-    #     a.plot([-3, 3], [-3, 3], color='gray', linestyle='--', alpha=0.7, linewidth=4)
-    #     a.text(1.2, -1.8, rf'$\rho = $ {corrs[i_a]}', fontsize=14)
-    #     a.set_xlabel('Single unit')
     ax[0, 0].set_ylabel('Activity')
     ax[0, 0].set_xlabel('Time')
     ax[0, 1].set_xlabel('Time')
     ax[1, 0].set_ylabel('Neighbors')
+    x_low = single_averages[1, idx_neuron]
+    x_high = single_averages[0, idx_neuron]
+    kwargs = {'linewidth': 4, 'bw_adjust': 2}
+    cp_high = roc_auc_score(choices[0], x_high)
+    cp_low = roc_auc_score(choices[1], x_low)
+    sns.kdeplot(x_low[choices[1] == 1], color='forestgreen',
+                ax=ax[2, 0], **kwargs)
+    sns.kdeplot(x_low[choices[1] == 0], color='firebrick',
+                ax=ax[2, 0], **kwargs)
+    sns.kdeplot(x_high[choices[0] == 1], color='forestgreen',
+                ax=ax[2, 1], **kwargs, label='Left')
+    sns.kdeplot(x_high[choices[0] == 0], color='firebrick',
+                ax=ax[2, 1], **kwargs, label='Right')
+    cps = [cp_low, cp_high]
+    for i_a, a in enumerate(ax[2, :]):
+        a.set_ylabel('')
+        a.axvline(0.5, color='gray', alpha=0.5, linewidth=3, linestyle='--')
+        a.annotate(f'CP = {cps[i_a]:.2f}', xy=(.04, 1.01), xycoords=a.transAxes)
+    ax[2, 0].set_xlabel('Single neuron')
+    ax[2, 1].set_xlabel('Single neuron')
+    ax[2, 0].set_ylabel('Density')
     for a in ax.flatten():
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
         a.set_yticks([])
         a.set_xticks([])
     fig.tight_layout()
-    fig.savefig(DATA_FOLDER + 'interneuronal_correlation_cartoon_example_v2.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'interneuronal_correlation_cartoon_example_v2.pdf', dpi=400, bbox_inches='tight')
+    ax[0, 0].legend(frameon=False, bbox_to_anchor=[0.8, 1.4])
+    ax[2, 1].legend(frameon=False, title='Choice')
+    f2, a2 = plt.subplots(ncols=2, figsize=(7, 3.2),
+                          sharex=True, sharey=True)
+    for a in a2:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+    kwargs = {'color': 'r', 'alpha': 0.4, 'linestyle': '--', 'linewidth': 3}
+    vals_data_cp = [0.56, 0.67]
+    vals_data_rsc = [0.23, 0.42]
+    for i in range(2):
+        a2[i].axhline(vals_data_cp[i], **kwargs)
+        a2[i].axvline(vals_data_rsc[i], **kwargs)
+        a2[i].axhline(0.5, color='k', alpha=0.3, linestyle='--')
+    
+    sc = a2[0].scatter(all_corr_low, all_cps_low, marker='o', c=components_0,
+                  cmap='copper', s=10)
+    sc = a2[1].scatter(all_corr_high, all_cps_high, marker='o', c=components_1,
+                       cmap='copper', s=10)
+    divider = make_axes_locatable(a2[1])
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    cbar = f2.colorbar(sc, cax=cax)
+    cbar.set_label("PC1 loading")
+    a2[0].plot(all_corr_low[idx_neuron], all_cps_low[idx_neuron],
+               marker='*', linestyle='', color='r', markersize=10)
+    a2[1].plot(all_corr_high[idx_neuron], all_cps_high[idx_neuron],
+               marker='*', linestyle='', color='r', markersize=10)
+    # all_cps = all_cps_high+all_cps_low
+    # all_corr = all_corr_high+all_corr_low
+    r, p = pearsonr(all_cps_low, all_corr_low)
+    a2[0].annotate(f'r = {r:.2f}\np={p:.1e}\nM=100', xy=(.04, 0.85), xycoords=a2[0].transAxes)
+    r, p = pearsonr(all_cps_high, all_corr_high)
+    a2[1].annotate(f'r = {r:.2f}\np={p:.1e}\nM={theta.shape[0]}', xy=(.04, 0.85), xycoords=a2[1].transAxes)
+    a2[0].set_xlabel('Correlation, r')
+    a2[0].set_ylabel('Choice probability (CP)')
+    a2[1].set_xlabel('Correlation, r')
+    f2.tight_layout()
+    f3, a3 = plt.subplots(ncols=2, figsize=(7, 3.2),
+                          sharex=True, sharey=True)
+    for a in a3:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.plot([0.45, 1], [0.45, 1], color='gray', linestyle='--',
+               alpha=0.5, linewidth=4)
+        a.set_ylim(0.45, 1)
+        a.set_xlim(0.45, 1)
+    all_cps_high = np.abs(np.array(all_cps_high)-0.5)+0.5
+    all_cps_low = np.abs(np.array(all_cps_low)-0.5)+0.5
+    analytical_cps_low = analytical_CP_haefner(cov_low, cov_mat=False)
+    analytical_cps_high = analytical_CP_haefner(cov_high, cov_mat=False)
+    r_high, p_high = pearsonr(analytical_cps_high, all_cps_high)
+    r_low, p_low = pearsonr(analytical_cps_low, all_cps_low)
+    a3[1].annotate(f'r = {r_high:.2f}\np={p_high:.1e}', xy=(.5, 0.1), xycoords=a3[1].transAxes)
+    a3[0].annotate(f'r = {r_low:.2f}\np={p_low:.1e}', xy=(.5, 0.1), xycoords=a3[0].transAxes)
+    a3[1].scatter(analytical_cps_high, all_cps_high, marker='o',
+                  s=10, cmap='copper', c=np.abs(components_0))
+    a3[0].scatter(analytical_cps_low, all_cps_low, marker='o',
+                  s=10, cmap='copper', c=np.abs(components_1))
+    a3[1].plot(analytical_cps_high[idx_neuron], all_cps_high[idx_neuron], marker='*',
+               linestyle='', markersize=10, color='r')
+    a3[0].plot(analytical_cps_low[idx_neuron], all_cps_low[idx_neuron], marker='*',
+               linestyle='', markersize=10, color='r')
+    a3[0].set_xlabel('Analytical')
+    a3[1].set_xlabel('Analytical')
+    a3[0].set_ylabel('Simulated')
+    f3.tight_layout()
+    fig.savefig(DATA_FOLDER + f'interneuronal_correlation_cartoon_example{label_matrix}.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + f'interneuronal_correlation_cartoon_example{label_matrix}.pdf', dpi=400, bbox_inches='tight')
+    f2.savefig(DATA_FOLDER + f'rsc_vs_cps{label_matrix}.png', dpi=400, bbox_inches='tight')
+    f2.savefig(DATA_FOLDER + f'rsc_vs_cps{label_matrix}.pdf', dpi=400, bbox_inches='tight')
+
+
+def analytical_CP_haefner(theta, cov_mat=False):
+    n = theta.shape[0]
+    if cov_mat:
+        b_vec = np.linalg.eig(theta)[1].T[0]
+    else:
+        b_vec = np.ones(n) / n
+    cps = []
+    for k in range(n):
+        chi_k = np.dot(theta[k], b_vec) / (np.sqrt(theta[k, k]*(b_vec.T@theta)@b_vec))
+        cp_k = 0.5 + np.sqrt(2)/np.pi*np.arctan((2/chi_k**2-1)**(-1/2))
+        cps.append(cp_k)
+    return cps
 
 
 def analytical_correlation_rsc(sigma=0.15, theta=theta, n=4):
@@ -5670,7 +5938,6 @@ def choice_probability_mean_field(j=0.5, b=0, theta=theta,
                                   noise=0.05, tau=0.1, time_end=20,
                                   nsimuls=1000, ou_noise=True,
                                   add_random_neurons=False):
-    from sklearn.metrics import roc_auc_score
     X = np.zeros((nsimuls, theta.shape[0]+add_random_neurons))
     y = np.zeros(nsimuls)
     # cps = np.zeros(nsimuls)
@@ -5834,8 +6101,8 @@ def cartoon_b_velocity_q():
     fig.tight_layout()
 
 
-def get_regular_graph(d=4, n=100):
-    G = gn.nx.random_regular_graph(d, n)
+def get_regular_graph(d=4, n=100, seed=None):
+    G = gn.nx.random_regular_graph(d, n, seed=seed)
     A = gn.nx.to_numpy_array(G, dtype=int)
     return A
 
@@ -6178,9 +6445,9 @@ def spectral_gap_vs_d_m(d_list=np.arange(2, 10, 1),
                    marker='o', label=labels[i_n])
     ax[2].axhline(0, color='gray', linewidth=2, alpha=0.5, linestyle='--')
     ax[2].legend(title='Neighbors', frameon=False)
-    ax[0].set_ylabel(r'$\lambda_1$')
-    ax[1].set_ylabel(r'$\lambda_2$')
-    ax[2].set_ylabel(r'Spectral gap, $\lambda_1-\lambda_2$')
+    ax[0].set_ylabel(r'$\mu_1$')
+    ax[1].set_ylabel(r'$\mu_2$')
+    ax[2].set_ylabel(r'Spectral gap, $\mu_1-\mu_2$')
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + f'spectral_gap{label_noise}.png', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + f'spectral_gap{label_noise}.pdf', dpi=400, bbox_inches='tight')
@@ -6307,12 +6574,12 @@ if __name__ == '__main__':
     # analytical_correlation_rsc(sigma=0.1, theta=get_regular_graph())
     # plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
     #                                         j_list=np.arange(0, 1.01, 0.02),
-    #                                         nsims=20, load_data=False, sigma=0.2,
+    #                                         nsims=20, load_data=True, sigma=0.2,
     #                                         long=True, cylinder=True, inset=False,
     #                                         barplot=False, add_rand_matrix=True)
     # plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
     #                                         j_list=np.arange(0, 1.01, 0.02),
-    #                                         nsims=20, load_data=False, sigma=0.2,
+    #                                         nsims=20, load_data=True, sigma=0.2,
     #                                         long=True, cylinder=True, inset=False,
     #                                         barplot=False, add_rand_matrix=False)
     # plot_cross_correlogram(sigma=0.1, nsims=50,
@@ -6323,5 +6590,11 @@ if __name__ == '__main__':
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
-    plot_example_correlation(j0=0.1, j1=0.33, t_dur=0.25, dt=1e-3, sigma=0.1,
-                             shift=0, jump=20, nreps=200, tau=0.5)
+    plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
+                             shift=0, nreps=1000, tau=0.2, seed=10, simulate=False,
+                             idx_neuron='mean', ou=False, add_symetric_RM=True,
+                             choice_time_before=0.25, random_matrix_weight=0.25)
+    # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
+    #                          shift=0, nreps=500, tau=0.2, seed=10, simulate=False,
+    #                          idx_neuron='mean', ou=False, add_symetric_RM=False,
+    #                          choice_time_before=0.25)
