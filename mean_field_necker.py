@@ -5485,8 +5485,8 @@ def compute_correlation_and_cp(single_averages, neighs_averages, choices):
         x_single = single_averages[i]
         roc = roc_auc_score(choices, x_single)
         # high coupling (right)
-        act_single = zscore(single_averages[i])
-        act_neigh = zscore(neighs_averages[i])
+        act_single = zscore(single_averages[i], nan_policy='omit')
+        act_neigh = zscore(neighs_averages[i], nan_policy='omit')
         corr_low, p_low = pearsonr(act_single, act_neigh)
         corrs.append(corr_low)
         rocs.append(roc)
@@ -5567,6 +5567,89 @@ def simulate_system_for_j_alpha(n_points=100, seed=10, t_dur=2, dt=1e-2,
     return correlation_matrix, cp_matrix, j_list, alpha_list
 
 
+def create_b_given_pstim(pstim=0, n_units=100, n_time=200, strength_b=0.2):
+    idx_i = np.random.choice(np.arange(n_units), int(n_units*pstim), replace=False)
+    choice = np.random.choice([-1, 1])
+    if len(idx_i) == 0:
+        return 0.
+    else:
+        b_all = np.zeros((n_time, n_units))
+        b_all[:, idx_i] = (choice + np.random.randn(n_time, len(idx_i)))*strength_b
+    return b_all
+
+
+def simulate_system_for_pstimulation_alpha(n_points=100, seed=10, t_dur=2, dt=1e-2,
+                                           tau=0.2, sigma=0.1, choice_time_before=0.25,
+                                           nreps=100, simulate=False, n_jobs=None,
+                                           add_stim=False, strength_b=0.1):
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    np.random.seed(seed)
+    # theta = get_regular_graph(seed=seed, n=100)
+    alpha_list = np.linspace(0, 1., n_points)
+    pstim_list = np.linspace(0, 1., n_points)
+    label_stim = f'_strength_b_{strength_b}'
+    label_sigma = f'_sigma_{sigma}' if sigma != 0.1 else ''
+    
+    # define function to iterate in parallel (will compute array of b
+    # depending on the proportion of stimulated neurons, p(stim))
+    def one_simulation(simulation_id, seed, pstim, W, neighs, strength_b,
+                       sigma, tau, t_dur, dt, choice_steps_before):
+        np.random.seed(seed + simulation_id)
+        n_time = int(np.round((t_dur+dt)/dt))
+        b = create_b_given_pstim(pstim=pstim, n_units=100, n_time=n_time, strength_b=strength_b)
+        _, activity = solution_mf_sdo_euler(
+            j=1, b=b, theta=W, noise=sigma,
+            tau=tau, time_end=t_dur, dt=dt, add_extra_shared_input=False)
+        activity = activity.T
+        acg = np.nanmean(activity, axis=1)
+        neigh_avg = neighs @ acg
+        choice = (np.sign(np.nanmean(activity[-choice_steps_before:]) - 0.5) + 1) / 2
+        return acg, neigh_avg, choice
+
+    if simulate:
+        print('Saving CP in:\n ' + DATA_FOLDER + f'choice_probability_matrix_pstimalpha{label_stim}{label_sigma}.npy')
+        if n_jobs is None:
+            import psutil
+            n_jobs = psutil.cpu_count(logical=False)-1
+        correlation_matrix = np.zeros((len(pstim_list), len(alpha_list), 100))
+        cp_matrix = np.zeros_like(correlation_matrix)
+        choice_steps_before = int(choice_time_before / dt)
+        for i_alpha, alpha in enumerate(tqdm(alpha_list)):
+            np.random.seed(seed)
+            X = np.random.randn(100, 100)  # variance = 1
+            # to get 1 variance again, we must divide by \sqrt(2)
+            X = (X + X.T) / np.sqrt(2)   # make it symmetric
+            W = X*alpha
+            neighs = (np.abs(W+np.random.randn(100, 100)*0.001) > 0.)*1
+            for i_p, pstim in enumerate(pstim_list):
+                with parallel_backend('loky', n_jobs=n_jobs, verbose=0):
+                    results = Parallel()(
+                        delayed(one_simulation)(
+                            simulation_id, seed, pstim, W, neighs, strength_b,
+                            sigma, tau, t_dur, dt, choice_steps_before
+                        )
+                        for simulation_id in range(nreps)
+                    )
+
+                single_averages = np.column_stack([r[0] for r in results])
+                neighs_averages = np.column_stack([r[1] for r in results])
+                choices = np.array([r[2] for r in results])
+                corrs, rocs = compute_correlation_and_cp(single_averages, neighs_averages, choices)
+                correlation_matrix[i_p, i_alpha, :] = corrs
+                cp_matrix[i_p, i_alpha, :] = rocs
+        os.environ.pop("OMP_NUM_THREADS", None)
+        os.environ.pop("MKL_NUM_THREADS", None)
+        os.environ.pop("OPENBLAS_NUM_THREADS", None)
+        np.save(DATA_FOLDER + f'choice_probability_matrix_pstimalpha{label_stim}{label_sigma}.npy', cp_matrix)
+        np.save(DATA_FOLDER + f'interneuronal_correlation_matrix_pstimalpha{label_stim}{label_sigma}.npy', correlation_matrix)
+    else:
+        cp_matrix = np.load(DATA_FOLDER + f'choice_probability_matrix_pstimalpha{label_stim}{label_sigma}.npy')
+        correlation_matrix = np.load(DATA_FOLDER + f'interneuronal_correlation_matrix_pstimalpha{label_stim}{label_sigma}.npy')
+    return correlation_matrix, cp_matrix, pstim_list, alpha_list
+
+
 def get_largest_eigval(seed=10, alpha_list=np.linspace(0, 1, 100)):
     np.random.seed(seed)
     theta = get_regular_graph(seed=seed, n=100)
@@ -5582,9 +5665,127 @@ def get_largest_eigval(seed=10, alpha_list=np.linspace(0, 1, 100)):
     return np.array(eigval)
 
 
-def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1):
-    corr_matrix, cp_matrix, j_list, alpha_list = \
-        simulate_system_for_j_alpha(simulate=False, add_stim=add_stim, sigma=sigma)
+def logistic_fixed_point(W, J, B=0.0, X0=None, n_attempts=100, tol=1e-6):
+    """
+    Solve for a fixed point starting from initial guess X0.
+    Logistic function sigma(z) = 1/(1+exp(-z))
+    """
+    N = W.shape[0]
+    if X0 is None:
+        X0 = np.random.rand(N)  # uniform initial guess in [0,1]
+
+    def f(X):
+        z = 2*J*W@(2*X-1) + 2*B
+        return -X + 1/(1 + np.exp(-z))
+
+    X_fp = fsolve(f, X0, xtol=tol)
+    residual = np.linalg.norm(f(X_fp))
+    if residual < 1e-6:
+        return X_fp
+    for attempt in range(n_attempts):
+        np.random.seed(attempt)
+        X0 = np.random.rand(N)
+        try:
+            X_fp = fsolve(f, X0, xtol=tol)
+            X_fp = np.clip(X_fp, 0.0, 1.0)
+            
+            # optional: check that solver actually converged
+            residual = np.linalg.norm(f(X_fp))
+            if residual < tol:
+                print(f'It took {attempt+2} attempts')
+                return X_fp
+        except Exception:
+            continue
+    return np.clip(X_fp, 0.0, 1.0)  # ensure values in [0,1]
+
+
+def jacobian_at_fixed_point(W, J, X_fp):
+    """
+    Linearized Jacobian at a fixed point.
+    """
+    N = W.shape[0]
+    z = 2*J*W@(2*X_fp - 1)
+    sigma_prime = np.exp(-z) / ((1 + np.exp(-z))**2)  # derivative of logistic
+    D = 4 * J * np.diag(sigma_prime)  # factor 4 from 2*J*2
+    A = -np.eye(N) + D @ W
+    return A
+
+
+def covariance_and_correlation(A, noise_std=0.1):
+    """
+    Solve Lyapunov equation A C + C A^T = -Q
+    """
+    N = A.shape[0]
+    Q = (noise_std**2) * np.eye(N)
+    
+    # solve
+    C = scipy.linalg.solve_continuous_lyapunov(A, -Q)
+    # symmetrize and clip diagonal
+    C = (C + C.T)/2
+    diag_C = np.diag(C).copy()
+    diag_C[diag_C < 1e-12] = 1e-12
+    std = np.sqrt(diag_C)
+    Corr = C / np.outer(std, std)
+    return C, Corr
+
+
+def single_vs_multi_unit_corr(W, C):
+    N = W.shape[0]
+    rho = np.zeros(N)
+    for i in range(N):
+        neigh = np.where(W[i] != 0)[0]
+        neigh = neigh[neigh != i]
+        d = len(neigh)
+        if d == 0:
+            rho[i] = np.nan
+            continue
+        cov_i_M = np.sum(C[i, neigh]) / d
+        C_nn = C[np.ix_(neigh, neigh)]
+        var_M = np.sum(C_nn) / (d**2)
+        rho[i] = cov_i_M / np.sqrt(C[i, i] * var_M)
+    return rho
+
+
+def plot_rsc_cp_analytical(cmap='Purples', seed=10, n_units=100, B=0):
+    alpha_list = np.linspace(0, 1, 100)
+    j_list = np.linspace(0, 0.5, 100)
+    np.random.seed(seed)
+    theta = get_regular_graph(seed=seed, n=n_units)
+    correlation_matrix = np.zeros((len(j_list), len(alpha_list), n_units))
+    cov_matrix = np.zeros((len(j_list), len(alpha_list), n_units, n_units))
+    cp_matrix = np.zeros((len(j_list), len(alpha_list), n_units))
+    for i_alpha, alpha in enumerate(tqdm(alpha_list)):
+        np.random.seed(seed)
+        X = np.random.randn(100, 100)  # variance = 1
+        # to get 1 variance again, we must divide by \sqrt(2)
+        X = (X + X.T) / np.sqrt(2)   # make it symmetric
+        W = theta + X*alpha
+        eigvals, eigvects = np.linalg.eigh(W)
+        for i_j, j in enumerate(j_list):
+            if j > 1/np.max(eigvals):
+                X0 = np.ones(n_units)*0.9
+            else:
+                X0 = np.ones(n_units)*0.5
+            X_fp = logistic_fixed_point(W, j, B, X0)
+            A = jacobian_at_fixed_point(W, j, X_fp)
+            cov, corr = covariance_and_correlation(A, noise_std=0.1)
+            cov_matrix[i_j, i_alpha] = cov
+            correlation_matrix[i_j, i_alpha] = single_vs_multi_unit_corr(W, cov)
+            cp_matrix[i_j, i_alpha] = analytical_CP_haefner(cov)
+
+
+def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1,
+                            plot_j_alpha_sim_values=True, mode='Jalpha',
+                            strength_b=0.1):
+    if mode == 'J_alpha':
+        corr_matrix, cp_matrix, j_list, alpha_list = \
+            simulate_system_for_j_alpha(simulate=False, add_stim=add_stim, sigma=sigma)
+        ylabel = r"$J$"
+    if mode == 'pstim_alpha':
+        corr_matrix, cp_matrix, j_list, alpha_list = \
+            simulate_system_for_pstimulation_alpha(simulate=False,
+                                                   sigma=sigma, strength_b=strength_b)
+        ylabel = 'p(stimulated)'
     largest_eigval = get_largest_eigval(seed=10, alpha_list=np.linspace(0, 1, 100))
     j_crit = 1/largest_eigval
     fig, axes = plt.subplots(1, 3, figsize=(12, 3))
@@ -5594,9 +5795,9 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1):
                 j_list[0], j_list[-1]],
         aspect="auto", cmap=cmap, vmin=0, vmax=1)
     axes[0].set_xlabel(r"$\alpha$")
-    axes[0].set_ylabel(r"$J$")
+    
+    axes[0].set_ylabel(ylabel)
     plt.colorbar(im0, ax=axes[0], label=r'Correlation, $\langle r \rangle$')
-
     im1 = axes[1].imshow(
         np.nanmean(cp_matrix, axis=-1), origin="lower",
         extent=[alpha_list[0], alpha_list[-1],
@@ -5604,8 +5805,12 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1):
         aspect="auto", cmap=cmap, vmin=0.5, vmax=1
     )
     axes[1].set_xlabel(r"$\alpha$")
-    axes[1].set_ylabel(r"$J$")
+    axes[1].set_ylabel(ylabel)
     plt.colorbar(im1, ax=axes[1], label=r'Choice probability, $\langle CP \rangle$')
+    if plot_j_alpha_sim_values:
+        for a in axes:
+            a.plot(0.25, 0.1, marker='s', color='r')
+            a.plot(0.25, 0.3, marker='s', color='r')
     # plot J_crit
     for a in (axes):
         a.plot(alpha_list, j_crit, color='k', linewidth=2)
@@ -5651,18 +5856,22 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1):
         aspect="auto", cmap=cmap, vmin=0, vmax=1
     )
     axes[2].set_xlabel(r"$\alpha$")
-    axes[2].set_ylabel(r"$J$")
+    axes[2].set_ylabel(ylabel)
     plt.colorbar(im1, ax=axes[2], label=r'Correlation $\rho(r, CP)$')
     fig.tight_layout()
 
-    label_stim = '_shared_stim' if add_stim else ''
     label_sigma = f'_sigma_{sigma}'
-    if add_stim:
-        fig.suptitle(rf'Shared stimulus, $\sigma$: {sigma}', y=1.01, fontsize=15)
-    else:
-        fig.suptitle(rf'$\sigma$: {sigma}', y=1.01, fontsize=15)
-    fig.savefig(DATA_FOLDER + f'rsc_cp_matrices_simulations{label_stim}{label_sigma}.png', dpi=400, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + f'rsc_cp_matrices_simulations{label_stim}{label_sigma}.pdf', dpi=400, bbox_inches='tight')
+    if mode == 'J_alpha':
+        label_stim = '_shared_stim' if add_stim else ''
+        if add_stim:
+            fig.suptitle(rf'Shared stimulus, $\sigma$: {sigma}', y=1.01, fontsize=15)
+        else:
+            fig.suptitle(rf'$\sigma$: {sigma}', y=1.01, fontsize=15)
+    if mode == 'pstim_alpha':
+        label_stim = f'_strength_b_{strength_b}'
+        fig.suptitle(rf'$\sigma$: {sigma}, $B_1$: {strength_b}', y=1.01, fontsize=15)
+    fig.savefig(DATA_FOLDER + f'rsc_cp_matrices_simulations{label_stim}{label_sigma}_{mode}.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + f'rsc_cp_matrices_simulations{label_stim}{label_sigma}_{mode}.pdf', dpi=400, bbox_inches='tight')
 
 
 def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
@@ -5985,7 +6194,8 @@ def analytical_CP_haefner(theta, cov_mat=False):
     return cps
 
 
-def analytical_correlation_rsc(sigma=0.15, theta=theta, n=4):
+def analytical_correlation_rsc(sigma=0.15, theta=theta, n=4, seed=10, alpha=0):
+    
     theta = theta + np.random.randn(theta.shape[0], theta.shape[1])*0.0
 
 
@@ -6689,43 +6899,33 @@ def sigma_prime(z):
     return s * (1 - s)
 
 
-def energy_of_state_fast(X, W, J, B=0.0, steps=40):
+def energy_of_state_fast(X, W, J, B=0.0, steps=100):
     """
-    Fast computation of Lyapunov energy using rank-1 updates.
+    Symmetric Lyapunov energy for Hopfield-like network.
+    Uses tanh activation to ensure symmetry when B=0.
     """
     N = len(X)
     E = 0.0
-
-    # precompute full field
     WX_full = W @ X
 
     for i in range(N):
         xi = X[i]
-
-        # grid for line integral
         xs = np.linspace(0.0, xi, steps)
 
-        # update WX efficiently: WX_temp = WX_full + (x - xi)*W[:,i]
         Wi = W[:, i]
-
-        # values of Wx_i along path
         Wx_i_vals = WX_full[i] + (xs - xi) * Wi[i]
 
-        # sigmoid input
-        z = 2 * J * Wx_i_vals + 2 * B
-
-        integrand = sigmoid(z)
+        z = J * Wx_i_vals + B
+        integrand = sigmoid(2*z) - 0.5  # center around 0
 
         E -= np.trapz(integrand, xs)
 
-    # quadratic term
     E += 0.5 * np.sum(X**2)
-
     return E
 
 
 def energy_1D(W, J, v1, B=0.0, grid_points=80):
-    m_vals = np.linspace(-25, 25, grid_points)
+    m_vals = np.linspace(-15, 15 , grid_points)
     E_vals = np.zeros_like(m_vals)
 
     for k, m in enumerate(m_vals):
@@ -6735,9 +6935,9 @@ def energy_1D(W, J, v1, B=0.0, grid_points=80):
     return m_vals, E_vals
 
 
-def energy_2D(W, J, v1, v2, B=0.0, grid_points=60):
-    m1_vals = np.linspace(-25, 25, grid_points)
-    m2_vals = np.linspace(-25, 25, grid_points)
+def energy_2D(W, J, v1, v2, B=0.0, grid_points=50):
+    m1_vals = np.linspace(-12, 12, grid_points)
+    m2_vals = np.linspace(-12, 12, grid_points)
 
     E = np.zeros((grid_points, grid_points))
 
@@ -6749,8 +6949,8 @@ def energy_2D(W, J, v1, v2, B=0.0, grid_points=60):
     return m1_vals, m2_vals, E
 
 
-def compute_energy_and_complexity(W, J, B=0.0, mode='1D',
-                                  grid_points=80,
+def compute_energy_and_complexity(W, J, B=0.0, mode='2D',
+                                  grid_points=50,
                                   complexity=True):
     """
     Main function.
@@ -6780,11 +6980,7 @@ def compute_energy_and_complexity(W, J, B=0.0, mode='1D',
     else:
         raise ValueError("mode must be '1D' or '2D'")
 
-    # compute complexity
-    Sigma, qs, Sigma_q = None, None, None
-    N_fix = None
-
-    return energy, N_fix, Sigma, (qs, Sigma_q)
+    return energy
 
 
 def plot_energy(energy, mode='1D'):
@@ -6794,8 +6990,6 @@ def plot_energy(energy, mode='1D'):
         plt.plot(m, E, lw=2)
         plt.xlabel('m (projection on v1)')
         plt.ylabel('Energy')
-        plt.title('1D Energy Landscape')
-        plt.grid(True)
         plt.show()
 
     elif mode == '2D':
@@ -6803,32 +6997,143 @@ def plot_energy(energy, mode='1D'):
         M1, M2 = np.meshgrid(m1, m2)
 
         plt.figure(figsize=(6,5))
-        plt.contourf(M1, M2, E.T, levels=40)
+        plt.contourf(M1, M2, E.T, levels=30)
         plt.colorbar(label='Energy')
         plt.xlabel('m1')
         plt.ylabel('m2')
-        plt.title('2D Energy Landscape')
         plt.show()
 
 
 
-def plot_energy_and_complexity_vs_j(seed=10):
+def plot_energy_and_complexity_vs_j(seed=10, mode='2D', j=0.6, alpha=0.25):
     # Generate a 100x100 symmetric random W
     N = 100
     np.random.seed(seed)
     theta = get_regular_graph(seed=seed, n=100)
     X = np.random.randn(N,N)
     X = (X + X.T)/2  # symmetric
-    alpha = 0.25
     W = theta + alpha * X
     # random symmetric noise
-    J = 0.8
-    B = 0.0
+    B = 0.
 
     # # compute
-    energy, N_fix, Sigma, comp_data = compute_energy_and_complexity(
-        W, J, B, mode='2D', complexity=False)
-    plot_energy(energy, mode='2D')
+    energy = compute_energy_and_complexity(
+        W, j, B, mode=mode, complexity=False, grid_points=50)
+    plot_energy(energy, mode=mode)
+
+
+def hessian_eigvals_min(W, j, B=0.0, grid_points=80, mode='2D'):
+    """
+    Compute energy along 1D direction v1 and return the minimal value.
+    """
+    m1, m2, E_grid = compute_energy_and_complexity(
+            W, j, B, mode=mode, complexity=False, grid_points=grid_points)
+    dm = np.diff(m1)[0]
+    i_min, j_min = np.unravel_index(np.argmin(E_grid), E_grid.shape)
+    # second derivatives
+    d2E_dm1 = (E_grid[i_min+1, j_min] - 2*E_grid[i_min, j_min] + E_grid[i_min-1, j_min]) / dm**2
+    d2E_dm2 = (E_grid[i_min, j_min+1] - 2*E_grid[i_min, j_min] + E_grid[i_min, j_min-1]) / dm**2
+    d2E_dm1dm2 = (E_grid[i_min+1, j_min+1] - E_grid[i_min+1, j_min-1] 
+                   - E_grid[i_min-1, j_min+1] + E_grid[i_min-1, j_min-1]) / (4*dm**2)
+    
+    # Hessian matrix
+    H = np.array([[d2E_dm1, d2E_dm1dm2],
+                  [d2E_dm1dm2, d2E_dm2]])
+    
+    # eigenvalues
+    eigvals = np.linalg.eigvalsh(H)
+    return eigvals
+
+
+def energy_minima_vs_jalpha(seed=10, n_points=50, n_jobs=None, B=0,
+                            compute=False, grid_points=50):
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    np.random.seed(seed)
+    theta = get_regular_graph(seed=seed, n=100)
+    alpha_list = np.linspace(0, 1., n_points)
+    j_list = np.linspace(0, 0.5, n_points)
+    if compute:
+        if n_jobs is None:
+            import psutil
+            n_jobs = psutil.cpu_count(logical=False)-1
+        hessian_eigenvals_matrix = np.zeros((len(j_list), len(alpha_list), 2))
+        for i_alpha, alpha in enumerate(tqdm(alpha_list)):
+            np.random.seed(seed)
+            X = np.random.randn(100, 100)  # variance = 1
+            # to get 1 variance again, we must divide by \sqrt(2)
+            X = (X + X.T) / np.sqrt(2)   # make it symmetric
+            W = theta + X*alpha
+            with parallel_backend('loky', n_jobs=n_jobs, verbose=0):
+                results = Parallel()(
+                    delayed(hessian_eigvals_min)(
+                        W, j, B, grid_points
+                    )
+                    for j in j_list
+                )
+            # store results
+            print(np.array(results).shape)
+            hessian_eigenvals_matrix[:, i_alpha, :] = np.array(results)
+        os.environ.pop("OMP_NUM_THREADS", None)
+        os.environ.pop("MKL_NUM_THREADS", None)
+        os.environ.pop("OPENBLAS_NUM_THREADS", None)
+        np.save(DATA_FOLDER + 'hessian_eigenvals_matrix_Jalpha.npy', hessian_eigenvals_matrix)
+    else:
+        hessian_eigenvals_matrix = np.load(DATA_FOLDER + 'hessian_eigenvals_matrix_Jalpha.npy')
+    return hessian_eigenvals_matrix, j_list, alpha_list
+
+
+def plot_hessian_eigvals_vs_j_alpha(cmap='Greens', n_points=100):
+    eigvals, j_list, alpha_list = energy_minima_vs_jalpha(seed=10, n_points=n_points, n_jobs=None, B=0,
+                                                          compute=False, grid_points=50)
+    largest_eigval = get_largest_eigval(seed=10, alpha_list=alpha_list)
+    j_crit = 1/largest_eigval
+    fig, axes = plt.subplots(1, 2, figsize=(8, 3))
+    im0 = axes[0].imshow(
+        eigvals[:, :, 1], origin="lower",              
+        extent=[alpha_list[0], alpha_list[-1],
+                j_list[0], j_list[-1]],
+        aspect="auto", cmap=cmap, vmin=0, vmax=1)
+    axes[0].set_xlabel(r"$\alpha$")
+    axes[0].set_ylabel(r"$J$")
+    plt.colorbar(im0, ax=axes[0], label=r'$\lambda_1$')
+
+    im1 = axes[1].imshow(
+        eigvals[:, :, 0], origin="lower",
+        extent=[alpha_list[0], alpha_list[-1],
+                j_list[0], j_list[-1]],
+        aspect="auto", cmap=cmap, vmin=0., vmax=1
+    )
+    axes[1].set_xlabel(r"$\alpha$")
+    axes[1].set_ylabel(r"$J$")
+    plt.colorbar(im1, ax=axes[1], label=r'$\lambda_2$')
+    # plot J_crit
+    for a in (axes):
+        a.plot(alpha_list, j_crit, color='k', linewidth=2)
+    # fig.suptitle('Hessian eigenvalues at minimum', fontsize=15)
+    fig.tight_layout()
+    f2, a2 = plt.subplots(ncols=2, nrows=2, figsize=(7, 6.))
+    a2 = a2.flatten()
+    ylabels = [r'$\lambda_1(\alpha)$', r'$\lambda_2(\alpha)$',
+               r'$\lambda_1(J)$', r'$\lambda_2(J)$']
+    xlabels = [r'$\alpha$', r'$\alpha$',
+               r'J', r'J']
+    for i_a, a in enumerate(a2):
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_xlabel(xlabels[i_a])
+        a.set_ylabel(ylabels[i_a])
+    for val in range(n_points):
+        a2[0].plot(alpha_list, eigvals[val, :, 1], color='gray', linewidth=1, alpha=0.3)
+        a2[1].plot(alpha_list, eigvals[val, :, 0], color='gray', linewidth=1, alpha=0.3)
+        a2[2].plot(j_list, eigvals[:, val, 1], color='gray', linewidth=1, alpha=0.3)
+        a2[3].plot(j_list, eigvals[:, val, 0], color='gray', linewidth=1, alpha=0.3)
+    a2[0].plot(alpha_list, np.nanmean(eigvals[:, :, 1], axis=0), color='k', linewidth=6)
+    a2[1].plot(alpha_list, np.nanmean(eigvals[:, :, 0], axis=0), color='k', linewidth=6)
+    a2[2].plot(j_list, np.nanmean(eigvals[:, :, 1], axis=1), color='k', linewidth=6)
+    a2[3].plot(j_list, np.nanmean(eigvals[:, :, 0], axis=1), color='k', linewidth=6)
+    f2.tight_layout()
 
 
 if __name__ == '__main__':
@@ -6969,21 +7274,36 @@ if __name__ == '__main__':
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
     # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
-    #                          shift=0, nreps=1000, tau=0.2, seed=10, simulate=False,
-    #                          idx_neuron='mean', ou=False, add_symetric_RM=True,
-    #                          choice_time_before=0.25, random_matrix_weight=0.25,
-    #                          absolute_cps_rsc=False)
+    #                           shift=0, nreps=1000, tau=0.2, seed=10, simulate=False,
+    #                           idx_neuron='mean', ou=False, add_symetric_RM=True,
+    #                           choice_time_before=0.25, random_matrix_weight=0.25,
+    #                           absolute_cps_rsc=False)
     # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     #                          shift=0, nreps=500, tau=0.2, seed=10, simulate=False,
     #                          idx_neuron='mean', ou=False, add_symetric_RM=False,
     #                          choice_time_before=0.25)
     # simulate_system_for_j_alpha(n_points=100, seed=10, t_dur=2, dt=1e-2,
-    #                             tau=0.2, sigma=0.2, choice_time_before=0.25,
+    #                             tau=0.2, sigma=0.05, choice_time_before=0.25,
     #                             nreps=100, simulate=True, add_stim=False)
     # simulate_system_for_j_alpha(n_points=100, seed=10, t_dur=2, dt=1e-2,
-    #                             tau=0.2, sigma=0.2, choice_time_before=0.25,
+    #                             tau=0.2, sigma=0.05, choice_time_before=0.25,
     #                             nreps=100, simulate=True, add_stim=True)
-    plot_rsc_cp_simulations(add_stim=False, sigma=0.1)
-    plot_rsc_cp_simulations(add_stim=True, sigma=0.1)
-    plot_rsc_cp_simulations(add_stim=False, sigma=0.2)
-    plot_rsc_cp_simulations(add_stim=True, sigma=0.2)
+    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1)
+    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1, mode='pstim_alpha', strength_b=0.05)
+    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1, mode='pstim_alpha', strength_b=0.1)
+    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1, mode='pstim_alpha', strength_b=0.2)
+    # plot_hessian_eigvals_vs_j_alpha(cmap='Greens')
+    # plot_energy_and_complexity_vs_j(seed=10, mode='2D', j=0.4, alpha=0.5)
+    # plot_energy_and_complexity_vs_j(seed=10, mode='2D', j=0.4, alpha=1)
+    simulate_system_for_pstimulation_alpha(n_points=101, seed=10, t_dur=2, dt=1e-2,
+                                           tau=0.2, sigma=0.1, choice_time_before=0.25,
+                                           nreps=100, simulate=True, n_jobs=None,
+                                           add_stim=False, strength_b=0.1)
+    simulate_system_for_pstimulation_alpha(n_points=101, seed=10, t_dur=2, dt=1e-2,
+                                           tau=0.2, sigma=0.1, choice_time_before=0.25,
+                                           nreps=100, simulate=True, n_jobs=None,
+                                           add_stim=False, strength_b=0.2)
+    simulate_system_for_pstimulation_alpha(n_points=101, seed=10, t_dur=2, dt=1e-2,
+                                           tau=0.2, sigma=0.1, choice_time_before=0.25,
+                                           nreps=100, simulate=True, n_jobs=None,
+                                           add_stim=False, strength_b=0.05)
