@@ -34,6 +34,7 @@ import cv2
 import torch
 from tqdm import tqdm
 from joblib import Parallel, delayed, parallel_backend
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import os
 # import fastkde
 
@@ -3959,7 +3960,7 @@ def mean_field_both_eyes(j=0.45, theta=theta, b_list=np.arange(0, 0.25, 0.001)):
 
 def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
                  theta=theta, time_end=10000, dt=1e-3, tau=0.008,
-                 n_nodes_th=75):
+                 n_nodes_th=75, n=3):
     p_thr = n_nodes_th/100
     list_time_q1 = []
     list_time_q2 = []
@@ -3967,16 +3968,26 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
     list_predom_q2 = []
     alt_rate = []
     alt_rate_both_eyes = []
-    for i_b, b in enumerate(b_list):
-        print(round(100*(i_b+1)/len(b_list), 2))
-        print('%')
-        init_state = np.random.choice([-1, 1], theta.shape[0])
-        time, vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
-                                                      time_end=time_end, dt=dt,
-                                                      tau_n=tau)
-        mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
-        mean_states2 = scipy.signal.medfilt(mean_states, 1001)
-        # mean_states2 = np.copy(mean_states)
+    time = np.arange(0, time_end+dt, dt)
+    time_cte = dt/tau
+    noise_t_cte = np.sqrt(time_cte)*noise
+    coup_cte = 2*n*j
+    for i_b, b in enumerate(tqdm(b_list)):
+        q = np.random.rand()
+        mean_states = [q]
+        noise_vals = np.random.randn(len(time))
+        for t in range(len(time)):
+            noise_val = noise_t_cte*noise_vals[t]
+            q += (gn.sigmoid(coup_cte*(2*q-1)+2*b)-q)*time_cte + noise_val
+            mean_states.append(q)
+        # init_state = np.random.choice([-1, 1], theta.shape[0])
+        # time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
+        #                                   time_end=time_end, dt=dt)
+        # tau_n=tau)
+        # mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
+        # mean_states2 = scipy.signal.medfilt(mean_states, 101)  # 1001
+        mean_states = np.array(mean_states)
+        mean_states2 = np.copy(mean_states)
         mean_states[mean_states > p_thr] = 1
         mean_states[mean_states < (1-p_thr)] = -1
         if n_nodes_th == 50:
@@ -3993,20 +4004,22 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
         list_time_q1.append(np.mean(time_q1))
         list_time_q2.append(np.mean(time_q2))
         alt_rate.append(np.sum(np.diff(mean_states2) != 0))
-    for i_b, b in enumerate(b_list[b_list >= 0]):
-        b_both_eyes = np.repeat(b, theta.shape[0])
-        b_both_eyes[theta.shape[0]//2:] = -b
-        time, vec, _ = solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau,
-                                                      time_end=time_end, dt=dt,
-                                                      tau_n=tau)
-        mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
-        mean_states2 = np.copy(mean_states)
-        mean_states2[mean_states2 > 0.5] = 1
-        mean_states2[mean_states2 < 0.5] = 0
-        mean_states2 = mean_states2[mean_states2 != 0.5]
-        alt_rate_both_eyes.append(np.sum(np.diff(mean_states2) != 0))
-    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(12, 10))
+    # for i_b, b in enumerate(b_list[b_list >= 0]):
+    #     b_both_eyes = np.repeat(b, theta.shape[0])
+    #     b_both_eyes[theta.shape[0]//2:] = -b
+    #     time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
+    #                                       time_end=time_end, dt=dt)
+    #     mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
+    #     mean_states2 = np.copy(mean_states)
+    #     mean_states2[mean_states2 > 0.5] = 1
+    #     mean_states2[mean_states2 < 0.5] = 0
+    #     mean_states2 = mean_states2[mean_states2 != 0.5]
+    #     alt_rate_both_eyes.append(np.sum(np.diff(mean_states2) != 0))
+    fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(10, 6))
     ax = ax.flatten()
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
     ax[0].plot(b_list, list_predom_q1, label='q(x=1)', color='green', linewidth=2.5)
     ax[0].plot(b_list, list_predom_q2, label='q(x=-1)', color='r', linewidth=2.5)
     ax[0].legend()
@@ -4027,10 +4040,10 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
     axtwin.set_ylabel('Entropy')
     ax[2].set_xlabel('Fraction of q(x=1)')
     ax[2].set_ylabel('Alternation rate')
-    ax[3].plot(f[b_list >= 0], alt_rate_both_eyes, color='k',
-               linewidth=2.5)
-    ax[3].set_xlabel('Fraction of q(x=1)')
-    ax[3].set_ylabel('Alternation rate')
+    # ax[3].plot(f[b_list >= 0], alt_rate_both_eyes, color='k',
+    #            linewidth=2.5)
+    # ax[3].set_xlabel('Fraction of q(x=1)')
+    # ax[3].set_ylabel('Alternation rate')
     x_vals = np.arange(1, np.max((max(list_time_q2), max(list_time_q1))), 1)
     linereg = scipy.stats.linregress(np.log(list_time_q1), np.log(list_time_q2))
     y = np.log(x_vals)*linereg.slope + linereg.intercept
@@ -4048,6 +4061,11 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
     ax[5].set_xlabel('log T(x=-1)')
     # ax[5].set_yscale('log')
     # ax[5].set_xscale('log')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'levelt_laws_MF_last.png', dpi=400,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'levelt_laws_MF_last.pdf', dpi=400,
+                bbox_inches='tight')
     fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(12, 10))
     ax = ax.flatten()
     ax[0].plot(b_list, list_predom_q1, label='q(x=1)', color='k', linewidth=2.5)
@@ -4063,14 +4081,14 @@ def levelts_laws(noise=0.1, j=0.39, b_list=np.arange(0, 0.25, 0.01),
     ax[2].plot(b_list, alt_rate, color='k', linewidth=2.5)
     ax[2].set_xlabel('Sensory evidence, B')
     ax[2].set_ylabel('Alternation rate')
-    ax[3].plot(b_list[b_list >= 0], alt_rate_both_eyes, color='k',
-               linewidth=2.5)
+    # ax[3].plot(b_list[b_list >= 0], alt_rate_both_eyes, color='k',
+    #            linewidth=2.5)
     ax[3].set_xlabel('Sensory evidence, B')
     ax[3].set_ylabel('Alternation rate')
     fig3, ax3 = plt.subplots(1)
     ax3.plot(list_predom_q1, list_time_q1, label='q(x=1)', color='green', linewidth=2.5)
     ax3.plot(list_predom_q2, list_time_q2, label='q(x=-1)', color='r', linewidth=2.5)
-    ax.legend()
+    ax3.legend()
     ax3.set_xlabel('Perceptual predominance (<q(x=i)>')
     ax3.set_ylabel('Avg. perceptual dominance, T(x=1)')
 
@@ -5578,7 +5596,7 @@ def create_b_given_pstim(pstim=0, n_units=100, n_time=200, strength_b=0.2):
     return b_all
 
 
-def simulate_system_for_pstimulation_alpha(n_points=100, seed=10, t_dur=2, dt=1e-2,
+def simulate_system_for_pstimulation_alpha(n_points=101, seed=10, t_dur=2, dt=1e-2,
                                            tau=0.2, sigma=0.1, choice_time_before=0.25,
                                            nreps=100, simulate=False, n_jobs=None,
                                            add_stim=False, strength_b=0.1):
@@ -5774,9 +5792,26 @@ def plot_rsc_cp_analytical(cmap='Purples', seed=10, n_units=100, B=0):
             cp_matrix[i_j, i_alpha] = analytical_CP_haefner(cov)
 
 
+def create_realistic_connectivity(p_connection=0.1,
+                                  n_units=100, frac_E=0.8):
+    N = n_units
+    p = p_connection  # connection probability
+    
+    is_E = np.random.rand(N) < frac_E
+    
+    W = np.zeros((N, N))
+    
+    for i in range(N):
+        for j in range(N):
+            if np.random.rand() < p:
+                w = np.random.randn() / np.sqrt(N)
+                W[i, j] = abs(w) if is_E[j] else -abs(w)
+    return W
+
+
 def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1,
-                            plot_j_alpha_sim_values=True, mode='Jalpha',
-                            strength_b=0.1):
+                            plot_j_alpha_sim_values=False, mode='J_alpha',
+                            strength_b=0.1, center_vars=True):
     if mode == 'J_alpha':
         corr_matrix, cp_matrix, j_list, alpha_list = \
             simulate_system_for_j_alpha(simulate=False, add_stim=add_stim, sigma=sigma)
@@ -5784,13 +5819,17 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1,
     if mode == 'pstim_alpha':
         corr_matrix, cp_matrix, j_list, alpha_list = \
             simulate_system_for_pstimulation_alpha(simulate=False,
-                                                   sigma=sigma, strength_b=strength_b)
+                                                   sigma=sigma, strength_b=strength_b,
+                                                   n_points=101)
         ylabel = 'p(stimulated)'
-    largest_eigval = get_largest_eigval(seed=10, alpha_list=np.linspace(0, 1, 100))
+    if center_vars:
+        corr_matrix = np.abs(corr_matrix)
+        cp_matrix = np.abs(cp_matrix-0.5)+0.5
+    largest_eigval = get_largest_eigval(seed=10, alpha_list=alpha_list)
     j_crit = 1/largest_eigval
     fig, axes = plt.subplots(1, 3, figsize=(12, 3))
     im0 = axes[0].imshow(
-        np.nanmean(corr_matrix, axis=-1), origin="lower",              
+        np.nanmedian(corr_matrix, axis=-1), origin="lower",              
         extent=[alpha_list[0], alpha_list[-1],
                 j_list[0], j_list[-1]],
         aspect="auto", cmap=cmap, vmin=0, vmax=1)
@@ -5799,7 +5838,7 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1,
     axes[0].set_ylabel(ylabel)
     plt.colorbar(im0, ax=axes[0], label=r'Correlation, $\langle r \rangle$')
     im1 = axes[1].imshow(
-        np.nanmean(cp_matrix, axis=-1), origin="lower",
+        np.nanmedian(cp_matrix, axis=-1), origin="lower",
         extent=[alpha_list[0], alpha_list[-1],
                 j_list[0], j_list[-1]],
         aspect="auto", cmap=cmap, vmin=0.5, vmax=1
@@ -5812,8 +5851,10 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1,
             a.plot(0.25, 0.1, marker='s', color='r')
             a.plot(0.25, 0.3, marker='s', color='r')
     # plot J_crit
-    for a in (axes):
+    for a in axes:
         a.plot(alpha_list, j_crit, color='k', linewidth=2)
+        if mode == 'pstim_alpha':
+            a.set_xlim(0, 0.3)
     vals_data_cp = [0.56, 0.67]
     vals_data_rsc = [0.23, 0.42]
     colors = ['cadetblue', 'peru']
@@ -5822,7 +5863,7 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1,
         c = vals_data_rsc[i]
         
         CS = axes[0].contour(
-            alpha_list, j_list, np.nanmean(corr_matrix, axis=-1),
+            alpha_list, j_list, np.nanmedian(corr_matrix, axis=-1),
             levels=[c],
             colors=colors[i],
             linewidths=2
@@ -5832,7 +5873,7 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1,
         c = vals_data_cp[i]
         
         CS = axes[1].contour(
-            alpha_list, j_list, np.nanmean(cp_matrix, axis=-1),
+            alpha_list, j_list, np.nanmedian(cp_matrix, axis=-1),
             levels=[c],
             colors=colors[i],
             linewidths=2
@@ -5874,6 +5915,219 @@ def plot_rsc_cp_simulations(cmap='Purples', add_stim=False, sigma=0.1,
     fig.savefig(DATA_FOLDER + f'rsc_cp_matrices_simulations{label_stim}{label_sigma}_{mode}.pdf', dpi=400, bbox_inches='tight')
 
 
+def corrfunc(x, y, ax=None, **kws):
+    """Plot the correlation coefficient in the top left hand corner of a plot."""
+    r, p = scipy.stats.pearsonr(x, y)
+    ax = ax or plt.gca()
+    ax.annotate(f'r = {r:.3f}\np = {p:.1e}', xy=(.04, 0.9), xycoords=ax.transAxes,
+                fontsize=12)
+
+
+def return_time_resolved_properties(activity, choice, W):
+    """
+    Activity should be an array of N neurons x T timepoints x M trials.
+    Choice is M trials (binary).
+    W is matrix of connections.
+    Returns time resolved correlations, CP, logreg weights...
+    """
+    n_units, n_timepoints, n_reps = activity.shape
+    logreg_weights = np.zeros((n_units, n_timepoints))
+    correlations = np.zeros((n_units, n_timepoints))
+    choice_probabilities = np.zeros((n_units, n_timepoints))
+    pca_loadings = np.zeros((n_units, n_timepoints))
+    neighs = (np.abs(W) > 0)*1
+    for t in tqdm(range(n_timepoints)):
+        activity_t = activity[:, t, :]  # this is N x M
+        clf = LogisticRegression(solver='liblinear').fit(activity_t.T, choice)  # Use linear decoder
+        logreg_weights[:, t] = clf.coef_
+        neigh_act_t = neighs @ activity_t
+        corrs = []
+        cps = []
+        pca_loads = PCA(n_components=1).fit(activity_t.T).components_[0]
+        for neuron in range(n_units):
+            zscore_individual = zscore(activity_t[neuron])
+            zscore_neighs = zscore(neigh_act_t[neuron])
+            r, p = pearsonr(zscore_individual, zscore_neighs)
+            corrs.append(r)
+            cp = roc_auc_score(choice, activity_t[neuron])
+            cps.append(cp)
+        correlations[:, t] = corrs
+        choice_probabilities[:, t] = cps
+        pca_loadings[:, t] = pca_loads
+    return logreg_weights, correlations, choice_probabilities, pca_loadings
+
+
+def vars_over_time(add_symetric_RM=True, seed=10,
+                   random_matrix_weight=0.25, highlow=0,
+                   dt=1e-2, t_dur=2):
+    time = np.arange(0, t_dur+dt, dt)
+    label_matrix = '_added_random_matrix' if add_symetric_RM else ''
+    choices = np.load(DATA_FOLDER + f'simulated_choices_neurons{label_matrix}.npy')
+    all_activity = np.load(DATA_FOLDER + f'all_arr_simulated{label_matrix}.npy')
+    np.random.seed(seed)
+    theta = get_regular_graph(seed=seed, n=100)
+    if add_symetric_RM:
+        X = np.random.randn(100, 100)  # variance = 1
+        # to get 1 variance again, we must divide by \sqrt(2)
+        X = (X + X.T) / np.sqrt(2)   # make it symmetric
+        W = theta + X*random_matrix_weight
+    else:
+        W = theta
+    activity = all_activity[highlow]
+    logreg_weights, correlations, choice_probabilities, pca_loadings =\
+        return_time_resolved_properties(activity, choices[highlow], W)
+    n_units, n_timepoints, n_reps = activity.shape
+    return logreg_weights, correlations, choice_probabilities, pca_loadings
+
+
+def plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
+                         nreps=10, tau=0.3, seed=10,
+                         alpha=0.3, choice_time_before=0.25,
+                         idx_neuron=10, zscore_plot=False):
+    time = np.arange(0, t_dur+dt, dt)
+    np.random.seed(seed)
+    theta = get_regular_graph(seed=seed, n=100)
+    choice_steps_before = int(choice_time_before / dt)
+    np.random.seed(seed)
+    W = np.random.randn(100, 100)  # variance = 1
+    W = (W + W.T) / np.sqrt(2)   # make it symmetric
+    theta = theta + W*alpha
+    neighs = (np.abs(theta) > 0.5)*1
+    all_activity = np.zeros((2, theta.shape[0], len(time), nreps))
+    neigh_all_activity = np.zeros((2, theta.shape[0], len(time), nreps))
+    choices = np.zeros((2, nreps))
+    for simulation_id in tqdm(range(nreps)):
+        ini_cond = np.random.randn(100)*0.1+0.5
+        _, vec1_arr = solution_mf_sdo_euler(j=j1, b=0, theta=theta, noise=sigma,
+                                            tau=tau, time_end=t_dur, dt=dt,
+                                            add_extra_shared_input=False,
+                                            ini_cond=ini_cond)
+        _, vec2_arr = solution_mf_sdo_euler(j=j0, b=0, theta=theta, noise=sigma,
+                                            tau=tau, time_end=t_dur, dt=dt,
+                                            add_extra_shared_input=False,
+                                            ini_cond=ini_cond)
+        vec1_arr = vec1_arr.T
+        vec2_arr = vec2_arr.T
+        choices[0, simulation_id] = (np.sign(np.nanmean(vec1_arr[-choice_steps_before:])-0.5)+1)/2
+        choices[1, simulation_id] = (np.sign(np.nanmean(vec2_arr[-choice_steps_before:])-0.5)+1)/2
+        all_activity[0, :, :, simulation_id] = vec1_arr
+        all_activity[1, :, :, simulation_id] = vec2_arr
+        neigh_all_activity[0, :, :, simulation_id] = neighs @ vec1_arr
+        neigh_all_activity[1, :, :, simulation_id] = neighs @ vec2_arr
+    # 30,  idx choices 00, 00, 01  (35, 54, 24)
+    fig, ax = plt.subplots(ncols=2, nrows=3, figsize=(5, 4),
+                            sharey=True, sharex=True)
+    for a in ax.flatten():
+        # a.set_xlim(0.5, 3)
+        a.axis('off')
+        a.axhline(0.5*0**zscore_plot, color='k', alpha=0.5,
+                  linestyle='--', linewidth=3)
+    neighs_idx = np.where(neighs[idx_neuron])[0]
+    idxs_choices_high = [np.where(choices[0] == 0)[0][0],
+                          np.where(choices[0] == 1)[0][3],
+                          np.where(choices[0] == 1)[0][1]]
+    idxs_choices_low = [np.where(choices[1] == 0)[0][0],
+                        np.where(choices[1] == 1)[0][0],
+                        np.where(choices[1] == 1)[0][1]]
+    for i in range(3): # rows, choice 1 and choice 2
+        # mean_act_neighs_low = np.mean(all_activity[1, neighs_idx, :, idxs_choices_low[i]], axis=0)
+        # mean_act_neighs_high = np.mean(all_activity[0, neighs_idx, :, idxs_choices_high[i]], axis=0)
+        for neigh in neighs_idx:
+            if zscore_plot:
+                ax[i, 0].plot(time, zscore(all_activity[1, neigh, :, idxs_choices_low[i]]), color='gray',
+                              alpha=0.6, linewidth=2)
+                ax[i, 1].plot(time, zscore(all_activity[0, neigh, :, idxs_choices_high[i]]), color='gray',
+                              alpha=0.6, linewidth=2)
+            else:
+                ax[i, 0].plot(time, all_activity[1, neigh, :, idxs_choices_low[i]], color='gray',
+                              alpha=0.6, linewidth=2)
+                ax[i, 1].plot(time, all_activity[0, neigh, :, idxs_choices_high[i]], color='gray',
+                              alpha=0.6, linewidth=2)
+        if zscore_plot:
+            ax[i, 0].plot(time, zscore(all_activity[1, idx_neuron, :, idxs_choices_low[i]]), color='k',
+                          linewidth=3)
+            ax[i, 1].plot(time, zscore(all_activity[0, idx_neuron, :, idxs_choices_high[i]]), color='k',
+                          linewidth=3)
+        else:
+            ax[i, 0].plot(time, all_activity[1, idx_neuron, :, idxs_choices_low[i]], color='k',
+                          linewidth=3)
+            ax[i, 1].plot(time, all_activity[0, idx_neuron, :, idxs_choices_high[i]], color='k',
+                          linewidth=3)
+    # Example: 100 ms in x, 50 µV in y
+    ax = ax[2, 1]
+    x0 = 0.8 * max(time)        # starting x position
+    y0 = 0
+    
+    # horizontal scale bar (time)
+    ax.plot([x0, x0 + 0.5], [y0, y0], lw=2, color='black')  # 0.1 seconds = 100 ms
+    
+    # vertical scale bar (amplitude)
+    ax.plot([x0, x0], [y0, y0 + 0.5], lw=2, color='black')  # 50 µV
+    
+    # labels
+    ax.text(x0 + 0.05, y0 - 0.2, "500 ms", ha='center', va='top')
+    ax.text(x0 - 0.01, y0 + 0.25, "a.u.", ha='right', va='center', rotation=90)
+    fig.savefig(DATA_FOLDER + 'example_traces_neighbors.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'example_traces_neighbors.pdf', dpi=400, bbox_inches='tight')
+
+
+def plot_bars(vals_bar, rsc=False):
+    fig, ax = plt.subplots(figsize=(3.5, 3.2))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    # ax.text(0.02, 0.52, 'Experiments (MT/V5)\nWashmut et al. 2019', fontsize=12)
+    if rsc:
+        types = ['RDM', 'SFM (B>0)', 'SFM (B=0)']*2
+        classes = ['Data']*3 + ['Model']*3
+        vals_all = [0.23, 0.28, 0.42] + vals_bar
+        df = pd.DataFrame({
+            "Type": types,
+            "Classes": classes,
+            "Interneuronal correlation": vals_all})
+        ax.set_ylim(0, 0.6)
+        title = 'Interneuronal correlation'
+        plot_name = 'interneuronal_correlation_barplot_v2'
+    else:
+        types = ['RDM', 'SFM (B=0)']*2
+        classes = ['Data']*2 + ['Model']*2
+        vals_all = [0.56, 0.67] + vals_bar
+        df = pd.DataFrame({
+            "Type": types,
+            "Classes": classes,
+            "Choice probability": vals_all})
+        ax.set_ylim(0.5, 0.7)
+        title = 'Choice probability'
+        plot_name = 'choice_probability_barplot_v2'
+        plt.axhline(0.5, color='k', alpha=0.3, linestyle='--')
+    # Define colors — one per Type
+    pair_colors = ['dimgrey', 'dimgrey']
+    # Draw bars
+    bar = sns.barplot(
+        data=df, x="Type", y=title, hue="Classes",
+        palette=pair_colors, ax=ax)
+    ax.grid(False)
+    ax.set_xlabel('')
+    # Apply hatching to 'Model' bars only
+    hatch_map = {'Data': '', 'Model': '///'}
+    for container, class_name in zip(bar.containers, df['Classes'].unique()):
+        hatch = hatch_map[class_name]
+        for patch in container:
+            patch.set_hatch(hatch)
+    plt.xticks(rotation=30)
+    # Beautify
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.legend(title='', loc='best', frameon=False)
+    
+    
+    # Make sure legend shows hatches too
+    for legend_patch, class_name in zip(ax.legend_.get_patches(), df['Classes'].unique()):
+        legend_patch.set_hatch(hatch_map[class_name])
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + plot_name + '.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + plot_name + '.pdf', dpi=400, bbox_inches='tight')
+
+
 def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
                              shift=0, nreps=1000, tau=0.2, seed=10, simulate=False,
                              idx_neuron='mean', ou=False, add_symetric_RM=True,
@@ -5887,7 +6141,7 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     choice_steps_before = int(choice_time_before / dt)
     label_matrix = ''
     if add_symetric_RM:
-        f, a = plt.subplots(ncols=4, figsize=(10, 3.5))
+        f, a = plt.subplots(ncols=3, figsize=(8, 3.5))
         a[0].imshow(theta, vmin=-1.5, vmax=1.5, cmap='bwr')
 
         W = np.random.randn(100, 100)  # variance = 1
@@ -5895,11 +6149,11 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
         W = (W + W.T) / np.sqrt(2)   # make it symmetric
         theta = theta + W*random_matrix_weight
         neighs = (np.abs(theta) > random_matrix_weight)*1
-        a[1].imshow(theta, vmin=-1.5, vmax=1.5, cmap='bwr')
-        a[2].imshow(W*random_matrix_weight, vmin=-1.5, vmax=1.5, cmap='bwr')
-        a[3].imshow(neighs, vmin=-1.5, vmax=1.5, cmap='bwr')
+        a[1].imshow(W*random_matrix_weight, vmin=-1.5, vmax=1.5, cmap='bwr')
+        a[2].imshow(theta, vmin=-1.5, vmax=1.5, cmap='bwr')
+        # a[3].imshow(neighs, vmin=-1.5, vmax=1.5, cmap='bwr')
         
-        titles = [r'$\theta$', r'$W = \theta + \alpha X$', r'$\alpha X$', 'Neighbors']
+        titles = [r'$\theta$', r'$\alpha X$', r'$W = \theta + \alpha X$', 'Neighbors']
         for i_a, a_ind in enumerate(a):
             a_ind.axis('off')
             a_ind.set_title(titles[i_a], fontsize=14)
@@ -5908,12 +6162,11 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
         f.savefig(DATA_FOLDER + f'all_matrices{label_matrix}.png', dpi=200, bbox_inches='tight')
         f.savefig(DATA_FOLDER + f'all_matrices{label_matrix}.pdf', dpi=200, bbox_inches='tight')
     if simulate:
-        single_averages = np.zeros((2, theta.shape[0], nreps))
-        neighbor_averages = np.zeros((2, theta.shape[0], nreps))
-        choices = np.zeros((2, nreps))
+        single_averages = np.zeros((3, theta.shape[0], nreps))
+        neighbor_averages = np.zeros((3, theta.shape[0], nreps))
+        all_activity = np.zeros((3, theta.shape[0], len(time), nreps))
+        choices = np.zeros((3, nreps))
         for simulation_id in tqdm(range(nreps)):
-            vec1_arr = np.zeros((theta.shape[0], len(time)))
-            vec2_arr = np.zeros((theta.shape[0], len(time)))
             if ou:
                 _, vec1_arr, _ = solution_mf_sdo_euler_OU_noise(j=j1, b=0, theta=theta, noise=sigma, tau=tau, time_end=t_dur, dt=dt,
                                                              tau_n=0.1, approx_init=False)
@@ -5926,24 +6179,34 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
                 _, vec2_arr = solution_mf_sdo_euler(j=j0, b=0, theta=theta, noise=sigma,
                                                     tau=tau, time_end=t_dur, dt=dt,
                                                     add_extra_shared_input=False)
+                _, vecb1_arr = solution_mf_sdo_euler(j=j1, b=0.25, theta=theta, noise=sigma,
+                                                     tau=tau, time_end=t_dur, dt=dt,
+                                                     add_extra_shared_input=False)
             vec1_arr = vec1_arr.T
             vec2_arr = vec2_arr.T
+            vecb1_arr = vecb1_arr.T
 
+            all_activity[0, :, :, simulation_id] = vec1_arr
+            all_activity[1, :, :, simulation_id] = vec2_arr
+            all_activity[2, :, :, simulation_id] = vecb1_arr
             # time averages per unit (you already had this)
             avg1 = np.nanmean(vec1_arr, axis=1)
             avg2 = np.nanmean(vec2_arr, axis=1)
+            avgb1 = np.nanmean(vecb1_arr, axis=1)
             
             # choose neuron 0 (same as in example trace)
             single_averages[0, :, simulation_id] = avg1
             single_averages[1, :, simulation_id] = avg2
+            single_averages[2, :, simulation_id] = avgb1
             
             neighbor_averages[0, :, simulation_id] = np.matmul(neighs, avg1)
             neighbor_averages[1, :, simulation_id] = np.matmul(neighs, avg2)
+            neighbor_averages[2, :, simulation_id] = np.matmul(neighs, avgb1)
     
             choices[0, simulation_id] = (np.sign(np.nanmean(vec1_arr[-choice_steps_before:])-0.5)+1)/2
             choices[1, simulation_id] = (np.sign(np.nanmean(vec2_arr[-choice_steps_before:])-0.5)+1)/2
-        np.save(DATA_FOLDER + f'vec2_arr_simulated{label_matrix}.npy', vec2_arr)
-        np.save(DATA_FOLDER + f'vec1_arr_simulated{label_matrix}.npy', vec1_arr)
+            choices[2, simulation_id] = (np.sign(np.nanmean(vecb1_arr[-choice_steps_before:])-0.5)+1)/2
+        np.save(DATA_FOLDER + f'all_arr_simulated{label_matrix}.npy', all_activity)
         np.save(DATA_FOLDER + f'simulated_choices_neurons{label_matrix}.npy', choices)
         np.save(DATA_FOLDER + f'simulated_neigh_averages_neurons{label_matrix}.npy', neighbor_averages)
         np.save(DATA_FOLDER + f'simulated_single_averages{label_matrix}.npy', single_averages)
@@ -5951,13 +6214,17 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
         choices = np.load(DATA_FOLDER + f'simulated_choices_neurons{label_matrix}.npy')
         neighbor_averages = np.load(DATA_FOLDER + f'simulated_neigh_averages_neurons{label_matrix}.npy')
         single_averages = np.load(DATA_FOLDER + f'simulated_single_averages{label_matrix}.npy')
-        vec2_arr = np.load(DATA_FOLDER + f'vec2_arr_simulated{label_matrix}.npy')
-        vec1_arr = np.load(DATA_FOLDER + f'vec1_arr_simulated{label_matrix}.npy')
+        all_activity = np.load(DATA_FOLDER + f'all_arr_simulated{label_matrix}.npy')
+        vec2_arr = all_activity[1, :, :, -1]
+        vec1_arr = all_activity[0, :, :, -1]
     # first compute everything
     all_cps_high = []
     all_cps_low = []
     all_corr_high = []
     all_corr_low = []
+    all_logreg_weights_low = []
+    all_logreg_weights_high = []
+    all_corr_b1 = []
     for i in range(theta.shape[0]):
         x_low = single_averages[1, i]
         x_high = single_averages[0, i]
@@ -5969,21 +6236,39 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
         else:
             all_cps_high.append(roc_high)
             all_cps_low.append(roc_low)
+        # logistic regression
+        clf = LogisticRegression(solver='liblinear').fit(x_high.reshape(len(x_high), 1), choices[0])  # Use linear decoder
+        all_logreg_weights_high.append(clf.coef_[0][0])
+        clf = LogisticRegression(solver='liblinear').fit(x_low.reshape(len(x_low), 1), choices[1])
+        all_logreg_weights_low.append(clf.coef_[0][0])
         # low coupling (left)
         x_low = zscore(single_averages[1, i])
         y_low = zscore(neighbor_averages[1, i])
         # high coupling (right)
         x_high = zscore(single_averages[0, i])
         y_high = zscore(neighbor_averages[0, i])
+        x_b1 = zscore(single_averages[2, i])
+        y_b1 = zscore(neighbor_averages[2, i])
         corr_low, p_low = pearsonr(x_low, y_low)
         corr_high, p_high = pearsonr(x_high, y_high)
+        corr_b1, p_high_b1 = pearsonr(x_b1, y_b1)
         if absolute_cps_rsc:
             all_corr_high.append(np.abs(corr_high))
             all_corr_low.append(np.abs(corr_low))
+            all_corr_b1.append(np.abs(corr_b1))
         else:
             all_corr_high.append(corr_high)
             all_corr_low.append(corr_low)
+            all_corr_b1.append(corr_b1)
     
+    vals_bar = [np.nanmean(all_cps_low),
+                np.nanmean(all_cps_high)]
+    plot_bars(vals_bar, rsc=False)
+    vals_bar = [np.nanmean(all_corr_low),
+                np.nanmean(all_corr_b1),
+                np.nanmean(all_corr_high)]
+    plot_bars(vals_bar, rsc=True)
+
     # concat all activity
     X = np.concatenate([
         single_averages[0].T,
@@ -6023,7 +6308,7 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
         # Index of neuron closest to the mean
         idx_neuron = np.argmin(dist)
     
-    f1, a1 = plt.subplots(ncols=2, nrows=3, figsize=(6, 8), sharey=True)
+    f1, a1 = plt.subplots(ncols=2, nrows=4, figsize=(6, 12), sharey=True)
     a1 = a1.flatten()
     for a in a1:
         a.spines['top'].set_visible(False)
@@ -6031,9 +6316,39 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     mean_cov_low = all_corr_low
     mean_cov_high = all_corr_high
     eigvect_1 = -eigvect_1 if (~absolute_cps_rsc and eigvect_1[np.argmin(components_0)] > 0) else eigvect_1
-    for i_var, var_1 in enumerate([eigvect_1, deg_in, mean_cov_high, mean_cov_low, all_cps_high, all_cps_low]):
+    for i_var, var_1 in enumerate([eigvect_1, deg_in, mean_cov_high, mean_cov_low, all_cps_high, all_cps_low,
+                                   all_logreg_weights_high, all_logreg_weights_low]):
         plot_scatter_and_add_correlations(var_1, var_2=components_0, ax=a1[i_var], color='k',
                                           idx_neuron=idx_neuron)
+    data = pd.DataFrame({'PC1': components_0,
+                         r'$v_1$': eigvect_1,
+                         'Degree': deg_in,
+                         'Corr. (J=0.1)': mean_cov_high,
+                         'Corr. (J=0.3)': mean_cov_low,
+                         'CP (J=0.1)': all_cps_high,
+                         'CP (J=0.3)': all_cps_low,
+                         'Weight (J=0.1)': all_logreg_weights_high,
+                         'Weight (J=0.3)': all_logreg_weights_low})
+    g = sns.pairplot(data, kind='reg', diag_kind='hist',
+                     plot_kws={
+                        "scatter_kws": {"color": "black", "s": 15, "alpha": 0.8},
+                        "line_kws": {"color": "firebrick", "lw": 2}
+                         },
+                     diag_kws={"color": "black", "bins": 20, 'alpha': 0.5},
+                     corner=True,
+                     height=2.,   # height of EACH subplot (in inches)
+                     aspect=1 )
+    g.map_lower(corrfunc)
+    # Remove gridlines and adjust axes
+    for axi in g.axes.flatten():
+        if axi is not None:
+            axi.grid(False)
+    
+    plt.tight_layout()
+    # g.savefig(DATA_FOLDER + "importance_measures_pairplot.png",
+    #           bbox_inches="tight", dpi=300)
+    # g.savefig(DATA_FOLDER + "importance_measures_pairplot.svg",
+    #           bbox_inches="tight", dpi=300)
     a1[0].set_ylabel('PC1 loading')
     a1[0].set_xlabel(r'Eigenvector, $v_1$')
     a1[1].set_xlabel(r'$d_i = \sum_j W_{ij}$')
@@ -6041,8 +6356,10 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     a1[3].set_xlabel('Correlation (J small)')
     a1[4].set_xlabel('CP (J big)')
     a1[5].set_xlabel('CP (J small)')
+    a1[6].set_xlabel('Weight (J big)')
+    a1[7].set_xlabel('Weight (J small)')
     f1.tight_layout()
-
+    
     fig, ax = plt.subplots(ncols=2, nrows=3, figsize=(5, 7))
     colormap = ['k', 'gray']
     ax[0, 1].plot(time, zscore(np.matmul(neighs, vec1_arr)[idx_neuron]), color=colormap[0], linewidth=3)
@@ -6073,10 +6390,12 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
         # a.set_xlabel('Single unit')
     
     ax[1, 1].plot(x_high, y_high,
-                  linestyle='', marker='o', markersize=2, color='k')
+                  linestyle='', marker='o', markersize=2, color='k',
+                  alpha=0.4)
     
     ax[1, 0].plot(x_low, y_low,
-                  linestyle='', marker='o', markersize=2, color='k')
+                  linestyle='', marker='o', markersize=2, color='k',
+                  alpha=0.4)
     ax[0, 0].set_ylabel('Activity')
     ax[0, 0].set_xlabel('Time')
     ax[0, 1].set_xlabel('Time')
@@ -6176,8 +6495,12 @@ def plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     f3.tight_layout()
     fig.savefig(DATA_FOLDER + f'interneuronal_correlation_cartoon_example{label_matrix}.png', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + f'interneuronal_correlation_cartoon_example{label_matrix}.pdf', dpi=400, bbox_inches='tight')
+    f1.savefig(DATA_FOLDER + f'measures_of_covariability{label_matrix}.png', dpi=400, bbox_inches='tight')
+    f1.savefig(DATA_FOLDER + f'measures_of_covariability{label_matrix}.pdf', dpi=400, bbox_inches='tight')
     f2.savefig(DATA_FOLDER + f'rsc_vs_cps{label_matrix}.png', dpi=400, bbox_inches='tight')
     f2.savefig(DATA_FOLDER + f'rsc_vs_cps{label_matrix}.pdf', dpi=400, bbox_inches='tight')
+    f3.savefig(DATA_FOLDER + f'comparison_analytical_rsc_vs_cps{label_matrix}.png', dpi=400, bbox_inches='tight')
+    f3.savefig(DATA_FOLDER + f'comparison_analytical_rsc_vs_cps{label_matrix}.pdf', dpi=400, bbox_inches='tight')
 
 
 def analytical_CP_haefner(theta, cov_mat=False):
@@ -6927,31 +7250,68 @@ def energy_of_state_fast(X, W, J, B=0.0, steps=100):
 def energy_1D(W, J, v1, B=0.0, grid_points=80):
     m_vals = np.linspace(-15, 15 , grid_points)
     E_vals = np.zeros_like(m_vals)
-
+    X0 = 0.5 * np.ones(len(v1))
     for k, m in enumerate(m_vals):
-        X = m * v1
-        E_vals[k] = energy_of_state_fast(X, W, J, B)
+        X = m * v1 + X0
+        X = np.clip(X, 0.0, 1.0)
+        E_vals[k] = energy_of_state_true(X, W, J, B)
 
     return m_vals, E_vals
 
 
-def energy_2D(W, J, v1, v2, B=0.0, grid_points=50):
-    m1_vals = np.linspace(-12, 12, grid_points)
-    m2_vals = np.linspace(-12, 12, grid_points)
+def energy_2D(W, J, v1, v2, B=0.0, grid_points=50, maxminval=6):
+    m1_vals = np.linspace(-maxminval, maxminval, grid_points)
+    m2_vals = np.linspace(-maxminval, maxminval, grid_points)
 
     E = np.zeros((grid_points, grid_points))
+    N = len(v1)
+    X0 = 0.5 * np.ones(N)
 
     for i, m1 in enumerate(m1_vals):
         for j, m2 in enumerate(m2_vals):
-            X = m1 * v1 + m2 * v2
-            E[i, j] = energy_of_state_fast(X, W, J, B)
+            X = m1 * v1 + m2 * v2 + X0
+            X = np.clip(X, 0.0, 1.0)
+            E[i, j] = energy_of_state_true(X, W, J, B)
 
     return m1_vals, m2_vals, E
 
 
+def energy_of_state_true(X, W, J, B=0.0):
+    """
+    TRUE Lyapunov / free energy for logistic mean-field network.
+
+    Parameters
+    ----------
+    X : activity in [0,1]^N
+    W : symmetric connectivity
+    J : coupling
+    B : bias
+    """
+
+    # convert to centered variables
+    m = 2*X - 1
+
+    # keep inside (-1,1) to avoid log singularities
+    eps = 1e-12
+    m = np.clip(m, -1 + eps, 1 - eps)
+
+    # coupling
+    E_coupling = -0.5 * J * (m @ W @ m)
+
+    # bias
+    E_bias = -B * np.sum(m)
+
+    # entropy term
+    p = (1 + m) / 2
+    E_entropy = np.sum(
+        p * np.log(p) + (1 - p) * np.log(1 - p)
+    )
+
+    return E_coupling + E_bias + E_entropy
+
 def compute_energy_and_complexity(W, J, B=0.0, mode='2D',
                                   grid_points=50,
-                                  complexity=True):
+                                  complexity=True, maxminval=6):
     """
     Main function.
 
@@ -6976,14 +7336,14 @@ def compute_energy_and_complexity(W, J, B=0.0, mode='2D',
     if mode == '1D':
         energy = energy_1D(W, J, v1, B, grid_points)
     elif mode == '2D':
-        energy = energy_2D(W, J, v1, v2, B, grid_points)
+        energy = energy_2D(W, J, v1, v2, B, grid_points, maxminval)
     else:
         raise ValueError("mode must be '1D' or '2D'")
 
     return energy
 
 
-def plot_energy(energy, mode='1D'):
+def plot_energy(energy, mode='1D', plot='2D', cmap='jet', alpha=0, ax=None):
     if mode == '1D':
         m, E = energy
         plt.figure(figsize=(6,4))
@@ -6996,40 +7356,110 @@ def plot_energy(energy, mode='1D'):
         m1, m2, E = energy
         M1, M2 = np.meshgrid(m1, m2)
 
-        plt.figure(figsize=(6,5))
-        plt.contourf(M1, M2, E.T, levels=30)
-        plt.colorbar(label='Energy')
-        plt.xlabel('m1')
-        plt.ylabel('m2')
-        plt.show()
+        E = E-np.min(E)+1e-2
+        if ax is None:
+            fig, ax = plt.figure(figsize=(6,5))
+            axnone_flag = True
+        else:
+            axnone_flag = False
+        if plot == '2D':
+            im = ax.contourf(M1, M2, E.T, levels=np.logspace(-2, 2, 41), cmap=cmap,
+                             norm=mpl.colors.LogNorm(), locator=mpl.ticker.LogLocator(base=10))
+            label_save = f'2D_projection_alpha_{alpha}'
+        if plot == '3D':
+            ax = fig.add_subplot(projection='3d')
+            im = ax.plot_surface(M1, M2, E.T, cmap=cmap,  # levels=np.logspace(-2, 3, 41)
+                                 norm=mpl.colors.LogNorm())  # , locator=mpl.ticker.LogLocator(base=10)
+            ax.set_zlim(0, 3)
+            label_save = f'3D_perspective_2D_projection_alpha_{alpha}' 
+        fmt = mpl.ticker.LogFormatterMathtext(base=10)
+        cax = inset_axes(
+                ax,
+                width="80%",   # width of colorbar relative to parent axes
+                height="5%",   # height of colorbar
+                loc='upper center',  # top of the axes
+                borderpad=-6     # padding from the top
+                )
+        cbar = plt.colorbar(im, format=fmt, label='Energy', cax=cax, orientation='horizontal')
+        ax.set_xlabel(r'Projection $v_1$')
+        ax.set_ylabel(r'Projection $v_2$')
+        if axnone_flag:
+            fig.savefig(DATA_FOLDER + f'{label_save}_energy.png', dpi=100, bbox_inches='tight')
+            fig.savefig(DATA_FOLDER + f'{label_save}_energy.pdf', dpi=100, bbox_inches='tight')
 
 
-
-def plot_energy_and_complexity_vs_j(seed=10, mode='2D', j=0.6, alpha=0.25):
+def plot_energy_and_complexity_vs_j(seed=10, mode='2D', j=0.6, alpha=0.25, plot='2D', cmap='jet'):
     # Generate a 100x100 symmetric random W
     N = 100
     np.random.seed(seed)
     theta = get_regular_graph(seed=seed, n=100)
     X = np.random.randn(N,N)
-    X = (X + X.T)/2  # symmetric
+    X = (X + X.T)/np.sqrt(2)  # symmetric
     W = theta + alpha * X
     # random symmetric noise
     B = 0.
 
     # # compute
     energy = compute_energy_and_complexity(
-        W, j, B, mode=mode, complexity=False, grid_points=50)
-    plot_energy(energy, mode=mode)
+        W, j, B, mode=mode, complexity=False, grid_points=100, maxminval=20)
+    plot_energy(energy, mode=mode, plot=plot, cmap=cmap, alpha=alpha)
+
+
+def plot_2d_energy_projection_different_alphas(seed=10, alpha_list=[0, 0.1, 0.2, 0.25], j=0.4):
+    N = 100
+    np.random.seed(seed)
+    theta = get_regular_graph(seed=seed, n=100)
+    np.random.seed(seed)
+    X = np.random.randn(N,N)
+    X = (X + X.T)/np.sqrt(2)  # symmetric
+    n_axes = len(alpha_list)
+    fig, ax = plt.subplots(ncols=n_axes, nrows=1, figsize=(3.5*len(alpha_list)+2, 4))
+    if 0.2 < j < 0.4:
+        maxminval_list = [7]*n_axes
+    elif j >= 0.4:
+        maxminval_list = [15]*n_axes
+    else:
+        maxminval_list = [3]*n_axes
+    for a in ax:
+        a.set_xlabel(r'Projection $v_1$')
+        a.set_ylabel(r'Projection $v_2$')
+    fig.tight_layout()
+    for i_a, alpha in enumerate(alpha_list):
+        W = theta + alpha * X
+        # random symmetric noise
+        B = 0.
+    
+        # # compute
+        energy = compute_energy_and_complexity(
+            W, j, B, mode='2D', complexity=False, grid_points=100, maxminval=maxminval_list[i_a])
+        plot_energy(energy, mode='2D', plot='2D', cmap='rocket', alpha=alpha, ax=ax[i_a])
+    fig.savefig(DATA_FOLDER + f'j_{j}_energy_vs_alpha.png', dpi=100, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + f'j_{j}_energy_vs_alpha.pdf', dpi=100, bbox_inches='tight')
 
 
 def hessian_eigvals_min(W, j, B=0.0, grid_points=80, mode='2D'):
     """
     Compute energy along 1D direction v1 and return the minimal value.
     """
+    # Flatten and sort indices by energy
     m1, m2, E_grid = compute_energy_and_complexity(
-            W, j, B, mode=mode, complexity=False, grid_points=grid_points)
+            W, j, B, mode=mode, complexity=False, grid_points=grid_points, maxminval=20)
+    
+    flat_indices = np.argsort(E_grid.ravel())
+    N = E_grid.shape[0]
+    found = False
+    
+    for idx in flat_indices:
+        i_min, j_min = np.unravel_index(idx, E_grid.shape)
+    
+        # Check if interior point
+        if 0 < i_min < N-1 and 0 < j_min < N-1:
+            found = True
+            break
+    
+    if not found:
+        raise ValueError("No interior minimum found")
     dm = np.diff(m1)[0]
-    i_min, j_min = np.unravel_index(np.argmin(E_grid), E_grid.shape)
     # second derivatives
     d2E_dm1 = (E_grid[i_min+1, j_min] - 2*E_grid[i_min, j_min] + E_grid[i_min-1, j_min]) / dm**2
     d2E_dm2 = (E_grid[i_min, j_min+1] - 2*E_grid[i_min, j_min] + E_grid[i_min, j_min-1]) / dm**2
@@ -7084,17 +7514,17 @@ def energy_minima_vs_jalpha(seed=10, n_points=50, n_jobs=None, B=0,
     return hessian_eigenvals_matrix, j_list, alpha_list
 
 
-def plot_hessian_eigvals_vs_j_alpha(cmap='Greens', n_points=100):
+def plot_hessian_eigvals_vs_j_alpha(cmap='Greens', n_points=50):
     eigvals, j_list, alpha_list = energy_minima_vs_jalpha(seed=10, n_points=n_points, n_jobs=None, B=0,
-                                                          compute=False, grid_points=50)
+                                                          compute=False, grid_points=250)
     largest_eigval = get_largest_eigval(seed=10, alpha_list=alpha_list)
     j_crit = 1/largest_eigval
     fig, axes = plt.subplots(1, 2, figsize=(8, 3))
     im0 = axes[0].imshow(
         eigvals[:, :, 1], origin="lower",              
         extent=[alpha_list[0], alpha_list[-1],
-                j_list[0], j_list[-1]],
-        aspect="auto", cmap=cmap, vmin=0, vmax=1)
+                j_list[0], j_list[-1]], norm=mpl.colors.LogNorm(vmin=np.min(np.abs(eigvals[:, :, 0])), vmax=12),
+        aspect="auto", cmap=cmap)
     axes[0].set_xlabel(r"$\alpha$")
     axes[0].set_ylabel(r"$J$")
     plt.colorbar(im0, ax=axes[0], label=r'$\lambda_1$')
@@ -7103,7 +7533,7 @@ def plot_hessian_eigvals_vs_j_alpha(cmap='Greens', n_points=100):
         eigvals[:, :, 0], origin="lower",
         extent=[alpha_list[0], alpha_list[-1],
                 j_list[0], j_list[-1]],
-        aspect="auto", cmap=cmap, vmin=0., vmax=1
+        aspect="auto", cmap=cmap, norm=mpl.colors.LogNorm(vmin=np.min(np.abs(eigvals[:, :, 0])), vmax=12)
     )
     axes[1].set_xlabel(r"$\alpha$")
     axes[1].set_ylabel(r"$J$")
@@ -7134,6 +7564,233 @@ def plot_hessian_eigvals_vs_j_alpha(cmap='Greens', n_points=100):
     a2[2].plot(j_list, np.nanmean(eigvals[:, :, 1], axis=1), color='k', linewidth=6)
     a2[3].plot(j_list, np.nanmean(eigvals[:, :, 0], axis=1), color='k', linewidth=6)
     f2.tight_layout()
+
+
+def cross_covariance_matrix_trials(activity, tau, neighs):
+    """
+    Compute trial-averaged time-lagged cross-covariance matrix C_jk(tau).
+
+    Parameters
+    ----------
+    activity : array, shape (T, N, M)
+        Time series of population activity (T time points, N neurons, M trials).
+    tau : int
+        Time lag (can be negative).
+
+    Returns
+    -------
+    C : array, shape (N, N)
+        Cross-covariance matrix at lag tau, averaged across trials.
+    """
+
+    activity = np.asarray(activity)
+    T, N, M = activity.shape
+
+    # Center the data along time for each neuron and trial
+    X = activity - activity.mean(axis=(0, 2), keepdims=True)  # shape (T, N, M)
+
+    # Determine aligned slices based on tau
+    if tau > 0:
+        X1 = X[:-tau, :, :]  # shape (T-tau, N, M)
+        X2 = X[tau:, :, :]   # shape (T-tau, N, M)
+    elif tau < 0:
+        tau = -tau
+        X1 = X[tau:, :, :]
+        X2 = X[:-tau, :, :]
+    else:
+        X1 = X2 = X
+    
+    # X2 = np.matmul(neighs, X2)
+
+    # Compute trial-averaged cross-covariance
+    C = np.einsum('tim,tjm->ij', X1, X2) / (X1.shape[0] * M)
+
+    return C
+
+
+def cross_covariance_all_taus(activity, taus, neighs):
+    """
+    Compute trial-averaged cross-covariance (C), auto-covariance (ACG), and cross-covariance (CCG)
+    for multiple lags.
+
+    Parameters
+    ----------
+    activity : array, shape (T, N, M)
+    taus : iterable of int
+
+    Returns
+    -------
+    C_tau : dict
+        tau -> cross-covariance matrix (N, N)
+    ACG_tau : dict
+        tau -> auto-covariance array (N,)
+    CCG_tau : dict
+        tau -> cross-covariance matrix with diagonal zeroed (N, N)
+    """
+
+    C_tau = {}
+    ACG_tau = {}
+    CCG_tau = {}
+
+    for tau in tqdm(taus):
+        C = cross_covariance_matrix_trials(activity, tau, neighs)
+        C_tau[tau] = C
+        ACG_tau[tau] = np.diag(C)
+        CCG_temp = C.copy()
+        np.fill_diagonal(CCG_temp, 0)
+        CCG_tau[tau] = CCG_temp
+
+    return C_tau, ACG_tau, CCG_tau
+
+
+def compute_correlogram_matrices(model='full', alpha=0.25, J=0.4, p_stim=0.5,
+                                 n_trials=100, seed=10, dt=1e-2, t_dur=2,
+                                 n_units=100, noise=0.1, tau=0.2,
+                                 n_taus=100):
+    """
+    Model can be:
+        - full --> full model (JW = J\theta + J \alpha X and B(t)), parameters: J, p(stim), \alpha, \sigma
+        - lateral --> only lateral, (JW = J\theta + J \alpha X), parameters: J, \alpha, \sigma
+        - feedback --> only feedback, (B(t)), parameters: p(stim), \alpha, \sigma
+    """
+    time = np.arange(0, t_dur+dt, dt)
+    np.random.seed(seed)
+    theta = get_regular_graph(seed=seed, n=n_units)
+    neighs = theta
+    W = np.random.randn(n_units, n_units)  # variance = 1
+    W = (W + W.T) / np.sqrt(2)   # make it symmetric
+    theta = theta + W*alpha
+    neighs = (np.abs(theta) > 0.)*1
+    activity = np.zeros((len(time), n_units, n_trials))
+    for simulation_id in tqdm(range(n_trials)):
+        _, activity_trial = solution_mf_sdo_euler(j=J, b=0, theta=theta, noise=noise,
+                                                  tau=tau, time_end=t_dur, dt=dt,
+                                                  add_extra_shared_input=False)
+        activity[:, :, simulation_id] = activity_trial
+    taus = np.arange(-100, 100, 1)
+    c_all, acg, ccg = cross_covariance_all_taus(activity, taus=taus, neighs=neighs)
+    off_diag_mask = ~np.eye(n_units, dtype=bool)
+    ccg_avg = [ccg[tau][off_diag_mask].mean() for tau in taus]
+    acg_avg = [acg[tau].mean() for tau in taus]
+    f, a = plt.subplots(ncols=2, figsize=(7, 3.))
+    for ax in a:
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.set_xlabel('Lag, s')
+    a[0].plot(taus, acg_avg, color='k', linewidth=4)
+    a[1].plot(taus, ccg_avg, color='k', linewidth=4)
+    a[0].set_ylabel('ACG')
+    a[1].set_ylabel('CCG')
+    f.tight_layout()
+
+
+def rubins_vase_simulation(seed=13, j=0.7, b=0, noise=0.2,
+                           tau=0.04, time_end=30.1, dt=1e-3,
+                           downsample=1, wdow=200):
+    np.random.seed(seed)
+    kernel = exp_kernel(x=np.arange(20), tau=0.1)
+    theta = scipy.linalg.circulant(kernel)
+    time, vec = solution_mf_sdo_euler(j, b, theta, noise, tau,
+                                      time_end=time_end, dt=dt)
+    fig, ax = plt.subplots(1, figsize=(5, 3.5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    vec = vec[::downsample]
+    for i in range(20):
+        vec[:, i] = np.convolve(np.ones(wdow)/wdow, vec[:, i], mode='same')
+    ax.plot(time[::downsample], vec, color='forestgreen',
+             alpha=0.1)
+    ax.plot(time[::downsample], np.nanmean(vec, axis=1),
+             color='darkgreen', linewidth=4)
+    ax.set_xlim(wdow*dt, time_end-wdow*dt)
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Posterior, q')
+    first_wdow = [0, 12]
+    ax.fill_between(first_wdow, 1.2, -0.2, color='gray', alpha=0.3)
+    second_wdow = [27, time_end+dt]
+    ax.fill_between(second_wdow, 1.2, -0.2, color='gray', alpha=0.3)
+    ax.set_yticks([0, 0.5, 1])
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'simulations_rubin.png', dpi=400,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'simulations_rubin.svg', dpi=100,
+                bbox_inches='tight')
+
+
+def theta_vs_stim(stim):
+    if stim == 1:  # /mon/
+        theta = np.array([[0, 1, 0, 0],
+                          [1, 0, -1, 0],
+                          [0, -1, 0, 1],
+                          [0, 0, 1, 0]])
+        stim = np.array([-5, 1, 1, -5])
+    else:  # /xa/
+        theta = np.array([[0, 1, 0, -1],
+                          [1, 0, 0, 0],
+                          [0, 0, 0, 1],
+                          [-1, 0, 1, 0]])
+        stim = np.array([1, -5, -5, 1])
+    return theta, stim
+
+
+def create_stim_jamon_monja(timesteps_per_state=1,
+                            n_iters=100):
+    s_init = 0
+    s = s_init
+    sv = [s]
+    for i in range(n_iters-1):
+        if i != 0 and i % timesteps_per_state == 0:
+            s = 1-s
+        sv.append(s)
+    return np.array(sv)
+    
+
+def jamon_monja(seed=13, j=0.7, b_weight=0, noise=0.2,
+                tau=0.04, time_end=30.1, dt=1e-3,
+                downsample=1, wdow=200, timesteps_stim=10):
+    """
+    4 variables, coupling is ring-like but pos/neg/pos/neg
+    """
+    np.random.seed(seed)
+    n_units = 4
+    x = np.random.rand(n_units)  # initial_cond
+    time = np.arange(0, time_end+dt, dt)
+    vec = np.zeros((len(time), n_units))
+    vec[0, :] = x
+    t_cte_noise = np.sqrt(dt/tau)
+    stim = create_stim_jamon_monja(timesteps_per_state=timesteps_stim,
+                                   n_iters=len(time))
+    noise_vec = np.random.randn(time.shape[0], n_units)*t_cte_noise*noise
+    for t in range(1, time.shape[0]):
+        theta, b = theta_vs_stim(stim[t])
+        x = x + dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1))+b*b_weight) - x)/ tau +\
+            noise_vec[t]        # x = np.clip(x, 0, 1)
+        vec[t, :] = x  # np.clip(x, 0, 1)
+    
+    fig, ax = plt.subplots(1, figsize=(6, 3.5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    vec = vec[::downsample]
+    for i in range(4):
+        vec[:, i] = np.convolve(np.ones(wdow)/wdow, vec[:, i], mode='same')
+    colors = ['firebrick', 'forestgreen', '']
+    ax.plot(time, vec[:, 0], color='limegreen', linewidth=3)
+    ax.plot(time, vec[:, 1], color='forestgreen', linewidth=3)
+    ax.plot(time, vec[:, 2], color='darkred', linewidth=3)
+    ax.plot(time, vec[:, 3], color='salmon', linewidth=3)
+    ax.set_xlabel('Time (s)')
+    ax.set_xlim(10.5, 14); ax.set_xticks([11, 12, 13, 14])
+    ax.set_ylim(-0.125, 1.25)
+    ax.set_yticks([0, 0.5, 1])
+    ax.set_ylabel('Posterior, q')
+    step_time = timesteps_stim * dt # convert steps → time units
+    for start in np.arange(time.min(), time.max(), 2*step_time):
+        ax.axvspan(start, start + step_time, color='gray', alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'simulations_jamon_monja.png', dpi=400,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'simulations_jamon_monja.svg', dpi=100,
+                bbox_inches='tight')
 
 
 if __name__ == '__main__':
@@ -7227,9 +7884,9 @@ if __name__ == '__main__':
     # calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
     # boltzmann_2d_change_sigma(j=0.5, b=0)
-    # levelts_laws(noise=0.1, j=0.39,
-    #              b_list=np.round(np.arange(-0.01, 0.012, 0.0005), 4),
-    #              theta=theta, time_end=12000, dt=1e-3, tau=0.008,
+    # levelts_laws(noise=0.1, j=0.3,
+    #              b_list=np.round(np.arange(-0.1, 0.11, 0.01), 4),
+    #              theta=theta, time_end=12000, dt=1e-2, tau=0.1,
     #              n_nodes_th=50)
     # plot_3d_solution_mf_vs_j_b(j_list=np.arange(0.01, 1.01, 0.00025),
     #                             b_list=np.arange(0, 0.125, 0.025), N=3,
@@ -7259,7 +7916,7 @@ if __name__ == '__main__':
     #                                         j_list=np.arange(0, 1.01, 0.02),
     #                                         nsims=20, load_data=True, sigma=0.2,
     #                                         long=True, cylinder=True, inset=False,
-    #                                         barplot=False, add_rand_matrix=True)
+    #                                         barplot=True, add_rand_matrix=True)
     # plot_rsc_matrix_vs_b_list_and_coupling(b_list=np.arange(0, 1.02, 0.02),
     #                                         j_list=np.arange(0, 1.01, 0.02),
     #                                         nsims=20, load_data=True, sigma=0.2,
@@ -7273,37 +7930,23 @@ if __name__ == '__main__':
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
-    # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
-    #                           shift=0, nreps=1000, tau=0.2, seed=10, simulate=False,
-    #                           idx_neuron='mean', ou=False, add_symetric_RM=True,
-    #                           choice_time_before=0.25, random_matrix_weight=0.25,
-    #                           absolute_cps_rsc=False)
-    # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
-    #                          shift=0, nreps=500, tau=0.2, seed=10, simulate=False,
-    #                          idx_neuron='mean', ou=False, add_symetric_RM=False,
-    #                          choice_time_before=0.25)
-    # simulate_system_for_j_alpha(n_points=100, seed=10, t_dur=2, dt=1e-2,
-    #                             tau=0.2, sigma=0.05, choice_time_before=0.25,
-    #                             nreps=100, simulate=True, add_stim=False)
-    # simulate_system_for_j_alpha(n_points=100, seed=10, t_dur=2, dt=1e-2,
-    #                             tau=0.2, sigma=0.05, choice_time_before=0.25,
-    #                             nreps=100, simulate=True, add_stim=True)
-    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1)
-    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1, mode='pstim_alpha', strength_b=0.05)
-    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1, mode='pstim_alpha', strength_b=0.1)
-    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1, mode='pstim_alpha', strength_b=0.2)
+    plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
+                              shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
+                              idx_neuron='mean', ou=False, add_symetric_RM=True,
+                              choice_time_before=0.25, random_matrix_weight=0.25,
+                              absolute_cps_rsc=True)
+    # plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
+    #                      nreps=10, tau=0.3, seed=10, 
+    #                      alpha=0.25, choice_time_before=0.25,
+    #                      idx_neuron=24, zscore_plot=False)
+    # plot_rsc_cp_simulations(add_stim=False, sigma=0.2, mode='J_alpha', plot_j_alpha_sim_values=True)
+    # plot_rsc_cp_simulations(add_stim=False, sigma=0.1, mode='J_alpha', plot_j_alpha_sim_values=True)
+    # plot_2d_energy_projection_different_alphas(seed=10, alpha_list=[0, 0.1, 0.2, 0.25], j=0.3)
+    # plot_2d_energy_projection_different_alphas(seed=10, alpha_list=[0, 0.1, 0.2, 0.25], j=0.1)
     # plot_hessian_eigvals_vs_j_alpha(cmap='Greens')
-    # plot_energy_and_complexity_vs_j(seed=10, mode='2D', j=0.4, alpha=0.5)
-    # plot_energy_and_complexity_vs_j(seed=10, mode='2D', j=0.4, alpha=1)
-    simulate_system_for_pstimulation_alpha(n_points=101, seed=10, t_dur=2, dt=1e-2,
-                                           tau=0.2, sigma=0.1, choice_time_before=0.25,
-                                           nreps=100, simulate=True, n_jobs=None,
-                                           add_stim=False, strength_b=0.1)
-    simulate_system_for_pstimulation_alpha(n_points=101, seed=10, t_dur=2, dt=1e-2,
-                                           tau=0.2, sigma=0.1, choice_time_before=0.25,
-                                           nreps=100, simulate=True, n_jobs=None,
-                                           add_stim=False, strength_b=0.2)
-    simulate_system_for_pstimulation_alpha(n_points=101, seed=10, t_dur=2, dt=1e-2,
-                                           tau=0.2, sigma=0.1, choice_time_before=0.25,
-                                           nreps=100, simulate=True, n_jobs=None,
-                                           add_stim=False, strength_b=0.05)
+    # jamon_monja(seed=13, j=2, b_weight=5, noise=0.1,
+    #             tau=0.05, time_end=15, dt=1e-3,
+    #             downsample=1, wdow=200, timesteps_stim=500)
+    # rubins_vase_simulation(seed=13, j=0.7, b=0, noise=0.2,
+    #                        tau=0.05, time_end=30.1, dt=1e-3,
+    #                        downsample=1, wdow=200)
