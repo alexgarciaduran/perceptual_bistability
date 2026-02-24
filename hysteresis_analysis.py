@@ -5959,7 +5959,7 @@ def plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
         kernels_to_plot = kernels_simul
         label_save = 'sim_to_sim_'
     idxs = np.digitize(amplitude_prediction, np.percentile(amplitude_prediction, bins_perc)+extra_for_all_vals)-1
-    fig, ax = plt.subplots(1, figsize=(5.5, 4))
+    fig, ax = plt.subplots(1, figsize=(5., 3.5))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     nbins = len(np.unique(idxs))
     # colormap = pl.cm.Oranges(np.linspace(0.3, 1, nbins))
@@ -11479,11 +11479,11 @@ if __name__ == '__main__':
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
     # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=12, ntraining=8, t_dur=13,
     #                subj_ini=None, nbins=54, fitting_method='bads')
-    parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
-                                n_pars_to_fit=100, n_sims_per_par=100,
-                                sv_folder=SV_FOLDER, simulate=True,
-                                load_net=False, not_plot_and_return=False,
-                                pyddmfit=True, transform=False, ini_par=0)
+    # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
+    #                             n_pars_to_fit=100, n_sims_per_par=100,
+    #                             sv_folder=SV_FOLDER, simulate=True,
+    #                             load_net=False, not_plot_and_return=False,
+    #                             pyddmfit=True, transform=False, ini_par=0)
     # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                  ntraining=8, coupling_levels=[0, 0.3, 1],
     #                  window_conv=5, bin_size=0.35, switch_01=False)
