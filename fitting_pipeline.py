@@ -2746,8 +2746,17 @@ def plot_mcmc_individual(states, vals, dists, burn_in):
     fig.tight_layout()
 
 
-def plot_all_subjects(xvar='stim_ev_cong'):
+def plot_all_subjects(xvar='stim_ev_cong', model=False):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    if model:
+        data_orig, data_model_orig, data_model_null =\
+            load_all_data(all_df, model='MF5', method='BADS', sv_folder=SV_FOLDER)
+        all_df = data_model_orig.copy().dropna()
+        all_df['pShuffle'] = np.round(1-all_df['coupling'].values, 1)
+        all_df['evidence'] = all_df['stim_str'].values
+        all_df['response'] = all_df['decision'].values
+        all_df = all_df[['pShuffle', 'confidence', 'evidence', 'response',
+                         'subject']]
     unique_vals = np.sort(all_df['pShuffle'].unique())
     all_df['coupling'] = all_df['pShuffle'].replace(to_replace=unique_vals,
                                 value= [1., 0.3, 0.])
@@ -2771,7 +2780,7 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         dataframe = all_df.copy().loc[all_df['subject'] == sub]
         dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
         dataframe['abs_confidence'] = np.abs(dataframe.confidence-0.5)*2
-        dataframe['zscore_abs_confidence'] = scipy.stats.zscore(np.abs(dataframe.confidence-0.5)*2)
+        dataframe['zscore_abs_confidence'] = scipy.stats.zscore(np.abs(dataframe.confidence*2-1), nan_policy='omit')
         df_sub = pd.concat((df_sub, dataframe[['zscore_abs_confidence', 'stim_ev_cong', 'coupling', 'abs_confidence', 'subject', 'stim_str', 'pShuffle', 'confidence']]))
         l = True if i_s == 0 else False
         sns.lineplot(dataframe, x=xvar, y='abs_confidence',
@@ -2818,7 +2827,8 @@ def plot_all_subjects(xvar='stim_ev_cong'):
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
-    df_subject_avg['pShuffle'] = df_subject_avg['pShuffle']/100
+    if not model:
+        df_subject_avg['pShuffle'] = df_subject_avg['pShuffle']/100
     sns.lineplot(data=df_subject_avg, x='stim_ev_cong', y='zscore_abs_confidence', hue='pShuffle', ax=ax2,
                  errorbar=('se'), palette=colormap, legend=True,
                  linewidth=4, hue_order=[1., 0.7, 0.])
@@ -2846,7 +2856,6 @@ def plot_all_subjects(xvar='stim_ev_cong'):
         stat, p_val = scipy.stats.ttest_rel(groups[0], groups[2])  # Paired t-test across subjects
         stat, p_val2 = scipy.stats.ttest_rel(groups[0], groups[1])  # Paired t-test across subjects
         stat, p_val3 = scipy.stats.ttest_rel(groups[2], groups[1])  # Paired t-test across subjects
-    
         # If p-value is below alpha, mark this stim_ev_cong as significant
         if p_val < alpha:
             significant_x.append(stim)
@@ -2858,15 +2867,15 @@ def plot_all_subjects(xvar='stim_ev_cong'):
     # colormap = sns.color_palette("rocket", as_cmap=True)
     # cmap = colormap([0, 0.5, 1])
     if significant_x:
-        for i, sig_x in enumerate([significant_x, significant_x2, significant_x3]): 
+        for i, sig_x in enumerate([significant_x]):   # , significant_x2, significant_x3
             y_max = -0.85 + i*0.08 # Position above highest confidence
             if sig_x == [0, 0.4, 0.8, 1] or sig_x == [0, 0.4, 0.8]:
                 ax2.plot(sig_x, [y_max]*len(sig_x),
-                         color=colormap[i], linewidth=4)
+                         color='k', linewidth=4)
             else:
                 for x in sig_x:
                     plt.plot([x - 0.2, x], [y_max, y_max],
-                             color=colormap[i], linewidth=4)  # Short line above plot
+                             color='k', linewidth=4)  # Short line above plot
     ax2.set_xlabel('Depth cue congruence with choice')
     ax2.set_ylabel('z-scored absolute confidence')
     ax2.set_xticks([-1, -0.5, 0, 0.5, 1])
@@ -3351,7 +3360,7 @@ if __name__ == '__main__':
     #                                 bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                data_only=True)
-    # plot_all_subjects()
+    plot_all_subjects(model=False)
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
@@ -3372,10 +3381,10 @@ if __name__ == '__main__':
     #                                   bw_pred=1)
     # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
     #                         method=opt_algorithm)
-    ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
-                        band_width=1, sort_by_j=True)
-    ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
-                        band_width=1)
+    # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+    #                     band_width=1, sort_by_j=True)
+    # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+    #                     band_width=1)
     # plot_confidence_vs_stim(method='BADS', variable='confidence', subject='s_23', plot_all=False,
     #                         bw=0.8, annot=False, model_density=True,
     #                         orient='Horizontal')  # good: 11, 7, 15, 18, 23, 30  --> 23 instead of 11
