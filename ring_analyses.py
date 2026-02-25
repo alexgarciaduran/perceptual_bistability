@@ -342,9 +342,6 @@ class ring:
             weight = np.exp(-dist / position_tau)
             mu_vals.append(weight * s_t_1[2])
         
-        # # Optional: include self-position penalty
-        # dist_self = np.abs(position_t[1] - position_t_1[1])
-        # weight_self = np.exp(-dist_self / position_tau)
         if len(mu_vals) == 0:
             return np.log(epsilon)  # no contributing neighbors
         else:
@@ -595,7 +592,7 @@ class ring:
                                                                                         position_t_1=positions[1][idxs],
                                                                                         noise=noise,
                                                                                         epsilon=self.eps)
-                        if discrete_stim and quartet:
+                        if quartet:
                             # based on a normal distribution centered in the expectation of the stimulus given the combination of z
                             p_s_given_z = self.compute_likelihood_quartet_stim_ising(s_t_1[idxs], zn[idxs],
                                                                                       s_t[idxs], central_idx=idx,
@@ -873,7 +870,7 @@ class ring:
         t_end = n_iters*dt
         kernel = self.exp_kernel()
         n_dots = self.ndots
-        if not tritone:
+        if not tritone and not distance:
             if discrete_stim:
                 if coh is None:
                     stim = self.stim_creation(s_init=s, n_iters=n_iters, true=true, timesteps_between=stim_stamps)
@@ -898,10 +895,6 @@ class ring:
             stim = self.stim_creation_quartet(n_iters=n_iters, timesteps_between=stim_stamps)
         if discrete_stim and coh is not None:
             discrete_stim = False
-        if type(s) is list:
-            s = np.repeat(np.array(s).reshape(-1, 1), n_dots//len(s), axis=1).T.flatten()
-        else:
-            s = np.repeat(np.array(s).reshape(-1, 1), n_dots, axis=1).T.flatten()
         if ini_cond is None:
             q_mf = np.clip(np.random.randn(n_dots, nstates)*5e-2+0.5, 0, 1)
         else:
@@ -1094,19 +1087,24 @@ class ring:
             # plt.ylim(0, 2)
             if distance:
                 fig, ax = plt.subplots(nrows=3, figsize=(8, 9))
-                titles = ['Contrast', 'Position', 'Posterior']
+                # titles = ['Contrast', 'Position', 'Posterior']
                 for ia, a in enumerate(ax):
                     a.set_ylabel('Dots')
-                    a.set_title(titles[ia], fontsize=14)
+                    # a.set_title(titles[ia], fontsize=14)
                     a.set_xticks([])
                 fig.suptitle(f'Coupling J = {j}, alpha = {alpha}', fontsize=16)
                 fig.tight_layout()
-                ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
-                             vmin=0, vmax=1)
-                ax[1].imshow(w_all.T, cmap='hsv', aspect='auto', interpolation='none')
+                im1 = ax[0].imshow(stim.T, cmap='binary', aspect='auto', interpolation='none',
+                                   vmin=0, vmax=1)
+                fig.colorbar(im1, ax=ax[0], label='Contrast')
+                im2 = ax[1].imshow(w_all.T, cmap='hsv', aspect='auto', interpolation='none',
+                                   vmin=0, vmax=2*np.pi)
+                cbar = fig.colorbar(im2, ax=ax[1], label='Position')
+                cbar.set_ticks(ticks=[0, np.pi/2, np.pi, np.pi*3/2, np.pi*2], labels=['0', r'$\pi/2$', r'$\pi$', r'$3 \pi/2$', r'$2 \pi$'])
                 q_mf_plot = np.array((q_mf_arr[:, 0, :].T, q_mf_arr[:, 1, :].T)).T
-                ax[2].imshow(q_mf_plot[:, :, 0], aspect='auto', interpolation='none',
-                             vmin=0, vmax=1, cmap='bwr')
+                im3 = ax[2].imshow(q_mf_plot[:, :, 0], aspect='auto', interpolation='none',
+                                   vmin=0, vmax=1, cmap='bwr')
+                fig.colorbar(im3, ax=ax[2], label='Posterior, q(CW)')
                 ax[2].set_xlabel('Time (s)')
 
 
@@ -1671,14 +1669,12 @@ class ring:
         ndots = self.ndots
         def theta_to_s(theta, p=2):
             return 1 - np.abs(np.sin(theta))
-        def circular_diff(a, b):
-            return np.angle(np.exp(1j*(a-b)))
         
         # add pi/2 so that we start in the top center
         # Initial angular positions, start at top
         theta = (np.linspace(0, 2*np.pi, ndots, endpoint=False) + np.pi/2) % (2*np.pi)
         s = theta_to_s(theta)
-    
+
         block_n = 0
         theta_all = [theta.copy()]
         s_all = [s.copy()]
@@ -1686,17 +1682,34 @@ class ring:
         for t in range(1, n_iters):
             block = t // timesteps_between
             if block != block_n:
-                # update theta at the start of each new block
-                delta = circular_diff(np.roll(theta, -1), theta) if true == 'CW' else circular_diff(np.roll(theta, 1), theta)
+                # rotation direction
+                if true in ['CCW', 'CCW_CW']:
+                    delta = circular_diff(np.roll(theta, -1), theta)
+                else:
+                    delta = circular_diff(np.roll(theta, 1), theta)
                 omega = theta + delta/2
-                theta = omega + alpha * np.cos(omega) * np.sign(np.cos(omega))
+                # --- NEW: side-dependent alpha ---
+                cosw = np.cos(theta)
+    
+                if true == 'CCW_CW':
+                    alpha_eff = alpha * np.where(cosw < 0, -1, 1)
+                elif true == 'CW_CCW':
+                    alpha_eff = alpha * np.where(cosw < 0, 1, -1)
+                else:
+                    alpha_eff = alpha  # original behavior
+
+                theta = omega + alpha_eff * np.cos(omega) * np.sign(np.cos(omega))
                 # + np.pi/ndots  # original simple formulation, rigid rotation + distortion
-                theta = theta % (2*np.pi)  # theta \in [0, 2\pi]
+                theta = theta % (2*np.pi)  # theta \in [0, 2\pi)
                 block_n = block
             theta_all.append(theta.copy())
             s_all.append(theta_to_s(theta).copy())
 
         return np.array(theta_all), np.array(s_all)
+
+
+def circular_diff(a, b):
+    return np.angle(np.exp(1j*(a-b)))
 
 
 def arc_distance(a, b):
@@ -3755,6 +3768,7 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
 
 
 if __name__ == '__main__':
+    print('Running ring analyses')
     # number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
     #                         jlist=np.arange(0, 1.05, 0.05).round(4),
     #                         nreps=20, dt=0.05, tau=0.1, n_iters=2500, true='CW', noise_stim=0.1,
@@ -3799,24 +3813,26 @@ if __name__ == '__main__':
     #                                            b=[0, 1, 0], noise_stim=0.0,
     #                                            coh=0.25, nstates=3, stim_stamps=1)
     # good seed: 5, 20, 30
-    # ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.05, tau=1, n_iters=300, j=0.3,
-    #                                              true='CW', noise=0., plot=True,
-    #                                              discrete_stim=True, s=[1, 0],
-    #                                              b=[0, 0], noise_stim=0.1,
-    #                                              coh=None, nstates=2, stim_stamps=10,
-    #                                              distance=True, alpha=0., seed=20)
-    # ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.05, tau=1, n_iters=300, j=0.3,
-    #                                              true='CW', noise=0., plot=True,
-    #                                              discrete_stim=True, s=[1, 0],
-    #                                              b=[0, 0], noise_stim=0.1,
-    #                                              coh=None, nstates=2, stim_stamps=10,
-    #                                              distance=True, alpha=0.1, seed=20)
-    # ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.05, tau=1, n_iters=300, j=0.3,
-    #                                              true='CCW', noise=0., plot=True,
-    #                                              discrete_stim=True, s=[1, 0],
-    #                                              b=[0, 0], noise_stim=0.1,
-    #                                              coh=None, nstates=2, stim_stamps=10,
-    #                                              distance=True, alpha=-0.1, seed=20)
+    ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
+                                                  true='CW', noise=0.2, plot=True,
+                                                  b=[0, 0], noise_stim=0.2,
+                                                  nstates=2, stim_stamps=10,
+                                                  distance=True, alpha=0., seed=None)
+    ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
+                                                  true='CCW', noise=0.2, plot=True,
+                                                  b=[0, 0], noise_stim=0.2,
+                                                  nstates=2, stim_stamps=10,
+                                                  distance=True, alpha=0., seed=None)
+    ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
+                                                  true='CCW', noise=0.2, plot=True,
+                                                  b=[0, 0], noise_stim=0.2,
+                                                  nstates=2, stim_stamps=10,
+                                                  distance=True, alpha=-0.2, seed=None)
+    ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
+                                                  true='CW', noise=0.2, plot=True,
+                                                  b=[0, 0], noise_stim=0.2,
+                                                  nstates=2, stim_stamps=10,
+                                                  distance=True, alpha=0.2, seed=None)
     # sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
     #                                 nreps=50, dt=0.05, tau=0.1, n_iters=250, true='CW', noise_stim=0.1)
     # for i in range(2):
@@ -3841,14 +3857,14 @@ if __name__ == '__main__':
     # nice_quartet_example(n_iters=2000, dt=1e-2, downsample=5)
     # motion_quartet_example(n_iters=5000, dt=0.01, nreps=50, cols=True,
     #                         downsample=25)
-    ring(epsilon=1e-2, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=2000, j=0.4,
-                                                true='CW', noise=0.1, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0., 0.], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=1,
-                                                stim_stamps=200, stim_weight=1,
-                                                colors=True,
-                                                seed=3)
+    # ring(epsilon=1e-2, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=2000, j=0.4,
+    #                                             true='CW', noise=0.1, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0., 0.], noise_stim=1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=1,
+    #                                             stim_stamps=200, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=3)
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
