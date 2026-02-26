@@ -2606,7 +2606,7 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
         ax.boxplot(llh_all.T)
         ax.set_xticks([1, 2, 3], ['Full', 'Null', 'Null-Full'], rotation=45)
     else:
-        sns.barplot([llh_all[2]], ax=ax, palette=['darkgreen'], errorbar='se')
+        sns.barplot([llh_all[2]], ax=ax, palette=['yellowgreen'], errorbar='se')
     ax.axhline(0, linestyle='--', color='k', alpha=0.5)
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
@@ -3354,13 +3354,13 @@ if __name__ == '__main__':
     #                   plot_subs=False)
     # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                     subjects='separated')
-    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-    #                                 bic=True, dots=True)
-    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-    #                                 bic=False, dots=True)
+    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
+                                    bic=True, dots=True)
+    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
+                                    bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                data_only=True)
-    plot_all_subjects(model=False)
+    # plot_all_subjects(model=False)
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
