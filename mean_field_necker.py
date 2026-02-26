@@ -7793,6 +7793,77 @@ def jamon_monja(seed=13, j=0.7, b_weight=0, noise=0.2,
                 bbox_inches='tight')
 
 
+def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
+                       j0=0.1, j1=0.2, n=4, sigma=0.1, b1=0.2, b0=0,
+                       dt=1e-2, tau=0.2, t_dur=1, seed=0,
+                       simulate=False):
+    np.random.seed(seed)
+    blist = [-1, -0.8, -0.4, 0., 0.4, 0.8, 1]
+    blist = np.round(np.linspace(-1, 1, 11), 2)
+    time = np.arange(0, t_dur+dt, dt)
+    n_iters = len(time)
+    rows = []
+    if simulate:
+        response_array = np.zeros((len(pshuf), len(blist), nreps))
+        conf_array = np.zeros((len(pshuf), len(blist), nreps))
+        for i_ps, ps in enumerate(pshuf):
+            for i_b, b in enumerate(blist):
+                for rep in range(nreps):
+                    x = 0.5  # +np.random.randn()*0.1
+                    for _ in range(n_iters):
+                        x += dt*(gn.sigmoid(2*n*(j1*(1-ps)+j0)*(2*x-1)+2*b*b1)-x)/tau +\
+                            np.sqrt(dt/tau)*np.random.randn()*sigma
+                    response_array[i_ps, i_b, rep] = 1*(x > 0.5)
+                    conf_array[i_ps, i_b, rep] = abs(2*x-1)
+        np.save(DATA_FOLDER + 'dummy_sims_psychometric.npy', response_array)
+        np.save(DATA_FOLDER + 'dummy_sims_psychometric_conf.npy', conf_array)
+    else:
+        response_array = np.load(DATA_FOLDER + 'dummy_sims_psychometric.npy')
+        conf_array = np.load(DATA_FOLDER + 'dummy_sims_psychometric_conf.npy')
+    rows = []
+    for i_ps, ps in enumerate(pshuf):
+        for i_b, b in enumerate(blist):
+            for rep in range(nreps):
+                rows.append({
+                    "evidence": b,
+                    "response": response_array[i_ps, i_b, rep],
+                    "pShuffle": ps,
+                    "conf": conf_array[i_ps, i_b, rep],
+                    "cong_ev": np.round(b*(response_array[i_ps, i_b, rep]*2-1), 2),
+                    "trial_idx": rep
+                })
+
+    vals = pd.DataFrame(rows)
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    fig, ax_both = plt.subplots(ncols=2, nrows=1, figsize=(7, 3.))
+    for a in ax_both:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    ax = ax_both[0]
+    ax.axhline(0.5, color='k', linestyle='--', alpha=0.4)
+    ax.axvline(0., color='k', linestyle='--', alpha=0.4)
+    sns.lineplot(data=vals, x='evidence', y='response', hue='pShuffle', ax=ax,
+                 errorbar=('se'), palette=colormap, legend=True,
+                 linewidth=5, hue_order=[1., 0.7, 0.])
+    ax.legend(frameon=False, title='p(shuffle)')
+    ax.set_xlabel('Depth cue, s')
+    ax.set_ylabel('p(right)')
+    ax.set_ylim(-0.05, 1.05); ax.set_xticks([-1, -0.5, 0, 0.5, 1])
+    # ax.tick_params("x", rotation=45)
+    ax = ax_both[1]
+    sns.lineplot(data=vals, x='cong_ev', y='conf', hue='pShuffle', ax=ax,
+                 errorbar=('se'), palette=colormap, legend=True,
+                 linewidth=5, hue_order=[1., 0.7, 0.])
+    ax.legend(frameon=False, title='p(shuffle)')
+    ax.set_xlabel('Depth cue congruent with choice')
+    ax.set_ylabel('Absolute confidence')
+    ax.set_ylim(-0.05, 1.05); ax.set_xticks([-1, -0.5, 0, 0.5, 1])
+    # ax.tick_params("x", rotation=45)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'exp_confidence_cartoon.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'exp_confidence_cartoon.pdf', dpi=200, bbox_inches='tight')
+
+
 if __name__ == '__main__':
     print('Mean-Field inference')
     # plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
@@ -7930,11 +8001,11 @@ if __name__ == '__main__':
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
-    plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
-                              shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
-                              idx_neuron='mean', ou=False, add_symetric_RM=True,
-                              choice_time_before=0.25, random_matrix_weight=0.25,
-                              absolute_cps_rsc=True)
+    # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
+    #                           shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
+    #                           idx_neuron='mean', ou=False, add_symetric_RM=True,
+    #                           choice_time_before=0.25, random_matrix_weight=0.25,
+    #                           absolute_cps_rsc=True)
     # plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     #                      nreps=10, tau=0.3, seed=10, 
     #                      alpha=0.25, choice_time_before=0.25,
