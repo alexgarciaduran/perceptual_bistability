@@ -7793,10 +7793,70 @@ def jamon_monja(seed=13, j=0.7, b_weight=0, noise=0.2,
                 bbox_inches='tight')
 
 
+def splitting_prob(q, V, sigma, q0=0.5):
+    weight = np.exp(2 * V / sigma**2)
+
+    idx0 = np.where(q >= q0)[0][0]
+
+    num = np.sum(weight[:idx0])
+    den = np.sum(weight)
+
+    return num / den
+
+
+def boltzmann_psychometric(n=4, noise=0.1,
+                           plot_boltz=False):
+    blist = np.round(np.linspace(-0.2, 0.2, 101), 4)
+    jlist = np.arange(1e-2, 1, 1e-2)
+    q = np.arange(-0.5, 1.5, 1e-3)
+    pright_per_j = np.zeros((len(jlist), len(blist)))
+    split_probability_per_j = np.zeros((len(jlist), len(blist)))
+    slope_per_j = np.zeros((len(jlist)))
+    slope_per_j_first_passage = np.zeros((len(jlist)))
+    idx_b_0 = np.where(blist == 0)[0][0]
+    db = np.diff(blist)[0]
+    for ij, j in enumerate(jlist):
+        prights = []
+        split_prob = []
+        for b in blist:
+            pot = potential_mf_neighs(q, j, bias=b, neighs=n)
+            distro = np.exp(-2*pot/noise**2)
+            distro = distro/np.sum(distro)
+            pright = np.sum(distro[q >= 0.5])
+            prights.append(pright)
+            V = potential_mf_neighs(q, j, bias=b, neighs=n)
+            split_prob.append(splitting_prob(q, V, noise, q0=0.5))
+        split_probability_per_j[ij] = split_prob
+        pright_per_j[ij] = prights
+        slope_per_j[ij] = (prights[idx_b_0+1]-prights[idx_b_0-1])/(2*db)
+        slope_per_j_first_passage[ij] = (split_prob[idx_b_0+1]-split_prob[idx_b_0-1])/(2*db)
+    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(4.5, 3.5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    var_slope = slope_per_j if plot_boltz else slope_per_j_first_passage
+    ax.plot(jlist, var_slope, linewidth=4, color='k')
+    ax.set_ylabel('Slope of psychometric function at B=0')
+    ax.set_xlabel('Coupling, J')
+    fig.tight_layout()
+    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(4.5, 3.5))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    chosen_j = [0.1, 0.19, 0.3]
+    colormap = pl.cm.Blues(np.linspace(0.2, 1, len(chosen_j)))
+    var_pright = pright_per_j if plot_boltz else split_probability_per_j
+    for i_j, j in enumerate(chosen_j):
+        j_idx = np.where(np.isclose(jlist, j))[0][0]
+        ax.plot(blist, var_pright[j_idx],
+                color=colormap[i_j], linewidth=4)
+    ax.set_ylabel('Psychometric function')
+    ax.set_xlabel('Sensory evidence, B')
+    fig.tight_layout()
+
+
 def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
                        j0=0.1, j1=0.2, n=4, sigma=0.1, b1=0.2, b0=0,
                        dt=1e-2, tau=0.2, t_dur=1, seed=0,
-                       simulate=False):
+                       simulate=False, together=False):
     np.random.seed(seed)
     blist = [-1, -0.8, -0.4, 0., 0.4, 0.8, 1]
     blist = np.round(np.linspace(-1, 1, 11), 2)
@@ -7835,11 +7895,16 @@ def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
 
     vals = pd.DataFrame(rows)
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
-    fig, ax_both = plt.subplots(ncols=2, nrows=1, figsize=(7, 3.))
-    for a in ax_both:
-        a.spines['right'].set_visible(False)
-        a.spines['top'].set_visible(False)
-    ax = ax_both[0]
+    if together:
+        fig, ax_both = plt.subplots(ncols=2, nrows=1, figsize=(7, 3.))
+        for a in ax_both:
+            a.spines['right'].set_visible(False)
+            a.spines['top'].set_visible(False)
+        ax = ax_both[0]
+    else:
+        fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(4.5, 3.5))
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
     ax.axhline(0.5, color='k', linestyle='--', alpha=0.4)
     ax.axvline(0., color='k', linestyle='--', alpha=0.4)
     sns.lineplot(data=vals, x='evidence', y='response', hue='pShuffle', ax=ax,
@@ -7849,23 +7914,35 @@ def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
     ax.set_xlabel('Depth cue, s')
     ax.set_ylabel('p(right)')
     ax.set_ylim(-0.05, 1.05); ax.set_xticks([-1, -0.5, 0, 0.5, 1])
-    # ax.tick_params("x", rotation=45)
-    ax = ax_both[1]
+    if together:
+        ax = ax_both[1]
+    else:
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'exp_psychometric_cartoon.png', dpi=200, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'exp_psychometric_cartoon.pdf', dpi=200, bbox_inches='tight')
+        fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(4.5, 3.5))
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
     sns.lineplot(data=vals, x='cong_ev', y='conf', hue='pShuffle', ax=ax,
-                 errorbar=('se'), palette=colormap, legend=True,
+                 errorbar=('se'), palette=colormap, legend=False if together else True,
                  linewidth=5, hue_order=[1., 0.7, 0.])
-    ax.legend(frameon=False, title='p(shuffle)')
+    if not together:
+        ax.legend(frameon=False, title='p(shuffle)')
     ax.set_xlabel('Depth cue congruent with choice')
     ax.set_ylabel('Absolute confidence')
     ax.set_ylim(-0.05, 1.05); ax.set_xticks([-1, -0.5, 0, 0.5, 1])
-    # ax.tick_params("x", rotation=45)
     fig.tight_layout()
-    fig.savefig(DATA_FOLDER + 'exp_confidence_cartoon.png', dpi=200, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'exp_confidence_cartoon.pdf', dpi=200, bbox_inches='tight')
+    label = 'psychometric_and_confidence_cartoon' if together else 'exp_confidence_cartoon'
+    fig.savefig(DATA_FOLDER + f'{label}.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + f'{label}.pdf', dpi=200, bbox_inches='tight')
 
 
 if __name__ == '__main__':
     print('Mean-Field inference')
+    dummy_psychometric(nreps=1000, pshuf=[1., 0.7, 0.],
+                           j0=0.1, j1=0.3, n=4, sigma=0.1, b1=0.2, b0=0,
+                           dt=1e-2, tau=0.2, t_dur=1, seed=10, simulate=False,
+                           together=True)
     # plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
     # plot_hysteresis_different_taus(j=0.36,
     #                                 b_list=np.linspace(-0.53, 0.53, 2001),
