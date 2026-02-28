@@ -2889,6 +2889,8 @@ def psychometric_curve_all_subjects():
     fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(4.5, 3.5))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
+    ax.axhline(0.5, color='k', linestyle='--', alpha=0.4)
+    ax.axvline(0., color='k', linestyle='--', alpha=0.4)
     resp = (np.sign(all_df['confidence'].values)+1)/2
     all_df['response'] = resp
     vals = all_df.groupby(['subject', 'evidence', 'pShuffle'])['response'].mean().reset_index()
@@ -3354,15 +3356,15 @@ if __name__ == '__main__':
     #                   plot_subs=False)
     # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                     subjects='separated')
-    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-                                    bic=True, dots=True)
-    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-                                    bic=False, dots=True)
+    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
+    #                                 bic=True, dots=True)
+    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
+    #                                 bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                data_only=True)
     # plot_all_subjects(model=False)
     # plot_all_subjects(xvar='stim_ev_cong')
-    # psychometric_curve_all_subjects()
+    psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=True)
