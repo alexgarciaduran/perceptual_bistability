@@ -7896,7 +7896,7 @@ def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
     vals = pd.DataFrame(rows)
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     if together:
-        fig, ax_both = plt.subplots(ncols=2, nrows=1, figsize=(7, 3.))
+        fig, ax_both = plt.subplots(ncols=2, nrows=1, figsize=(7.5, 3.5))
         for a in ax_both:
             a.spines['right'].set_visible(False)
             a.spines['top'].set_visible(False)
