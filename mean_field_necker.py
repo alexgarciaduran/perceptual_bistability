@@ -7910,7 +7910,7 @@ def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
     sns.lineplot(data=vals, x='evidence', y='response', hue='pShuffle', ax=ax,
                  errorbar=('se'), palette=colormap, legend=True,
                  linewidth=5, hue_order=[1., 0.7, 0.])
-    ax.legend(frameon=False, title='p(shuffle)')
+    ax.legend(frameon=False, title='p(shuffle)', loc='upper left')
     ax.set_xlabel('Depth cue, s')
     ax.set_ylabel('p(right)')
     ax.set_ylim(-0.05, 1.05); ax.set_xticks([-1, -0.5, 0, 0.5, 1])
@@ -7940,9 +7940,9 @@ def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
 if __name__ == '__main__':
     print('Mean-Field inference')
     dummy_psychometric(nreps=1000, pshuf=[1., 0.7, 0.],
-                           j0=0.1, j1=0.3, n=4, sigma=0.1, b1=0.2, b0=0,
-                           dt=1e-2, tau=0.2, t_dur=1, seed=10, simulate=False,
-                           together=True)
+                       j0=0.1, j1=0.3, n=4, sigma=0.1, b1=0.2, b0=0,
+                       dt=1e-2, tau=0.2, t_dur=1, seed=10, simulate=False,
+                       together=True)
     # plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
     # plot_hysteresis_different_taus(j=0.36,
     #                                 b_list=np.linspace(-0.53, 0.53, 2001),
