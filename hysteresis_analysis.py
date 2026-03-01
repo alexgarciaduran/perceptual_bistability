@@ -63,6 +63,8 @@ plt.rcParams['legend.title_fontsize'] = 14
 plt.rcParams['legend.fontsize'] = 14
 plt.rcParams['xtick.labelsize']= 14
 plt.rcParams['ytick.labelsize']= 14
+plt.rcParams["axes.grid"] = False
+
 
 pc_name = 'alex'
 if pc_name == 'alex':
@@ -10273,55 +10275,54 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
     else:
         t_bins = np.arange(0, 26 + dt_eff, dt_eff)
     t_bin_centers = t_bins[:-1] + dt_eff/2
-    fig, axes = plt.subplots(1, 1, figsize=(5, 4))
+    fig, axes = plt.subplots(1, 1, figsize=(4.5, 3.5))
     if condition == 'pShuffle':
         colormap = ['midnightblue','royalblue','lightskyblue'][::-1]
     if condition == 'regime':
-        colormap = ['peru', 'cadetblue']
+        colormap = ['cadetblue', 'peru']
 
-    axes = [axes]
     if condition == 'pShuffle':
         all_data = np.zeros((len(conditions), len(sublist), len(t_bin_centers)))
     else:
         all_data = [[], []]
-    for i_p, pup_col in enumerate([pupil_col]):
-        for i_c, cond in enumerate(reversed(sorted(per_sub_avg[pupil_col].keys()))):
-            # reversed loop so order becomes 1 (bistable) and -1 (monostable)
-            # Convert to array (subjects x time)
-            data_array = np.array(per_sub_avg[pupil_col][cond])
-            if condition == 'pShuffle':
-                all_data[i_c] = data_array
-            else:
-                all_data[i_c].append(data_array.T)
-            # subject means
-            subj_mean = np.nanmean(data_array, axis=1, keepdims=True)
-            
-            # grand mean
-            grand_mean = np.nanmean(data_array)
-            
-            # normalized data (remove subject offsets)
-            data_corr = data_array - subj_mean + grand_mean
-            
-            # SEM
-            grand_avg = np.nanmean(data_array, axis=0)
-            grand_error = np.nanstd(data_corr, axis=0, ddof=1) / np.sqrt(data_array.shape[0])
-            label_dict = {-1: 'Monostable', 1: 'Bistable'}
-            if condition == 'regime':
-                label = label_dict.get(cond, str(cond))
-            else:
-                label = str(cond)
-            axes[i_p].plot(t_bin_centers, grand_avg, color=colormap[i_c], linewidth=3, label=label)
-            axes[i_p].fill_between(t_bin_centers, grand_avg-grand_error,
-                                   grand_avg+grand_error, color=colormap[i_c], alpha=0.3)
-        axes[i_p].axvline(0, color='k', linestyle='--')
-        axes[i_p].axhline(0, color='k', linestyle='--')
-        if align:
-            axes[i_p].set_xlabel('Time from switch (s)')
+    vals_to_iterate = sorted(per_sub_avg[pupil_col].keys())
+    vals_to_iterate = vals_to_iterate if condition ==' pShuffle' else reversed(vals_to_iterate)
+    for i_c, cond in enumerate(vals_to_iterate):
+        # reversed loop so order becomes 1 (bistable) and -1 (monostable)
+        # Convert to array (subjects x time)
+        data_array = np.array(per_sub_avg[pupil_col][cond])
+        if condition == 'pShuffle':
+            all_data[i_c] = data_array
         else:
-            axes[i_p].set_xlabel('Time (s)')
-        # axes[i_p].set_title(pupil_col, fontsize=15)
-        axes[i_p].spines['right'].set_visible(False)
-        axes[i_p].spines['top'].set_visible(False)
+            all_data[i_c].append(data_array.T)
+        # subject means
+        subj_mean = np.nanmean(data_array, axis=1, keepdims=True)
+        
+        # grand mean
+        grand_mean = np.nanmean(data_array)
+        
+        # normalized data (remove subject offsets)
+        data_corr = data_array - subj_mean + grand_mean
+        
+        # SEM
+        grand_avg = np.nanmean(data_array, axis=0)
+        grand_error = np.nanstd(data_corr, axis=0, ddof=1) / np.sqrt(data_array.shape[0])
+        label_dict = {-1: 'Monostable', 1: 'Bistable'}
+        if condition == 'regime':
+            label = label_dict.get(cond, str(cond))
+        else:
+            label = str(cond)
+        axes.plot(t_bin_centers, grand_avg, color=colormap[i_c], linewidth=3, label=label)
+        axes.fill_between(t_bin_centers, grand_avg-grand_error,
+                          grand_avg+grand_error, color=colormap[i_c], alpha=0.3)
+    axes.axvline(0, color='k', linestyle='--')
+    axes.axhline(0, color='k', linestyle='--')
+    if align:
+        axes.set_xlabel('Time from switch (s)')
+    else:
+        axes.set_xlabel('Time (s)')
+    axes.spines['right'].set_visible(False)
+    axes.spines['top'].set_visible(False)
     if pupil_col == 'blink' and not align and condition == 'pShuffle':
         save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'blink_rate.npy')
         np.save(save_path, np.nanmean(all_data, axis=-1))
@@ -10352,44 +10353,44 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
     a2.axhline(0.05)
     if pupil_col == 'saccade':
         y_max = 1.28 # Position above highest confidence
-        axes[0].set_ylim(0.3, 1.3)
+        axes.set_ylim(0.3, 1.3)
     if pupil_col == 'speed':
         y_max = 0.37 # Position above highest confidence
-        axes[0].set_ylim(0.24, 0.38)
+        axes.set_ylim(0.24, 0.38)
     if 'Pupil' in pupil_col:
         y_max = 0.09
     if pupil_col == 'blink':
         y_max = 0.9
-        axes[0].set_ylim(0.15, 0.905)
+        axes.set_ylim(0.15, 0.905)
     if velocity:
         y_max = 0.225
     for x in significance_where:
-        axes[0].plot([x - dt_eff/2, x+dt_eff/2], [y_max, y_max],
+        axes.plot([x - dt_eff/2, x+dt_eff/2], [y_max, y_max],
                      color='k', linewidth=4)
     if xy_flag:
-        axes[0].set_ylabel('Distance')
+        axes.set_ylabel('Distance')
     else:
         if velocity:
-            axes[0].set_ylabel('Pupil size velocity')
+            axes.set_ylabel('Pupil size velocity')
         else:
-            axes[0].set_ylabel('Pupil size')
+            axes.set_ylabel('Pupil size')
     if pupil_col == 'vergence_angle':
-        axes[0].set_ylabel('Vergence angle (º)')
+        axes.set_ylabel('Vergence angle (º)')
     if 'speed' in pupil_col:
-        axes[0].set_ylabel('Eye movement speed')
+        axes.set_ylabel('Eye movement speed')
     if pupil_col == 'blink':
-        axes[0].set_ylabel('Blink rate (Hz)')
+        axes.set_ylabel('Blink rate (Hz)')
     if pupil_col == 'saccade':
-        axes[0].set_ylabel('Saccade rate (Hz)')
+        axes.set_ylabel('Saccade rate (Hz)')
     if pupil_col == 'raw_blink':
-        axes[0].set_ylabel('Proportion of eyes closed')
+        axes.set_ylabel('Proportion of eyes closed')
     if pupil_col == 'raw_saccade':
-        axes[0].set_ylabel('Proportion of fixation breaks')
+        axes.set_ylabel('Proportion of fixation breaks')
     
     if condition == 'pShuffle':
-        axes[0].legend(title='p(shuffle)', frameon=False)
+        axes.legend(title='p(shuffle)', frameon=False)
     if condition == 'regime':
-        axes[0].legend(frameon=False)
+        axes.legend(frameon=False)
 
     fig.tight_layout()
     if save_plot:
@@ -10398,7 +10399,7 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
             save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'final_plots', plot_name + extension)
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             fig.savefig(save_path, dpi=400, bbox_inches='tight')
-    f2, ax2 = plt.subplots(1, figsize=(4, 3))
+    f2, ax2 = plt.subplots(1, figsize=(3.5, 3.5))
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
     if condition == 'pShuffle':
@@ -10496,7 +10497,7 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         ax2.set_xticks([0, 1, 2], [0., 0.7, 1.][::-1])
         ax2.set_xlabel('p(Shuffle)')
     if condition == 'regime':
-        ax2.set_xticks([0, 1], ['Bistable', 'Monostable'])
+        ax2.set_xticks([0, 1], ['Monostable', 'Bistable'])
         ax2.set_xlabel('')
     if "Pupil" in pupil_col:
         ax2.set_ylabel('Minimum pupil')
@@ -11864,39 +11865,9 @@ def plot_pupil_traces():
                                  t_after=4,
                                  smooth_window=5,
                                  polyorder=1,
-                                 pupil_col='blink',
+                                 pupil_col='Pupil_residual',
                                  save_plot=True,
                                  plot_name='all_pupil_residual_avg_last.png',
-                                 velocity=False, n=4,
-                                 downsample_to=20, null=False, align=True,
-                                 region_interval=[-2, 2])
-    plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
-                                 sublist=None,
-                                 n_training=8,
-                                 dt=1/60,
-                                 t_before=4,
-                                 condition='pShuffle',
-                                 t_after=4,
-                                 smooth_window=5,
-                                 polyorder=1,
-                                 pupil_col='saccade',
-                                 save_plot=True,
-                                 plot_name='all_saccade_switch_avg_last.png',
-                                 velocity=False, n=4,
-                                 downsample_to=20, null=False, align=True,
-                                 region_interval=[-2, 2])
-    plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
-                                 sublist=None,
-                                 n_training=8,
-                                 dt=1/60,
-                                 t_before=4,
-                                 condition='pShuffle',
-                                 t_after=4,
-                                 smooth_window=5,
-                                 polyorder=1,
-                                 pupil_col='blink',
-                                 save_plot=True,
-                                 plot_name='all_blink_switch_avg_last.png',
                                  velocity=False, n=4,
                                  downsample_to=20, null=False, align=True,
                                  region_interval=[-2, 2])
