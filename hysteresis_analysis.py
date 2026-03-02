@@ -4663,9 +4663,9 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
                                   maxasterix=3, ax=ax_01)
         heights = np.nanmean(hyst_width_4.T, axis=0)
         bars = np.arange(3)
-        pv_sh012 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[1]).pvalue
-        pv_sh022 = scipy.stats.ttest_ind(hyst_width_4[0], hyst_width_4[2]).pvalue
-        pv_sh122 = scipy.stats.ttest_ind(hyst_width_4[1], hyst_width_4[2]).pvalue
+        pv_sh012 = scipy.stats.ttest_rel(hyst_width_4[0], hyst_width_4[1]).pvalue
+        pv_sh022 = scipy.stats.ttest_rel(hyst_width_4[0], hyst_width_4[2]).pvalue
+        pv_sh122 = scipy.stats.ttest_rel(hyst_width_4[1], hyst_width_4[2]).pvalue
         barplot_annotate_brackets(0, 1, pv_sh012, bars, heights, yerr=None, dh=.16, barh=.05, fs=10,
                                   maxasterix=3, ax=ax_11)
         barplot_annotate_brackets(0, 2, pv_sh022, bars, heights, yerr=None, dh=.39, barh=.05, fs=10,
@@ -6672,7 +6672,7 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     ax.plot(variables[fitted_variable], mean_duration_per_sub, marker='o', linestyle='', color='k')
     ax.set_title('r = ' + str(round(rho, 3)) + '\np = ' + str(round(pval, 5)))
-    ax.set_xlabel(variable)
+    ax.set_xlabel(fitted_variable)
     ax.set_ylabel(label)
     fig.tight_layout()
     fig, ax = plt.subplots(ncols=4, figsize=(14, 4))
@@ -10279,14 +10279,13 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
     if condition == 'pShuffle':
         colormap = ['midnightblue','royalblue','lightskyblue'][::-1]
     if condition == 'regime':
-        colormap = ['cadetblue', 'peru']
+        colormap = ['peru', 'cadetblue']
 
     if condition == 'pShuffle':
         all_data = np.zeros((len(conditions), len(sublist), len(t_bin_centers)))
     else:
         all_data = [[], []]
-    vals_to_iterate = sorted(per_sub_avg[pupil_col].keys())
-    vals_to_iterate = vals_to_iterate if condition ==' pShuffle' else reversed(vals_to_iterate)
+    vals_to_iterate = reversed(sorted(per_sub_avg[pupil_col].keys()))
     for i_c, cond in enumerate(vals_to_iterate):
         # reversed loop so order becomes 1 (bistable) and -1 (monostable)
         # Convert to array (subjects x time)
@@ -10342,15 +10341,15 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         if condition == 'pShuffle':
             pv = scipy.stats.ttest_rel(all_data[0, :, i_t], all_data[2, :, i_t]).pvalue
         else:
-            pv = scipy.stats.ttest_ind(all_data[1][0][i_t], all_data[0][0][i_t]).pvalue
+            pv = scipy.stats.ttest_ind(all_data[1][0][i_t], all_data[0][0][i_t], equal_var=False).pvalue
         pvals.append(pv)
         significance.append(pv < 0.05)
         if pv < 0.05:
             significance_where.append(tim)
-    f2, a2 = plt.subplots(1)
-    a2.plot(pvals)
-    a2.set_yscale('log')
-    a2.axhline(0.05)
+    # f2, a2 = plt.subplots(1)
+    # a2.plot(pvals)
+    # a2.set_yscale('log')
+    # a2.axhline(0.05)
     if pupil_col == 'saccade':
         y_max = 1.28 # Position above highest confidence
         axes.set_ylim(0.3, 1.3)
@@ -10358,10 +10357,13 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         y_max = 0.37 # Position above highest confidence
         axes.set_ylim(0.24, 0.38)
     if 'Pupil' in pupil_col:
-        y_max = 0.09
+        y_max = 0.25
     if pupil_col == 'blink':
         y_max = 0.9
         axes.set_ylim(0.15, 0.905)
+    if pupil_col == 'fixation_break':
+        y_max = 0.03
+        axes.set_ylim(0.02, 0.06)
     if velocity:
         y_max = 0.225
     for x in significance_where:
@@ -10380,6 +10382,8 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         axes.set_ylabel('Eye movement speed')
     if pupil_col == 'blink':
         axes.set_ylabel('Blink rate (Hz)')
+    if pupil_col == 'fixation_break':
+        axes.set_ylabel('Fixation break rate (Hz)')
     if pupil_col == 'saccade':
         axes.set_ylabel('Saccade rate (Hz)')
     if pupil_col == 'raw_blink':
@@ -10456,12 +10460,15 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
                                       maxasterix=3, ax=ax2)
             c += 1
     else:
+        colormap = ['cadetblue', 'peru']
         df = pd.DataFrame({
                 "value": list(all_data[0][0]) + list(all_data[1][0]),
-                "group": (["Monostable"] * len(all_data[0][0])) + (["Bistable"] * len(all_data[1][0]))
+                "group": (["Bistable"] * len(all_data[0][0])) + (["Monostable"] * len(all_data[1][0]))
             })
-        sns.barplot(data=df, x="group", y="value", palette=colormap, ax=ax2)
+        sns.barplot(data=df, x="group", y="value", palette=colormap, ax=ax2,
+                    order=['Monostable', 'Bistable'])
         sns.swarmplot(data=df,
+                      order=['Monostable', 'Bistable'],
                       x='group',
                       y='value',
                       color="black",        # point fill
@@ -10471,11 +10478,11 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
                       ax=ax2,
                       zorder=10             # ensures points are on top
                     )
-        pval = scipy.stats.ttest_ind(all_data[1][0], all_data[0][0]).pvalue
+        pval = scipy.stats.ttest_ind(all_data[1][0], all_data[0][0], equal_var=False).pvalue
         c = 0; c1 = 0; c2 = 1
-        plt.figure()
-        sns.kdeplot(all_data[0][0], color='peru')
-        sns.kdeplot(all_data[1][0], color='cadetblue')
+        # plt.figure()
+        # sns.kdeplot(all_data[0][0], color='cadetblue')
+        # sns.kdeplot(all_data[1][0], color='peru')
         cte = 0.4*('Pupil' not in pupil_col and 'speed' not in pupil_col) + 0.11*('speed' in pupil_col)
         heights = np.max((np.zeros(2), [np.nanmean(all_data[0][0])+cte, np.nanmean(all_data[1][0])+cte]), axis=0)
         bars = [0, 1]
@@ -10507,6 +10514,10 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         ax2.set_ylabel('Maximum blink rate (Hz)')
     if pupil_col == 'blink' and not align:
         ax2.set_ylabel('Baseline blink rate (Hz)')
+    if pupil_col == 'fixation_break' and align:
+        ax2.set_ylabel('Maximum fixation break rate (Hz)')
+    if pupil_col == 'fixation_break' and not align:
+        ax2.set_ylabel('Baseline fixation break rate (Hz)')
     if pupil_col == 'saccade' and align:
         ax2.set_ylabel('Maximum saccade rate (Hz)')
     if pupil_col == 'saccade' and not align:
@@ -10533,6 +10544,91 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'final_plots', plot_name)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         f2.savefig(save_path, dpi=400, bbox_inches='tight')
+
+
+def plot_bars_pupil(data_folder=DATA_FOLDER,
+                    condition='pShuffle', n=4):
+    save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'min_pupil_across_trials.npy')
+    all_data = np.load(save_path)
+    fig, ax = plt.subplots(ncols=1, figsize=(3.2, 3))
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    if condition == 'pShuffle':
+        colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+        sns.barplot(all_data.T, fill=True, palette=colormap, ax=ax)
+        sns.swarmplot(
+                        data=all_data.T,
+                        color="black",        # point fill
+                        edgecolor="white",    # contrast on dark bars
+                        linewidth=0.5,
+                        size=3,
+                        ax=ax,
+                        zorder=10             # ensures points are on top
+                    )
+        # sns.swarmplot(all_data.T, color='k', ax=ax2)
+        # sns.lineplot(all_data, color='k', ax=ax2, alpha=0.2, linestyle='solid')
+        barh = 0.03
+        dhs = [0.08, 0.08, 0.17]
+        c = 0
+        for c1, c2 in zip([0, 1, 0], [1, 2, 2]):
+            pval = scipy.stats.ttest_rel(all_data[c1], all_data[c2]).pvalue
+            cte = 0.
+            heights = np.max((np.zeros(3), np.nanmean(all_data, axis=1)+cte), axis=0)
+            bars = [0, 1, 2]
+            print(pval)
+            barplot_annotate_brackets(c1, c2, pval, bars, heights,
+                                      yerr=None, dh=dhs[c], barh=barh, fs=10,
+                                      maxasterix=3, ax=ax)
+            c += 1
+    else:
+        pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+        fitted_params_all = [np.load(par) for par in pars]
+        j0s = np.array([n*params[1] for params in fitted_params_all])
+        j1s = np.array([n*params[0] for params in fitted_params_all])
+        pshuff_vals = np.tile([1., 0.7, 0.], 35).reshape(3, 35)
+        bis_mono_boolean = (pshuff_vals*j1s+j0s) > 1
+        colormap = ['cadetblue', 'peru']
+        data_bis = all_data[bis_mono_boolean]
+        data_mono = all_data[~bis_mono_boolean]
+        df = pd.DataFrame({
+                "value": list(data_bis) + list(data_mono),
+                "group": (["Bistable"] * np.sum(bis_mono_boolean)) + (["Monostable"] * np.sum(~bis_mono_boolean))
+            })
+        sns.barplot(data=df, x="group", y="value", palette=colormap, ax=ax,
+                    order=['Monostable', 'Bistable'])
+        sns.swarmplot(data=df,
+                      order=['Monostable', 'Bistable'],
+                      x='group',
+                      y='value',
+                      color="black",        # point fill
+                      edgecolor="white",    # contrast on dark bars
+                      linewidth=0.5,
+                      size=3,
+                      ax=ax,
+                      zorder=10             # ensures points are on top
+                    )
+        t_stat, pval = scipy.stats.ttest_ind(data_bis, data_mono, equal_var=False,
+                                             alternative='less')
+        c = 0; c1 = 0; c2 = 1
+        cte = 0.
+        heights = np.max((np.zeros(2), [np.nanmean(data_bis)+cte, np.nanmean(data_mono)+cte]), axis=0)
+        bars = [0, 1]
+        barh = 0.03
+        dhs = [0.08, 0.08, 0.17]
+        barplot_annotate_brackets(c1, c2, pval, bars, heights,
+                                  yerr=None, dh=dhs[c], barh=barh, fs=10,
+                                  maxasterix=3, ax=ax)
+        c += 1
+    ax.set_xlabel('')
+    ax.set_xticks([])
+    ax.set_ylabel('Minimum pupil at switch')
+    fig.tight_layout()
+    for termination in ['.png', '.svg', '.pdf']:
+        plot_name = 'clean_pupil_' + condition + '_' + f'average_window{termination}'
+        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'final_plots', plot_name)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=400, bbox_inches='tight')
+
 
 
 def plot_regression_subjects(data_folder=DATA_FOLDER,
@@ -11466,18 +11562,49 @@ def get_eye_tracker_data_across_trials(data_folder=DATA_FOLDER,
     return variable
 
 
+def plot_hyst_dom_correlation(data_folder=DATA_FOLDER, freq=2):
+    variable = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+    ylabel = 'Dominance (s)'
+    variable_eye = np.load(DATA_FOLDER + f'hysteresis_width_freq_{freq}.npy')
+    xlabel = 'Hysteresis, 1-C'
+    fig, ax = plt.subplots(ncols=1, figsize=(3, 2.6), sharex=True, sharey=True)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    avg_eye = np.nanmean(variable_eye, axis=0)
+    avg_beh = np.nanmean(variable, axis=0)
+    X = avg_eye.reshape(-1, 1)
+    y = avg_beh.reshape(-1, 1)
+    linreg = LinearRegression(fit_intercept=True).fit(X, y)
+    minmax_array = np.array([np.min(X)-0.1, np.max(X)+0.1]).reshape(-1, 1)
+    pred_y = linreg.predict(minmax_array)
+    r, p = pearsonr(avg_eye, avg_beh)
+    ax.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=ax.transAxes)
+    ax.plot(minmax_array,
+           pred_y, color='gray', linestyle='--', alpha=0.4, linewidth=3)
+    ax.plot(avg_eye, avg_beh, marker='o', color='k',
+           linestyle='')
+    fig.tight_layout()
+    for extension in ['.png', '.svg', '.pdf']:
+        plot_name = 'hysteresis_vs_dominance' + extension
+        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'behavioral_correlates',  plot_name)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=400, bbox_inches='tight')
+
+
 def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var_eye='pupil',
                                    min_pupil=True,
                                    magnitude_eye='mean_',
-                                   return_vars=False, align=False):
+                                   return_vars=False, align=False, full=False):
     if var_eye == 'blink':
-        xlabel = 'Baseline blink rate (Hz)' if min_pupil else 'Maximum blink rate (Hz)'
+        xlabel = 'Base. blink rate (Hz)' if min_pupil else 'Max. blink rate (Hz)'
     if var_eye == 'saccade':
-        xlabel = 'Baseline saccade rate (Hz)' if min_pupil else 'Maximum saccade rate (Hz)'
+        xlabel = 'Base. saccade rate (Hz)' if min_pupil else 'Max. saccade rate (Hz)'
     if var_eye == 'speed':
-        xlabel = 'Baseline speed' if min_pupil else 'Maximum speed'
+        xlabel = 'Base. speed' if min_pupil else 'Max. speed'
     if var_eye == 'pupil':
-        xlabel = 'Pupil negative peak' if min_pupil else 'Pupil maximum peak'
+        xlabel = 'Min. pupil' if min_pupil else 'Max. pupil peak'
         # average across trials
         # save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'min_pupil.npy')
         # variable_eye = np.load(save_path) 
@@ -11515,7 +11642,11 @@ def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var
         ylabel = 'Hysteresis (f=4)'
     if return_vars:
         return variable, variable_eye
-    fig, ax = plt.subplots(ncols=5, figsize=(14, 3), sharex=True, sharey=True)
+    if full:
+        fig, ax = plt.subplots(ncols=5, figsize=(14, 3), sharex=True, sharey=True)
+    else:
+        fig, ax = plt.subplots(ncols=1, figsize=(2.8, 2.6), sharex=True, sharey=True)
+        ax = [ax]
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     labels = ['p(shuffle)=1', 'p(shuffle)=0.7', 'p(shuffle)=0', 'All', 'Average across trials']
     ax[0].set_xlabel(xlabel)
@@ -11523,24 +11654,32 @@ def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var
     for i_a, a in enumerate(ax):
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
-        if i_a < 3:
-            r, p = pearsonr(variable_eye[i_a], variable[i_a])
-            a.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=a.transAxes)
-            a.plot(variable_eye[i_a], variable[i_a], color=colormap[i_a],
-                   marker='o', linestyle='')
-        a.set_title(labels[i_a], fontsize=14)
-        if i_a == 3:
-            avg_eye = variable_eye.flatten()
-            avg_beh = variable.flatten()
-            r, p = pearsonr(avg_eye, avg_beh)
-            a.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=a.transAxes)
-            a.plot(avg_eye, avg_beh, marker='o', color='k',
-                   linestyle='')
-        if i_a == 4:
+        if full:
+            if i_a < 3:
+                r, p = pearsonr(variable_eye[i_a], variable[i_a])
+                a.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=a.transAxes)
+                a.plot(variable_eye[i_a], variable[i_a], color=colormap[i_a],
+                       marker='o', linestyle='')
+            a.set_title(labels[i_a], fontsize=14)
+            if i_a == 3:
+                avg_eye = variable_eye.flatten()
+                avg_beh = variable.flatten()
+                r, p = pearsonr(avg_eye, avg_beh)
+                a.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=a.transAxes)
+                a.plot(avg_eye, avg_beh, marker='o', color='k',
+                       linestyle='')
+        if i_a == 4 or not full:
             avg_eye = np.nanmean(variable_eye, axis=0)
             avg_beh = np.nanmean(variable, axis=0)
+            X = avg_eye.reshape(-1, 1)
+            y = avg_beh.reshape(-1, 1)
+            linreg = LinearRegression(fit_intercept=True).fit(X, y)
+            minmax_array = np.array([np.min(X)-0.1, np.max(X)+0.1]).reshape(-1, 1)
+            pred_y = linreg.predict(minmax_array)
             r, p = pearsonr(avg_eye, avg_beh)
             a.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=a.transAxes)
+            a.plot(minmax_array,
+                   pred_y, color='gray', linestyle='--', alpha=0.4, linewidth=3)
             a.plot(avg_eye, avg_beh, marker='o', color='k',
                    linestyle='')
     fig.tight_layout()
@@ -11841,41 +11980,30 @@ def plot_eye_simple():
 
 
 def plot_pupil_traces():
-    plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
-                                 sublist=None,
-                                 n_training=8,
-                                 dt=1/60,
-                                 t_before=4,
-                                 condition='pShuffle',
-                                 t_after=4,
-                                 smooth_window=5,
-                                 polyorder=1,
-                                 pupil_col='Pupil_residual',
-                                 save_plot=True,
-                                 plot_name='all_pupil_residual_avg_last.png',
-                                 velocity=False, n=4,
-                                 downsample_to=20, null=False, align=True,
-                                 region_interval=[-2, 2])
-    plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
-                                 sublist=None,
-                                 n_training=8,
-                                 dt=1/60,
-                                 t_before=4,
-                                 condition='regime',
-                                 t_after=4,
-                                 smooth_window=5,
-                                 polyorder=1,
-                                 pupil_col='Pupil_residual',
-                                 save_plot=True,
-                                 plot_name='all_pupil_residual_avg_last.png',
-                                 velocity=False, n=4,
-                                 downsample_to=20, null=False, align=True,
-                                 region_interval=[-2, 2])
+    for pupil_col in ['Pupil_residual', 'saccade',
+                      'fixation_break', 'speed', 'saccade']:
+        for align in [True, False]:
+            for cond in ['regime', 'pShuffle']:
+                plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
+                                             sublist=None,
+                                             n_training=8,
+                                             dt=1/60,
+                                             t_before=4,
+                                             condition=cond,
+                                             t_after=4,
+                                             smooth_window=5,
+                                             polyorder=1,
+                                             pupil_col=pupil_col,
+                                             save_plot=True,
+                                             plot_name=f'all_{pupil_col}_avg_last.png',
+                                             velocity=False, n=4,
+                                             downsample_to=20, null=False, align=align,
+                                             region_interval=[-2, 2])
 
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
-    plot_pupil_traces()
+    # plot_pupil_traces()
     # experiment_example(nFrame=1560, fps=60, noisyframes=15)
     # plot_noise_variables_vs_fitted_params(n=4, variable='amplitude')
     # ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=10, fps=60,
@@ -12060,3 +12188,22 @@ if __name__ == '__main__':
     #                           slope_random_effect=False, plot_individual=True)
     # lmm_hysteresis_dominance(freq=2, plot_summary=True,
     #                           slope_random_effect=True, plot_individual=True)
+    for var_beh in ['hyst2', 'hyst4', 'dominance']:
+        for var_eye in ['pupil', 'blink', 'saccade']:
+            plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh=var_beh,
+                                           var_eye=var_eye,
+                                           min_pupil=True,
+                                           align=False, full=False)
+            plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh=var_beh,
+                                           var_eye=var_eye,
+                                           min_pupil=True,
+                                           align=True, full=False)
+            plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh=var_beh,
+                                           var_eye=var_eye,
+                                           min_pupil=False,
+                                           align=False, full=False)
+            plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh=var_beh,
+                                           var_eye=var_eye,
+                                           min_pupil=False,
+                                           align=True, full=False)
+            plt.close('all')
