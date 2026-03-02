@@ -1578,7 +1578,7 @@ def solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau, time_end=50, dt=1e-2
     ou_vec[:] = np.nan
     ou_val = np.zeros(theta.shape[0])  # np.random.randn(theta.shape[0])
     ou_vec[0, :] = ou_val
-    noise_component = np.random.randn(time.shape[0], theta.shape[0])*noise*np.sqrt(2*dt/tau_n)
+    noise_component = np.random.randn(time.shape[0], theta.shape[0])*noise*np.sqrt(dt/tau_n)
     # n_neighs = np.matmul(theta, np.ones(theta.shape[0]))
     for t in range(1, time.shape[0]):
         x_n = dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1)) + 2*b) - x) / tau
@@ -3164,35 +3164,92 @@ def transition_probs_j_and_b(t_dur, noise,
     ax.set_xlabel('B')
 
 
-def plot_3_examples_mf_evolution(avg=False):
-    j_list = [0.25, 0.25, 0.4]
+def plot_3_examples_mf_evolution(avg=False, seed=5, n=4, skiplist=[1000, 1000, 250],
+                                 add_bias=True, ou_noise=False):
+    np.random.seed(seed)
+    j_list = [0.15, 0.15, 0.35]
     b_list = [0, 0.1, 0]
-    fig, ax = plt.subplots(ncols=3, figsize=(6, 2.5))
+    if add_bias:
+        ncols = 3
+        width = 6
+    else:
+        ncols = 2
+        width = 4
+    fig, ax = plt.subplots(ncols=ncols, figsize=(width, 2.5), sharex=True, sharey=True)
+    fig2, ax2 = plt.subplots(ncols=ncols, figsize=(width, 1.2), sharex=True, sharey=True)
     i = 0
     times = [100, 100, 100]
     time_min = [0, 0, 0]
     dt_list = [1e-3, 1e-3, 1e-3]
-    noise_list = [0.15, 0.15, 0.15]
-    convlist = [True, True, False]
-    for j, b, t_end, dt, noise, t_min, conv in zip(j_list, b_list, times, dt_list,
-                                              noise_list, time_min, convlist):
+    noise_list = [0.05, 0.05, 0.1]
+    convlist = [False, False, True]
+    tau = 0.1
+    for j, b, t_end, dt, sigma, t_min, conv, skip in zip(j_list, b_list, times, dt_list,
+                                              noise_list, time_min, convlist, skiplist):
+        ax2[i].set_xlim([0-dt+t_end/3, 2*t_end/3+dt])
+        ax[i].axvline(0-dt+t_end/3, color='gray', linestyle='--', alpha=0.2)
+        ax[i].axvline(2*t_end/3+dt, color='gray', linestyle='--', alpha=0.2)
         ax[i].axhline(0.5, color='k', alpha=0.4, linestyle='--')
-        line = plot_mf_evolution_all_nodes(j=j, b=b, noise=noise, tau=0.008, time_end=t_end,
-                                           dt=dt, ax=ax[i], ylabel=i==0,
-                                           time_min=t_min, avg=avg, conv=conv)
+        ax[i].set_xlim([0-dt, t_end+dt])
+        x = np.arange(0, t_end+dt, dt)
+        y_t = 0.5
+        y = [y_t]
+        if ou_noise:
+            ou = np.random.rand()*0.01
+        for _ in range(len(x)-1):
+            if ou_noise:
+                ou = ou + dt*(-ou) + np.random.randn()*sigma*np.sqrt(dt)
+                noise = ou*dt/tau
+            else:
+                noise = np.random.randn()*sigma*np.sqrt(dt/tau)
+            y_t = y_t + dt*(gn.sigmoid(2*j*n*(2*y_t-1) + 2*b)-y_t)/tau + noise
+            y_t = np.clip(y_t, 0, 1)
+            y.append(y_t)
+        y = np.array(y[::skip])
+        x = np.array(x[::skip])
+        choice = y > 0.5
+        if b == 0.1 and not add_bias:
+            continue
+        line = colored_line(x, y, y, ax[i], linewidth=2, cmap=COLORMAP, 
+                            norm=plt.Normalize(vmin=0,vmax=1))
+        ax2[i].plot(x, choice, color='k', linewidth=4)
+        
+        ax[i].set_ylim(-0.05, 1.05)
+        ax2[i].set_ylim(-0.05, 1.05)
+        ax[i].set_title('J = ' + str(j) + ', B = ' + str(b), fontsize=12)
+        
+        # ax[i].fill_between(x, -0.1, 1.1, where=(y > 0.5),
+        #             color='crimson', alpha=0.25)
+        # ax[i].fill_between(x, -0.1, 1.1, where=(y < 0.5),
+        #                    color='darkgreen', alpha=0.25)
+        if i == 0:
+            ax[i].set_ylabel(r'q(    in front)')  # \U0001F534
+            ax[i].set_yticks([0, 0.5, 1])
+            ax2[i].set_ylabel(r'Choice')  # \U0001F534
+            ax2[i].set_yticks([0, 1], ['L', 'R'])
         ax[i].spines['right'].set_visible(False)
         ax[i].spines['top'].set_visible(False)
+        ax2[i].spines['right'].set_visible(False)
+        ax2[i].spines['top'].set_visible(False)
         i += 1
     ax[1].set_xlabel('Time')
+    ax2[1].set_xlabel('Time')
     for a in ax:
         a.set_xticks([])
+    for a in ax2:
+        a.set_xticks([])
     fig.tight_layout()
-    ax_pos = ax[2].get_position()
+    fig2.tight_layout()
+    ax_pos = ax[-1].get_position()
     ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.13, ax_pos.y0+ax_pos.height*0.2,
                             ax_pos.width*0.1, ax_pos.height*0.7])
-    fig.colorbar(line, cax=ax_cbar, pad=0.3, aspect=7.5).set_label(label='q(\U0001F534 front)', size=14) # add a color legend
+    fig.colorbar(line, cax=ax_cbar, pad=0.3, aspect=7.5).set_label(label='q( front)', size=14) # add a color legend  \U0001F534
     fig.savefig(DATA_FOLDER + 'example_dynamics.png', dpi=300, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'example_dynamics.svg', dpi=300, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'example_dynamics.pdf', dpi=300, bbox_inches='tight')
+    fig2.savefig(DATA_FOLDER + 'example_dynamics_choice.png', dpi=300, bbox_inches='tight')
+    fig2.savefig(DATA_FOLDER + 'example_dynamics_choice.svg', dpi=300, bbox_inches='tight')
+    fig2.savefig(DATA_FOLDER + 'example_dynamics_choice.pdf', dpi=300, bbox_inches='tight')
     # plt.subplots_adjust(wspace=0.2, bottom=0.16, top=0.88)
 
 
@@ -7939,10 +7996,10 @@ def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
 
 if __name__ == '__main__':
     print('Mean-Field inference')
-    dummy_psychometric(nreps=1000, pshuf=[1., 0.7, 0.],
-                       j0=0.1, j1=0.3, n=4, sigma=0.1, b1=0.2, b0=0,
-                       dt=1e-2, tau=0.2, t_dur=1, seed=10, simulate=False,
-                       together=True)
+    # dummy_psychometric(nreps=1000, pshuf=[1., 0.7, 0.],
+    #                    j0=0.1, j1=0.3, n=4, sigma=0.1, b1=0.2, b0=0,
+    #                    dt=1e-2, tau=0.2, t_dur=1, seed=10, simulate=False,
+    #                    together=True)
     # plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
     # plot_hysteresis_different_taus(j=0.36,
     #                                 b_list=np.linspace(-0.53, 0.53, 2001),
@@ -7975,7 +8032,8 @@ if __name__ == '__main__':
     #                                       theta=theta)
     # plot_solutions_mfield(j_list=np.arange(0.001, 1.01, 0.001), stim=0, N=3,
     #                       plot_approx=False)
-    # plot_3_examples_mf_evolution(avg=True)
+    plot_3_examples_mf_evolution(avg=True, seed=5, skiplist=[250, 250, 100],
+                                 ou_noise=False)
     # examples_pot()
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0., 1.005, 0.001),
     #                        num_iter=200, neigh_list=np.arange(3, 11),
