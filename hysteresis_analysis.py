@@ -11955,16 +11955,22 @@ def analytical_hysteresis_width_degeneration(n=4, freq=2, fps=60):
         hyst_width_data = np.load(DATA_FOLDER + 'difference_b_hysteresis_width_freq_4.npy')
     for i in range(len(j1s)):
         j_list = j1s[i]*coup_vals + j0s[i]
-        delta = np.sqrt(1-1/(j_list*n))
-        b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_list*delta)/2  #  + ds*0.5*fps
-        # we add the NDT
-        hyst_width_analytical.append(b_crit1*2)
-    hyst_width_analytical = np.array(hyst_width_analytical).T
+        areas_all = []
+        for j in j_list:
+            if j*n <= 1:
+                area = 2*ds/(1-j*n)*10
+            else:
+                delta = np.sqrt(1-1/(j*n))
+                area = (np.log((1-delta)/(1+delta))+2*n*j*delta)  #  + ds*0.5*fps
+            areas_all.append(area)
+        hyst_width_analytical.append(areas_all)
+    hyst_width_analytical = np.stack(hyst_width_analytical).T
     # hyst_width_analytical[np.isnan(hyst_width_analytical)] = 0.5
     fig, ax = plt.subplots(1, figsize=(4, 3.5))
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     for i in range(3):
         plt.plot(hyst_width_analytical[i], hyst_width_data[i], marker='o',
-                 linestyle='', color='k')
+                 linestyle='', color=colormap[i])
     an = hyst_width_analytical.flatten()
     hyst_width_data = hyst_width_data.flatten()
     idx_nan = np.isnan(an) + np.isnan(hyst_width_data) + np.isinf(an) + np.isinf(hyst_width_data)
