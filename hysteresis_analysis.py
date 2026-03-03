@@ -43,7 +43,7 @@ import tqdm
 import statsmodels.formula.api as smf
 from scipy.stats import pearsonr, zscore
 from scipy.signal import sawtooth
-from scipy.optimize import curve_fit, root_scalar
+from scipy.optimize import curve_fit, root_scalar, brentq, fsolve
 from scipy.integrate import quad, cumulative_trapezoid, solve_bvp
 from scipy.interpolate import interp1d
 import itertools
@@ -11941,14 +11941,139 @@ def plot_all_eye_tracker():
                 plt.close('all')
 
 
+def sigma(u):
+    return 1.0/(1.0 + np.exp(-u))
+
+def sigma_prime(u):
+    s = sigma(u)
+    return s*(1-s)
+
+def u_of(x, B, J, N):
+    return 2*J*N*(2*x - 1) + 2*B
+
+def f(x, B, J, N):
+    return sigma(u_of(x, B, J, N)) - x
+
+def fprime(x, B, J, N):
+    return 4*J*N*sigma_prime(u_of(x, B, J, N)) - 1.0
+
+def V_of(x, B, J, N):
+    return x*x/2.0 - np.log(1+np.exp(2*N*(J*(2*x-1)) + 2*B))/(4*N*J)
+
+def find_roots(B, J, N, ngrid=400):
+    xs = np.linspace(0.001, 0.999, ngrid)
+    vals = f(xs, B, J, N)
+
+    roots = []
+    for i in range(len(xs)-1):
+        if vals[i]*vals[i+1] < 0:
+            root = brentq(lambda x: f(x, B, J, N),
+                          xs[i], xs[i+1])
+            roots.append(root)
+
+    return roots
+
+def barrier_prefactor(B, J, N):
+    roots = find_roots(B, J, N)
+
+    if len(roots) < 3:
+        return None  # monostable
+
+    # classify by stability
+    eqs = []
+    for x in roots:
+        fp = fprime(x, B, J, N)
+        eqs.append((x, fp))
+
+    # sort by x position
+    eqs.sort(key=lambda t: t[0])
+
+    # stable equilibria: f'(x) < 0
+    stable = [(x, fp) for x, fp in eqs if fp < 0]
+    unstable = [(x, fp) for x, fp in eqs if fp > 0]
+
+    if len(stable) < 2 or len(unstable) < 1:
+        return None  # not truly bistable
+
+    # left well = smallest stable
+    x_min = stable[0][0]
+
+    # saddle = unstable between the two wells
+    # choose unstable closest to x_min
+    saddles = [u for u in unstable if u[0] > x_min]
+    if len(saddles) == 0:
+        return None
+
+    x_sad = saddles[0][0]
+
+    # compute barrier
+    deltaV = V_of(x_sad, B, J, N) - V_of(x_min, B, J, N)
+
+    fp_min = fprime(x_min, B, J, N)
+    fp_sad = fprime(x_sad, B, J, N)
+
+    A = np.sqrt(abs(fp_min * fp_sad)) / (2*np.pi)
+
+    return deltaV, A
+
+def kramers_width(J, N, D, alpha,
+                  Bmin=-3, Bmax=3, nscan=400):
+
+    Bs = np.linspace(Bmin, Bmax, nscan)
+
+    # detect bistable interval
+    bistable = [len(find_roots(B,J,N))>=3 for B in Bs]
+
+    if not any(bistable):
+        return 0.0
+
+    idx = np.where(bistable)[0]
+    B_lo, B_hi = Bs[idx[0]], Bs[idx[-1]]
+
+    def rate_minus_alpha(B):
+        val = barrier_prefactor(B,J,N)
+        if val is None:
+            return np.nan
+        deltaV, A = val
+        return A*np.exp(-deltaV/D) - alpha
+
+    # forward switch
+    B_forward = None
+    grid = np.linspace(B_lo, B_hi, 1000)
+    vals = [rate_minus_alpha(B) for B in grid]
+
+    for i in range(len(vals)-1):
+        if np.sign(vals[i]) != np.sign(vals[i+1]):
+            B_forward = brentq(rate_minus_alpha,
+                               grid[i], grid[i+1])
+            break
+
+    # backward switch (search reversed)
+    B_backward = None
+    for i in reversed(range(len(vals)-1)):
+        if np.sign(vals[i]) != np.sign(vals[i+1]):
+            B_backward = brentq(rate_minus_alpha,
+                                grid[i], grid[i+1])
+            break
+
+    if B_forward is None or B_backward is None:
+        return 0.0
+
+    return B_forward - B_backward
+
+
 def analytical_hysteresis_width_degeneration(n=4, freq=2, fps=60):
     coup_vals = np.array([0., 0.3, 1.])
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     print(len(pars), ' fitted subjects')
     j1s = np.array([np.load(par)[0] for par in pars])
     j0s = np.array([np.load(par)[1] for par in pars])
+    b1s = np.array([np.load(par)[2] for par in pars])
+    sigmas = np.array([np.load(par)[3] for par in pars])
+    diffusion = 0.5*sigmas**2
     hyst_width_analytical = []
-    ds = np.diff(get_blist(freq, 1560, 3))[0]
+    ds = np.diff(get_blist(freq, 1560, 3))[0] * fps
+    
     if freq == 2:
         hyst_width_data = np.load(DATA_FOLDER + 'difference_b_hysteresis_width_freq_2.npy')
     else:
@@ -11959,9 +12084,12 @@ def analytical_hysteresis_width_degeneration(n=4, freq=2, fps=60):
         for j in j_list:
             if j*n <= 1:
                 area = 2*ds/(1-j*n)*10
+                area = np.nan
             else:
-                delta = np.sqrt(1-1/(j*n))
-                area = (np.log((1-delta)/(1+delta))+2*n*j*delta)  #  + ds*0.5*fps
+                # delta = np.sqrt(1-1/(j*n))
+                # area = (np.log((1-delta)/(1+delta))+2*n*j*delta)  #  + ds*0.5*fps
+                area = kramers_width(j, n, diffusion[i], ds,
+                              Bmin=-3*b1s[i], Bmax=3*b1s[i], nscan=400)
             areas_all.append(area)
         hyst_width_analytical.append(areas_all)
     hyst_width_analytical = np.stack(hyst_width_analytical).T
@@ -12199,8 +12327,7 @@ if __name__ == '__main__':
     # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
     #                         window_conv=None, ndt_list=None)
-    # analytical_hysteresis_width_degeneration(n=4, freq=2)
-    # analytical_hysteresis_width_degeneration(n=4, freq=4)
+    analytical_hysteresis_width_degeneration()
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=29, sv_folder=SV_FOLDER)
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
