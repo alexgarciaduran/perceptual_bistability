@@ -4297,12 +4297,26 @@ def get_log_likelihood_all_data(data_folder=DATA_FOLDER,
     return np.array(nllh), np.array(aics), np.array(bics)
 
 
+def plot_example_pupil(ax,
+                       data_folder=DATA_FOLDER,
+                       sub='s_36', trial_idx=4,
+                       **plot_kws):
+    path_save_csv = data_folder + '/aligned_eye_tracker_data/' + sub + '_aligned_Gaze_Data.csv'
+    eyetracker_data = pd.read_csv(path_save_csv)
+    pupil_trial = eyetracker_data.loc[eyetracker_data.trial_index == trial_idx, 'Pupil_residual'].values
+    time = eyetracker_data.loc[eyetracker_data.trial_index == trial_idx, 't_trial'].values
+    ax.plot(time, pupil_trial, **plot_kws)
+    ax.set_xlim(-0.05, 26.05)
+
+
 def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
                                  sv_folder=SV_FOLDER,
                                  ntraining=8, simulated_subject='s_36',
                                  fps=60, idx_trial=4, ntrials=72, n=4,
-                                 nfreq=1, plot_response=False, fps_sim=200):
+                                 nfreq=1, plot_response=False, fps_sim=200,
+                                 n_trials=200):
     # for subject s_36, good trial_idx for plotting responses are 4 and 5
+    # for subject s_35, good trial_idx for responses (2,3,4,5) & pupil (2,3, 5)
     nFrame = fps*26
     nFrame_sim = fps_sim*26
     df = load_data(data_folder, n_participants='all', preprocess_data=True)
@@ -4312,7 +4326,10 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
     figsize = (7.5, 8) if nfreq == 2 else (6, 8)
     fig_sim, ax_sim = plt.subplots(ncols=nfreq, nrows=3, figsize=figsize, sharex=True)
     fig_dat, ax_dat = plt.subplots(ncols=nfreq, nrows=3, figsize=figsize, sharex=True)
-    fig_dat2, ax_dat2 = plt.subplots(ncols=nfreq, nrows=2, figsize=(6, 2.5), sharex=True)
+    fig_dat2, ax_dat2 = plt.subplots(ncols=nfreq, nrows=2, figsize=(6, 1.5), sharex=True,
+                                     sharey=True)
+    fig_pupil, ax_pupil = plt.subplots(ncols=nfreq, nrows=2, figsize=(6, 1.5), sharex=True,
+                                       sharey=True)
     example_shuffles = [0., 1.]
     example_freqs = [2, 4][:nfreq]
     fitted_params = [0.3, 0.1, 0.3, 0., 0.0, 0.5]
@@ -4327,8 +4344,20 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
                       transform=ax_sim[0, 0].transAxes, rotation=35)
     ax_sim[0, 0].text(0.75, 0.07, 'Descending',
                       transform=ax_sim[0, 0].transAxes, rotation=-34)
-    colors = ['midnightblue', 'lightskyblue']  # bistable, monostable
+    colors = ['peru', 'cadetblue']  # bistable, monostable
     labels = ['Bistable', 'Monostable']
+    lsts = ['solid', '--']
+    choice_model_all = np.zeros((nFrame, n_trials, 2))  # Bistable, Monostable
+    fitted_params_noise = [0.3, 0.1, 0.3, 0.1, 0.04, 0.5]  # sigma != 0
+    for i_p, ps in enumerate(example_shuffles):
+        j_eff = ((1-ps)*fitted_params_noise[0] + fitted_params_noise[1])*n
+        params = fitted_params_noise[1:].copy()
+        params[0] = j_eff
+        for trial in range(n_trials):
+            choice, x = simulator_5_params(params=params, freq=2, nFrame=nFrame,
+                                           fps=fps, return_choice=True, ini_cond_convergence=50,
+                                           tau=0.05)
+            choice_model_all[:, trial, i_p] = choice
     for i_p, ps in enumerate(example_shuffles):
         for i_fr, fr in enumerate(example_freqs):
             t = np.arange(0, 26, 1/fps)
@@ -4341,6 +4370,11 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
                                 norm=plt.Normalize(vmin=-2, vmax=2))
             choice_dat = df_subject.loc[(df_subject.pShuffle == ps)&(df_subject.freq == fr)&(df_subject.initial_side==1)]
             unique_tr_index = choice_dat.trial_index.unique()[idx_trial]
+            plot_kws = {'linewidth': 4, 'color': colors[i_p]}
+            plot_example_pupil(ax_pupil[i_p],
+                               data_folder=DATA_FOLDER,
+                               sub=simulated_subject, trial_idx=unique_tr_index,
+                               **plot_kws)
             choices = choice_dat.loc[choice_dat.trial_index == unique_tr_index]
             t_choices = get_response_array(choices)
             j_eff = ((1-ps)*fitted_params[0] + fitted_params[1])*n
@@ -4358,6 +4392,7 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
                 ax_dat[i_p+1, i_fr].axvline(cross, color='gray', linestyle='--', alpha=0.3)
                 ax_dat[0, i_fr].axvline(cross, color='gray', linestyle='--', alpha=0.3)
                 ax_dat2[i_p].axvline(cross, color='gray', linestyle='--', alpha=0.3)
+                ax_pupil[i_p].axvline(cross, color='gray', linestyle='--', alpha=0.3)
             choice[choice == 1] = 1
             choice[choice == -1] = 0.
             time_sim = np.arange(nFrame_sim)/fps_sim
@@ -4380,14 +4415,19 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
             t_choices = t_choices.astype(float)
             t_choices[t_choices < 1] = np.nan
             ax_dat2[i_p].plot(t, t_choices, color=colors[i_p], linewidth=5,
-                              label=labels[i_p])
-        ax_dat[0, i_fr].legend(frameon=False, title='Regime')
+                              label=labels[i_p], linestyle=lsts[i_p])
+        # ax_dat[0, i_fr].legend(frameon=False, title='Regime')
     for a2 in ax_dat2:
         a2.spines['right'].set_visible(False)
         a2.spines['top'].set_visible(False)
         a2.spines['left'].set_visible(False)
         a2.set_yticks([])
         a2.set_ylim(0.95, 2.05)
+    for a2 in ax_pupil:
+        a2.spines['right'].set_visible(False)
+        a2.spines['top'].set_visible(False)
+        a2.spines['left'].set_visible(False)
+        a2.set_yticks([])
     ax_dat2[0].set_xticks([])
     j_eff_list = [0.4, 0.1]
     b_list =  [-0.15, 0.15, 0.5, 0.2, 0.0, -0.2, -1]
@@ -4405,13 +4445,16 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
                         pos, transform=ax_sim[i_p+1, 0].transAxes)
             if pos_idx == 2:
                 sub_ax2 =  ax_sim[i_p+1, 0].inset_axes(
-                            [0.8, 1.2, 0.16, 0.4], transform=ax_sim[i_p+1, 0].transAxes)
-                sub_ax2.set_ylabel(r'$V(q)$')
-                sub_ax2.set_xlabel(r'$q$')
+                            [0.8, 1.2, 0.2, 0.54], transform=ax_sim[i_p+1, 0].transAxes)
+                sub_ax2.set_ylabel(r'p(   )')
+                sub_ax2.set_xlabel(r's(t)')
+                stim = sawtooth(2 * np.pi * abs(2)/2 * t/26, 0.5)*2*np.sign(2)
+                sub_ax2.plot(stim[50:][::10], np.mean(choice_model_all, axis=1)[50:, i_p][::10], linewidth=3,
+                             color=colors[i_p])
                 sub_ax2.spines['right'].set_visible(False)
                 sub_ax2.spines['top'].set_visible(False)
-                sub_ax2.set_xticks([0, 0.5, 1]); sub_ax2.set_yticks([])
-                sub_ax2.axvline(0.5, color='gray', linestyle=':', alpha=0.6)
+                sub_ax2.set_yticks([]); sub_ax2.set_xticks([])
+                sub_ax2.axvline(0., color='gray', linestyle=':', alpha=0.6)
             sub_ax.axis('off')
             q = np.arange(-0.2, 1.2, 1e-3)
             v_xj = potential_mf(q, j_eff, b, n=n)
@@ -4464,6 +4507,7 @@ def cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
     fig_dat.tight_layout()
     fig_sim.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution.png', dpi=200, bbox_inches='tight')
     fig_sim.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution.pdf', dpi=200, bbox_inches='tight')
+    fig_sim.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution.svg', dpi=200, bbox_inches='tight')
     fig_dat.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution_responses_data.png', dpi=200, bbox_inches='tight')
     fig_dat.savefig(SV_FOLDER + 'hysteresis_cartoon_evolution_responses_data.pdf', dpi=200, bbox_inches='tight')
     fig_dat2.savefig(SV_FOLDER + 'example_hysteresis_responses_data.png', dpi=200, bbox_inches='tight')
@@ -7050,7 +7094,7 @@ def comparison_between_experiments(estimator='mean', data_only=False,
     hyst_width_2_simul = np.load(DATA_FOLDER + 'hysteresis_width_f2_sims_fitted_params.npy')
     hyst_width_4_simul = np.load(DATA_FOLDER + 'hysteresis_width_f4_sims_fitted_params.npy')
     nrows = 1 if data_only else 2
-    height = 4 if data_only else 7
+    height = 4 if data_only else 6
     if ax is None:
         fig, ax = plt.subplots(ncols=4, nrows=nrows, figsize=(11.2, height),
                                sharey='col')
@@ -7092,6 +7136,7 @@ def comparison_between_experiments(estimator='mean', data_only=False,
     ax[3].set_xlim(xlim_ax0)
     if not data_only:
         ax[7].axhline(5/9, color='gray', linestyle='--', linewidth=3)
+        ax[7].set_ylim(0.28, 1.05)
     # ax[3].set_ylim(0.46, 0.71);  ax[0].set_ylim(0.85, 1.68);
     # ax[1].set_ylim(1.6, 2.35); ax[2].set_ylim(5.5, 9.9)
     # if not data_only:
@@ -7099,8 +7144,8 @@ def comparison_between_experiments(estimator='mean', data_only=False,
     ax[3].set_ylabel("Bimodality coefficient")
     ax[2].set_ylabel("Dominance duration (s)")
     ax[3].set_yticks([0.3, 0.4, 5/9, 0.7, 0.8, 0.9], ['0.3', '0.4', '5/9', '0.7', '0.8', '0.9'])
-    ax[3].set_ylim(0.28, 1.1)
-    titles = ['Exp. 1\n', 'Exp. 2\nHysteresis (f=2)', 'Exp. 2\nHysteresis (f=4)', 'Exp. 2\nNoise trials']
+    ax[3].set_ylim(0.28, 1.05)
+    titles = ['Exp. 1\n', 'Exp. 2\nHysteresis, 1-C', 'Exp. 2\nHysteresis, 2-C', 'Exp. 2\nNoise trials']
     variables = [hyst_width_2, hyst_width_4, mean_number_switchs_coupling, bimodal_coef]
     dhs = [[0.05, 0.15, 0.05],
            [0.05, 0.16, 0.05],
@@ -7129,7 +7174,7 @@ def comparison_between_experiments(estimator='mean', data_only=False,
         barplot_annotate_brackets(1, 2, pv_sh12, bars, heights, yerr=None, dh=dh3, barh=.01, fs=10,
                                   maxasterix=3, ax=a)
         a.set_xticks([])
-    ax[0].set_ylabel('Hysteresis f=2'); ax[1].set_ylabel('Hysteresis f=4')
+    ax[0].set_ylabel('Hysteresis, 1-C'); ax[1].set_ylabel('Hysteresis, 2-C')
     handles = [mpatches.Patch(color=colormap[0], label='1.'),
                 mpatches.Patch(color=colormap[1], label='0.7'),
                 mpatches.Patch(color=colormap[2], label='0.')]
@@ -9558,10 +9603,11 @@ def align_eye_tracking_blocks_hyst_noisy(
         gaze_aligned.loc[mask, 'Pupil_residual'] = (
             y - res.predict(X))
 
-    gaze_aligned['Pupil_residual'] = (
+    pup_residual = (
                     gaze_aligned
                     .groupby('trial_index')['Pupil_residual']
                     .transform(lambda x: (x - np.nanmean(x)) / np.nanstd(x)))
+    gaze_aligned['Pupil_residual'] = interp_nans(pup_residual)
     if save_csv:
         gaze_aligned.to_csv(save_csv, index=False)
 
@@ -9995,6 +10041,8 @@ def plot_pupil_across_subjects_simple(data_folder=DATA_FOLDER,
                 name = 'saccade'
             if 'speed' in pupil_col:
                 name = 'speed'
+            if 'fixation_break' in pupil_col:
+                name = 'fixation_break'
             max_all_data = np.zeros((len(conditions), len(sublist)))
             min_all_data = np.zeros((len(conditions), len(sublist)))
             mean_all_data = np.zeros((len(conditions), len(sublist)))
@@ -10508,8 +10556,6 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         ax2.set_xlabel('')
     if "Pupil" in pupil_col:
         ax2.set_ylabel('Minimum pupil')
-    if pupil_col == 'blink':
-        ax2.set_ylabel('Maximum blink rate (Hz)')
     if pupil_col == 'blink' and align:
         ax2.set_ylabel('Maximum blink rate (Hz)')
     if pupil_col == 'blink' and not align:
@@ -11562,11 +11608,11 @@ def get_eye_tracker_data_across_trials(data_folder=DATA_FOLDER,
     return variable
 
 
-def plot_hyst_dom_correlation(data_folder=DATA_FOLDER, freq=2):
+def plot_hyst_dom_correlation(data_folder=DATA_FOLDER, freq=4):
     variable = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
     ylabel = 'Dominance (s)'
     variable_eye = np.load(DATA_FOLDER + f'hysteresis_width_freq_{freq}.npy')
-    xlabel = 'Hysteresis, 1-C'
+    xlabel = f'Hysteresis, {freq // 2}-C'
     fig, ax = plt.subplots(ncols=1, figsize=(3, 2.6), sharex=True, sharey=True)
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
@@ -11599,6 +11645,8 @@ def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var
                                    return_vars=False, align=False, full=False):
     if var_eye == 'blink':
         xlabel = 'Base. blink rate (Hz)' if min_pupil else 'Max. blink rate (Hz)'
+    if var_eye == 'fixation_break':
+        xlabel = 'Base. FB rate (Hz)' if min_pupil else 'Max. FB rate (Hz)'
     if var_eye == 'saccade':
         xlabel = 'Base. saccade rate (Hz)' if min_pupil else 'Max. saccade rate (Hz)'
     if var_eye == 'speed':
@@ -11607,7 +11655,7 @@ def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var
         xlabel = 'Min. pupil' if min_pupil else 'Max. pupil peak'
         # average across trials
         # save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'min_pupil.npy')
-        # variable_eye = np.load(save_path) 
+        # variable_eye = np.load(save_path)
     align_label = 'aligned_' if align else 'full_time_'
     if return_vars:
         pre_label = magnitude_eye
@@ -11636,16 +11684,16 @@ def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var
         ylabel = 'Noise peak amplitude'
     if var_beh == 'hyst2':
         variable = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
-        ylabel = 'Hysteresis (f=2)'
+        ylabel = 'Hysteresis, 1-C'
     if var_beh == 'hyst4':
         variable = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
-        ylabel = 'Hysteresis (f=4)'
+        ylabel = 'Hysteresis, 2-C'
     if return_vars:
         return variable, variable_eye
     if full:
         fig, ax = plt.subplots(ncols=5, figsize=(14, 3), sharex=True, sharey=True)
     else:
-        fig, ax = plt.subplots(ncols=1, figsize=(2.8, 2.6), sharex=True, sharey=True)
+        fig, ax = plt.subplots(ncols=1, figsize=(2.6, 2.4), sharex=True, sharey=True)
         ax = [ax]
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
     labels = ['p(shuffle)=1', 'p(shuffle)=0.7', 'p(shuffle)=0', 'All', 'Average across trials']
@@ -11931,7 +11979,8 @@ def analytical_hysteresis_width_degeneration(n=4, freq=2, fps=60):
 
 def plot_eye_simple():
     for align in [False, True]:
-        for col in ['Pupil_residual', 'saccade', 'blink']:
+        for col in ['Pupil_residual', 'saccade', 'blink',
+                    'speed', 'fixation_break']:
             plot_pupil_across_subjects_simple(data_folder=DATA_FOLDER,
                                             sublist=None,
                                             n_training=8,
@@ -12003,7 +12052,6 @@ def plot_pupil_traces():
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
-    # plot_pupil_traces()
     # experiment_example(nFrame=1560, fps=60, noisyframes=15)
     # plot_noise_variables_vs_fitted_params(n=4, variable='amplitude')
     # ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=10, fps=60,
@@ -12076,13 +12124,14 @@ if __name__ == '__main__':
     #                                   ntraining=8, window_conv=10, fps=200,
     #                                   ntrials=72, shift_ndt=False)
     # plot_hysteresis_model_data()
+    # sub = 's_36'
     # cartoon_hysteresis_responses(data_folder=DATA_FOLDER,
     #                                   sv_folder=SV_FOLDER,
-    #                                   ntraining=8, simulated_subject='s_36',
+    #                                   ntraining=8, simulated_subject=sub,
     #                                   fps=60, idx_trial=4, ntrials=72, nfreq=1,
     #                                   plot_response=True)
     # comparison_between_experiments(estimator='mean', data_only=False,
-    #                                ax=None, fig=None)
+    #                                 ax=None, fig=None)
     # plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
     #                         fps=200, n=4, ntraining=8, tFrame=26,
     #                         window_conv=5, n_bins=50)
@@ -12136,7 +12185,7 @@ if __name__ == '__main__':
     #                     ntrials=20, zscore_number_switches=False, hysteresis_width=True)
     # hysteresis_basic_plot(coupling_levels=[0, 0.3, 1],
     #                       fps=60, tFrame=26, data_folder=DATA_FOLDER,
-    #                       nbins=10, ntraining=8, arrows=False, subjects=['s_1'],
+    #                       nbins=10, ntraining=8, arrows=False, subjects=['s_23'],
     #                       window_conv=None)
     # plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                           ntraining=8, coupling_levels=[0, 0.3, 1],
@@ -12188,22 +12237,3 @@ if __name__ == '__main__':
     #                           slope_random_effect=False, plot_individual=True)
     # lmm_hysteresis_dominance(freq=2, plot_summary=True,
     #                           slope_random_effect=True, plot_individual=True)
-    for var_beh in ['hyst2', 'hyst4', 'dominance']:
-        for var_eye in ['pupil', 'blink', 'saccade']:
-            plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh=var_beh,
-                                           var_eye=var_eye,
-                                           min_pupil=True,
-                                           align=False, full=False)
-            plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh=var_beh,
-                                           var_eye=var_eye,
-                                           min_pupil=True,
-                                           align=True, full=False)
-            plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh=var_beh,
-                                           var_eye=var_eye,
-                                           min_pupil=False,
-                                           align=False, full=False)
-            plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh=var_beh,
-                                           var_eye=var_eye,
-                                           min_pupil=False,
-                                           align=True, full=False)
-            plt.close('all')
