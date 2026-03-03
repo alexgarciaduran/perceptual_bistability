@@ -480,7 +480,6 @@ def plot_sols_mf_bias_stim_changing_j(j_list=[0.55, 0.6, 0.65, 0.7, 0.75, 0.8],
 
 
 def plot_q_bifurcation_vs_JB(j_list, stim_list=np.arange(-0.5, 0.5, 0.001)):
-    fig, ax = plt.subplots(1, figsize=(5, 4))
     N = 3
     first_val = []
     for i_b, b in enumerate(stim_list):
@@ -499,6 +498,7 @@ def plot_q_bifurcation_vs_JB(j_list, stim_list=np.arange(-0.5, 0.5, 0.001)):
                 continue
         if len(first_val) != (i_b+1):
             first_val.append(np.nan)
+    fig, ax = plt.subplots(1, figsize=(5, 4))
     ax.plot(stim_list, first_val, color='k')
     ax.set_ylabel('q*')
     ax.set_xlabel('B')
@@ -1583,7 +1583,7 @@ def solution_mf_sdo_euler_OU_noise(j, b, theta, noise, tau, time_end=50, dt=1e-2
     for t in range(1, time.shape[0]):
         x_n = dt*(gn.sigmoid(2*j*(np.matmul(theta, 2*x-1)) + 2*b) - x) / tau
         ou_val = ou_val + dt*(-ou_val / tau_n) + noise_component[t]
-        x = x + x_n + ou_val
+        x = x + x_n + ou_val*np.sqrt(dt)
         # x = np.clip(x, 0, 1)
         x_vec[t, :] = x  # np.clip(x, 0, 1)
         ou_vec[t, :] = ou_val
@@ -3167,7 +3167,7 @@ def transition_probs_j_and_b(t_dur, noise,
 def plot_3_examples_mf_evolution(avg=False, seed=5, n=4, skiplist=[1000, 1000, 250],
                                  add_bias=True, ou_noise=False):
     np.random.seed(seed)
-    j_list = [0.15, 0.15, 0.35]
+    j_list = [0.1, 0.1, 0.35]
     b_list = [0, 0.1, 0]
     if add_bias:
         ncols = 3
@@ -3186,9 +3186,9 @@ def plot_3_examples_mf_evolution(avg=False, seed=5, n=4, skiplist=[1000, 1000, 2
     tau = 0.1
     for j, b, t_end, dt, sigma, t_min, conv, skip in zip(j_list, b_list, times, dt_list,
                                               noise_list, time_min, convlist, skiplist):
-        ax2[i].set_xlim([0-dt+t_end/3, 2*t_end/3+dt])
-        ax[i].axvline(0-dt+t_end/3, color='gray', linestyle='--', alpha=0.2)
-        ax[i].axvline(2*t_end/3+dt, color='gray', linestyle='--', alpha=0.2)
+        # ax2[i].set_xlim([0-dt+t_end/3, 2*t_end/3+dt])
+        # ax[i].axvline(0-dt+t_end/3, color='gray', linestyle='--', alpha=0.2)
+        # ax[i].axvline(2*t_end/3+dt, color='gray', linestyle='--', alpha=0.2)
         ax[i].axhline(0.5, color='k', alpha=0.4, linestyle='--')
         ax[i].set_xlim([0-dt, t_end+dt])
         x = np.arange(0, t_end+dt, dt)
@@ -3207,12 +3207,12 @@ def plot_3_examples_mf_evolution(avg=False, seed=5, n=4, skiplist=[1000, 1000, 2
             y.append(y_t)
         y = np.array(y[::skip])
         x = np.array(x[::skip])
-        choice = y > 0.5
+        choice = y >= 0.5
         if b == 0.1 and not add_bias:
             continue
         line = colored_line(x, y, y, ax[i], linewidth=2, cmap=COLORMAP, 
                             norm=plt.Normalize(vmin=0,vmax=1))
-        ax2[i].plot(x, choice, color='k', linewidth=4)
+        ax2[i].plot(x, choice, color='k', linewidth=2)
         
         ax[i].set_ylim(-0.05, 1.05)
         ax2[i].set_ylim(-0.05, 1.05)
@@ -4869,7 +4869,7 @@ def plot_2d_mean_passage_time(J=2, B=0, sigma=0.1):
 
 def example_dynamics_hierarchical_theta(theta=gn.THETA_HIER):
     # bifurcation happens at 1/\lambda_max ~ 0.212766
-    j_list = [0.1, 0.1, 0.222]
+    j_list = [0.1, 0.1, 0.25]
     b_list = [0, 0.2, 0]
     fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(6, 4.5))
     ax = ax.flatten()
@@ -4879,7 +4879,7 @@ def example_dynamics_hierarchical_theta(theta=gn.THETA_HIER):
     dt_list = [1e-3, 1e-3, 1e-3]
     noise_list = [0.05, 0.05, 0.05]
     convlist = [True, True, False]
-    tau = 0.008
+    tau = 0.1
     for j, b, t_end, dt, noise, t_min, conv in zip(j_list, b_list, times, dt_list,
                                               noise_list, time_min, convlist):
         time, vec, _ = \
@@ -8020,20 +8020,20 @@ if __name__ == '__main__':
     # plot_pot_evolution_mfield(j=0.9, num_iter=15, sigma=0.1, bias=0)
     # plot_occupancy_distro(j=0.36, noise=0.08, tau=1, dt=5e-1, theta=theta, b=0,
     #                       t=10000, burn_in=0.001, n_sims=500)
-    # q_list = []
-    # for j in np.arange(0.01, 1, 0.01):
-    #     q_list.append(find_repulsor(j=j, num_iter=30, epsilon=1e-1, q_i=0.01,
+    # q_list = []; jlist = np.arange(0.01, 1, 0.01)
+    # for j in jlist:
+    #     q_list.append(find_repulsor(j=j, num_iter=30, q_i=0.01,
     #                                 q_f=0.95, stim=0.1, threshold=1e-5, theta=theta,
     #                                 neigh=3))
-    # plt.plot(np.arange(0.01, 1, 0.01), q_list)
+    # plt.plot(jlist, q_list)
     # plot_mf_sol_stim_bias_different_sols(j_list=np.arange(0.001, 1, 0.001),
     #                                       stim=0.,
     #                                       num_iter=40,
     #                                       theta=theta)
     # plot_solutions_mfield(j_list=np.arange(0.001, 1.01, 0.001), stim=0, N=3,
     #                       plot_approx=False)
-    plot_3_examples_mf_evolution(avg=True, seed=5, skiplist=[250, 250, 100],
-                                 ou_noise=False)
+    # plot_3_examples_mf_evolution(avg=True, seed=5, skiplist=[1000, 1000, 500],
+    #                              ou_noise=False)
     # examples_pot()
     # plot_crit_J_vs_B_neigh(j_list=np.arange(0., 1.005, 0.001),
     #                        num_iter=200, neigh_list=np.arange(3, 11),
@@ -8049,7 +8049,7 @@ if __name__ == '__main__':
     #                      tau=0.1, time_end=50000, dt=5e-3, p_thr=0.5,
     #                      steps_back=2000, steps_front=500)
     # plot_q_bifurcation_vs_JB(j_list=np.arange(1/3, 1, 0.0001),
-    #                          stim_list=np.arange(-0.1, 0.1, 0.001))
+    #                           stim_list=np.arange(-0.1, 0.1, 0.001))
     # plot_potentials_mf(j_list=[0.1, 0.2, 1/3, 0.4, 0.6, 0.8, 1],
     #                    bias=0, neighs=3)
     # plot_potentials_mf(j_list=[0.35, 0.355, 0.36, 0.365, 0.37, 0.375],
@@ -8078,8 +8078,8 @@ if __name__ == '__main__':
     # psychometric_mf_analytical(t_dur=1000000, noiselist=[0.05, 0.08, 0.1, 0.15],
     #                            j_list=np.arange(0.6, 1.3, 0.1),
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
-    # calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
-    #                               tol_stop=1e-30)
+    calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
+                                  tol_stop=1e-30)
     # example_dynamics_hierarchical_theta(theta=gn.THETA_HIER)
     # bifurcation_hierarchical(b=0, varchange='descending')
     # bifurcation_hierarchical(b=0, varchange='ascending')
