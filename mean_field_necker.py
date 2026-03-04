@@ -6156,6 +6156,12 @@ def plot_bars(vals_bar, rsc=False):
         title = 'Choice probability'
         plot_name = 'choice_probability_barplot_v2'
         plt.axhline(0.5, color='k', alpha=0.3, linestyle='--')
+    # Define ONE color per Type
+    type_colors = {
+        'RDM': 'cadetblue',
+        'SFM (B>0)': 'peru',
+        'SFM (B=0)': 'peru'
+    }
     # Define colors — one per Type
     pair_colors = ['dimgrey', 'dimgrey']
     # Draw bars
@@ -6166,10 +6172,10 @@ def plot_bars(vals_bar, rsc=False):
     ax.set_xlabel('')
     # Apply hatching to 'Model' bars only
     hatch_map = {'Data': '', 'Model': '///'}
-    for container, class_name in zip(bar.containers, df['Classes'].unique()):
-        hatch = hatch_map[class_name]
-        for patch in container:
-            patch.set_hatch(hatch)
+    for patch, (_, row) in zip(ax.patches, df.iterrows()):
+        patch.set_facecolor(type_colors[row['Type']])
+        patch.set_hatch(hatch_map[row['Classes']])
+
     plt.xticks(rotation=30)
     # Beautify
     ax.spines['right'].set_visible(False)
@@ -8078,8 +8084,8 @@ if __name__ == '__main__':
     # psychometric_mf_analytical(t_dur=1000000, noiselist=[0.05, 0.08, 0.1, 0.15],
     #                            j_list=np.arange(0.6, 1.3, 0.1),
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
-    calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
-                                  tol_stop=1e-30)
+    # calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
+    #                               tol_stop=1e-30)
     # example_dynamics_hierarchical_theta(theta=gn.THETA_HIER)
     # bifurcation_hierarchical(b=0, varchange='descending')
     # bifurcation_hierarchical(b=0, varchange='ascending')
@@ -8136,11 +8142,11 @@ if __name__ == '__main__':
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
-    # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
-    #                           shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
-    #                           idx_neuron='mean', ou=False, add_symetric_RM=True,
-    #                           choice_time_before=0.25, random_matrix_weight=0.25,
-    #                           absolute_cps_rsc=True)
+    plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
+                              shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
+                              idx_neuron='mean', ou=False, add_symetric_RM=True,
+                              choice_time_before=0.25, random_matrix_weight=0.25,
+                              absolute_cps_rsc=True)
     # plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     #                      nreps=10, tau=0.3, seed=10, 
     #                      alpha=0.25, choice_time_before=0.25,
