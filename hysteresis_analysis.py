@@ -11376,7 +11376,7 @@ def linear_reg_comparison():
     ax.set_yticks(np.arange(len(labs))+0.5, labs, rotation=0)
 
 
-def get_corr_p_matrix_specific_trials(data_folder=DATA_FOLDER, mean=False):
+def get_corr_p_matrix_specific_trials(data_folder=DATA_FOLDER, mean=False, include_h4=False):
     # examples:  Hysteresis - Dominance, Dominance - Pupil, Dominance - Saccade
     data_dominance = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
     data_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
@@ -11427,6 +11427,10 @@ def get_corr_p_matrix_specific_trials(data_folder=DATA_FOLDER, mean=False):
              align=True,
              measure="max"),
     ]
+    
+    if not include_h4:
+        variables.pop(2)
+
     def load_eye_data(var, beh_name=None):
         return get_eye_tracker_data_across_trials(
             pupil_col=var["pupil_col"],
@@ -11480,7 +11484,7 @@ def get_corr_p_matrix_specific_trials(data_folder=DATA_FOLDER, mean=False):
 
 
 def get_corr_p_matrix_all_trials(data_folder=DATA_FOLDER,
-                                 mean=False):
+                                 mean=False, include_h4=False):
     data_dominance = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
     data_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
     data_hysteresis_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
@@ -11503,6 +11507,8 @@ def get_corr_p_matrix_all_trials(data_folder=DATA_FOLDER,
     variables = [data_dominance, data_hysteresis_2, data_hysteresis_4,
                  min_pupil, saccade_baseline, saccade_max,
                  blink_baseline, blink_max]
+    if not include_h4:
+        variables.pop(2)
     if mean:
         variables = [np.nanmean(var, axis=0) for var in variables]
     else:
@@ -11534,15 +11540,15 @@ def stars(p):
 
     
 def plot_full_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, specific=True,
-                                        mean=False, mask=False):
+                                        mean=False, mask=False, include_h4=False):
     if specific:
         corr_matrix, p_matrix, annot = \
             get_corr_p_matrix_specific_trials(data_folder=data_folder,
-                                              mean=mean)
+                                              mean=mean, include_h4=include_h4)
     else:
         corr_matrix, p_matrix, annot = \
             get_corr_p_matrix_all_trials(data_folder=data_folder,
-                                         mean=mean)
+                                         mean=mean, include_h4=include_h4)
             
     alpha = 0.05
     fig, ax = plt.subplots(1, figsize=(8, 6))
@@ -11550,6 +11556,9 @@ def plot_full_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, specific=True,
      'sacc. baseline', 'sacc. max.', 'blink baseline', 'blink max.']
     labs_reduced = ['Dom.', 'Hyst. 1-c', 'Hyst. 2-c', 'Min. pupil',
      'sacc. base.', 'sacc. max.', 'blink base.', 'blink max.']
+    if not include_h4:
+        labs.pop(2)
+        labs_reduced.pop(2)
     ax.set_xticks(np.arange(len(labs)), labs, rotation=45)
     ax.set_yticks(np.arange(len(labs)), labs, rotation=0)
     fig.tight_layout()
