@@ -1869,7 +1869,8 @@ def plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
 def plot_density_comparison(num_iter=100, method='nelder-mead',
                             kde=False, stim_ev_0=False, ax0=None, fig=None,
                             full_fig=False, variable='signed_confidence',
-                            bws=[0.7]*2, model='MF5', plot_model=False):
+                            bws=[0.7]*2, model='MF5', plot_model=False,
+                            colors_bis_mono=False):
     np.random.seed(0)
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
@@ -1907,6 +1908,9 @@ def plot_density_comparison(num_iter=100, method='nelder-mead',
     data_model_orig = data_model_orig.reset_index()
     data_model_null['state'] = state[3]
     data_model_null = data_model_null.reset_index()
+    color_bis = 'peru'
+    color_mono = 'cadetblue'
+    alpha_list = [0.25, 0.5, 0.75, 1]
     if full_fig:
         fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(11, 10))
         ax = ax.flatten()
@@ -1947,6 +1951,7 @@ def plot_density_comparison(num_iter=100, method='nelder-mead',
             a.set_ylabel('Density')
             a.set_title(title)
             i_a += 1
+    plt.close(fig)
     if ax0 is None:
         fig.tight_layout()
         fig2, ax2 = plt.subplots(ncols=2, figsize=(8, 4))
@@ -1961,23 +1966,31 @@ def plot_density_comparison(num_iter=100, method='nelder-mead',
         data_orig_mf = data_model_orig
     data_monost = data_orig_mf.loc[data_orig_mf.state == 'Monostable']
     data_bist = data_orig_mf.loc[data_orig_mf.state == 'Bistable']
-    legendelements = []
+    legendelements1 = []
+    legendelements2 = []
     for ia in range(4):
+        alpha = alpha_list[ia] if colors_bis_mono else 1
+        c_mono = color_mono if colors_bis_mono else colormap_k[ia]
+        c_bis = color_bis if colors_bis_mono else colormap_k[ia]
         sns.kdeplot(data_monost.loc[(data_orig_mf.stim_str.abs() == stim[ia])],
                     x=variable,
-                    alpha=1, lw=3., common_norm=False, ax=ax2[0],
-                    legend=False, bw_adjust=bws[0], color=colormap_k[ia])
+                    alpha=alpha, lw=3., common_norm=False, ax=ax2[0],
+                    legend=False, bw_adjust=bws[0], color=c_mono)
+        legendelements1.append(Line2D([0], [0], color=c_mono,
+                                     lw=3.5, label=stim[ia], alpha=alpha))
         sns.kdeplot(data_bist.loc[(data_orig_mf.stim_str.abs() == stim[ia])],
                     x=variable,
-                    alpha=1, lw=3., common_norm=False, ax=ax2[1],
-                    legend=False, bw_adjust=bws[1], color=colormap_k[ia])
-        legendelements.append(Line2D([0], [0], color=colormap_k[ia],
-                                     lw=3.5, label=stim[ia]))
+                    alpha=alpha, lw=3., common_norm=False, ax=ax2[1],
+                    legend=False, bw_adjust=bws[1], color=c_bis)
+        legendelements2.append(Line2D([0], [0], color=c_bis,
+                                     lw=3.5, label=stim[ia], alpha=alpha))
     ax2[0].set_title('Monostable', fontsize=15)
     ax2[1].set_title('Bistable', fontsize=15)
     ax2[0].set_ylabel('Density of confidence')
     ax2[1].set_ylabel('')
-    ax2[0].legend(frameon=False, title='Depth cue, s', handles=legendelements,
+    ax2[0].legend(frameon=False, title='Depth cue, s', handles=legendelements1,
+                  loc='upper left')  # bbox_to_anchor=(0.86, 0.6)
+    ax2[1].legend(frameon=False, title='Depth cue, s', handles=legendelements2,
                   loc='upper left')  # bbox_to_anchor=(0.86, 0.6)
     for a2 in ax2:
         a2.spines['right'].set_visible(False)
@@ -3071,47 +3084,63 @@ def ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method='BADS',
 
 
 def plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
-                                      bw_pred=1):
+                                      bw_pred=1, fitted_simulations=True):
     folder_simulations = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/mean_field_necker/data_folder/'  # Alex
     signed_confidence_array = np.load(folder_simulations + 'signed_confidence_density_simulations.npy')
     colormap = pl.cm.gist_gray_r(np.linspace(0.3, 1, len(b_list)))
-    fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(8, 6))
+    color_bis = 'peru'
+    color_mono = 'cadetblue'
+    alpha_list = [0.25, 0.5, 0.75, 1]
+    fig, ax = plt.subplots(ncols=4, nrows=1, figsize=(14, 3.5),
+                           sharey=True, sharex=True)
     ax = ax.flatten()
-    for a in ax:
+    titles = ['Data', 'Model']*2
+
+    plot_density_comparison(num_iter=100, method='BADS', kde=True, stim_ev_0=True,
+                            variable='aligned_confidence', bws=[1.2, 0.75], model='MF5',
+                            full_fig=True, plot_model=False, ax0=[ax[0], ax[2]],
+                            colors_bis_mono=True)
+    if fitted_simulations:
+        plot_density_comparison(num_iter=100, method='BADS', kde=True, stim_ev_0=True,
+                                variable='aligned_confidence', bws=[1.2, 0.75], model='MF5',
+                                full_fig=True, plot_model=True, ax0=[ax[1], ax[3]],
+                                colors_bis_mono=True)
+    for ia, a in enumerate(ax):
         a.spines['top'].set_visible(False)
         a.spines['right'].set_visible(False)
         a.set_xticks([-1, 0, 1])
-        a.set_ylim(-0.05, 1.6)  # 1.6
         a.set_xlabel('')
-    plot_density_comparison(num_iter=100, method='BADS', kde=True, stim_ev_0=True,
-                            variable='aligned_confidence', bws=[1.35, 0.75], model='MF5',
-                            full_fig=True, plot_model=False, ax0=[ax[0], ax[1]])
     for ia in range(4):
-        vals_mono = signed_confidence_array[:, ia, 0]
-        sns.kdeplot(vals_mono[vals_mono != 0],
-                    alpha=1, lw=3., common_norm=False, ax=ax[2],
-                    legend=False, bw_adjust=bw_pred, color=colormap[ia], cut=0)
-        vals_bis = signed_confidence_array[:, ia, 1]
-        sns.kdeplot(vals_bis[vals_bis != 0],
-                    alpha=1, lw=3., common_norm=False, ax=ax[3],
-                    legend=False, bw_adjust=bw_pred, color=colormap[ia], cut=0)
+        if not fitted_simulations:
+            vals_mono = signed_confidence_array[:, ia, 0]
+            sns.kdeplot(vals_mono[vals_mono != 0],
+                        alpha=alpha_list[ia], lw=3., common_norm=False, ax=ax[1],
+                        legend=False, bw_adjust=bw_pred, color=color_mono, cut=0)
+            vals_bis = signed_confidence_array[:, ia, 1]
+            sns.kdeplot(vals_bis[vals_bis != 0],
+                        alpha=alpha_list[ia], lw=3., common_norm=False, ax=ax[3],
+                        legend=False, bw_adjust=bw_pred, color=color_bis, cut=0)
+        ax[ia].set_title(titles[ia], fontsize=15)
     ax[1].set_ylabel('')
     ax[3].set_ylabel('')
-    ax[0].set_ylabel('Density, Data')
-    ax[2].set_ylabel('Density, Model')
+    ax[0].set_ylabel('Density of confidence')
+    ax[2].set_ylabel('Density of confidence')
+    ax[0].set_xlabel('                           Confidence aligned with stimulus')    
+    ax[2].set_xlabel('                           Confidence aligned with stimulus')
     for a in ax:
         a.set_yticks([])
-        a.set_xlabel('')
-    ax[2].set_xlim(-1.7, 1.7)
-    ax[3].set_xlim(-1.7, 1.7)
-    ax[2].set_xlabel('                                                         Confidence aligned with stimulus')    
-    ax[0].set_xticks([])
-    ax[1].set_xticks([])
-    ax[0].set_title('Monostable', fontsize=15)
-    ax[1].set_title('Bistable', fontsize=15)
+    ax[0].set_xlim(-1.25, 1.25)
+    # ax[3].set_xlim(-1.5, 1.5)
     fig.tight_layout()
-    fig.savefig(SV_FOLDER + 'distros_aligned_confidence_data_and_model.png', dpi=200, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + 'distros_aligned_confidence_data_and_model.pdf', dpi=200, bbox_inches='tight')
+    plt.subplots_adjust(wspace=0.3)
+    ax[0].annotate('Monostable', xy=(0.9, 1.2), xycoords=ax[0].transAxes, color='cadetblue')
+    ax[2].annotate('Bistable', xy=(0.9, 1.2), xycoords=ax[2].transAxes, color='peru')
+    name = 'fitted_sims_distros_aligned_confidence_data_and_model' if fitted_simulations\
+        else 'distros_aligned_confidence_data_and_model'
+    # ax[1].set_title('Bistable', fontsize=15)
+    fig.savefig(SV_FOLDER + f'{name}.png', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'{name}.svg', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'{name}.pdf', dpi=200, bbox_inches='tight')
 
 
 def plot_prev_vs_new_fitting(nsubs=32, model='MF5'):
@@ -3364,7 +3393,7 @@ if __name__ == '__main__':
     #                                data_only=True)
     # plot_all_subjects(model=False)
     # plot_all_subjects(xvar='stim_ev_cong')
-    psychometric_curve_all_subjects()
+    # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=True)
@@ -3379,8 +3408,10 @@ if __name__ == '__main__':
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
     #                         variable='aligned_confidence', bws=[1.35, 0.8], model='MF5',
     #                         full_fig=False, plot_model=False)
+    plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
+                                      bw_pred=1)
     # plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
-    #                                   bw_pred=1)
+    #                                   bw_pred=1, fitted_simulations=False)
     # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
     #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
