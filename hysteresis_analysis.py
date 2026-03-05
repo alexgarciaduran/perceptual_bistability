@@ -42,7 +42,7 @@ from sbi import analysis as analysis
 import tqdm
 import statsmodels.formula.api as smf
 from scipy.stats import pearsonr, zscore
-from scipy.signal import sawtooth
+from scipy.signal import sawtooth, medfilt
 from scipy.optimize import curve_fit, root_scalar, brentq, fsolve
 from scipy.integrate import quad, cumulative_trapezoid, solve_bvp
 from scipy.interpolate import interp1d
@@ -2238,8 +2238,8 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     axnew[1].set_xlabel('Latency (s)'); axnew[1].set_xlim(axnew[0].get_xlim())
     np.save(DATA_FOLDER + 'kernel_latency_average.npy', np.array(latency_avg))
     if ax is None:
-        fig, ax = plt.subplots(1, figsize=(5.5, 4))
-    fig2, ax2 = plt.subplots(1, figsize=(5.5, 4))
+        fig, ax = plt.subplots(1, figsize=(5, 4))
+    fig2, ax2 = plt.subplots(1, figsize=(5., 4))
     fig3, ax34567 = plt.subplots(ncols=3, nrows=2, figsize=(12.5, 8))
     ax34567= ax34567.flatten()
     ax3, ax4, ax5, ax6, ax7, ax8 = ax34567
@@ -2417,10 +2417,10 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     fig2.tight_layout()
     fig3.tight_layout()
     fignew.tight_layout()
-    fignew.savefig(SV_FOLDER + 'latency_computation.png', dpi=100, bbox_inches='tight')
-    fignew.savefig(SV_FOLDER + 'latency_computation.pdf', dpi=100, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.png', dpi=100, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.pdf', dpi=100, bbox_inches='tight')
+    fignew.savefig(SV_FOLDER + 'latency_computation.png', dpi=400, bbox_inches='tight')
+    fignew.savefig(SV_FOLDER + 'latency_computation.pdf', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.pdf', dpi=400, bbox_inches='tight')
     figlast, ax = plt.subplots(ncols=1, figsize=(5, 4))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     ax.axhline(0, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
@@ -6272,6 +6272,8 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
     ax.set_ylabel('Noise')
     ax.axhline(0, color='k', linestyle='--', alpha=0.5)
     fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'simulated_kernel_pshuffle.png', dpi=400)
+    fig.savefig(SV_FOLDER + 'simulated_kernel_pshuffle.svg', dpi=400)
     fig3.tight_layout()
     colormap = ['peru', 'cadetblue']; labels=['Bistable', 'Monostable']
     fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
@@ -6292,6 +6294,8 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
     ax.legend(frameon=False); ax.set_xlabel('Time before switch(s)')
     ax.set_ylabel('Noise')
     fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'simulated_kernel_regime.png', dpi=400)
+    fig.savefig(SV_FOLDER + 'simulated_kernel_regime.svg', dpi=400)
     
     fig, ax = plt.subplots(ncols=1, figsize=(5, 4))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
@@ -6682,12 +6686,13 @@ def plot_hyst_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False,
 
 
 def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
-                                          fitted_variable='J'):
+                                          fitted_variable='J',
+                                          full=False):
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     fitted_subs = len(pars)
-    b1s = [np.load(par)[2] for par in pars]
+    b1s = np.array([np.load(par)[2] for par in pars])
     sigmas = np.array([np.load(par)[3] for par in pars])
-    thetas = [np.load(par)[4] for par in pars]
+    thetas = np.array([np.load(par)[4] for par in pars])
     j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
     j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
     variables = {'J': j0s+j1s, 'B': b1s, 'sigma': sigmas, 'theta': thetas,
@@ -6709,40 +6714,66 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
     if variable == 'freq4':
         file = 'hysteresis_width_freq_4.npy'
         label = 'Hysteresis freq=4'
+    if variable == 'pupil':
+        file = os.path.join('aligned_eye_tracker_data','plots', 'min_pupil_across_trials.npy')
+        label = 'Min. pupil'
+    if 'saccade' in variable:
+        file = os.path.join('aligned_eye_tracker_data','plots', 'saccade_rate.npy')
+        label = 'Mean saccade rate'
+    if 'blink' in variable:
+        file = os.path.join('aligned_eye_tracker_data','plots', 'blink_rate.npy')
+        label = 'Mean blink rate'
+    if 'speed' in variable:
+        file = os.path.join('aligned_eye_tracker_data','plots', 'average_speed.npy')
+        label = 'Mean eye speed'
+    if 'fixation' in variable:
+        file = os.path.join('aligned_eye_tracker_data','plots', 'average_fixation_break_rate.npy')
+        label = 'Mean FB rate'
     var = np.load(DATA_FOLDER + file)
-    mean_duration_per_sub = np.nanmean(var, axis=0)[:fitted_subs]
-    rho, pval = pearsonr(variables[fitted_variable], mean_duration_per_sub)
-    fig, ax = plt.subplots(1, figsize=(5, 4))
+    mean_variable = np.nanmean(var, axis=0)[:fitted_subs]
+    r, p = pearsonr(variables[fitted_variable], mean_variable)
+    fig, ax = plt.subplots(1, figsize=(3.4, 3))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
-    ax.plot(variables[fitted_variable], mean_duration_per_sub, marker='o', linestyle='', color='k')
-    ax.set_title('r = ' + str(round(rho, 3)) + '\np = ' + str(round(pval, 5)))
+    var_fitted = variables[fitted_variable]
+    ax.plot(var_fitted, mean_variable, marker='o', linestyle='', color='k')
+    
+    X = var_fitted.reshape(-1, 1)
+    y = mean_variable.reshape(-1, 1)
+    linreg = LinearRegression(fit_intercept=True).fit(X, y)
+    minmax_array = np.array([np.min(X)-0.1, np.max(X)+0.1]).reshape(-1, 1)
+    pred_y = linreg.predict(minmax_array)
+    ax.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=ax.transAxes, fontsize=14)
+    ax.plot(minmax_array,
+           pred_y, color='gray', linestyle='--', alpha=0.4, linewidth=3)
+    
     ax.set_xlabel(fitted_variable)
     ax.set_ylabel(label)
     fig.tight_layout()
-    fig, ax = plt.subplots(ncols=4, figsize=(14, 4))
-    couplings = [0, 0.3, 1]
-    for i in range(4):
-        ax[i].spines['right'].set_visible(False); ax[i].spines['top'].set_visible(False)
-        if i < 3:
-            dominance_dur_coup = var[i, :fitted_subs]
-            j_coupling = (j1s*couplings[i]+j0s)*n
-            rho = pearsonr(j_coupling, dominance_dur_coup).statistic
-            print(pearsonr(j_coupling, dominance_dur_coup).pvalue)
-            ax[i].plot(j_coupling, dominance_dur_coup,
-                        color='k', marker='o', linestyle='')
-            ax[i].set_title('p(sh)=' + str(1-couplings[i]) + ';   r = ' + str(round(rho, 3)))
-        else:
-            j_coupling_0 = (j0s)*n
-            j_coupling_03 = (j1s*0.3+j0s)*n
-            j_coupling_1 = (j1s+j0s)*n
-            all_coups = np.concatenate((j_coupling_0, j_coupling_03, j_coupling_1))
-            all_doms = var[:, :fitted_subs].flatten()
-            rho = pearsonr(all_coups, all_doms).statistic
-            ax[i].plot(all_coups, all_doms, color='k', marker='o', linestyle='')
-            ax[i].set_title('All p(sh);   r = ' + str(round(rho, 3)))
-        ax[i].set_xlabel('Fitted J = (1-p(sh))*J1 + J0')
-    ax[0].set_ylabel(label)
-    fig.tight_layout()
+    if full:
+        fig, ax = plt.subplots(ncols=4, figsize=(14, 4))
+        couplings = [0, 0.3, 1]
+        for i in range(4):
+            ax[i].spines['right'].set_visible(False); ax[i].spines['top'].set_visible(False)
+            if i < 3:
+                dominance_dur_coup = var[i, :fitted_subs]
+                j_coupling = (j1s*couplings[i]+j0s)*n
+                rho = pearsonr(j_coupling, dominance_dur_coup).statistic
+                print(pearsonr(j_coupling, dominance_dur_coup).pvalue)
+                ax[i].plot(j_coupling, dominance_dur_coup,
+                            color='k', marker='o', linestyle='')
+                ax[i].set_title('p(sh)=' + str(1-couplings[i]) + ';   r = ' + str(round(rho, 3)))
+            else:
+                j_coupling_0 = (j0s)*n
+                j_coupling_03 = (j1s*0.3+j0s)*n
+                j_coupling_1 = (j1s+j0s)*n
+                all_coups = np.concatenate((j_coupling_0, j_coupling_03, j_coupling_1))
+                all_doms = var[:, :fitted_subs].flatten()
+                rho = pearsonr(all_coups, all_doms).statistic
+                ax[i].plot(all_coups, all_doms, color='k', marker='o', linestyle='')
+                ax[i].set_title('All p(sh);   r = ' + str(round(rho, 3)))
+            ax[i].set_xlabel('Fitted J = (1-p(sh))*J1 + J0')
+        ax[0].set_ylabel(label)
+        fig.tight_layout()
 
 
 def plot_params_corrs():
@@ -9330,10 +9361,20 @@ def blink_onset_boolean(pupil):
     return onset
 
 
-def detect_saccades(x, y, dt=1/60, vel_thresh=30):  # deg/s equivalent
-    vx = np.gradient(x, dt)
-    vy = np.gradient(y, dt)
+def engbert_velocity(x, dt):
+    v = (x[4:] + x[3:-1] - x[1:-3] - x[:-4]) / (6*dt)
+    v = np.pad(v, (2,2), mode='edge')
+    return v
+
+
+def detect_saccades(x, y, dt=1/60, n_stds=5):
+    
+    vx = engbert_velocity(x, dt)
+    vy = engbert_velocity(y, dt)
+    
     speed = np.sqrt(vx**2 + vy**2)
+    # Median Absolute Deviation
+    vel_thresh = n_stds * 1.4826 * np.median(np.abs(speed - np.median(speed)))
     return (speed > vel_thresh), [speed, vx, vy]
 
 
@@ -9363,8 +9404,10 @@ def expand_mask(mask, n_pre=3, n_post=3):
     return mask
 
 
-def detect_fixation_break(x, y, max_dist=0.1):
-    return np.sqrt(x**2+y**2) > max_dist
+def detect_fixation_break(x, y, max_dist=0.1, min_samples=3):
+    dist = np.sqrt(x**2+y**2)
+    breaks = (dist > max_dist)
+    return breaks
 
 
 def align_eye_tracking_blocks_hyst_noisy(
@@ -9485,7 +9528,7 @@ def align_eye_tracking_blocks_hyst_noisy(
                 else:
                     x = gaze_block['LeftEye_X'].iloc[start_idx:end_idx].values
                     y = gaze_block['LeftEye_Y'].iloc[start_idx:end_idx].values
-                saccade_mask, _ = detect_saccades(x[valid_idx], y[valid_idx], dt=dt_noisy, vel_thresh=2)
+                saccade_mask, _ = detect_saccades(x[valid_idx], y[valid_idx], dt=dt_noisy, n_stds=5)
                 bad = blink_mask | saccade_mask
                 pupil_valid[bad] = np.nan
                 
@@ -9509,7 +9552,7 @@ def align_eye_tracking_blocks_hyst_noisy(
                 blink_mask = blink_onset_boolean(pupil)
                 # blink_mask = detect_blinks(pupil)
                 # blink_mask = expand_mask(blink_mask, n_pre=3, n_post=3)
-                _, speed_all = detect_saccades(x, y, dt=dt_noisy, vel_thresh=2)
+                _, speed_all = detect_saccades(x, y, dt=dt_noisy, n_stds=5)
                 saccade_mask = saccade_onset_boolean(x, y, dt=1/60, vel_thresh=2)
                 # saccade_mask = expand_mask(saccade_mask, n_pre=1, n_post=1)
                 
@@ -9518,7 +9561,7 @@ def align_eye_tracking_blocks_hyst_noisy(
                 
                 blink_mask = detect_blinks(pupil)
                 # blink_mask = expand_mask(blink_mask, n_pre=3, n_post=3)
-                saccade_mask, speed_all = detect_saccades(x, y, dt=dt_noisy, vel_thresh=2)
+                saccade_mask, speed_all = detect_saccades(x, y, dt=dt_noisy, n_stds=5)
                 # saccade_mask = expand_mask(saccade_mask, n_pre=1, n_post=1)
                 raw_blinks[left_right, start_idx:end_idx] = blink_mask
                 raw_saccades[left_right, start_idx:end_idx] = saccade_mask
@@ -9527,12 +9570,37 @@ def align_eye_tracking_blocks_hyst_noisy(
         x_pos_left = gaze_block['LeftEye_X'].values
         y_pos_right = gaze_block['RightE_Y'].values
         y_pos_left = gaze_block['LeftEye_Y'].values
-        x = np.nanmean(np.c_[x_pos_left, x_pos_right], axis=1)-0.5
-        y = np.nanmean(np.c_[y_pos_left, y_pos_right], axis=1)-0.5
-        position = np.sqrt(x**2+y**2)
-        fixation_breaks = detect_fixation_break(x, y, max_dist=0.1)
-        # get speed
-        _, speed_all = detect_saccades(x, y, dt=dt_noisy, vel_thresh=2)
+        
+        
+        x_raw = np.mean(np.c_[x_pos_left, x_pos_right], axis=1) - 0.5
+        y_raw = np.mean(np.c_[y_pos_left, y_pos_right], axis=1) - 0.5
+        
+        # get fixation breaks
+        position = np.sqrt(x_raw**2+y_raw**2)
+        fixation_breaks = detect_fixation_break(x_raw, y_raw, max_dist=0.1)
+        
+        # interpolate NaNs
+        x_pos_left = interp_nans(x_pos_left)
+        x_pos_right = interp_nans(x_pos_right)
+        y_pos_left = interp_nans(y_pos_left)
+        y_pos_right = interp_nans(y_pos_right)
+
+        x = np.mean(np.c_[x_pos_left, x_pos_right], axis=1) - 0.5
+        y = np.mean(np.c_[y_pos_left, y_pos_right], axis=1) - 0.5
+
+        # get saccade mask, sacc_mask
+        sacc_mask, _ = detect_saccades(x, y, dt=dt_noisy, n_stds=5)
+
+        # apply medfilt to position (x, y)
+        x = scipy.signal.medfilt(x, 5)
+        y = scipy.signal.medfilt(y, 5)
+
+        # now compute speed
+        _, speed_all = detect_saccades(x, y, dt=dt_noisy, n_stds=5)
+        for speed in speed_all:
+            sacc_mask = sacc_mask | (np.abs(speed) > 2)
+            speed[sacc_mask] = np.nan
+
         # save data
         gaze_block['blink'] = np.logical_or(blinks[0], blinks[1])
         gaze_block['saccade'] = np.logical_or(saccades[0], saccades[1])
@@ -10254,7 +10322,7 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
             bin_idx = np.digitize(all_epochs['t'], t_bins) - 1
             valid = (bin_idx >= 0) & (bin_idx < len(t_bin_centers))
             
-            if pupil_col in ['blink', 'saccade']:
+            if pupil_col in ['blink', 'saccade', 'fixation_break']:
                 # --- Sum events per bin ---
                 binned_sum = (
                     pd.DataFrame({
@@ -10373,6 +10441,12 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
     if pupil_col == 'blink' and not align and condition == 'pShuffle':
         save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'blink_rate.npy')
         np.save(save_path, np.nanmean(all_data, axis=-1))
+    if pupil_col == 'speed' and not align and condition == 'pShuffle':
+        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'average_speed.npy')
+        np.save(save_path, np.nanmean(all_data, axis=-1))
+    if pupil_col == 'fixation_break' and not align and condition == 'pShuffle':
+        save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'average_fixation_break_rate.npy')
+        np.save(save_path, np.nanmean(all_data, axis=-1))
     if pupil_col == 'saccade' and not align and condition == 'pShuffle':
         save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'saccade_rate.npy')
         np.save(save_path, np.nanmean(all_data, axis=-1))
@@ -10401,9 +10475,9 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
     if pupil_col == 'saccade':
         y_max = 1.28 # Position above highest confidence
         axes.set_ylim(0.3, 1.3)
-    if pupil_col == 'speed':
-        y_max = 0.37 # Position above highest confidence
-        axes.set_ylim(0.24, 0.38)
+    if 'speed' in pupil_col:
+        y_max = 0.31 # Position above highest confidence
+        axes.set_ylim(-0.1, 0.32)
     if 'Pupil' in pupil_col:
         y_max = 0.25
     if pupil_col == 'blink':
@@ -10474,6 +10548,12 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
             np.save(save_path, all_data)
         if 'blink' in pupil_col:
             save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', f'{label_save_max}_blink_rate_across_trials.npy')
+            np.save(save_path, all_data)
+        if 'fixation' in pupil_col:
+            save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', f'{label_save_max}_fixation_break_rate_across_trials.npy')
+            np.save(save_path, all_data)
+        if 'speed' in pupil_col:
+            save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', f'{label_save_max}_eye_speed_across_trials.npy')
             np.save(save_path, all_data)
         sns.barplot(all_data.T, fill=True, palette=colormap, ax=ax2)
         sns.swarmplot(
@@ -11313,11 +11393,64 @@ def eye_tracker_correlates(data_folder=DATA_FOLDER, min_pupil=True, freq=2,
     g.map_lower(corrfunc)
 
 
-def linear_reg_comparison():
+
+def linear_reg_behavior(delta=False):
+    data_dominance = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
+    data_hysteresis_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
+    data_hysteresis_4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
+    save_path = os.path.join(DATA_FOLDER, 'aligned_eye_tracker_data','plots', 'min_pupil_across_trials.npy')
+    min_pupil = np.load(save_path)
+    variables = [data_dominance, data_hysteresis_2, data_hysteresis_4]
+    pshuffle = (1-np.array([0, 0.7, 1]))
+    n = len(variables)
+    nshufs, nsubs = data_dominance.shape
+    coef_vars = np.zeros((n, nsubs))
+    for i_var, var in enumerate(variables):
+        coefs = []
+        for sub in range(nsubs):
+            if delta:
+                var_z = var[:, sub]
+                coefs.append(var_z[2]-var_z[0])
+            else:
+                linreg = LinearRegression(fit_intercept=True)
+                var_z = zscore(var[:, sub])
+                coefs.append(linreg.fit(pshuffle.reshape(-1, 1), var_z.reshape(-1, 1)).coef_[0][0])
+
+        coef_vars[i_var] = coefs
+
+    corr_matrix = np.full((n, n), np.nan)
+    p_matrix = np.full((n, n), np.nan)
+    annot = np.empty((n, n), dtype=object)
+    annot[:] = ""
+    for i in range(n):
+        var_i = coef_vars[i]
+    
+        for j in range(n):
+            if i == j:
+                continue
+            r, p = pearsonr(var_i, coef_vars[j])
+            corr_matrix[i, j] = r
+            p_matrix[i, j] = p
+            annot[i, j] = stars(p)
+    fig, ax = plt.subplots(1, figsize=(8, 6))
+    labs = ['Dom.', 'Hyst. f2', 'f4', 'pupil']
+    ax.set_xticks(np.arange(len(labs)), labs, rotation=45)
+    ax.set_yticks(np.arange(len(labs)), labs, rotation=0)
+    fig.tight_layout()
+    sns.heatmap(corr_matrix, cmap="bwr",
+                vmin=-1, vmax=1,
+                cbar_kws={"label": "Correlation"},
+                fmt="", annot=annot)
+    ax.set_xticks(np.arange(len(labs))+0.5, labs, rotation=45)
+    ax.set_yticks(np.arange(len(labs))+0.5, labs, rotation=0)
+
+
+def linear_reg_comparison(delta=False):
     data_dominance = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
     data_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
     data_hysteresis_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
     data_hysteresis_4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     min_pupil = get_eye_tracker_data_across_trials(data_folder=DATA_FOLDER,
                                                    pupil_col='Pupil_residual',
                                                    align=True, flatten=False)
@@ -11343,9 +11476,14 @@ def linear_reg_comparison():
     for i_var, var in enumerate(variables):
         coefs = []
         for sub in range(nsubs):
-            linreg = LinearRegression(fit_intercept=True)
-            var_z = zscore(var[:, sub])
-            coefs.append(linreg.fit(pshuffle.reshape(-1, 1), var_z.reshape(-1, 1)).coef_[0][0])
+            if delta:
+                var_z = var[:, sub]
+                coefs.append(var_z[2]-var_z[0])
+            else:
+                linreg = LinearRegression(fit_intercept=True)
+                var_z = zscore(var[:, sub])
+                coefs.append(linreg.fit(pshuffle.reshape(-1, 1), var_z.reshape(-1, 1)).coef_[0][0])
+
         coef_vars[i_var] = coefs
     
     corr_matrix = np.full((n, n), np.nan)
@@ -11382,6 +11520,13 @@ def get_corr_p_matrix_specific_trials(data_folder=DATA_FOLDER, mean=False, inclu
     data_amplitude = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
     data_hysteresis_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
     data_hysteresis_4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    print(len(pars), ' fitted subjects')
+    j1s = np.array([np.load(par)[0] for par in pars])
+    j0s = np.array([np.load(par)[1] for par in pars])
+    b1s = np.array([np.load(par)[2] for par in pars])
+    # thetas = np.array([np.load(par)[4] for par in pars])
+    sigmas = np.array([np.load(par)[3] for par in pars])
     
     if mean:
         data_dominance = np.nanmean(data_dominance, axis=0)
@@ -11400,6 +11545,9 @@ def get_corr_p_matrix_specific_trials(data_folder=DATA_FOLDER, mean=False, inclu
         dict(name="dominance", kind="behavior", data=data_dominance),
         dict(name="hyst2", kind="behavior", data=data_hysteresis_2),
         dict(name="hyst4", kind="behavior", data=data_hysteresis_4),
+        dict(name='param J0+J1', kind='behavior', data=j0s+j1s),
+        dict(name='param sigma', kind='behavior', data=sigmas),
+        dict(name='param b1', kind='behavior', data=b1s),
     
         # --- Eye measures ---
         dict(name="min pupil", kind="eye",
@@ -11407,6 +11555,16 @@ def get_corr_p_matrix_specific_trials(data_folder=DATA_FOLDER, mean=False, inclu
              align=True,
              measure="min"),
     
+        dict(name="fixation_break baseline", kind="eye",
+             pupil_col="fixation_break",
+             align=False,
+             measure="mean"),
+    
+        dict(name="fixation_break max", kind="eye",
+             pupil_col="fixation_break",
+             align=True,
+             measure="max"),
+        
         dict(name="saccade baseline", kind="eye",
              pupil_col="saccade",
              align=False,
@@ -11414,6 +11572,16 @@ def get_corr_p_matrix_specific_trials(data_folder=DATA_FOLDER, mean=False, inclu
     
         dict(name="saccade max", kind="eye",
              pupil_col="saccade",
+             align=True,
+             measure="max"),
+
+        dict(name="speed baseline", kind="eye",
+             pupil_col="speed",
+             align=False,
+             measure="mean"),
+    
+        dict(name="speed max", kind="eye",
+             pupil_col="speed",
              align=True,
              measure="max"),
     
@@ -11552,10 +11720,16 @@ def plot_full_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, specific=True,
             
     alpha = 0.05
     fig, ax = plt.subplots(1, figsize=(8, 6))
-    labs = ['Dominance', 'Hysteresis 1-cycle', 'Hysteresis 2-cycle', 'Min. pupil',
-     'sacc. baseline', 'sacc. max.', 'blink baseline', 'blink max.']
-    labs_reduced = ['Dom.', 'Hyst. 1-c', 'Hyst. 2-c', 'Min. pupil',
-     'sacc. base.', 'sacc. max.', 'blink base.', 'blink max.']
+    labs = ['Dominance', 'Hysteresis 1-cycle', 'Hysteresis 2-cycle', 'Fitted J=J0+J1', r'Fitted $\sigma$', 'Fitted B1',
+     'Min. pupil', 'FB baseline', 'FB max',
+     'sacc. baseline', 'sacc. max.',
+     'speed base.', 'speed max.',
+     'blink baseline', 'blink max.']
+    labs_reduced = ['Dom.', 'Hyst. 1-c', 'Hyst. 2-c', 'Fit J', r'Fitted $\sigma$', 'Fit B1',
+                    'Min. pupil',
+                    'FB baseline', 'FB max',
+                    'sacc. base.', 'sacc. max.', 'speed base.', 'speed max.',
+                    'blink base.', 'blink max.']
     if not include_h4:
         labs.pop(2)
         labs_reduced.pop(2)
@@ -11585,7 +11759,7 @@ def get_eye_tracker_data_across_trials(data_folder=DATA_FOLDER,
                                        align=False,
                                        var_beh=None, measure='mean',
                                        flatten=False, mean=False):
-    if var_beh is None:
+    if var_beh is None or 'param' in var_beh:
         if 'Pupil' in pupil_col and align:
             save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'min_pupil_across_trials.npy')
         label_save_max = 'max' if align else 'baseline'
@@ -11593,6 +11767,10 @@ def get_eye_tracker_data_across_trials(data_folder=DATA_FOLDER,
             save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', f'{label_save_max}_saccade_rate_across_trials.npy')
         if 'blink' in pupil_col:
             save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', f'{label_save_max}_blink_rate_across_trials.npy')
+        if 'fixation' in pupil_col:
+            save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', f'{label_save_max}_fixation_break_rate_across_trials.npy')
+        if 'speed' in pupil_col:
+            save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', f'{label_save_max}_eye_speed_across_trials.npy')
     else:
         align_label = 'aligned_' if align else 'full_time_'
         if 'Pupil' in pupil_col:
@@ -11601,8 +11779,10 @@ def get_eye_tracker_data_across_trials(data_folder=DATA_FOLDER,
             name = 'blink'
         if 'saccade' in pupil_col:
             name = 'saccade'
-        if 'speed' in pupil_col:
+        elif 'speed' in pupil_col:
             name = 'speed'
+        if pupil_col == 'fixation_break':
+            name = 'fixation_break'
         if var_beh in ['dominance', 'amplitude', 'latency']:
             save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', f'{align_label}{measure}_{name}_noisy_trials.npy')
         if var_beh == 'hyst2':
@@ -11617,29 +11797,32 @@ def get_eye_tracker_data_across_trials(data_folder=DATA_FOLDER,
     return variable
 
 
-def plot_hyst_dom_correlation(data_folder=DATA_FOLDER, freq=4):
-    variable = np.load(DATA_FOLDER + 'mean_number_switches_per_subject.npy')
-    ylabel = 'Dominance (s)'
-    variable_eye = np.load(DATA_FOLDER + f'hysteresis_width_freq_{freq}.npy')
-    xlabel = f'Hysteresis, {freq // 2}-C'
-    fig, ax = plt.subplots(ncols=1, figsize=(3, 2.6), sharex=True, sharey=True)
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    avg_eye = np.nanmean(variable_eye, axis=0)
-    avg_beh = np.nanmean(variable, axis=0)
-    X = avg_eye.reshape(-1, 1)
-    y = avg_beh.reshape(-1, 1)
-    linreg = LinearRegression(fit_intercept=True).fit(X, y)
-    minmax_array = np.array([np.min(X)-0.1, np.max(X)+0.1]).reshape(-1, 1)
-    pred_y = linreg.predict(minmax_array)
-    r, p = pearsonr(avg_eye, avg_beh)
-    ax.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=ax.transAxes)
-    ax.plot(minmax_array,
-           pred_y, color='gray', linestyle='--', alpha=0.4, linewidth=3)
-    ax.plot(avg_eye, avg_beh, marker='o', color='k',
-           linestyle='')
+def plot_hyst_dom_correlation(data_folder=DATA_FOLDER):
+    variable_eye = np.load(data_folder + 'mean_number_switches_per_subject.npy')
+    xlabel = 'Dominance (s)'
+    
+    fig, axes = plt.subplots(ncols=1, nrows=2, figsize=(2.6, 4.6), sharex=True, sharey=False)
+    for i_f, freq in enumerate([2, 4]):
+        ax = axes[i_f]
+        variable = np.load(data_folder + f'hysteresis_width_freq_{freq}.npy')
+        ylabel = f'Hysteresis, {freq // 2}-C'
+        avg_eye = np.nanmean(variable_eye, axis=0)
+        avg_beh = np.nanmean(variable, axis=0)
+        X = avg_eye.reshape(-1, 1)
+        y = avg_beh.reshape(-1, 1)
+        linreg = LinearRegression(fit_intercept=True).fit(X, y)
+        minmax_array = np.array([np.min(X)-0.1, np.max(X)+0.1]).reshape(-1, 1)
+        pred_y = linreg.predict(minmax_array)
+        r, p = pearsonr(avg_eye, avg_beh)
+        ax.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=ax.transAxes, fontsize=14)
+        ax.plot(minmax_array,
+               pred_y, color='gray', linestyle='--', alpha=0.4, linewidth=3)
+        ax.plot(avg_eye, avg_beh, marker='o', color='k',
+               linestyle='')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.set_ylabel(ylabel)
+    axes[1].set_xlabel(xlabel)
     fig.tight_layout()
     for extension in ['.png', '.svg', '.pdf']:
         plot_name = 'hysteresis_vs_dominance' + extension
@@ -12121,9 +12304,10 @@ def analytical_hysteresis_width_degeneration(n=4, freq=2, fps=60):
 
 
 def plot_eye_simple():
+    pup_cols = ['blink', 'speed', 'fixation_break',
+                'saccade']
     for align in [False, True]:
-        for col in ['Pupil_residual', 'saccade', 'blink',
-                    'speed', 'fixation_break']:
+        for col in pup_cols:
             plot_pupil_across_subjects_simple(data_folder=DATA_FOLDER,
                                             sublist=None,
                                             n_training=8,
@@ -12169,13 +12353,16 @@ def plot_eye_simple():
                                             velocity=False, n=4, zscore_values=False,
                                             downsample_to=20, null=False,
                                             align=align, region_interval=[-2, 2])
+            plt.close('all')
 
 
 def plot_pupil_traces():
-    for pupil_col in ['Pupil_residual', 'saccade',
-                      'fixation_break', 'speed', 'saccade']:
-        for align in [True, False]:
-            for cond in ['regime', 'pShuffle']:
+    #  'blink', 'speed',
+    pup_cols = [
+                'fixation_break', 'speed']
+    for pupil_col in pup_cols:
+        for align in [False, True]:
+            for cond in ['pShuffle', 'regime']:
                 plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
                                              sublist=None,
                                              n_training=8,
@@ -12191,12 +12378,17 @@ def plot_pupil_traces():
                                              velocity=False, n=4,
                                              downsample_to=20, null=False, align=align,
                                              region_interval=[-2, 2])
+                plt.close('all')
 
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
+    # plot_pupil_traces()
+    # plot_full_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, specific=True,
+    #                                     mean=True, mask=False, include_h4=True)
     # experiment_example(nFrame=1560, fps=60, noisyframes=15)
-    # plot_noise_variables_vs_fitted_params(n=4, variable='amplitude')
+    plot_noise_variables_vs_fitted_params(n=4, variable='pupil',
+                                          fitted_variable='J0')
     # ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=10, fps=60,
     #                       zscore_variables=False, order_by_variable=None)
     # kernel_different_regimes_all_subjects(data_folder=DATA_FOLDER,
@@ -12261,7 +12453,6 @@ if __name__ == '__main__':
     #                                                     simulated=True)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
-    # plot_noise_variables_vs_fitted_params(n=4, variable='freq2')
     # plot_params_distros(ndt=True)
     # plot_simulate_hysteresis_subject(data_folder=DATA_FOLDER, subject_name=None,
     #                                   ntraining=8, window_conv=10, fps=200,
@@ -12284,7 +12475,7 @@ if __name__ == '__main__':
     #                                       tFrame=26, window_conv=1,
     #                                       fps=60, ax=None, hysteresis_area=True,
     #                                       normalize_variables=True, ratio=1,
-    #                                       load_simulations=False)
+    #                                       load_simulations=True)
     # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
     #                                   cumsum=False, npercentiles=3, sim_predict_dat=False)
     # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
@@ -12336,7 +12527,7 @@ if __name__ == '__main__':
     # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
     #                         window_conv=None, ndt_list=None)
-    analytical_hysteresis_width_degeneration()
+    # analytical_hysteresis_width_degeneration()
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=29, sv_folder=SV_FOLDER)
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
