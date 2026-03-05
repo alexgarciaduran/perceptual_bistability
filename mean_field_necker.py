@@ -6163,7 +6163,7 @@ def plot_bars(vals_bar, rsc=False):
         'SFM (B=0)': 'peru'
     }
     # Define colors — one per Type
-    pair_colors = ['dimgrey', 'dimgrey']
+    pair_colors = ['lightgrey', 'lightgrey']
     # Draw bars
     bar = sns.barplot(
         data=df, x="Type", y=title, hue="Classes",
@@ -7174,13 +7174,14 @@ def plot_cartoon_potential_boltzmann(b=0.05, noise=0.15):
         a.set_yticks([]); a.set_xticks([0, 0.5, 1])
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
+    colors = ['cadetblue', 'peru']
     for i_j, j in enumerate([0.1, 0.38]):
         pot = potential_mf_neighs(q, j, bias=b, neighs=4)
         distro = np.exp(-2*pot/noise**2)
         ax[i_j].plot(q, pot,
-                     color='k', linewidth=4)
+                     color=colors[i_j], linewidth=4)
         ax[i_j+2].plot(q, distro / np.sum(distro),
-                         color='k', linewidth=4)
+                       color=colors[i_j], linewidth=4)
     ax[0].set_title('Monostable', fontsize=15)
     ax[1].set_title('Bistable', fontsize=15)
     ax[0].set_ylabel('Potential \n' + r'$V(q)$')
@@ -8006,7 +8007,7 @@ if __name__ == '__main__':
     #                    j0=0.1, j1=0.3, n=4, sigma=0.1, b1=0.2, b0=0,
     #                    dt=1e-2, tau=0.2, t_dur=1, seed=10, simulate=False,
     #                    together=True)
-    # plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
+    plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
     # plot_hysteresis_different_taus(j=0.36,
     #                                 b_list=np.linspace(-0.53, 0.53, 2001),
     #                                 save_folder=DATA_FOLDER,
@@ -8142,11 +8143,11 @@ if __name__ == '__main__':
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
-    plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
-                              shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
-                              idx_neuron='mean', ou=False, add_symetric_RM=True,
-                              choice_time_before=0.25, random_matrix_weight=0.25,
-                              absolute_cps_rsc=True)
+    # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
+    #                           shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
+    #                           idx_neuron='mean', ou=False, add_symetric_RM=True,
+    #                           choice_time_before=0.25, random_matrix_weight=0.25,
+    #                           absolute_cps_rsc=True)
     # plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     #                      nreps=10, tau=0.3, seed=10, 
     #                      alpha=0.25, choice_time_before=0.25,
