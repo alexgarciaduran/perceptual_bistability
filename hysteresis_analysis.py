@@ -4787,27 +4787,7 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
             ax[k].axhline(means_sims, color='k', alpha=0.5)
             ax[k].axvline(means_data, color='k', alpha=0.5)
         fig.tight_layout()
-        # unique_shuffle = np.array(unique_shuffle)
-        # jeffs = np.zeros((3, fitted_subs)); n=4
-        # for i in range(fitted_subs):
-        #     jeffs[:, i] = (fitted_params_all[i][0]*unique_shuffle+fitted_params_all[i][1])
-        # jeffs_mask = jeffs >= 1  # 1/n
-        # bistable_stim_2 = hyst_width_2_data[:, :fitted_subs].flatten()[jeffs_mask.flatten()]
-        # monostable_stim_2 = hyst_width_2_data[:, :fitted_subs].flatten()[~jeffs_mask.flatten()]
-        # bistable_stim_2_sims = hyst_width_2[:, :fitted_subs].flatten()[jeffs_mask.flatten()]
-        # monostable_stim_2_sims = hyst_width_2[:, :fitted_subs].flatten()[~jeffs_mask.flatten()]
-        # bistable_stim_4 = hyst_width_4_data[:, :fitted_subs].flatten()[jeffs_mask.flatten()]
-        # monostable_stim_4 = hyst_width_4_data[:, :fitted_subs].flatten()[~jeffs_mask.flatten()]
-        # bistable_stim_4_sims = hyst_width_4[:, :fitted_subs].flatten()[jeffs_mask.flatten()]
-        # monostable_stim_4_sims = hyst_width_4[:, :fitted_subs].flatten()[~jeffs_mask.flatten()]
-        # fig5, ax5 = plt.subplots(ncols=1, figsize=(5, 4))
-        # ax5.spines['right'].set_visible(False); ax5.spines['top'].set_visible(False)
-        # sns.kdeplot(bistable_stim_4, color='k', ax=ax5, label='Bistable')
-        # sns.kdeplot(monostable_stim_4, color='r', ax=ax5, label='Monostable')
-        # sns.kdeplot(bistable_stim_4_sims, color='k', ax=ax5, linestyle='--')
-        # sns.kdeplot(monostable_stim_4_sims, color='r', ax=ax5, linestyle='--')
-        # ax5.set_xlabel('Hysteresis'); ax5.legend(frameon=False)
-        # fig5.tight_layout()
+
         np.save(DATA_FOLDER + 'hysteresis_width_f2_sims_fitted_params.npy', hyst_width_2)
         np.save(DATA_FOLDER + 'hysteresis_width_f4_sims_fitted_params.npy', hyst_width_4)
         fig3, ax3 = plt.subplots(1, figsize=(5, 4))
@@ -4825,7 +4805,7 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         fig3.tight_layout()
         fig3.savefig(SV_FOLDER + 'simulated_hysteresis_f4_vs_f2.png', dpi=400, bbox_inches='tight')
         fig3.savefig(SV_FOLDER + 'simulated_hysteresis_f4_vs_f2.pdf', dpi=400, bbox_inches='tight')
-        
+
         fig, ax = plt.subplots(ncols=3, nrows=2, figsize=(10., 7))
         ax = ax.flatten()
         for i in range(3):
@@ -4873,7 +4853,8 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
         for i_s, subject in enumerate(subjects):
             choice_all = choices_all_subject[i_s]
             x_all = x_all_subject[i_s]
-        
+            fitted_params = fitted_params_all[i_s]
+            theta = fitted_params[3]
             df_subject = df.loc[df.subject == subject]
             ini_side = np.round(df_subject.groupby('trial_index')['initial_side'].mean().values, 1)
             frequencies = np.round(df_subject.groupby('trial_index')['freq'].mean().values * ini_side, 2)
@@ -4887,10 +4868,13 @@ def simulated_subjects(data_folder=DATA_FOLDER, tFrame=26, fps=60,
                 # binary choice
                 ch = choice_all[i_trial].copy()
                 ch[ch == 0] = np.nan
-                ch = (ch + 1) / 2
-        
+                # ch = (ch + 1) / 2
+                conf_trial = x_all[i_trial]
                 # absolute confidence (CORRECT)
-                conf = np.abs(2*x_all[i_trial]-1)
+                # dist_lower = (conf_trial - 0.5-theta)**2
+                # dist_upper = (conf_trial - 0.5+theta)**2
+                # conf = np.min(np.row_stack([dist_lower, dist_upper]), axis=0)
+                conf = np.abs(2*conf_trial-(0.5-theta)*2)
         
                 switch_idx = np.where(np.abs(np.diff(ch)) > 0)[0] + 1
         
@@ -5856,6 +5840,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                     continue
                 if jeff > 1 and bis_mono == 'Monostable':
                     continue
+                lower_bound = 0.5-fitted_params_all[i_sub][3]
+                upper_bound = 0.5+fitted_params_all[i_sub][3]
                 median_theta.append(fitted_params_all[i_sub][3])
             values_x = x_all[i_sub, i_trial]
             chi = noise_signal[i_sub, i_trial]
@@ -5890,16 +5876,20 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                 potential = potential_mf(x_vals_aligned[i, :], j_eff,
                                          bias=b1*stim_vals_aligned[i, :], n=1)
                 dxdt_full = np.full_like(x_vals_aligned[i, :], np.nan)
-                dxdt_full[k:] = (x_vals_aligned[i, :][k:]-x_vals_aligned[i, :][:-k])/(k/fps)
-                potential_vals_aligned[i, :] = dxdt_full
+                min_dist_vals = np.min(np.row_stack([(x_vals_aligned[i, :]-upper_bound)**2, (x_vals_aligned[i, :]-lower_bound)**2]), axis=0)
+                dxdt_full[k:] = (min_dist_vals[k:]-min_dist_vals[:-k])/(k/fps)
+                potential_vals_aligned[i, :] = min_dist_vals
             for i, idx in enumerate(idx_0):
                 x_vals_aligned[i+len(idx_1), :] =\
                     1-values_x[idx - steps_back:idx+steps_front]
                 stim_vals_aligned[i+len(idx_1), :] = chi[idx - steps_back:idx+steps_front]*-1
                 internal_noise_vals_aligned[i+len(idx_1), :] = internal_noise[idx - steps_back:idx+steps_front]*-1
                 dxdt_full = np.full_like(x_vals_aligned[i+len(idx_1), :], np.nan)
-                dxdt_full[k:] = (x_vals_aligned[i+len(idx_1), :][k:]-x_vals_aligned[i+len(idx_1), :][:-k])/(k/fps)
-                potential_vals_aligned[i+len(idx_1), :] = dxdt_full
+                # dxdt_full[k:] = (x_vals_aligned[i+len(idx_1), :][k:]-x_vals_aligned[i+len(idx_1), :][:-k])/(k/fps)
+                min_dist_vals = np.min(np.row_stack([(x_vals_aligned[i+len(idx_1), :]-upper_bound)**2, (x_vals_aligned[i+len(idx_1), :]-lower_bound)**2]), axis=0)
+                dxdt_full[k:] = (min_dist_vals[k:]-min_dist_vals[:-k])/(k/fps)
+                potential_vals_aligned[i+len(idx_1), :] = min_dist_vals
+
             x_vals_aligned_all_trials = np.row_stack((x_vals_aligned_all_trials, x_vals_aligned))
             potential_vals_aligned_all_trials = np.row_stack((potential_vals_aligned_all_trials, potential_vals_aligned))
             stim_vals_aligned_all_trials = np.row_stack((stim_vals_aligned_all_trials, stim_vals_aligned))
@@ -5925,7 +5915,7 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
     ax = ax.flatten()
     variables = [x_values_all_subjects, stim_values_all_subjects, internal_noise_values_all_subjects,
                  potential_value_all_subjects]
-    labels = ['App. posterior q']*2 + ['Stimulus noise B(t)']*2 + ['Internal noise']*2 + [r'$ \sum_t \Delta q_t / \Delta T$']*2
+    labels = ['App. posterior q']*2 + ['Stimulus noise B(t)']*2 + ['Internal noise']*2 + [r'$ ||q - \theta||^2$']*2
     var = 0
     [ax[1].axhline(val, color='r', linestyle='--', alpha=0.2, linewidth=2, zorder=1) for val in median_theta]
     ax[1].axhline(0.5, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
@@ -12387,8 +12377,8 @@ if __name__ == '__main__':
     # plot_full_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, specific=True,
     #                                     mean=True, mask=False, include_h4=True)
     # experiment_example(nFrame=1560, fps=60, noisyframes=15)
-    plot_noise_variables_vs_fitted_params(n=4, variable='pupil',
-                                          fitted_variable='J0')
+    # plot_noise_variables_vs_fitted_params(n=4, variable='pupil',
+    #                                       fitted_variable='J0')
     # ridgeplot_all_kernels(data_folder=DATA_FOLDER, steps_back=150, steps_front=10, fps=60,
     #                       zscore_variables=False, order_by_variable=None)
     # kernel_different_regimes_all_subjects(data_folder=DATA_FOLDER,
@@ -12405,16 +12395,16 @@ if __name__ == '__main__':
     # simple_optimal_eta_quartic_potential(a=0.5)
     # simple_optimal_eta_quartic_potential(a=1.)
     # simple_optimal_eta_quartic_potential(a=1.5)
-    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-    #                             tFrame=26, fps=60,
-    #                             steps_back=200, steps_front=100, avoid_first=True,
-    #                             n=4, load_simulations=True, normalize=False, sigma=None,
-    #                             pshuf_only=None, bis_mono='Monostable')
-    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-    #                             tFrame=26, fps=60,
-    #                             steps_back=200, steps_front=100, avoid_first=True,
-    #                             n=4, load_simulations=True, normalize=False, sigma=None,
-    #                             pshuf_only=None, bis_mono='Bistable')
+    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+                                tFrame=26, fps=60,
+                                steps_back=200, steps_front=100, avoid_first=True,
+                                n=4, load_simulations=True, normalize=False, sigma=None,
+                                pshuf_only=None, bis_mono='Monostable')
+    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+                                tFrame=26, fps=60,
+                                steps_back=200, steps_front=100, avoid_first=True,
+                                n=4, load_simulations=True, normalize=False, sigma=None,
+                                pshuf_only=None, bis_mono='Bistable')
     # compare_likelihoods_models(load=True, loss='AIC')
     # compare_likelihoods_models(load=True, loss='BIC')
     # compare_likelihoods_models(load=True, loss='NLH')
