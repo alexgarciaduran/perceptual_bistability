@@ -6091,24 +6091,24 @@ def plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
         # mean_act_neighs_high = np.mean(all_activity[0, neighs_idx, :, idxs_choices_high[i]], axis=0)
         for neigh in neighs_idx:
             if zscore_plot:
-                ax[i, 0].plot(time, zscore(all_activity[1, neigh, :, idxs_choices_low[i]]), color='gray',
-                              alpha=0.6, linewidth=2)
-                ax[i, 1].plot(time, zscore(all_activity[0, neigh, :, idxs_choices_high[i]]), color='gray',
-                              alpha=0.6, linewidth=2)
+                ax[i, 0].plot(time, zscore(all_activity[1, neigh, :, idxs_choices_low[i]]), color='cadetblue',
+                              alpha=0.4, linewidth=2)
+                ax[i, 1].plot(time, zscore(all_activity[0, neigh, :, idxs_choices_high[i]]), color='peru',
+                              alpha=0.4, linewidth=2)
             else:
-                ax[i, 0].plot(time, all_activity[1, neigh, :, idxs_choices_low[i]], color='gray',
-                              alpha=0.6, linewidth=2)
-                ax[i, 1].plot(time, all_activity[0, neigh, :, idxs_choices_high[i]], color='gray',
-                              alpha=0.6, linewidth=2)
+                ax[i, 0].plot(time, all_activity[1, neigh, :, idxs_choices_low[i]], color='cadetblue',
+                              alpha=0.4, linewidth=2)
+                ax[i, 1].plot(time, all_activity[0, neigh, :, idxs_choices_high[i]], color='peru',
+                              alpha=0.4, linewidth=2)
         if zscore_plot:
-            ax[i, 0].plot(time, zscore(all_activity[1, idx_neuron, :, idxs_choices_low[i]]), color='k',
+            ax[i, 0].plot(time, zscore(all_activity[1, idx_neuron, :, idxs_choices_low[i]]), color='cadetblue',
                           linewidth=3)
-            ax[i, 1].plot(time, zscore(all_activity[0, idx_neuron, :, idxs_choices_high[i]]), color='k',
+            ax[i, 1].plot(time, zscore(all_activity[0, idx_neuron, :, idxs_choices_high[i]]), color='peru',
                           linewidth=3)
         else:
-            ax[i, 0].plot(time, all_activity[1, idx_neuron, :, idxs_choices_low[i]], color='k',
+            ax[i, 0].plot(time, all_activity[1, idx_neuron, :, idxs_choices_low[i]], color='cadetblue',
                           linewidth=3)
-            ax[i, 1].plot(time, all_activity[0, idx_neuron, :, idxs_choices_high[i]], color='k',
+            ax[i, 1].plot(time, all_activity[0, idx_neuron, :, idxs_choices_high[i]], color='peru',
                           linewidth=3)
     # Example: 100 ms in x, 50 µV in y
     ax = ax[2, 1]
@@ -6125,11 +6125,12 @@ def plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     ax.text(x0 + 0.05, y0 - 0.2, "500 ms", ha='center', va='top')
     ax.text(x0 - 0.01, y0 + 0.25, "a.u.", ha='right', va='center', rotation=90)
     fig.savefig(DATA_FOLDER + 'example_traces_neighbors.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'example_traces_neighbors.svg', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'example_traces_neighbors.pdf', dpi=400, bbox_inches='tight')
 
 
 def plot_bars(vals_bar, rsc=False):
-    fig, ax = plt.subplots(figsize=(3.5, 3.2))
+    fig, ax = plt.subplots(figsize=(3., 2.6))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
     # ax.text(0.02, 0.52, 'Experiments (MT/V5)\nWashmut et al. 2019', fontsize=12)
@@ -6140,9 +6141,9 @@ def plot_bars(vals_bar, rsc=False):
         df = pd.DataFrame({
             "Type": types,
             "Classes": classes,
-            "Interneuronal correlation": vals_all})
+            "Interneuronal\ncorrelation": vals_all})
         ax.set_ylim(0, 0.6)
-        title = 'Interneuronal correlation'
+        title = 'Interneuronal\ncorrelation'
         plot_name = 'interneuronal_correlation_barplot_v2'
     else:
         types = ['RDM', 'SFM (B=0)']*2
@@ -6151,9 +6152,9 @@ def plot_bars(vals_bar, rsc=False):
         df = pd.DataFrame({
             "Type": types,
             "Classes": classes,
-            "Choice probability": vals_all})
+            "Choice\nprobability": vals_all})
         ax.set_ylim(0.5, 0.7)
-        title = 'Choice probability'
+        title = 'Choice\nprobability'
         plot_name = 'choice_probability_barplot_v2'
         plt.axhline(0.5, color='k', alpha=0.3, linestyle='--')
     # Define ONE color per Type
@@ -6188,6 +6189,7 @@ def plot_bars(vals_bar, rsc=False):
         legend_patch.set_hatch(hatch_map[class_name])
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + plot_name + '.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + plot_name + '.svg', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + plot_name + '.pdf', dpi=400, bbox_inches='tight')
 
 
@@ -8007,7 +8009,7 @@ if __name__ == '__main__':
     #                    j0=0.1, j1=0.3, n=4, sigma=0.1, b1=0.2, b0=0,
     #                    dt=1e-2, tau=0.2, t_dur=1, seed=10, simulate=False,
     #                    together=True)
-    plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
+    # plot_cartoon_potential_boltzmann(b=0.05, noise=0.15)
     # plot_hysteresis_different_taus(j=0.36,
     #                                 b_list=np.linspace(-0.53, 0.53, 2001),
     #                                 save_folder=DATA_FOLDER,
@@ -8143,15 +8145,15 @@ if __name__ == '__main__':
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
-    # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
-    #                           shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
-    #                           idx_neuron='mean', ou=False, add_symetric_RM=True,
-    #                           choice_time_before=0.25, random_matrix_weight=0.25,
-    #                           absolute_cps_rsc=True)
+    plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
+                              shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
+                              idx_neuron='mean', ou=False, add_symetric_RM=True,
+                              choice_time_before=0.25, random_matrix_weight=0.25,
+                              absolute_cps_rsc=True)
     # plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
-    #                      nreps=10, tau=0.3, seed=10, 
-    #                      alpha=0.25, choice_time_before=0.25,
-    #                      idx_neuron=24, zscore_plot=False)
+    #                       nreps=10, tau=0.3, seed=10, 
+    #                       alpha=0.25, choice_time_before=0.25,
+    #                       idx_neuron=24, zscore_plot=False)
     # plot_rsc_cp_simulations(add_stim=False, sigma=0.2, mode='J_alpha', plot_j_alpha_sim_values=True)
     # plot_rsc_cp_simulations(add_stim=False, sigma=0.1, mode='J_alpha', plot_j_alpha_sim_values=True)
     # plot_2d_energy_projection_different_alphas(seed=10, alpha_list=[0, 0.1, 0.2, 0.25], j=0.3)
