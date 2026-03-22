@@ -212,33 +212,44 @@ class ring:
             2: {3:'L', 0:'D'},  # bottom-left
             3: {2:'R', 1:'D'}   # bottom-right
         }
-    
+
         neighbors = quartet_map[central_idx]
-    
+
         L = 0.0
-    
+
         if z_triplet[1] == 1:  # central moving
             evidence = 0.0
             for local_idx, expected_dir in neighbors.items():
-                # local_idx corresponds to a neighbor in z_triplet: map to 0/2
-                if local_idx == central_idx - 1 or (central_idx==0 and local_idx==3):
+
+                # map global neighbor index -> local triplet index
+                if local_idx == central_idx - 1 or (central_idx == 0 and local_idx == 3):
                     neighbor_local = 0
-                elif local_idx == central_idx + 1 or (central_idx==3 and local_idx==0):
+                elif local_idx == central_idx + 1 or (central_idx == 3 and local_idx == 0):
                     neighbor_local = 2
                 else:
-                    continue  # not in triplet, skip
-    
-                # neighbor must be moving AND its latent movement matches expected direction
-                neighbor_movement = latent_dirs[local_idx]
-                if z_triplet[neighbor_local] == 1 and neighbor_movement == expected_dir:
-                    # horizontal vs vertical weighting
-                    weight = 1.0 if neighbor_movement in ['L','R'] else ratio
-                    evidence += np.exp(-weight / noise)
-    
+                    continue
+            
+                if s_t_1[neighbor_local] != 1:
+                    continue
+            
+                neighbor_dir = latent_dirs[local_idx]
+            
+                if neighbor_dir != expected_dir:
+                    continue
+            
+                if z_triplet[neighbor_local] == -1:  # horizontal
+                    weight = 1.0
+                elif z_triplet[neighbor_local] == 1:  # vertical
+                    weight = ratio
+                else:
+                    continue
+            
+                evidence += np.exp(-weight / noise)
+
             if evidence == 0:
                 evidence = epsilon
             L = evidence
-    
+
         elif z_triplet[1] == -1:  # central not moving
             if s_t_1[1] == 1 and s_t[1] == 1:
                 L = np.exp(-0.0 / noise)
@@ -3813,26 +3824,26 @@ if __name__ == '__main__':
     #                                            b=[0, 1, 0], noise_stim=0.0,
     #                                            coh=0.25, nstates=3, stim_stamps=1)
     # good seed: 5, 20, 30
-    ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
-                                                  true='CW', noise=0.2, plot=True,
-                                                  b=[0, 0], noise_stim=0.2,
-                                                  nstates=2, stim_stamps=10,
-                                                  distance=True, alpha=0., seed=None)
-    ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
-                                                  true='CCW', noise=0.2, plot=True,
-                                                  b=[0, 0], noise_stim=0.2,
-                                                  nstates=2, stim_stamps=10,
-                                                  distance=True, alpha=0., seed=None)
-    ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
-                                                  true='CCW', noise=0.2, plot=True,
-                                                  b=[0, 0], noise_stim=0.2,
-                                                  nstates=2, stim_stamps=10,
-                                                  distance=True, alpha=-0.2, seed=None)
-    ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
-                                                  true='CW', noise=0.2, plot=True,
-                                                  b=[0, 0], noise_stim=0.2,
-                                                  nstates=2, stim_stamps=10,
-                                                  distance=True, alpha=0.2, seed=None)
+    # ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
+    #                                               true='CW', noise=0.2, plot=True,
+    #                                               b=[0, 0], noise_stim=0.2,
+    #                                               nstates=2, stim_stamps=10,
+    #                                               distance=True, alpha=0., seed=None)
+    # ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
+    #                                               true='CCW', noise=0.2, plot=True,
+    #                                               b=[0, 0], noise_stim=0.2,
+    #                                               nstates=2, stim_stamps=10,
+    #                                               distance=True, alpha=0., seed=None)
+    # ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
+    #                                               true='CCW', noise=0.2, plot=True,
+    #                                               b=[0, 0], noise_stim=0.2,
+    #                                               nstates=2, stim_stamps=10,
+    #                                               distance=True, alpha=-0.2, seed=None)
+    # ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
+    #                                               true='CW', noise=0.2, plot=True,
+    #                                               b=[0, 0], noise_stim=0.2,
+    #                                               nstates=2, stim_stamps=10,
+    #                                               distance=True, alpha=0.2, seed=None)
     # sols_vs_j_cond_on_a_beleif_prop(alist=[0, 0.05, 0.1, 0.2], j_list=np.arange(0, 1.02, 2e-2).round(5),
     #                                 nreps=50, dt=0.05, tau=0.1, n_iters=250, true='CW', noise_stim=0.1)
     # for i in range(2):
@@ -3857,14 +3868,14 @@ if __name__ == '__main__':
     # nice_quartet_example(n_iters=2000, dt=1e-2, downsample=5)
     # motion_quartet_example(n_iters=5000, dt=0.01, nreps=50, cols=True,
     #                         downsample=25)
-    # ring(epsilon=1e-2, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=2000, j=0.4,
-    #                                             true='CW', noise=0.1, plot=True,
-    #                                             discrete_stim=True, s=[0., 1],
-    #                                             b=[0., 0.], noise_stim=1, coh=None,
-    #                                             nstates=2, quartet=True, ratio=1,
-    #                                             stim_stamps=200, stim_weight=1,
-    #                                             colors=True,
-    #                                             seed=3)
+    ring(epsilon=1e-3, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=2000, j=0.,
+                                                true='CW', noise=0.1, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0., 0.], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=1,
+                                                stim_stamps=200, stim_weight=1,
+                                                colors=True,
+                                                seed=3)
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
