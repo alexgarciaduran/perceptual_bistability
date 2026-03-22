@@ -44,7 +44,7 @@ import statsmodels.formula.api as smf
 from scipy.stats import pearsonr, zscore
 from scipy.signal import sawtooth, medfilt
 from scipy.optimize import curve_fit, root_scalar, brentq, fsolve
-from scipy.integrate import quad, cumulative_trapezoid, solve_bvp
+from scipy.integrate import quad, cumulative_trapezoid, solve_bvp, solve_ivp
 from scipy.interpolate import interp1d
 import itertools
 from pyddm import set_N_cpus
@@ -5610,9 +5610,8 @@ def optimal_escape_eta(j,  time, stim=None):
     return eta
 
 
-def optimal_escape_eta_with_all_functional(j=1, theta=0.):
+def optimal_escape_eta_with_all_functional(j=1, theta=0., D=0.025):
     B = 0.0
-    D = 0.01
     if j < 1:
         x0 = 0.5-theta
     else:
@@ -5635,22 +5634,130 @@ def optimal_escape_eta_with_all_functional(j=1, theta=0.):
         time_vals = sol.x
         eta_opt = (dx_opt - drive(x_opt, j, B)) / np.sqrt(2*D)
 
-        plt.figure(figsize=(8, 4))
+        plt.figure(figsize=(6, 3))
         plt.subplot(121)
-        plt.plot(time_vals, x_opt, label="x(t)")
-        plt.title("Optimal path")
-        plt.xlabel("Time, t"); plt.ylabel("x")
+        plt.plot(time_vals, x_opt, label="q(t)", color='k', linewidth=3)
+        plt.xlabel("Time, t"); plt.ylabel("q")
         plt.legend()
 
         plt.subplot(122)
-        plt.plot(time_vals, eta_opt, label="η(t)")
-        plt.title("Optimal noise")
+        plt.plot(time_vals, eta_opt, label="η(t)", color='k', linewidth=3)
         plt.xlabel("Time, t"); plt.ylabel("η(t)")
         plt.legend()
         plt.tight_layout()
         plt.show()
     else:
         print("BVP failed:", sol.message)
+
+
+def optimal_b_escape(J=1.5, theta=0., k=1):
+    if J > 1:
+        q0 = 0.05  # initial position (left attractor)
+    else:
+        q0 = 0.5-theta
+    qT = 0.5 + theta
+    
+    T = 10
+    t = np.linspace(0,T,500)
+    
+    q = q0 + (qT-q0)/(1+np.exp(-k*(t-T/2)))
+    
+    dq = np.gradient(q,t)
+    
+    B = 0.5*(np.log((q+dq)/(1-(q+dq))) - 2*J*(2*q-1))
+    
+    fig, ax = plt.subplots(ncols=2, figsize=(6, 3))
+    ax[0].plot(t,q,label="q(t)", color='k', linewidth=3)
+    ax[1].plot(t,B,label="B(t)", color='k', linewidth=3)
+    ax[0].set_xlabel('Time (s)')
+    ax[0].set_ylabel('q(t)')
+    ax[1].set_ylabel('B(t)')
+    fig.tight_layout()
+
+
+def optimal_eta_and_stimuli(J=1, sigma=0.1, alpha=1, theta=0.05, T=10,
+                            timepoints=10000):
+    if J > 1:
+        q0 = 0.05  # initial position (left attractor)
+    else:
+        q0 = 0.5-theta
+    
+    target = 0.5 + theta
+    
+    
+    def f(z):
+        return 1/(1+np.exp(-z))
+    
+    def fp(z):
+        return f(z)*(1-f(z))
+    
+    def compute_B(q,p):
+
+        B=0
+        for _ in range(100):
+            z=2*J*(2*q-1)+2*B
+            B=-alpha*p*fp(z)
+        return B
+
+    def dynamics(t,y):
+
+        q,p=y
+        B=compute_B(q,p)
+        z=2*J*(2*q-1)+2*B
+        
+        dq = f(z)-q - sigma**2*p
+        dp = -p*(2*J*fp(z)-1)
+
+        return [dq,dp]
+
+    def shoot(p0, q0=q0):
+
+        sol = solve_ivp(
+            dynamics,
+            [0,T],
+            [q0,p0],
+            t_eval=[T]
+        )
+    
+        qT = sol.y[0,-1]
+
+        return qT - target
+
+    root = root_scalar(
+    shoot,
+    bracket=[-10,10],
+    method='brentq'
+    )
+
+    p0 = root.root
+    y0=[q0, p0]
+    print(y0)
+    t = np.linspace(0,T,timepoints)
+    sol = solve_ivp(dynamics,[0,T],y0,t_eval=t)
+
+    q=sol.y[0]
+    p=sol.y[1]
+
+    B = np.array([compute_B(q[i],p[i]) for i in range(len(q))])
+
+    dq = np.gradient(q, t)
+
+    eta_check = dq - f(2*J*(2*q-1)+2*B) + q
+
+    fig, ax = plt.subplots(ncols=3, figsize=(8, 3))
+    time_switch = -sol.t[::-1]
+    ax[0].plot(time_switch,q,label="q(t)", linewidth=3, color='k')
+    ax[0].set_ylabel('q(t)')
+    ax[1].plot(time_switch,-p*sigma**2,label=r"$-p(t)\sigma^2$", linewidth=3, color='k')
+    ax[1].plot(time_switch,eta_check,label=r"$\eta(t)$", linewidth=3, color='firebrick')
+    ax[1].legend(frameon=False)
+    ax[1].set_ylabel('$\eta(t)$')
+    ax[2].plot(time_switch,B,label="B(t)", linewidth=3, color='k')
+    ax[2].set_ylabel('B(t)')
+    for a in ax:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+        a.set_xlabel('Time before switch (s)')
+    fig.tight_layout()
 
 
 def optimal_eta_time(J, theta, T=1.0, B=0.0, n_points=400):
@@ -5705,10 +5812,11 @@ def optimal_eta_time(J, theta, T=1.0, B=0.0, n_points=400):
 
 
 def plot_eta():
-    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    colormap = ['cadetblue', 'peru']
     linestyles = ['solid', '--']
-    for i_j, J in enumerate([1.5, 2, 2.5]):
-        for i_th, theta in enumerate([0.05, 0.1]):
+    plt.figure()
+    for i_j, J in enumerate([0.6, 1.4]):
+        for i_th, theta in enumerate([0.05, 0.2]):
             t, x_t, eta_t, C = optimal_eta_time(J, theta, T=10, n_points=1000)
             plt.plot(t, eta_t, label=f'J={J}, θ={theta}, C={C:.3f}',
                      linewidth=3, color=colormap[i_j],
@@ -5866,29 +5974,27 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
             potential_vals_aligned = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
             potential_vals_aligned[:] = np.nan
             parameters_sub = fitted_params_all[i_sub]
-            j_eff = parameters_sub[0]*(1-pshuffles[i_sub, i_trial]) + parameters_sub[1]
-            b1 = parameters_sub[2]
-            k = int(fps*0.5)
+            sigma_param = parameters_sub[4]
+            k = int(fps*0.25)
             for i, idx in enumerate(idx_1):
-                x_vals_aligned[i, :] = values_x[idx - steps_back:idx+steps_front]
+                conf_i = values_x[idx - steps_back:idx+steps_front]
+                x_vals_aligned[i, :] = conf_i
                 stim_vals_aligned[i, :] = chi[idx - steps_back:idx+steps_front]
-                internal_noise_vals_aligned[i, :] = internal_noise[idx - steps_back:idx+steps_front]
-                potential = potential_mf(x_vals_aligned[i, :], j_eff,
-                                         bias=b1*stim_vals_aligned[i, :], n=1)
-                dxdt_full = np.full_like(x_vals_aligned[i, :], np.nan)
-                min_dist_vals = np.min(np.row_stack([(x_vals_aligned[i, :]-upper_bound)**2, (x_vals_aligned[i, :]-lower_bound)**2]), axis=0)
-                dxdt_full[k:] = (min_dist_vals[k:]-min_dist_vals[:-k])/(k/fps)
-                potential_vals_aligned[i, :] = min_dist_vals
+                internal_noise_vals_aligned[i, :] = internal_noise[idx - steps_back:idx+steps_front]*sigma_param
+                dxdt_full = np.full_like(conf_i, np.nan)
+                min_dist_vals = np.min(np.row_stack([(conf_i-upper_bound)**2, (conf_i-lower_bound)**2]), axis=0)
+                dxdt_full[k:] = (conf_i[k:]-conf_i[:-k])/(k/fps)
+                potential_vals_aligned[i, :] = dxdt_full
             for i, idx in enumerate(idx_0):
-                x_vals_aligned[i+len(idx_1), :] =\
-                    1-values_x[idx - steps_back:idx+steps_front]
+                conf_i = 1-values_x[idx - steps_back:idx+steps_front]
+                x_vals_aligned[i+len(idx_1), :] = conf_i
                 stim_vals_aligned[i+len(idx_1), :] = chi[idx - steps_back:idx+steps_front]*-1
-                internal_noise_vals_aligned[i+len(idx_1), :] = internal_noise[idx - steps_back:idx+steps_front]*-1
-                dxdt_full = np.full_like(x_vals_aligned[i+len(idx_1), :], np.nan)
+                internal_noise_vals_aligned[i+len(idx_1), :] = internal_noise[idx - steps_back:idx+steps_front]*-1*sigma_param
+                dxdt_full = np.full_like(conf_i, np.nan)
                 # dxdt_full[k:] = (x_vals_aligned[i+len(idx_1), :][k:]-x_vals_aligned[i+len(idx_1), :][:-k])/(k/fps)
-                min_dist_vals = np.min(np.row_stack([(x_vals_aligned[i+len(idx_1), :]-upper_bound)**2, (x_vals_aligned[i+len(idx_1), :]-lower_bound)**2]), axis=0)
-                dxdt_full[k:] = (min_dist_vals[k:]-min_dist_vals[:-k])/(k/fps)
-                potential_vals_aligned[i+len(idx_1), :] = min_dist_vals
+                min_dist_vals = np.min(np.row_stack([(conf_i-upper_bound)**2, (conf_i-lower_bound)**2]), axis=0)
+                dxdt_full[k:] = (conf_i[k:]-conf_i[:-k])/(k/fps)
+                potential_vals_aligned[i+len(idx_1), :] = dxdt_full
 
             x_vals_aligned_all_trials = np.row_stack((x_vals_aligned_all_trials, x_vals_aligned))
             potential_vals_aligned_all_trials = np.row_stack((potential_vals_aligned_all_trials, potential_vals_aligned))
@@ -5909,8 +6015,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         median_theta = 0.5 + np.nanmedian(theta)*np.array([-1, 1])
     else:
         median_theta = 0.5 + np.nanmean(median_theta)*np.array([-1, 1])
-    fig, ax = plt.subplots(ncols=2, nrows=4, figsize=(10, 11), sharex=True,
-                           sharey='row')
+    fig, ax = plt.subplots(ncols=2, nrows=4, figsize=(10, 11), sharex=True,)
+                           # sharey='row')
     fig.suptitle(title, fontsize=16)
     ax = ax.flatten()
     variables = [x_values_all_subjects, stim_values_all_subjects, internal_noise_values_all_subjects,
@@ -5927,6 +6033,15 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         ax[0].axhline(0., color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
     else:
         ax[0].axhline(0.5, color='k', linestyle='--', alpha=0.4, linewidth=3, zorder=1)
+    if bis_mono is None:
+        color = 'k'
+        c_ind = 'firebrick'
+    if bis_mono == 'Bistable':
+        color = 'peru'
+        c_ind = 'peru'
+    if bis_mono == 'Monostable':
+        color = 'cadetblue'
+        c_ind = 'cadetblue'
     for i_a, a in enumerate(ax):
         # a.set_ylim(ylims[var][0], ylims[var][1])
         a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
@@ -5942,7 +6057,7 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                     y_plot = (variables[var][i_sub]-0.5)/(maxvar-minvar)
                 else:
                     y_plot = variables[var][i_sub]
-                a.plot(x_plot, y_plot, color='firebrick',
+                a.plot(x_plot, y_plot, color=c_ind,
                        linewidth=2, alpha=0.1)
             continue
         y_plot = np.nanmean(variables[var], axis=0)
@@ -5953,8 +6068,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         #     ax2.plot(x_plot_for_eta/10, eta, color='darkgreen', linestyle='--', linewidth=3)
         #     ax2.spines['top'].set_visible(False)
         y_err = np.nanstd(variables[var], axis=0)/np.sqrt(len(subs))
-        a.plot(x_plot, y_plot, color='k', linewidth=4)
-        a.fill_between(x_plot, y_plot-y_err, y_plot+y_err, color='k', alpha=0.2)
+        a.plot(x_plot, y_plot, color=color, linewidth=4)
+        a.fill_between(x_plot, y_plot-y_err, y_plot+y_err, color=color, alpha=0.2)
         var += 1
     fig.tight_layout()
     fig.savefig(SV_FOLDER + f'simulated_variables_noise_trials{label}.png', dpi=200, bbox_inches='tight')
@@ -12395,14 +12510,19 @@ if __name__ == '__main__':
     # simple_optimal_eta_quartic_potential(a=0.5)
     # simple_optimal_eta_quartic_potential(a=1.)
     # simple_optimal_eta_quartic_potential(a=1.5)
+    # optimal_escape_eta_with_all_functional(j=1.3, theta=0., D=0.02)
+    # plot_eta()
+    # optimal_b_escape(J=1.3, theta=0., k=1)
+    # optimal_eta_and_stimuli(J=1.3, sigma=0.2, alpha=1, theta=0., T=2,
+    #                         timepoints=1000)
     plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                                 tFrame=26, fps=60,
-                                steps_back=200, steps_front=100, avoid_first=True,
+                                steps_back=300, steps_front=200, avoid_first=True,
                                 n=4, load_simulations=True, normalize=False, sigma=None,
                                 pshuf_only=None, bis_mono='Monostable')
     plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                                 tFrame=26, fps=60,
-                                steps_back=200, steps_front=100, avoid_first=True,
+                                steps_back=300, steps_front=200, avoid_first=True,
                                 n=4, load_simulations=True, normalize=False, sigma=None,
                                 pshuf_only=None, bis_mono='Bistable')
     # compare_likelihoods_models(load=True, loss='AIC')
@@ -12538,11 +12658,11 @@ if __name__ == '__main__':
     #                                  fps=150, nsubs=1, n=4, nsims=5000,
     #                                  b_list=np.linspace(-0.5, 0.5, 1001), simul=False)
     # plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                          steps_back=150, steps_front=10,
-    #                          shuffle_vals=[1, 0.7, 0], violin=True, sub=None,
-    #                          avoid_first=True, window_conv=1,
-    #                          zscore_number_switches=False, 
-    #                          normalize_variables=True, hysteresis_area=True)
+    #                           steps_back=150, steps_front=10,
+    #                           shuffle_vals=[1, 0.7, 0], violin=True, sub=None,
+    #                           avoid_first=True, window_conv=1,
+    #                           zscore_number_switches=False, 
+    #                           normalize_variables=True, hysteresis_area=True)
     # hysteresis_basic_plot_all_subjects(coupling_levels=[0, 0.3, 1],
     #                                     fps=60, tFrame=26, data_folder=DATA_FOLDER,
     #                                     ntraining=8, arrows=False)
