@@ -2891,7 +2891,7 @@ def optimal_alpha_grad_descent(j, b, n, lr=1e-2, n_iter=5000, a0=2,
         if mode == 'inference':
             # find r(alpha)
             sol_a = np.max(find_solution_bp(j, b, min_r=0., max_r=30, w_size=0.1,
-                                            tol=1e-2, n_neigh=n, alpha=a))
+                                            tol=1e-2, n_neigh=n, alpha=a-eps))
             # find r(alpha+epsilon)
             sol_a_eps = np.max(find_solution_bp(j, b, min_r=0., max_r=30, w_size=0.1,
                                                 tol=1e-2, n_neigh=n, alpha=a+eps))
@@ -2899,8 +2899,8 @@ def optimal_alpha_grad_descent(j, b, n, lr=1e-2, n_iter=5000, a0=2,
             q_a = np.exp(b)*sol_a**3 / (np.exp(-b)+np.exp(b)*sol_a**3)
             # compute q(alpha+epsilon)
             q_a_eps = np.exp(b)*sol_a_eps**3 / (np.exp(-b)+np.exp(b)*sol_a_eps**3)
-            # compute as d q/d alpha = (q(alpha+epsilon)-q(alpha))/epsilon
-            d_q_d_a = (q_a_eps-q_a)/eps
+            # compute as d q/d alpha = (q(alpha+epsilon)-q(alpha-epsilon))/(2*epsilon)
+            d_q_d_a = (q_a_eps-q_a)/eps/2
             # compute dKL/dalpha = dKL/dq * dq/dalpha
             derivative = d_kl_d_q(q_a, p)*d_q_d_a
         if mode == 'correct':
@@ -3858,5 +3858,5 @@ if __name__ == '__main__':
     # plot_lbp_3_examples()
     # plot_lbp_explanation()
     # plot_m1_m2_vector_field(j=.65, b=0., n=3)
-    # plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
-    #                  thr=1e-15, stim=0.0, j=0.5*np.log(3))
+    plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
+                      thr=1e-15, stim=0.0, j=0.5*np.log(3))
