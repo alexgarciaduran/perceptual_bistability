@@ -1426,7 +1426,7 @@ def compute_j_crit(j_list=np.arange(0., 1.005, 0.01),
 
 
 def plot_density(num_iter=100, extra='', method='BADS', model='MF',
-                 n=3.92):
+                 n=4):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     subjects = all_df.subject.unique()
     state = []
@@ -2759,7 +2759,8 @@ def plot_mcmc_individual(states, vals, dists, burn_in):
     fig.tight_layout()
 
 
-def plot_all_subjects(xvar='stim_ev_cong', model=False):
+def plot_all_subjects(xvar='stim_ev_cong', model=False, hue='pShuffle',
+                      n=4):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
     if model:
         data_orig, data_model_orig, data_model_null =\
@@ -2794,7 +2795,18 @@ def plot_all_subjects(xvar='stim_ev_cong', model=False):
         dataframe['confidence'] = (transform(dataframe.confidence.values, -0.999, 0.999)+1)/2
         dataframe['abs_confidence'] = np.abs(dataframe.confidence-0.5)*2
         dataframe['zscore_abs_confidence'] = scipy.stats.zscore(np.abs(dataframe.confidence*2-1), nan_policy='omit')
-        df_sub = pd.concat((df_sub, dataframe[['zscore_abs_confidence', 'stim_ev_cong', 'coupling', 'abs_confidence', 'subject', 'stim_str', 'pShuffle', 'confidence']]))
+        # load params to compute regime
+        pars = np.load(SV_FOLDER + '/parameters_MF5_BADS' + sub + '.npy')
+        j_vals = pars[0]*(1-dataframe['pShuffle'].values/100)+pars[1]
+        delta = np.sqrt(1-1/(j_vals*n))
+        b_crit1 = (np.log((1-delta)/(1+delta))+2*n*j_vals*delta)/2
+        b_crit2 = (np.log((1+delta)/(1-delta))-2*n*j_vals*delta)/2
+        vals_b = pars[3]+pars[2]*dataframe['evidence'].values
+        regime = np.ones(len(dataframe))
+        idx_monostable = (vals_b > b_crit1) + (vals_b < b_crit2) + np.isnan(delta)
+        regime[idx_monostable] = 0
+        dataframe['regime'] = regime
+        df_sub = pd.concat((df_sub, dataframe[['zscore_abs_confidence', 'stim_ev_cong', 'coupling', 'abs_confidence', 'subject', 'stim_str', 'pShuffle', 'confidence', 'regime']]))
         l = True if i_s == 0 else False
         sns.lineplot(dataframe, x=xvar, y='abs_confidence',
                      hue='coupling', ax=ax[i_s], legend=l, errorbar=('se'))
@@ -2835,17 +2847,20 @@ def plot_all_subjects(xvar='stim_ev_cong', model=False):
     df_sub_final = df_sub.dropna().reset_index()
     # df_sub_final['abs_confidence'] = scipy.stats.zscore(df_sub_final.abs_confidence.values)
     # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
-    df_subject_avg = df_sub_final.groupby(['subject', 'stim_ev_cong', 'pShuffle'])['zscore_abs_confidence'].mean().reset_index()
+    variable = 'zscore_abs_confidence' if hue == 'pShuffle' else 'abs_confidence'
+    df_subject_avg = df_sub_final.groupby(['subject', 'stim_ev_cong', 'pShuffle', 'regime'])[variable].mean().reset_index()
     # Plot
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
-    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1] if hue == 'pShuffle' else ['cadetblue', 'peru']
+    hue_order = [1, 0.7, 1] if hue == 'pShuffle' else [0, 1]
     if not model:
         df_subject_avg['pShuffle'] = df_subject_avg['pShuffle']/100
-    sns.lineplot(data=df_subject_avg, x='stim_ev_cong', y='zscore_abs_confidence', hue='pShuffle', ax=ax2,
+    sns.lineplot(data=df_subject_avg, x='stim_ev_cong', y=variable, hue=hue, ax=ax2,
                  errorbar=('se'), palette=colormap, legend=True,
-                 linewidth=4, hue_order=[1., 0.7, 0.])
-    ax2.legend(frameon=False, title='p(shuffle)')
+                 linewidth=4, hue_order=hue_order)
+    title_legend = 'p(shuffle)' if hue == 'pShuffle' else 'regime'
+    ax2.legend(frameon=False, title=title_legend)
     # Perform statistical tests at each stim_ev_cong level
     alpha = 0.01  # Significance threshold
     significant_x = []  # Store x positions where significant differences occur
@@ -2853,42 +2868,43 @@ def plot_all_subjects(xvar='stim_ev_cong', model=False):
     significant_x3 = []
     df = df_subject_avg.copy()
     # stim_values = df['stim_ev_cong'].unique()
-    coupling_values = df['pShuffle'].unique()
-    
-    for stim in [0, 0.4, 0.8, 1]:
-        groups = []
+    if hue == 'pShuffle':
+        coupling_values = df['pShuffle'].unique()
         
-        for coup in coupling_values:
-            # Extract confidence values for each coupling at a given stim_ev_cong
-            conf_values = df_subject_avg.loc[
-                (df_subject_avg['stim_ev_cong'] == stim) & (df_subject_avg['pShuffle'] == coup),
-                'zscore_abs_confidence'].values
+        for stim in [0, 0.4, 0.8, 1]:
+            groups = []
             
-            groups.append(conf_values)
-    
-        stat, p_val = scipy.stats.ttest_rel(groups[0], groups[2])  # Paired t-test across subjects
-        stat, p_val2 = scipy.stats.ttest_rel(groups[0], groups[1])  # Paired t-test across subjects
-        stat, p_val3 = scipy.stats.ttest_rel(groups[2], groups[1])  # Paired t-test across subjects
-        # If p-value is below alpha, mark this stim_ev_cong as significant
-        if p_val < alpha:
-            significant_x.append(stim)
-        if p_val2 < alpha:
-            significant_x3.append(stim)
-        if p_val3 < alpha:
-            significant_x2.append(stim)
-    # Add horizontal lines on top for significant differences
-    # colormap = sns.color_palette("rocket", as_cmap=True)
-    # cmap = colormap([0, 0.5, 1])
-    if significant_x:
-        for i, sig_x in enumerate([significant_x]):   # , significant_x2, significant_x3
-            y_max = -0.85 + i*0.08 # Position above highest confidence
-            if sig_x == [0, 0.4, 0.8, 1] or sig_x == [0, 0.4, 0.8]:
-                ax2.plot(sig_x, [y_max]*len(sig_x),
-                         color='k', linewidth=4)
-            else:
-                for x in sig_x:
-                    plt.plot([x - 0.2, x], [y_max, y_max],
-                             color='k', linewidth=4)  # Short line above plot
+            for coup in coupling_values:
+                # Extract confidence values for each coupling at a given stim_ev_cong
+                conf_values = df_subject_avg.loc[
+                    (df_subject_avg['stim_ev_cong'] == stim) & (df_subject_avg['pShuffle'] == coup),
+                    'zscore_abs_confidence'].values
+                
+                groups.append(conf_values)
+        
+            stat, p_val = scipy.stats.ttest_rel(groups[0], groups[2])  # Paired t-test across subjects
+            stat, p_val2 = scipy.stats.ttest_rel(groups[0], groups[1])  # Paired t-test across subjects
+            stat, p_val3 = scipy.stats.ttest_rel(groups[2], groups[1])  # Paired t-test across subjects
+            # If p-value is below alpha, mark this stim_ev_cong as significant
+            if p_val < alpha:
+                significant_x.append(stim)
+            if p_val2 < alpha:
+                significant_x3.append(stim)
+            if p_val3 < alpha:
+                significant_x2.append(stim)
+        # Add horizontal lines on top for significant differences
+        # colormap = sns.color_palette("rocket", as_cmap=True)
+        # cmap = colormap([0, 0.5, 1])
+        if significant_x:
+            for i, sig_x in enumerate([significant_x]):   # , significant_x2, significant_x3
+                y_max = -0.85 + i*0.08 # Position above highest confidence
+                if sig_x == [0, 0.4, 0.8, 1] or sig_x == [0, 0.4, 0.8]:
+                    ax2.plot(sig_x, [y_max]*len(sig_x),
+                             color='k', linewidth=4)
+                else:
+                    for x in sig_x:
+                        plt.plot([x - 0.2, x], [y_max, y_max],
+                                 color='k', linewidth=4)  # Short line above plot
     ax2.set_xlabel('Depth cue congruence with choice')
     ax2.set_ylabel('z-scored absolute confidence')
     ax2.set_xticks([-1, -0.5, 0, 0.5, 1])
@@ -3092,17 +3108,17 @@ def plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
     color_mono = 'cadetblue'
     alpha_list = [0.25, 0.5, 0.75, 1]
     fig, ax = plt.subplots(ncols=4, nrows=1, figsize=(14, 3.5),
-                           sharey=True, sharex=True)
+                           sharey=fitted_simulations, sharex=fitted_simulations)
     ax = ax.flatten()
     titles = ['Data', 'Model']*2
 
     plot_density_comparison(num_iter=100, method='BADS', kde=True, stim_ev_0=True,
-                            variable='aligned_confidence', bws=[1.2, 0.75], model='MF5',
+                            variable='aligned_confidence', bws=[1.2, 0.9], model='MF5',
                             full_fig=True, plot_model=False, ax0=[ax[0], ax[2]],
                             colors_bis_mono=True)
     if fitted_simulations:
         plot_density_comparison(num_iter=100, method='BADS', kde=True, stim_ev_0=True,
-                                variable='aligned_confidence', bws=[1.2, 0.75], model='MF5',
+                                variable='aligned_confidence', bws=[1.2, 0.9], model='MF5',
                                 full_fig=True, plot_model=True, ax0=[ax[1], ax[3]],
                                 colors_bis_mono=True)
     for ia, a in enumerate(ax):
@@ -3127,9 +3143,18 @@ def plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
     ax[2].set_ylabel('Density of confidence')
     ax[0].set_xlabel('                           Confidence aligned with stimulus')    
     ax[2].set_xlabel('                           Confidence aligned with stimulus')
-    for a in ax:
+    for ia, a in enumerate(ax):
         a.set_yticks([])
-    ax[0].set_xlim(-1.25, 1.25)
+        if fitted_simulations:
+            xlim1, xlim2 = -1.25, 1.25
+        else:
+            if ia % 2 == 0:
+                xlim1, xlim2 = -1.25, 1.25
+            else:
+                xlim1, xlim2 = -1.7, 1.7
+                a.set_ylim(-0.05, 1.4)
+            a.set_xticks([])
+        a.set_xlim(xlim1, xlim2)
     # ax[3].set_xlim(-1.5, 1.5)
     fig.tight_layout()
     plt.subplots_adjust(wspace=0.3)
@@ -3138,9 +3163,9 @@ def plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
     name = 'fitted_sims_distros_aligned_confidence_data_and_model' if fitted_simulations\
         else 'distros_aligned_confidence_data_and_model'
     # ax[1].set_title('Bistable', fontsize=15)
-    fig.savefig(SV_FOLDER + f'{name}.png', dpi=200, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + f'{name}.svg', dpi=200, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + f'{name}.pdf', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'{name}.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'{name}.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'{name}.pdf', dpi=400, bbox_inches='tight')
 
 
 def plot_prev_vs_new_fitting(nsubs=32, model='MF5'):
@@ -3391,7 +3416,7 @@ if __name__ == '__main__':
     #                                 bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                data_only=True)
-    # plot_all_subjects(model=False)
+    plot_all_subjects(model=False, hue='regime')
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
@@ -3408,8 +3433,6 @@ if __name__ == '__main__':
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
     #                         variable='aligned_confidence', bws=[1.35, 0.8], model='MF5',
     #                         full_fig=False, plot_model=False)
-    plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
-                                      bw_pred=1)
     # plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
     #                                   bw_pred=1, fitted_simulations=False)
     # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
