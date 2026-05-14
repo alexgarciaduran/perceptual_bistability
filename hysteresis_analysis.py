@@ -277,7 +277,12 @@ def preprocess_df_examples(data_folder, threshold_switches=3, n_training=8):
 
 
 def get_response_and_blist_array(df, fps=60, tFrame=26,
-                                 flip_responses=False):
+                                 flip_responses=False,
+                                 frames_no_resp_ini=0):
+    """
+    From the df extracts responses arrays,
+    separating ascending from descending parts.
+    """
     nFrame = fps*tFrame
     stimulus_times = np.arange(0, nFrame)
     trial_index = df.trial_index.unique()
@@ -316,7 +321,7 @@ def get_response_and_blist_array(df, fps=60, tFrame=26,
         if len(times_onset) > 1:
             response_series = np.array(())
             for i in range(len(switch_times)-1):
-                if switch_times[i+1] < 40:
+                if switch_times[i+1] < frames_no_resp_ini:
                     resp_i = np.nan
                 else:
                     resp_i = responses[i]
@@ -358,6 +363,11 @@ def bin_average_response(stim_time, response_array, nbins=11):
 
 
 def collect_responses(df, subjects, coupling_levels, fps=60, tFrame=26):
+    """
+    From the df, it collects the responses nicely so that we have
+    dictionaries (responses_2 and responses_4) with the response values,
+    separated in asc/desc, the initial side. It also returns the stimulus array.
+    """
     responses_2 = [[] for _ in coupling_levels]
     responses_4 = [[] for _ in coupling_levels]
     barray_2, barray_4 = None, None
@@ -479,7 +489,6 @@ def plot_responses_panels(responses_2, responses_4, barray_2, barray_4, coupling
     Make a 2-panel plot:
       - Left:  freq=2
       - Right: freq=4
-    Solid line = ascending, dashed line = descending
     """
     fig, ax = plt.subplots(ncols=2, nrows=1, figsize=(7.5, 4.))
     nFrame = tFrame*fps
@@ -2166,11 +2175,11 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
                 # chi = chi-np.nanmean(chi)
                 orders = rle(responses)
                 if avoid_first:
-                    idx_1 = orders[1][1:][orders[2][1:] == 2]
-                    idx_0 = orders[1][1:][orders[2][1:] == 1]
+                    idx_1 = orders[1][1:-1][orders[2][1:-1] == 2]
+                    idx_0 = orders[1][1:-1][orders[2][1:-1] == 1]
                 else:
-                    idx_1 = orders[1][orders[2] == 2]
-                    idx_0 = orders[1][orders[2] == 1]
+                    idx_1 = orders[1][:-1][orders[2][:-1] == 2]
+                    idx_0 = orders[1][:-1][orders[2][:-1] == 1]
                 number_switches.append(len(idx_1)+len(idx_0))
                 idx_1 = idx_1[(idx_1 > steps_back) & (idx_1 < (len(responses))-steps_front)]
                 idx_0 = idx_0[(idx_0 > steps_back) & (idx_0 < (len(responses))-steps_front)]
@@ -12515,16 +12524,16 @@ if __name__ == '__main__':
     # optimal_b_escape(J=1.3, theta=0., k=1)
     # optimal_eta_and_stimuli(J=1.3, sigma=0.2, alpha=1, theta=0., T=2,
     #                         timepoints=1000)
-    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-                                tFrame=26, fps=60,
-                                steps_back=300, steps_front=200, avoid_first=True,
-                                n=4, load_simulations=True, normalize=False, sigma=None,
-                                pshuf_only=None, bis_mono='Monostable')
-    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-                                tFrame=26, fps=60,
-                                steps_back=300, steps_front=200, avoid_first=True,
-                                n=4, load_simulations=True, normalize=False, sigma=None,
-                                pshuf_only=None, bis_mono='Bistable')
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=60,
+    #                             steps_back=300, steps_front=200, avoid_first=True,
+    #                             n=4, load_simulations=True, normalize=False, sigma=None,
+    #                             pshuf_only=None, bis_mono='Monostable')
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=60,
+    #                             steps_back=300, steps_front=200, avoid_first=True,
+    #                             n=4, load_simulations=True, normalize=False, sigma=None,
+    #                             pshuf_only=None, bis_mono='Bistable')
     # compare_likelihoods_models(load=True, loss='AIC')
     # compare_likelihoods_models(load=True, loss='BIC')
     # compare_likelihoods_models(load=True, loss='NLH')
@@ -12634,9 +12643,9 @@ if __name__ == '__main__':
     # plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                           ntraining=8, coupling_levels=[0, 0.3, 1],
     #                           window_conv=None, ndt_list=np.arange(-240, 80))
-    # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-    #                         ntraining=8, coupling_levels=[0, 0.3, 1],
-    #                         window_conv=None, ndt_list=None)
+    plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+                            ntraining=8, coupling_levels=[0, 0.3, 1],
+                            window_conv=None, ndt_list=None)
     # analytical_hysteresis_width_degeneration()
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=29, sv_folder=SV_FOLDER)
