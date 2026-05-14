@@ -36,6 +36,22 @@ if pc_name == 'alex':
 elif pc_name == 'alex_CRM':
     DATA_FOLDER = 'C:/Users/agarcia/Desktop/phd/necker/data_folder/'  # Alex CRM
 
+# Complete node definitions — these replace the startpoint triplet logic entirely
+# Ring1 (active for state1→state2 AND state2→state1, alternating nodes)
+# Ring2 (same geometry, rotated)
+QUARTET_NODE_DEFS = {
+    # ring1: CW direction is H
+    0: {'src': 0, 'dst': 1, 'type': 'H'},  # TL->TR
+    1: {'src': 1, 'dst': 2, 'type': 'V'},  # TR->BR
+    2: {'src': 2, 'dst': 3, 'type': 'H'},  # BR->BL
+    3: {'src': 3, 'dst': 0, 'type': 'V'},  # BL->TL
+    # ring2: CW direction is V
+    4: {'src': 0, 'dst': 3, 'type': 'V'},  # TL->BL
+    5: {'src': 3, 'dst': 2, 'type': 'H'},  # BL->BR
+    6: {'src': 2, 'dst': 1, 'type': 'V'},  # BR->TR
+    7: {'src': 1, 'dst': 0, 'type': 'H'},  # TR->TL
+}
+
 
 class ring:
     def __init__(self, n_dots=6, epsilon=0.05):
@@ -172,92 +188,34 @@ class ring:
         return likelihood
 
 
-    def compute_likelihood_quartet_stim_ising(self, s_t_1, z_triplet, s_t, central_idx,
-                                          noise=0.1, epsilon=1e-6, ratio=1,
-                                          state=1):
+    
+    def compute_likelihood_quartet_stim_ising(
+        self, s_t_1, z_triplet, s_t, central_idx,
+        noise=0.1, epsilon=1e-12, ratio=1.0, state=1
+    ):
         """
-        Compute log-likelihood for a local triplet of latents in the quartet,
-        respecting the movement semantics per state.
-    
-        Args:
-            s_t_1: np.array of length 3, previous frame (triplet)
-            s_t: np.array of length 3, current frame (triplet)
-            z_triplet: np.array of length 3, latent states [-1,1]
-                z[0] = left neighbor, z[1] = central, z[2] = right neighbor
-            central_idx: int, index of the central node in the full quartet (0..3)
-            state: 1 or 2, which quartet state we are in
-            noise: likelihood softness
-            epsilon: unexpected dot probability
-            ratio: vertical vs horizontal weighting
-    
-        Returns:
-            log-likelihood scalar
+        Edge-based likelihood for quartet Ising model.
+
+        Depends only on z_center and the edge type defined in QUARTET_NODE_DEFS.
+        No stim-content dependency — stim_t_1 = 1-stim[t] means every position
+        alternates at every step, so any stim-based formula introduces asymmetry.
+
+        d = 1.0 for H-type edges, d = ratio for V-type edges.
+        With ratio=1 all 4 latents in a ring receive identical signal.
+        H preferred over V when ratio > 1.
+        Idle-ring suppression is handled by get_likelihood_quartet_small_rings.
         """
-    
-        # Map each latent to its movement direction per state
-        # Example: 'R','U','D','L'
-        if state == 1:
-            latent_dirs = ['R','U','D','L']  # indices 0..3
-        elif state == 2:
-            latent_dirs = ['D','L','R','U']
+        if s_t[1] == 1:
+            z_center = z_triplet[1]
+            ring_offset = 0 if state == 1 else 4
+            edge_type = QUARTET_NODE_DEFS[ring_offset + central_idx]['type']
+            d = 1.0 if edge_type == 'H' else ratio
+            if z_center == 1:
+                return np.log(d)-d / noise
+            return np.log(epsilon)
         else:
-            raise ValueError("state must be 1 or 2")
-    
-        # Define which neighbor movement contributes to the central node
-        # quartet connectivity: each node has two neighbors that can move a dot to it
-        # mapping central_idx -> neighbor_idx -> expected direction
-        quartet_map = {
-            0: {1:'L', 2:'U'},  # top-left
-            1: {0:'R', 3:'U'},  # top-right
-            2: {3:'L', 0:'D'},  # bottom-left
-            3: {2:'R', 1:'D'}   # bottom-right
-        }
+            return 0
 
-        neighbors = quartet_map[central_idx]
-
-        L = 0.0
-
-        if z_triplet[1] == 1:  # central moving
-            evidence = 0.0
-            for local_idx, expected_dir in neighbors.items():
-
-                # map global neighbor index -> local triplet index
-                if local_idx == central_idx - 1 or (central_idx == 0 and local_idx == 3):
-                    neighbor_local = 0
-                elif local_idx == central_idx + 1 or (central_idx == 3 and local_idx == 0):
-                    neighbor_local = 2
-                else:
-                    continue
-            
-                if s_t_1[neighbor_local] != 1:
-                    continue
-            
-                neighbor_dir = latent_dirs[local_idx]
-            
-                if neighbor_dir != expected_dir:
-                    continue
-            
-                if z_triplet[neighbor_local] == -1:  # horizontal
-                    weight = 1.0
-                elif z_triplet[neighbor_local] == 1:  # vertical
-                    weight = ratio
-                else:
-                    continue
-            
-                evidence += np.exp(-weight / noise)
-
-            if evidence == 0:
-                evidence = epsilon
-            L = evidence
-
-        elif z_triplet[1] == -1:  # central not moving
-            if s_t_1[1] == 1 and s_t[1] == 1:
-                L = np.exp(-0.0 / noise)
-            else:
-                L = epsilon
-    
-        return np.log(L)
-    
     # def compute_likelihood_quartet_stim_ising(
     #     self,
     #     s_t_1,
@@ -545,7 +503,6 @@ class ring:
         idxmap = {-1:1, 1:0}  # state to index mapping
         for i in range(num_variables):  # for all dots
             # Iterate over all possible latent states z_{t-1}
-            # mat = np.zeros((2, 2)).flatten()
             for i_z, zstate in enumerate(z_states):
                 lh = 0
                 for startpoint in [-1, 0, 1]:
@@ -569,7 +526,7 @@ class ring:
                             zn = np.ones(num_variables)
                             zn[i_prev] = comb[0]  # z_{i-2}
                             zn[idx] = comb[1]  # z_{i-1}
-                            zn[i_next] = zstate
+                            zn[i_next] = zstate # z_i
                             q_z_p = q_z_prev[i_prev, idxmap[comb[0]]]  # extract q_{i-2}(z_{i-2}=comb[0])
                             q_z_n = q_z_prev[idx, idxmap[comb[1]]]  # extract q_{i-1}(z_{i-1}=comb[1])
                         if startpoint == 0:
@@ -581,7 +538,7 @@ class ring:
                             q_z_n = q_z_prev[i_next, idxmap[comb[1]]]  # extract q_{i+1}(z_{i+1}=comb[1])
                         if startpoint == 1:
                             zn = np.ones(num_variables)
-                            zn[i_prev] = zstate
+                            zn[i_prev] = zstate # z_i
                             zn[idx] = comb[0]  # z_{i+1}
                             zn[i_next] = comb[1]  # z_{i+2}
                             q_z_p = q_z_prev[idx, idxmap[comb[0]]]  # extract q_{i+1}(z_{i+1}=comb[0])
@@ -854,20 +811,35 @@ class ring:
             ax.set_ylabel('q(z_i = CW)')
 
 
-    def get_likelihood_quartet_small_rings(self,
-                                           stim_t_1, q_mf, s_t,
-                                           discrete_stim=True,
-                                           noise=0.1, quartet=True,
-                                           ratio=1):
-        likelihood_r1 = self.compute_expectation_log_likelihood_ising(stim_t_1[:4], q_mf[:4], s_t[:4],
-                                                                      discrete_stim=discrete_stim,
-                                                                      noise=noise, quartet=quartet,
-                                                                      ratio=ratio, tritone=False, state=1)
-        likelihood_r2 = self.compute_expectation_log_likelihood_ising(stim_t_1[4:], q_mf[4:], s_t[4:],
-                                                                      discrete_stim=discrete_stim,
-                                                                      noise=noise, quartet=quartet,
-                                                                      ratio=ratio, tritone=False, state=2)
-        return np.row_stack((likelihood_r1, likelihood_r2))
+    def get_likelihood_quartet_small_rings(self, stim_t_1, q_mf, s_t,
+                                       discrete_stim=True,
+                                       noise=0.1, quartet=True,
+                                       ratio=1):
+        is_state1_prev = (stim_t_1[0] == 1)  # TL lit → state1 was active
+    
+        # Strong bias toward z=-1 (no motion) for the idle ring
+        # log P(no motion | no dots changing) = 0, log P(motion | no dots) = log(eps)
+        idle_lh = np.zeros((4, q_mf.shape[1]))
+        # idle_lh[:, 0] = np.log(self.eps)   # col 0 = z=+1 (motion): heavily penalised
+        # idle_lh[:, 1] = 0.0                # col 1 = z=-1 (no motion): neutral
+    
+        if is_state1_prev:
+            likelihood_r1 = self.compute_expectation_log_likelihood_ising(
+                stim_t_1, q_mf[:4], s_t,
+                discrete_stim=discrete_stim,
+                noise=noise, quartet=True,
+                ratio=ratio, tritone=False, state=1)
+            likelihood_r2 = idle_lh
+        else:
+            likelihood_r2 = self.compute_expectation_log_likelihood_ising(
+                stim_t_1, q_mf[4:], s_t,
+                discrete_stim=discrete_stim,
+                noise=noise, quartet=True,
+                ratio=ratio, tritone=False, state=2)
+            likelihood_r1 = idle_lh
+    
+        likelihood_full = np.row_stack((likelihood_r1, likelihood_r2))
+        return likelihood_full
 
 
     def mean_field_sde(self, dt=0.001, tau=1, n_iters=100, j=2, nstates=3, b=np.zeros(3),
@@ -919,7 +891,7 @@ class ring:
                                     [0, 0, 0, 1],
                                     [1, 0, 0, 0],
                                     [0, 1, 0, 0]])
-            between_rings = within_ring + np.eye(4)
+            between_rings = np.eye(4) + within_ring
             upper = np.column_stack((within_ring, between_rings))
             lower = np.column_stack((between_rings, within_ring))
             j_mat = np.row_stack((upper, lower))*j
@@ -927,7 +899,9 @@ class ring:
         q_mf_arr[:, :, 0] = q_mf
         noise_vals = np.random.randn(n_iters, n_dots, nstates)*noise*np.sqrt(dt/tau)
         llh = []
+        llh1 = []
         llh2 = []
+        llh3 = []
         for t in range(1, n_iters):
             # if J*(2*Q-1), then it means repulsion between different z's, i.e. 2\delta(z_i, z_j) - 1
             # if J*Q, then it means just attraction to same, i.e. \delta(z_i, z_j)
@@ -943,7 +917,7 @@ class ring:
                 # stim_segment = stim[t-idx_max:t]
                 # # Weighted sum
                 # stim_t_1 = np.sum(stim_segment * exp_kernel[:, None], axis=0)  # assumes stim is 2D: (time, features)
-                stim_t_1 = stim[t-1]
+                stim_t_1 = 1-stim[t]
             if nstates == 2:
                 if quartet:
                     likelihood = self.get_likelihood_quartet_small_rings(
@@ -951,6 +925,7 @@ class ring:
                                                                          discrete_stim=True,
                                                                          noise=noise_stim, quartet=True,
                                                                          ratio=ratio)
+                    # print(likelihood)
                 elif distance:
                     positions = [w_all[t], w_all[t-1]]
                     likelihood = self.compute_expectation_log_likelihood_ising(stim_t_1, q_mf, stim[t],
@@ -968,14 +943,26 @@ class ring:
                 likelihood = self.compute_expectation_log_likelihood_original(stim_t_1, q_mf, stim[t],
                                                                              discrete_stim=discrete_stim,
                                                                              noise=noise_gaussian, tritone=tritone)
-            var_m1 = np.exp(np.matmul(j_mat, q_mf) + b + likelihood*stim_weight)
-            q_mf = q_mf + dt/tau*(var_m1.T / np.sum(var_m1, axis=1) - q_mf.T).T + noise_vals[t]
+            field = np.matmul(j_mat, q_mf) + b + likelihood * stim_weight
+
+            # numerical stabilization
+            # field = field - np.max(field, axis=1, keepdims=True)
+            
+            var_m1 = np.exp(field)
+            
+            var_m1 /= np.sum(var_m1, axis=1, keepdims=True)
+
+            q_mf = q_mf + dt/tau * (var_m1 - q_mf) + noise_vals[t]
             q_mf_arr[:, :, t] = q_mf
-            llh.append(likelihood[1, 0])
-            llh2.append(likelihood[5, 0])
+            llh.append(likelihood[0, 0])
+            llh1.append(likelihood[1, 0])
+            llh2.append(likelihood[2, 0])
+            llh3.append(likelihood[3, 0])
         plt.figure()
         plt.plot(llh)
+        plt.plot(llh1)
         plt.plot(llh2)
+        plt.plot(llh3)
         if not plot:
             if not return_all:
                 return q_mf
@@ -1649,15 +1636,15 @@ class ring:
 
 
     def stim_creation_quartet(self, n_iters=100, timesteps_between=50):
-        base = np.array([0,0,0,0,1,1,1,1])
-        # base = np.array([0,1,0,1,0,1,0,1])
-        seq = np.zeros((n_iters, len(base)), dtype=int)
-    
+        # Clockwise ordering: TL=0, TR=1, BR=2, BL=3
+        # State1: TL(0) and BR(2) lit → positions 0,2
+        # State2: TR(1) and BL(3) lit → positions 1,3
+        state1 = np.array([1, 0, 1, 0])
+        state2 = np.array([0, 1, 0, 1])
+        seq = np.zeros((n_iters, 4), dtype=int)
         for t in range(n_iters):
             block = t // timesteps_between
-            flip = block % 2
-            seq[t] = base ^ flip   # XOR
-    
+            seq[t] = state1 if block % 2 == 0 else state2
         return seq
 
 
@@ -3734,10 +3721,10 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
                          stamps=200):
     # np.random.seed(123)  # with tau=10*dt
     np.random.seed(910)
-    posterior = ring(epsilon=1e-2, n_dots=4).mean_field_sde(dt=dt, tau=20*dt, n_iters=n_iters, j=0.,
-                                                            true='CW', noise=0.1, plot=False,
+    posterior = ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=dt, tau=50*dt, n_iters=n_iters, j=1,
+                                                            true='CW', noise=0.05, plot=False,
                                                             discrete_stim=True, s=[0., 1],
-                                                            b=[0., 0.], noise_stim=0.5, coh=None,
+                                                            b=[0., 3.], noise_stim=1, coh=None,
                                                             nstates=2, quartet=True, ratio=1,
                                                             stim_stamps=stamps,
                                                             return_all=True)
@@ -3752,8 +3739,10 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
     ax.spines['right'].set_visible(False)
     colormap1 = ['firebrick', 'indianred']*2
     colormap2 = ['forestgreen', 'mediumseagreen']*2
+    colormap_full = ['firebrick', 'forestgreen', 'firebrick', 'forestgreen',
+                     'mediumseagreen', 'indianred', 'mediumseagreen', 'indianred']
     # ax.axhline(0.5, color='k', alpha=0.4, linewidth=4, linestyle='--')
-    ax.axvline(10.5, color='k', linestyle='--', alpha=0.4, linewidth=4)
+    # ax.axvline(10.5, color='k', linestyle='--', alpha=0.4, linewidth=4)
     time = np.arange(0, n_iters, downsample)*dt
     # time -= np.min(time)
     # create vertical shaded blocks every 200 with width 200
@@ -3761,13 +3750,14 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
     for start in np.arange(time.min(), time.max(), 2*step_time):
         ax.axvspan(start, start + step_time, color='gray', alpha=0.3)
 
-    for i in range(2):
-        for c in range(4):
+    for i in range(1):
+        for c in range(8):
             post = posterior[c, i, :]
             # butterworth_filter = scipy.signal.butter(3, 0.1, output='sos')
             # smoothed_version = scipy.signal.sosfilt(butterworth_filter, post)
-            ax.plot(time, post, color=[colormap1, colormap2][i][c], linewidth=4)
-    ax.set_xlabel('Time (s)'); ax.set_xlim(2.2, 18)
+            ax.plot(time, post, color=colormap_full[c], linewidth=4)
+    ax.set_xlabel('Time (s)'); 
+    # ax.set_xlim(2.2, 18)
     ax.set_yticks([0, 0.5, 1])
     ax.set_ylabel('Posterior, q')
     # ax.fill_between([11, 14], [1.1, 1.1], [-0.1, -0.1], color='k', alpha=0.2)
@@ -3865,17 +3855,49 @@ if __name__ == '__main__':
     #                                               true='CCW', noise=0.01, plot=True,
     #                                               discrete_stim=True, s=[0., 1],
     #                                               b=[0., 0., 0.], noise_stim=0.0, coh=0.2)
-    # nice_quartet_example(n_iters=2000, dt=1e-2, downsample=5)
+    # nice_quartet_example(n_iters=2000, dt=1e-3, downsample=10, stamps=250)
     # motion_quartet_example(n_iters=5000, dt=0.01, nreps=50, cols=True,
     #                         downsample=25)
-    ring(epsilon=1e-3, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=2000, j=0.,
-                                                true='CW', noise=0.1, plot=True,
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1,
+                                                true='CW', noise=0.05, plot=True,
                                                 discrete_stim=True, s=[0., 1],
-                                                b=[0., 0.], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=1,
-                                                stim_stamps=200, stim_weight=1,
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=0.1,
+                                                stim_stamps=50, stim_weight=1,
                                                 colors=True,
-                                                seed=3)
+                                                seed=6)
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1,
+                                                true='CW', noise=0.05, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=1,
+                                                stim_stamps=50, stim_weight=1,
+                                                colors=True,
+                                                seed=6)
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1,
+                                                true='CW', noise=0.05, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=2,
+                                                stim_stamps=50, stim_weight=1,
+                                                colors=True,
+                                                seed=6)
+    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.8,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0.0, 0.], noise_stim=0.1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=2,
+    #                                             stim_stamps=50, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=3)
+    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0.0, 0.], noise_stim=0.1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=0.1,
+    #                                             stim_stamps=50, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=3)
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
