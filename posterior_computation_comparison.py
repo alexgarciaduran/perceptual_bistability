@@ -234,7 +234,7 @@ def plot_grid_by_method_and_p(all_results, methods=None):
     n_cols = len(p_list)
 
     fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(3*n_cols, 3*n_rows),
+                             figsize=(2.5*n_cols, 2.5*n_rows),
                              sharex=True, sharey=True)
     for a in axes.flatten():
         a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
@@ -259,8 +259,9 @@ def plot_grid_by_method_and_p(all_results, methods=None):
             x_all = np.array(x_all)
             y_all = np.array(y_all)
 
-            ax.scatter(x_all, y_all, alpha=0.4, s=10)
-            ax.plot([0, 1], [0, 1], linestyle="--")
+            ax.plot([-0.1, 1.1], [-0.1, 1.1], linestyle="--",
+                    color='k', zorder=1)
+            ax.scatter(x_all, y_all, alpha=0.4, s=10, zorder=20)
 
             # Titles (top row)
             if i == 0:
@@ -270,8 +271,8 @@ def plot_grid_by_method_and_p(all_results, methods=None):
             if j == 0:
                 ax.set_ylabel(method_names[i])
 
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
+            ax.set_xlim(-0.1, 1.1)
+            ax.set_ylim(-0.1, 1.1)
             if i == (len(methods)-1):
                 ax.set_xlabel('Exact')
 
@@ -394,7 +395,7 @@ def plot_regular_results_dcolor(all_results, d_list, J_list=None, methods=None, 
     d_to_color = {d: cmap(i) for i, d in enumerate(d_list)}
 
     fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(3*n_cols, 3*n_rows),
+                             figsize=(2.5*n_cols, 2.5*n_rows),
                              sharex=True, sharey=True)
 
     for a in axes.flatten():
@@ -451,7 +452,7 @@ def plot_regular_results_dcolor(all_results, d_list, J_list=None, methods=None, 
 if __name__ == "__main__":
     p_list = np.round(np.arange(0.2, 1.01, 0.1), 2)
     d_list = list(range(2, 7))   # degrees 2-6
-    J_list = np.round(np.arange(0., 1.01, 0.2), 2) # J = 0.0, 0.05, ..., 0.5
+    J_list = np.round(np.arange(0., 1.01, 0.1), 2) # J = 0.0, 0.05, ..., 0.5
 
     # results_regular = run_regular_graph_experiment(d_list, J_list, n=8, N=30)
 
