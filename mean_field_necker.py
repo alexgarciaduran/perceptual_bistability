@@ -2034,7 +2034,8 @@ def potential_stim_str(stims=[0, 0.4, 0.8, 1], j_list=[0.15, 0.5]):
 
 
 def mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.2,
-                       skip=25):
+                       skip=25, seed=0):
+    np.random.seed(seed)
     x1, x2 = 0.5, 0.5
     x1l = []
     x2l = []
@@ -2046,30 +2047,34 @@ def mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.2,
         if i % skip == 0 and i > 0:
             x1l.append(x1)
             x2l.append(x2)
-    fig, ax = plt.subplots(ncols=1, nrows=2, figsize=(7, 6))
+    fig, ax = plt.subplots(ncols=1, nrows=2, figsize=(5, 6),
+                           sharex=True)
+    ax[0].set_yticks([])
     for a in ax:
         a.spines['top'].set_visible(False)
         a.spines['right'].set_visible(False)
-    ax[0].plot(time, x1l, color='firebrick', label=r'$r_A (t)$',
+    ax[0].plot(time, x1l, color='firebrick', label=r'$A (t)$',  # r'$r_A (t)$'
                linewidth=2.4)
     ax[0].set_ylim(0.1, 1.0)
-    ax[0].plot(time, x2l, color='navy', label=r'$r_B (t)$',
+    ax[0].plot(time, x2l, color='forestgreen', label=r'$B (t)$',  # r'$r_B (t)$'
                linewidth=2.4)
-    ax[0].set_ylabel('Firing rate')
-    ax[0].legend(frameon=False, ncol=2, loc='upper center')
+    ax[0].set_ylabel('Activity')
+    ax[0].legend(frameon=False, ncol=2, loc='upper center', fontsize=15)
     for y in [-0.375, 0, 0.375]:
         ax[1].axhline(y, color='grey', linestyle='--', alpha=0.7)
     ax[1].text(time[-1]+90, -0.52, 'Vase', color='gray')
     ax[1].text(time[-1]+90, 0.45, 'Faces', color='gray')
     ax[1].set_ylim(-0.6, 0.6)
-    ax[1].set_xlim(0, np.max(time)+150)
-    ax[0].set_xlim(0, np.max(time)+150)
+    # ax[1].set_xlim(0, np.max(time)+150)
+    # ax[0].set_xlim(0, np.max(time)+150)
     ax[1].plot(time, np.array(x1l)-np.array(x2l), color='grey',
                linewidth=2.4)
     ax[1].set_ylabel(r'$\Delta r (t)= r_A (t) - r_B (t)$')
     ax[1].set_xlabel('Time (s)')
     fig.tight_layout()
     # plt.ylim(0, 1)
+    fig.savefig(DATA_FOLDER + 'cartoon_firing_rate_BP.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'cartoon_firing_rate_BP.pdf', dpi=400, bbox_inches='tight')
 
 
 
@@ -8050,8 +8055,8 @@ if __name__ == '__main__':
     # plot_noise_before_switch(j=0.395, b=0, theta=theta, noise=0.15,
     #                          tau=0.1, time_end=120000, dt=5e-3, p_thr=0.5,
     #                          steps_back=2000, steps_front=1000, gibbs=False)
-    # mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.15,
-    #                    skip=25)
+    mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.15,
+                       skip=50, seed=0)
     # plt.title('J=0.395')
     # plot_peak_noise_vs_j(j_list=np.arange(0.34, 0.55, 5e-3),
     #                      b=0, theta=theta, noise=0.12,
@@ -8145,11 +8150,11 @@ if __name__ == '__main__':
     #                              b_list=[0, 0.4, 0.8, 1],
     #                              ntrials=100000, tmax=1, dt=0.01, tau=0.1, bw=1,
     #                              simulate=False)
-    plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
-                              shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
-                              idx_neuron='mean', ou=False, add_symetric_RM=True,
-                              choice_time_before=0.25, random_matrix_weight=0.25,
-                              absolute_cps_rsc=True)
+    # plot_example_correlation(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.2,
+    #                           shift=0, nreps=500, tau=0.3, seed=10, simulate=False,
+    #                           idx_neuron='mean', ou=False, add_symetric_RM=True,
+    #                           choice_time_before=0.25, random_matrix_weight=0.25,
+    #                           absolute_cps_rsc=True)
     # plot_examples_choice(j0=0.1, j1=0.3, t_dur=2, dt=1e-2, sigma=0.1,
     #                       nreps=10, tau=0.3, seed=10, 
     #                       alpha=0.25, choice_time_before=0.25,
