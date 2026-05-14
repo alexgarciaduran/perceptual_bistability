@@ -592,7 +592,6 @@ def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
     """
     Searches for roots using bisection method in a interval of r, given by
     [min_r, max_r], using a sliding window of size w_size.
-    
     """
     j_e = np.exp(2*j)
     b_e = np.exp(2*b)
@@ -3852,11 +3851,11 @@ if __name__ == '__main__':
     # j_list=np.arange(0.001, 1, 0.001)
     # fig, ax = plt.subplots(ncols=1)
     # plot_bp_solution(ax, j_list, b=0.05, tol=1e-10,
-    #                  min_r=-15, max_r=15,
-    #                  w_size=0.01, n_neigh=3,
-    #                  color='r')
+    #                   min_r=-15, max_r=15,
+    #                   w_size=0.01, n_neigh=3,
+    #                   color='r')
     # plot_lbp_3_examples()
     # plot_lbp_explanation()
     # plot_m1_m2_vector_field(j=.65, b=0., n=3)
-    plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
-                      thr=1e-15, stim=0.0, j=0.5*np.log(3))
+    # plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
+    #                  thr=1e-15, stim=0.0, j=0.5*np.log(3))
