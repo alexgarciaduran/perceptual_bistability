@@ -3153,7 +3153,7 @@ def plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
             else:
                 xlim1, xlim2 = -1.7, 1.7
                 a.set_ylim(-0.05, 1.4)
-            a.set_xticks([])
+            # a.set_xticks([])
         a.set_xlim(xlim1, xlim2)
     # ax[3].set_xlim(-1.5, 1.5)
     fig.tight_layout()
@@ -3416,7 +3416,7 @@ if __name__ == '__main__':
     #                                 bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                data_only=True)
-    plot_all_subjects(model=False, hue='regime')
+    # plot_all_subjects(model=False, hue='regime')
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
@@ -3433,8 +3433,8 @@ if __name__ == '__main__':
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
     #                         variable='aligned_confidence', bws=[1.35, 0.8], model='MF5',
     #                         full_fig=False, plot_model=False)
-    # plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
-    #                                   bw_pred=1, fitted_simulations=False)
+    plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
+                                      bw_pred=1, fitted_simulations=False)
     # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
     #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
