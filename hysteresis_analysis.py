@@ -1282,6 +1282,200 @@ def plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                           ndt_list=ndt_list)
 
 
+def plot_hysteresis_by_regime(
+    tFrame=26,
+    fps=60,
+    data_folder=DATA_FOLDER,
+    sv_folder=SV_FOLDER,
+    ntraining=8,
+    coupling_levels=[0, 0.3, 1],
+    window_conv=None,
+    n=4,
+    use_delay=False,
+):
+    """
+    Like plot_hysteresis_average, but instead of averaging by coupling level,
+    subjects are split into bistable / monostable groups based on their fitted
+    J parameters, and the hysteresis curves are averaged within each group.
+ 
+    Bistability condition (same as the rest of the pipeline):
+        J_eff = (n·J1)·(1 − pshuffle) + (n·J0)  ≥  1
+ 
+    Parameters
+    ----------
+    tFrame        : trial duration in seconds
+    fps           : frames per second
+    data_folder   : path to behavioural data
+    sv_folder     : path to fitted_params/ndt/*.npy files
+    ntraining     : number of training trials to discard
+    coupling_levels : list of coupling values (1 − pshuffle)
+    window_conv   : smoothing kernel width (None = no smoothing)
+    n             : nonlinearity exponent used during fitting
+    use_delay     : if True, load kernel_latency_average.npy to roll responses
+                    (same logic as plot_responses_panels)
+    """
+    # ------------------------------------------------------------------
+    # 1. Load behavioural data
+    # ------------------------------------------------------------------
+    df = load_data(data_folder, n_participants='all')
+    df = df.loc[df.trial_index > ntraining]
+    subjects = df.subject.unique()
+ 
+    # ------------------------------------------------------------------
+    # 2. Load fitted parameters  [n·J1, n·J0, B1, sigma, theta]
+    #    Order on disk matches subjects order assumed by collect_responses.
+    # ------------------------------------------------------------------
+    pars_files = sorted(glob.glob(sv_folder + 'fitted_params/ndt/' + '*.npy'))
+    fitted_params_all = []
+    for f in pars_files:
+        p = np.load(f)           # raw: [J1, J0, B1, theta, sigma, ...]
+        fitted_params_all.append([
+            n * p[0],   # n·J1   → index 0
+            n * p[1],   # n·J0   → index 1
+            p[2],       # B1     → index 2
+            p[4],       # sigma  → index 3
+            p[3],       # theta  → index 4
+        ])
+ 
+    n_fitted = len(fitted_params_all)
+ 
+    # ------------------------------------------------------------------
+    # 3. Collect responses (same helper as the original function)
+    # ------------------------------------------------------------------
+    responses_2, responses_4, barray_2, barray_4 = collect_responses(
+        df, subjects, coupling_levels, fps=fps, tFrame=tFrame)
+ 
+    nFrame = tFrame * fps
+    nsubs = len(responses_2[0])
+ 
+    # Per-subject delay (frames) used to roll the response array
+    if use_delay:
+        delay_per_subject = np.int32(fps * np.load(data_folder + 'kernel_latency_average.npy'))
+    else:
+        delay_per_subject = np.zeros(nsubs, dtype=int)
+ 
+    # ------------------------------------------------------------------
+    # 4. Stimulus x-axes
+    # ------------------------------------------------------------------
+    asc_mask_2 = np.gradient(barray_2) > 0
+    x_asc_2    = barray_2[asc_mask_2]
+    x_desc_2   = barray_2[~asc_mask_2]
+ 
+    asc_mask_4 = np.gradient(barray_4) > 0
+    x_asc_4    = barray_4[asc_mask_4][:nFrame // 4]
+    x_desc_4   = barray_4[~asc_mask_4][:nFrame // 4]
+ 
+    # ------------------------------------------------------------------
+    # 5. Build regime-separated response lists, pooled across all couplings
+    # ------------------------------------------------------------------
+    # Each entry is one (subject × coupling) observation, a 1-D mean curve.
+    regime_resp_2 = {0: [], 1: []}   # 0 = bistable, 1 = monostable
+    regime_resp_4 = {0: [], 1: []}
+ 
+    for i_c, coupling in enumerate(coupling_levels):
+        pshuffle = 1.0 - coupling
+ 
+        # ---- freq = 2 ----
+        for i_s, subj_resp in enumerate(responses_2[i_c]):
+            if i_s >= n_fitted:
+                break
+ 
+            j_eff = (fitted_params_all[i_s][0] * (1.0 - pshuffle)
+                     + fitted_params_all[i_s][1])
+            regime = 0 if j_eff >= 1.0 else 1
+ 
+            resp_asc  = subj_resp["asc"]
+            resp_desc = subj_resp["desc"]
+            combined  = np.hstack((resp_asc, resp_desc))
+            combined  = np.roll(combined, delay_per_subject[i_s], axis=1)
+ 
+            asc  = np.nanmean(combined[:, :nFrame // 2], axis=0)
+            desc = np.nanmean(combined[:, nFrame // 2:], axis=0)
+ 
+            regime_resp_2[regime].append((asc, desc))
+ 
+        # ---- freq = 4 ----
+        for i_s, subj_resp in enumerate(responses_4[i_c]):
+            if i_s >= n_fitted:
+                break
+ 
+            j_eff = (fitted_params_all[i_s][0] * (1.0 - pshuffle)
+                     + fitted_params_all[i_s][1])
+            regime = 0 if j_eff >= 1.0 else 1
+ 
+            resp_asc  = subj_resp["asc"]
+            resp_desc = subj_resp["desc"]
+            combined  = np.hstack((resp_asc, resp_desc))
+            combined  = np.roll(combined, delay_per_subject[i_s], axis=1)
+ 
+            asc  = np.nanmean(combined[:, :nFrame // 4], axis=0)
+            desc = np.nanmean(combined[:, nFrame // 4:], axis=0)
+ 
+            regime_resp_4[regime].append((asc, desc))
+ 
+    # ------------------------------------------------------------------
+    # 6. Plot — one curve per regime, pooled across all coupling levels
+    # ------------------------------------------------------------------
+    fig, ax = plt.subplots(ncols=2, nrows=1, figsize=(7.5, 4.))
+ 
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_ylim(-0.025, 1.085)
+        a.set_yticks([0, 0.5, 1])
+        a.set_xlim(-2.05, 2.05)
+        a.set_xticks([-2, 0, 2], [-1, 0, 1])
+        a.axhline(0.5, color='k', linestyle='--', alpha=0.2)
+        a.axvline(0.0, color='k', linestyle='--', alpha=0.2)
+ 
+    regime_colors = {0: 'peru',   1: 'cadetblue'}
+    regime_labels = {0: 'Bistable',  1: 'Monostable'}
+ 
+    def _smooth(y, x, wc):
+        if wc is not None and wc > 1:
+            y = np.convolve(y, np.ones(wc) / wc, mode='same')[wc//2:-wc//2]
+            x = x[wc//2:-wc//2]
+        return y, x
+ 
+    for regime in [0, 1]:
+        color   = regime_colors[regime]
+ 
+        # ---- freq = 2 ----
+        data_2 = regime_resp_2[regime]
+        if data_2:
+            n_obs  = len(data_2)
+            y_asc  = np.nanmean([d[0] for d in data_2], axis=0)
+            y_desc = np.nanmean([d[1] for d in data_2], axis=0)
+            ya, xa = _smooth(y_asc,  x_asc_2.copy(),  window_conv)
+            yd, xd = _smooth(y_desc, x_desc_2.copy(), window_conv)
+            ax[0].plot(xa, ya, color=color, linewidth=4,
+                       label=f'{regime_labels[regime]}')
+            ax[0].plot(xd, yd, color=color, linewidth=4)
+ 
+        # ---- freq = 4 ----
+        # data_4 = regime_resp_4[regime]
+        # if data_4:
+        #     y_asc  = np.nanmean([d[0] for d in data_4], axis=0)
+        #     y_desc = np.nanmean([d[1] for d in data_4], axis=0)
+        #     ya, xa = _smooth(y_asc,  x_asc_4.copy(),  window_conv)
+        #     yd, xd = _smooth(y_desc, x_desc_4.copy(), window_conv)
+        #     ax[1].plot(xa, ya, color=color, linewidth=4)
+        #     ax[1].plot(xd, yd, color=color, linewidth=4)
+ 
+    ax[0].set_xlabel('Depth cue, s(t)')
+    ax[1].set_xlabel('Depth cue, s(t)')
+    ax[0].set_ylabel('P(rightward)')
+    ax[0].set_title('Freq = 2', fontsize=14)
+    ax[1].set_title('Freq = 4', fontsize=14)
+    ax[0].legend(frameon=False, fontsize=12, loc='upper left')
+ 
+    fig.tight_layout()
+    fig.savefig(sv_folder + 'hysteresis_by_regime_together.png', dpi=400, bbox_inches='tight')
+    fig.savefig(sv_folder + 'hysteresis_by_regime_together.pdf', dpi=400, bbox_inches='tight')
+    plt.show()
+    return fig, ax
+ 
+
 def plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
                               ntraining=8, coupling_levels=[0, 0.3, 1],
                               window_conv=None, ndt_list=np.arange(100)):
@@ -12643,9 +12837,20 @@ if __name__ == '__main__':
     # plot_max_hyst_ndt_subject(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                           ntraining=8, coupling_levels=[0, 0.3, 1],
     #                           window_conv=None, ndt_list=np.arange(-240, 80))
-    plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-                            ntraining=8, coupling_levels=[0, 0.3, 1],
-                            window_conv=None, ndt_list=None)
+    # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+    #                         ntraining=8, coupling_levels=[0, 0.3, 1],
+    #                         window_conv=None, ndt_list=None)
+    plot_hysteresis_by_regime(
+        tFrame=26,
+        fps=60,
+        data_folder=DATA_FOLDER,
+        sv_folder=SV_FOLDER,
+        ntraining=8,
+        coupling_levels=[0, 0.3, 1],
+        window_conv=None,
+        n=4,
+        use_delay=False,
+    )
     # analytical_hysteresis_width_degeneration()
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=29, sv_folder=SV_FOLDER)
