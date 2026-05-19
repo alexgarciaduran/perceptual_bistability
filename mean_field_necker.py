@@ -3932,8 +3932,10 @@ def save_images_potential_hysteresis(j=0.39,
                                      b_list=np.linspace(-0.2, 0.2, 501),
                                      save_folder=DATA_FOLDER, tau=0.8,
                                      sigma=0.):
-    b_list = np.concatenate(([-0.2, -0.2], b_list[:-1], b_list[::-1]))
+    b_list = np.concatenate(([b_list[0], b_list[0]], b_list[:-1], b_list[::-1]))
     x = 0.0931
+    if j < 0.33:
+        x = 0.15
     vec = [x]
     dt = 0.1
     for i in range(len(b_list)-1):
@@ -3943,43 +3945,73 @@ def save_images_potential_hysteresis(j=0.39,
     # plt.figure()
     # plt.plot(b_list, vec)
     if tau >= 0.5:
-        lab = '/fast/' if sigma == 0 else '/fast_noisy/'
+        lab = '/fast' if sigma == 0 else '/fast_noisy'
     else:
-        lab = '/slow/' if sigma == 0 else '/slow_noisy/'
-    q = np.arange(0, 1, 0.001)
+        lab = '/slow' if sigma == 0 else '/slow_noisy'
+    color_potential = 'peru'
+    if j < 0.33:
+        lab = lab + '_monostable'
+        color_potential = 'cadetblue'
+    folder = save_folder + '/images_video_hyst' + lab + '/'
+    os.makedirs(folder, exist_ok=True)
+    q = np.arange(-0.1, 1.1, 0.001)
     for i in range(len(vec)):
         fig, ax = plt.subplots(nrows=2, figsize=(6, 10))
-        ax[0].plot(b_list[:i], vec[:i], color='navajowhite',
-                   linewidth=4)
+        for t in range(i):
+            ax[0].plot(b_list[t], vec[t], color=COLORMAP(vec[t]),
+                       marker='o', markersize=4)
         ax[0].plot(b_list[i], vec[i],
-                   marker='o', markersize=8, color='k')
-        ax[0].set_ylabel('Approximate posterior, q(x=1)')
-        ax[0].set_xlabel('Stimulus strength, B')
+                   marker='o', markersize=10, color=COLORMAP(vec[i]))
+        ax[0].set_ylabel(r'Approximate posterior, $q$')
+        ax[0].set_xlabel('Sensory evidence, B')
         ax[0].spines['right'].set_visible(False)
         ax[0].spines['top'].set_visible(False)
-        ax[0].set_xlim(-0.21, 0.21)
+        ax[0].set_xlim(-np.max(b_list)-0.01, np.max(b_list)+0.01)
         ax[0].set_ylim(0, 1)
         pot = potential_mf(q, j, b_list[i])
         val_particle = potential_mf(vec[i], j, b_list[i])
-        ax[1].plot(q, pot-np.nanmean(pot), color='purple',
-                   linewidth=4)
+        ax[1].plot(q, pot-np.nanmean(pot), color=color_potential,
+                   linewidth=5)
         ax[1].plot(vec[i], val_particle-np.nanmean(pot),
-                   marker='o', markersize=8, color='k')
+                   marker='o', markersize=12, color=COLORMAP(vec[i]))
         ax[1].set_ylabel('Potential')
-        ax[1].set_xlabel('Approximate posterior, q(x=1)')
+        ax[1].set_xlabel(r'Approximate posterior, $q$')
         ax[1].spines['left'].set_visible(False)
         ax[1].spines['right'].set_visible(False)
         ax[1].spines['bottom'].set_visible(False)
         ax[1].spines['top'].set_visible(False)
         ax[1].set_yticks([])
         ax[1].set_xticks([])
-        fig.savefig(save_folder + '/images_video_hyst' + lab + str(i) + '.png',
+        fig.savefig(folder + str(i) + '.png',
                     dpi=100)
         plt.close(fig)
 
+
+def create_gif_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast/',
+                           namefile='fast', fps=50):
+    from PIL import Image
+    gif_name = DATA_FOLDER+'/images_video_hyst/' + f'hysteresis_{namefile}.gif'
     
-def create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast/'):
-    video_name = image_folder + 'hysteresis_fast.mp4'
+    images = [img for img in os.listdir(image_folder) if img.endswith(".png")]
+    images = [images[i].replace('.png', '') for i in range(len(images))]
+    images.sort(key=float)
+    images = [images[i] + '.png' for i in range(len(images))]
+
+    frames = [Image.open(os.path.join(image_folder, img)) for img in images[2:-2]]
+    print(len(frames))
+    
+    frames[0].save(
+        gif_name,
+        save_all=True,
+        append_images=frames[1:],
+        duration=1000 // fps,  # milliseconds per frame
+        loop=0                 # 0 = loop forever
+    )
+
+
+def create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast/',
+                             namefile='fast'):
+    video_name = image_folder + f'hysteresis_{namefile}.mp4'
     images = [img for img in os.listdir(image_folder) if img.endswith(".png")]
     images = [images[i].replace('.png', '') for i in range(len(images))]
     images.sort(key=float)
@@ -8055,8 +8087,8 @@ if __name__ == '__main__':
     # plot_noise_before_switch(j=0.395, b=0, theta=theta, noise=0.15,
     #                          tau=0.1, time_end=120000, dt=5e-3, p_thr=0.5,
     #                          steps_back=2000, steps_front=1000, gibbs=False)
-    mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.15,
-                       skip=50, seed=0)
+    # mutual_inh_cartoon(inh=2.1, exc=2.1, n_its=10000, noise=0.025, tau=0.15,
+    #                    skip=50, seed=0)
     # plt.title('J=0.395')
     # plot_peak_noise_vs_j(j_list=np.arange(0.34, 0.55, 5e-3),
     #                      b=0, theta=theta, noise=0.12,
@@ -8113,14 +8145,30 @@ if __name__ == '__main__':
     #                             num_iter=200, tol=1e-3, dim3d=False)
     # plot_adaptation_mf(j=0.6, b=0.5, theta=theta, noise=0.1, gamma_adapt=3,
     #                    tau=1, time_end=100, dt=1e-2)
+    save_images_potential_hysteresis(j=0.1,
+                                      b_list=np.linspace(-0.6, 0.6, 501),
+                                      save_folder=DATA_FOLDER, tau=0.8,
+                                      sigma=0.05)
+    # save_images_potential_hysteresis(j=0.1,
+    #                                   b_list=np.linspace(-0.6, 0.6, 501),
+    #                                   save_folder=DATA_FOLDER, tau=0.1,
+    #                                   sigma=0.)
+    save_images_potential_hysteresis(j=0.39,
+                                      b_list=np.linspace(-0.6, 0.6, 501),
+                                      save_folder=DATA_FOLDER, tau=0.8,
+                                      sigma=0.05)
     # save_images_potential_hysteresis(j=0.39,
-    #                                  b_list=np.linspace(-0.2, 0.2, 501),
-    #                                  save_folder=DATA_FOLDER, tau=0.8,
-    #                                  sigma=0.)
-    # save_images_potential_hysteresis(j=0.39,
-    #                                  b_list=np.linspace(-0.2, 0.2, 501),
-    #                                  save_folder=DATA_FOLDER, tau=0.1,
-    #                                  sigma=0.)
+    #                                   b_list=np.linspace(-0.6, 0.6, 501),
+    #                                   save_folder=DATA_FOLDER, tau=0.1,
+    #                                   sigma=0.)
+    create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast_noisy/',
+                                  namefile='fast')
+    create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast_noisy_monostable/',
+                                  namefile='fast_monostable')
+    create_gif_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast_noisy/',
+                                 namefile='fast_noisy')
+    create_gif_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast_noisy_monostable/',
+                                 namefile='fast_noisy_monostable')
     # plot_adaptation_1d(j=0.5, b=0., noise=0.0, gamma_adapt=0.1,
     #                    tau=1, time_end=100, dt=1e-3)
     # for b in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]:
@@ -8170,3 +8218,4 @@ if __name__ == '__main__':
     # rubins_vase_simulation(seed=13, j=0.7, b=0, noise=0.2,
     #                        tau=0.05, time_end=30.1, dt=1e-3,
     #                        downsample=1, wdow=200)
+    # plt.show()
