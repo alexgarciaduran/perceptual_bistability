@@ -2238,6 +2238,365 @@ def get_correlation_consecutive_dominance_durations(data_folder=DATA_FOLDER, fps
     fig.tight_layout()
 
 
+def plot_dominance_distros_noise_trials_per_subject_regime(
+        data_folder=DATA_FOLDER,
+        fps=60,
+        simulated=False,
+        unique_shuffle=[1., 0.7, 0.],
+        regime_threshold=0.25
+):
+    """
+    Plot dominance distributions conditioned on inferred regime.
+
+    Regime definition:
+        Jeff = J * (1 - pShuffle) + bias
+
+    where:
+        fitted_params[0] -> J
+        fitted_params[1] -> baseline
+
+    Regimes:
+        Jeff < threshold  -> weak coupling
+        Jeff >= threshold -> strong coupling
+    """
+
+    # =========================================================
+    # LOAD DATA
+    # =========================================================
+
+    df = load_data(
+        data_folder + '/noisy/',
+        n_participants='all',
+        filter_subjects=True
+    )
+
+    subs = df.subject.unique()
+
+    # =========================================================
+    # LOAD FITTED PARAMETERS
+    # =========================================================
+
+    pars = glob.glob(
+        SV_FOLDER + 'fitted_params/ndt/' + '*.npy'
+    )
+
+    pars = sorted(pars)
+
+    fitted_params_all = [
+        np.load(par) for par in pars
+    ]
+
+    fitted_params_all = [
+        [params[0], params[1], params[2], params[4], params[3]]
+        for params in fitted_params_all
+    ]
+
+    unique_shuffle = np.array(unique_shuffle)
+
+    # =========================================================
+    # COMPUTE EFFECTIVE COUPLING / REGIME
+    # =========================================================
+
+    regimes_per_subject = {}
+
+    for i_sub, sub in enumerate(subs):
+
+        J = fitted_params_all[i_sub][0]
+        bias = fitted_params_all[i_sub][1]
+
+        jeffs = J * (1 - unique_shuffle) + bias
+
+        regimes = {}
+
+        for i_psh, psh in enumerate(unique_shuffle):
+
+            regimes[psh] = (
+                'Bistable'
+                if jeffs[i_psh] >= regime_threshold
+                else 'Monostable'
+            )
+
+        regimes_per_subject[sub] = regimes
+
+    # =========================================================
+    # SIMULATED RESPONSES
+    # =========================================================
+
+    responses_all = np.load(
+        SV_FOLDER + 'responses_simulated_noise.npy'
+    )
+
+    map_resps = {-1: 1, 0: 0, 1: 2}
+
+    # =========================================================
+    # COLORS
+    # =========================================================
+
+    regime_colors = {
+        'Monostable': 'cadetblue',
+        'Bistable': 'peru'
+    }
+
+    # =========================================================
+    # PER SUBJECT PLOTS
+    # =========================================================
+
+    fig, ax = plt.subplots(
+        nrows=len(subs)//5 + 1,
+        ncols=5,
+        figsize=(15, 12),
+        sharex=True,
+        sharey=True
+    )
+
+    ax = ax.flatten()
+
+    dominance_all_regimes = {
+        'Monostable': [],
+        'Bistable': []
+    }
+
+    mean_dom_per_subject = {
+        'Monostable': [],
+        'Bistable': []
+    }
+
+    for i_sub, subject in enumerate(subs):
+
+        ax[i_sub].spines['right'].set_visible(False)
+        ax[i_sub].spines['top'].set_visible(False)
+
+        df_sub = df.loc[df.subject == subject]
+
+        trial_index = df_sub.trial_index.unique()
+
+        doms_regime = {
+            'Monostable': [],
+            'Bistable': []
+        }
+
+        for i_trial, trial in enumerate(trial_index):
+
+            df_trial = df_sub.loc[
+                df_sub.trial_index == trial
+            ]
+
+            r = df_trial.responses.values
+
+            if simulated:
+                r = [
+                    map_resps[resp]
+                    for resp in responses_all[i_sub, i_trial]
+                ]
+
+            # -------------------------------------------------
+            # segment dominance durations
+            # -------------------------------------------------
+
+            change = np.r_[True, np.diff(r) != 0, True]
+
+            starts = np.where(change[:-1])[0]
+            ends = np.where(change[1:])[0]
+
+            segment_values = np.array([r[s] for s in starts])
+
+            lengths = np.array(ends - starts)
+
+            # exclude neutral state
+            doms = lengths[segment_values != 0] / fps
+
+            psh = df_trial.pShuffle.values[0]
+
+            regime = regimes_per_subject[subject][psh]
+
+            doms_regime[regime].extend(doms)
+
+        # -----------------------------------------------------
+        # plot per subject
+        # -----------------------------------------------------
+
+        for regime in ['Monostable', 'Bistable']:
+
+            if len(doms_regime[regime]) > 3:
+
+                sns.kdeplot(
+                    doms_regime[regime],
+                    color=regime_colors[regime],
+                    linewidth=3,
+                    ax=ax[i_sub],
+                    label=regime,
+                    cut=0
+                )
+
+                dominance_all_regimes[regime].extend(
+                    doms_regime[regime]
+                )
+
+                mean_dom_per_subject[regime].append(
+                    np.nanmean(doms_regime[regime])
+                )
+
+        ax[i_sub].set_title(subject)
+
+        ax[i_sub].set_xlabel('Dominance (s)')
+
+    ax[0].set_ylabel('Density')
+    ax[0].legend(frameon=False)
+
+    fig.tight_layout()
+
+    label = 'simulated_' if simulated else ''
+
+    # fig.savefig(
+    #     SV_FOLDER + label +
+    #     'noise_trials_dominance_regime_per_subject.png',
+    #     dpi=400,
+    #     bbox_inches='tight'
+    # )
+
+    # fig.savefig(
+    #     SV_FOLDER + label +
+    #     'noise_trials_dominance_regime_per_subject.pdf',
+    #     dpi=400,
+    #     bbox_inches='tight'
+    # )
+
+    # =========================================================
+    # GROUP-LEVEL DISTRIBUTIONS
+    # =========================================================
+
+    f2, ax2 = plt.subplots(
+        1,
+        figsize=(5, 4)
+    )
+
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+
+    for regime in ['Monostable', 'Bistable']:
+
+        sns.kdeplot(
+            dominance_all_regimes[regime],
+            color=regime_colors[regime],
+            linewidth=4,
+            label=regime,
+            cut=0,
+            ax=ax2
+        )
+
+    ax2.legend(frameon=False)
+
+    ax2.set_xlabel('Dominance (s)')
+    ax2.set_ylabel('Density')
+
+    f2.tight_layout()
+
+    # f2.savefig(
+    #     SV_FOLDER + label +
+    #     'noise_trials_dominance_regime_average.png',
+    #     dpi=400,
+    #     bbox_inches='tight'
+    # )
+
+    # f2.savefig(
+    #     SV_FOLDER + label +
+    #     'noise_trials_dominance_regime_average.pdf',
+    #     dpi=400,
+    #     bbox_inches='tight'
+    # )
+
+    # =========================================================
+    # SUBJECT AVERAGES + SWARMPLOT
+    # =========================================================
+
+    f3, ax3 = plt.subplots(
+        1,
+        figsize=(4.5, 4)
+    )
+
+    ax3.spines['right'].set_visible(False)
+    ax3.spines['top'].set_visible(False)
+
+    means = [
+        mean_dom_per_subject['Monostable'],
+        mean_dom_per_subject['Bistable']
+    ]
+
+    positions = [0, 1]
+
+    bar_means = [
+        np.nanmean(means[0]),
+        np.nanmean(means[1])
+    ]
+
+    bar_sds = [
+        np.nanstd(means[0]),
+        np.nanstd(means[1])
+    ]
+
+    ax3.bar(
+        positions,
+        bar_means,
+        yerr=bar_sds,
+        capsize=5,
+        color=[
+            regime_colors['Monostable'],
+            regime_colors['Bistable']
+        ]
+    )
+
+    # ---------------------------------------------------------
+    # swarm points
+    # ---------------------------------------------------------
+
+    for i, regime in enumerate(['Monostable', 'Bistable']):
+
+        x = np.random.normal(
+            positions[i],
+            0.04,
+            size=len(mean_dom_per_subject[regime])
+        )
+
+        ax3.scatter(
+            x,
+            mean_dom_per_subject[regime],
+            color='black',
+            s=30,
+            alpha=0.8
+        )
+
+    ax3.set_xticks(positions)
+
+    ax3.set_xticklabels([
+        'Monostable',
+        'Bistable'
+    ])
+
+    ax3.set_ylabel('Mean dominance (s)')
+
+    f3.tight_layout()
+
+    # f3.savefig(
+    #     SV_FOLDER + label +
+    #     'noise_trials_dominance_regime_barplot.png',
+    #     dpi=400,
+    #     bbox_inches='tight'
+    # )
+
+    # f3.savefig(
+    #     SV_FOLDER + label +
+    #     'noise_trials_dominance_regime_barplot.pdf',
+    #     dpi=400,
+    #     bbox_inches='tight'
+    # )
+
+    # return (
+    #     dominance_all_regimes,
+    #     mean_dom_per_subject,
+    #     regimes_per_subject
+    # )
+
+
 def plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
                                                     simulated=False):
     df = load_data(data_folder + '/noisy/', n_participants='all', filter_subjects=True)
@@ -12764,6 +13123,7 @@ if __name__ == '__main__':
     #                                                     simulated=False)
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                                     simulated=True)
+    plot_dominance_distros_noise_trials_per_subject_regime(simulated=True)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
     # plot_params_distros(ndt=True)
@@ -12840,17 +13200,17 @@ if __name__ == '__main__':
     # plot_hysteresis_average(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                         ntraining=8, coupling_levels=[0, 0.3, 1],
     #                         window_conv=None, ndt_list=None)
-    plot_hysteresis_by_regime(
-        tFrame=26,
-        fps=60,
-        data_folder=DATA_FOLDER,
-        sv_folder=SV_FOLDER,
-        ntraining=8,
-        coupling_levels=[0, 0.3, 1],
-        window_conv=None,
-        n=4,
-        use_delay=False,
-    )
+    # plot_hysteresis_by_regime(
+    #     tFrame=26,
+    #     fps=60,
+    #     data_folder=DATA_FOLDER,
+    #     sv_folder=SV_FOLDER,
+    #     ntraining=8,
+    #     coupling_levels=[0, 0.3, 1],
+    #     window_conv=None,
+    #     n=4,
+    #     use_delay=False,
+    # )
     # analytical_hysteresis_width_degeneration()
     # simple_recovery_pyddm(J1=0.3, J0=0.1, B=0.4, THETA=0.1, SIGMA=0.1)
     # save_params_pyddm_recovery(n_pars=100, i_ini=29, sv_folder=SV_FOLDER)
