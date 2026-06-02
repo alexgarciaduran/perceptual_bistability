@@ -23,6 +23,7 @@ import pickle
 import seaborn as sns
 from pybads import BADS
 from scipy.optimize import Bounds
+from scipy.stats import norm
 import glob
 import os
 import statsmodels.api as sm
@@ -3394,8 +3395,384 @@ def plot_pars_distros(sv_folder=SV_FOLDER,
 
 
 
+def compute_dprime(stimulus, choice):
+    """
+    stimulus : 0/1
+    choice   : 0/1
+    """
+
+    hits = np.mean(choice[stimulus == 1] == 1)
+    fas  = np.mean(choice[stimulus == -1] == 1)
+
+    # Avoid infinities
+    eps = 1e-5
+    hits = np.clip(hits, eps, 1 - eps)
+    fas  = np.clip(fas, eps, 1 - eps)
+
+    dprime = norm.ppf(hits) - norm.ppf(fas)
+
+    return dprime
+
+
+def discretize_confidence(conf, n_levels=4):
+
+    side = np.sign(conf)
+
+    mag = np.abs(conf)
+
+    bins = np.linspace(0, 1, n_levels + 1)
+
+    level = np.digitize(mag, bins[1:-1])
+
+    # LEFT responses
+    out = np.zeros(len(conf), dtype=int)
+
+    left = side < 0
+    right = side > 0
+
+    out[left] = n_levels - level[left]
+
+    out[right] = n_levels + 1 + level[right]
+
+    # Confidence exactly 0
+    out[side == 0] = n_levels
+
+    return out
+
+
+def build_type2_counts(stimulus, conf_bin, nratings=3):
+    # Standard meta-d' format:
+    #
+    # nR_S1:
+    # confidence counts conditioned on LEFT stimulus
+    #
+    # nR_S2:
+    # confidence counts conditioned on RIGHT stimulus
+    #
+
+    nbins = 2 * nratings
+
+    nR_S1 = np.zeros(nbins)
+    nR_S2 = np.zeros(nbins)
+
+    for r in range(1, nbins + 1):
+
+        nR_S1[r - 1] = np.sum(
+            (stimulus == -1) &
+            (conf_bin == r)
+        )
+
+        nR_S2[r - 1] = np.sum(
+            (stimulus == 1) &
+            (conf_bin == r)
+        )
+
+    return nR_S1, nR_S2
+
+
+def compute_meta_dprime_approx(correct, conf_abs):
+
+    # Logistic-style separation:
+    #
+    # Can confidence predict correctness?
+
+    correct = np.asarray(correct)
+
+    conf_abs = np.asarray(conf_abs)
+
+    mu_c = conf_abs[correct == 1].mean()
+    mu_i = conf_abs[correct == 0].mean()
+
+    sd_c = conf_abs[correct == 1].std()
+    sd_i = conf_abs[correct == 0].std()
+
+    pooled = np.sqrt(
+        0.5 * (sd_c**2 + sd_i**2)
+    )
+
+    if pooled == 0:
+        return np.nan
+
+    meta_d = (mu_c - mu_i) / pooled
+
+    return meta_d
+
+
+def compute_metda_d_vs_d_all_participants(conf_bins=4):
+    df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    df["conf_bin"] = discretize_confidence(
+            df["confidence"].values, n_levels=conf_bins)
+    df["correct"] = (df["response"] == df["side"]).astype(int)
+    df["conf_abs"] = np.abs(df["confidence"])
+    results = []
+
+    participants = np.unique(df["subject"])
+    conds = ['Monostable', 'Bistable']
+    
+    # number of neighbors
+    n = 4
+    
+    for pid in participants:
+    
+        for pshuffle in [0, 70, 100]:
+            
+    
+            sub = df[
+                (df["subject"] == pid) &
+                (df["pShuffle"] == pshuffle)
+            ]
+            
+            pars = np.load(SV_FOLDER + '/parameters_MF5_BADS' + pid + '.npy')
+            regime = int(pars[0]*(1-pshuffle/100)+pars[1] > 1/n)
+            regime = conds[regime]
+            
+    
+            dprime = compute_dprime(
+            sub["side"].values,
+            sub["response"].values
+            )
+            meta_d = compute_meta_dprime_approx(
+            sub["correct"].values,
+            sub["conf_abs"].values
+            )
+            if np.abs(dprime) < 1e-6:
+                mratio = np.nan
+            else:
+                mratio = meta_d / dprime
+            acc = sub["correct"].mean()
+            mean_conf = sub["conf_abs"].mean()
+            results.append({
+                "participant": pid,
+                "pShuffle": pshuffle,
+                "regime": regime,
+                "ntrials": len(sub),
+                "accuracy": acc,
+                "dprime": dprime,
+                "meta_d": meta_d,
+                "mratio": mratio,
+                "mean_conf": mean_conf
+            })
+
+    results = pd.DataFrame(results)
+    
+    results_ev = []
+
+    for pid in participants:
+    
+        for pshuffle in [0, 70, 100]:
+    
+            for ev in [0, 0.4, 0.8, 1.]:
+    
+                sub = df[
+                    (df["subject"] == pid) &
+                    (df["pShuffle"] == pshuffle) &
+                    (np.abs(df["evidence"]) == ev)
+                ]
+                
+                pars = np.load(SV_FOLDER + '/parameters_MF5_BADS' + pid + '.npy')
+                
+                jval = pars[0]*(1-pshuffle/100)+pars[1]
+                vals_b = pars[3]+pars[2]*ev
+                delta = np.sqrt(1-1/(jval*n))
+                b_crit1 = (np.log((1-delta)/(1+delta))+2*n*jval*delta)/2
+                b_crit2 = (np.log((1+delta)/(1-delta))-2*n*jval*delta)/2
+                regime = (vals_b > b_crit1) * (vals_b < b_crit2)
+                regime = conds[regime]
+    
+                if len(sub) < 15:
+                    continue
+    
+                dprime = compute_dprime(
+                    sub["side"].values,
+                    sub["response"].values
+                )
+    
+                meta_d = compute_meta_dprime_approx(
+                    sub["correct"].values,
+                    sub["conf_abs"].values
+                )
+    
+                # if np.abs(dprime) < 1e-6:
+                #     mratio = np.nan
+                # else:
+                mratio = meta_d / dprime
+    
+                results_ev.append({
+                    "participant": pid,
+                    "pShuffle": pshuffle,
+                    "regime": regime,
+                    "evidence": ev,
+                    "dprime": dprime,
+                    "meta_d": meta_d,
+                    "mratio": mratio,
+                    "accuracy": sub["correct"].mean()
+                })
+    
+    results_ev = pd.DataFrame(results_ev)
+
+    return results, results_ev
+
+
+def mean_sem(x):
+    x = np.asarray(x)
+    mean = np.nanmean(x)
+    sem = np.nanstd(x) / np.sqrt(np.sum(~np.isnan(x)))
+    return mean, sem
+
+
+def p_to_star(p):
+    if p < 1e-4:
+        return "****"
+    elif p < 1e-3:
+        return "***"
+    elif p < 1e-2:
+        return "**"
+    elif p < 0.05:
+        return "*"
+    else:
+        return "ns"
+
+
+def plot_metad_d_prime_results(condition='regime', conf_bins=4):
+    from scipy.stats import ttest_rel, ttest_ind
+    results, results_ev = compute_metda_d_vs_d_all_participants(conf_bins=conf_bins)
+    metrics = ["dprime", "meta_d", "mratio"]
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    
+    conditions = sorted(results[condition].unique())
+    
+    for ax, metric in zip(axes, metrics):
+    
+        means = []
+        sems = []
+    
+        for cond in conditions:
+    
+            vals = results.loc[
+                results[condition] == cond,
+                metric
+            ].values
+    
+            m, s = mean_sem(vals)
+    
+            means.append(m)
+            sems.append(s)
+    
+        ax.errorbar(
+            conditions,
+            means,
+            yerr=sems,
+            marker='o',
+            capsize=5
+        )
+    
+        ax.set_xlabel(condition)
+        ax.set_ylabel(metric)
+        ax.set_title(metric)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # ========================================================
+    # 2. BARPLOT + STATS (mratio only)
+    # ========================================================
+
+    metric = "mratio"
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    group_means = results.groupby(condition)[metric].mean()
+    group_sds = results.groupby(condition)[metric].std()
+
+    x = np.arange(len(group_means.index))
+
+    bars = ax.bar(
+        x,
+        group_means.values,
+        yerr=group_sds.values,
+        capsize=5
+    )
+    sns.swarmplot(
+        data=results,
+        x=condition,
+        y=metric,
+        color="black",
+        size=3,
+        ax=ax
+    )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(group_means.index)
+    ax.set_ylabel(metric)
+    ax.set_title(f"{metric} with stats")
+
+    # ========================================================
+    # 3. STATISTICS
+    # ========================================================
+
+    conds = list(group_means.index)
+
+    y_max = np.nanmax(group_means.values + group_sds.values)
+
+    def add_sig_line(x1, x2, y, text):
+        ax.plot([x1, x1, x2, x2],
+                [y, y+0.02*y_max, y+0.02*y_max, y],
+                lw=1.5)
+        ax.text((x1+x2)/2, y+0.03*y_max, text,
+                ha='center')
+
+    comparisons = []
+
+    # all pairwise comparisons
+    for i in range(len(conds)):
+        for j in range(i+1, len(conds)):
+
+            c1, c2 = conds[i], conds[j]
+
+            g1 = results.loc[results[condition] == c1, metric].values
+            g2 = results.loc[results[condition] == c2, metric].values
+
+            # ====================================================
+            # CHOOSE TEST TYPE
+            # ====================================================
+
+            if condition == "pShuffle":
+                g1_final = g1[~np.isnan(g1) * ~np.isnan(g2)]
+                g2_final = g2[~np.isnan(g1) * ~np.isnan(g2)]
+                # paired t-test (match by participant order)
+                # assume same participants in same order
+                stat, p = ttest_rel(g1_final, g2_final, nan_policy='omit')
+
+            else:
+                g1 = g1[~np.isnan(g1)]
+                g2 = g2[~np.isnan(g2)]
+                # Welch t-test
+                stat, p = ttest_ind(g1, g2, equal_var=False)
+            print(p)
+
+            star = p_to_star(p)
+
+            comparisons.append((i, j, p, star))
+
+    # draw significance bars
+    step = 0.08 * y_max
+    base = y_max * 1.05
+
+    for k, (i, j, p, star) in enumerate(comparisons):
+
+        add_sig_line(i, j, base + k * step, star)
+
+    ax.set_ylim(0, base + len(comparisons) * step * 1.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
+    plot_metad_d_prime_results(condition='pShuffle',
+                               conf_bins=10)
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=100, model='MF5', method='BADS')
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=100, model='MF', method='BADS')
     # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=10, extra='null')
@@ -3433,8 +3810,8 @@ if __name__ == '__main__':
     # plot_density_comparison(num_iter=100, method=opt_algorithm, kde=True, stim_ev_0=True,
     #                         variable='aligned_confidence', bws=[1.35, 0.8], model='MF5',
     #                         full_fig=False, plot_model=False)
-    plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
-                                      bw_pred=1, fitted_simulations=False)
+    # plot_density_predictions_and_data(b_list=[0, 0.4, 0.8, 1],
+    #                                   bw_pred=1, fitted_simulations=False)
     # plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF5',
     #                         method=opt_algorithm)
     # ridgeplot_all_subs(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
