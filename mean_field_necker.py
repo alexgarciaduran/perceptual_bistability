@@ -8040,8 +8040,62 @@ def dummy_psychometric(nreps=200, pshuf=[1., 0.7, 0.],
     fig.savefig(DATA_FOLDER + f'{label}.pdf', dpi=200, bbox_inches='tight')
 
 
+def fixed_points_vs_B(J_mono=0.1, J_bis=0.45, n=3,
+                      iters=200):
+    B_list = np.arange(0, 0.25, 1e-4)
+    # backwards(q, j, b, n_neigh=n)
+    q_mono = []
+    q_bis_large = []
+    q_bis_small = []
+    q_bis_unstable = []
+    for b in B_list:
+        # mono
+        # bis
+        q_small = 0.05
+        q_large = 0.95
+        q_bckw = 0.5
+        q = 0.5
+        for _ in range(iters):
+            q = sigmoid(2*n*J_mono*(2*q-1)+2*b)
+            q_large = sigmoid(2*n*J_bis*(2*q_large-1)+2*b)
+            q_small = sigmoid(2*n*J_bis*(2*q_small-1)+2*b)
+            q_bckw = backwards(q_bckw, J_bis, b, n_neigh=n)
+        q_mono.append(q)
+        q_bis_large.append(q_large)
+        q_bis_small.append(q_small)
+        q_bis_unstable.append(q_bckw)
+    fig, ax = plt.subplots(ncols=2, figsize=(9.5, 4), sharey=True)
+    ax[0].set_ylim(-0.05, 1.05)
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.axhline(0.5, color='gray', alpha=0.5, linestyle='--')
+    q_bis_small = np.array(q_bis_small)
+    q_mono = np.array(q_mono)
+    ax[0].plot(B_list, q_mono, color='cadetblue',
+               linewidth=4)
+    ax[1].plot(B_list, q_bis_large, color='peru',
+               linewidth=4)
+    ax[1].plot(B_list[q_bis_small < 0.5], q_bis_small[q_bis_small < 0.5], color='peru',
+               linewidth=4, label='Stable')
+    ax[1].plot(B_list, q_bis_unstable, color='peru',
+               linestyle='--', linewidth=4, label='Unstable')
+    ax[1].legend(frameon=False, bbox_to_anchor=[0.2, 0.6])
+    ax[0].set_ylabel('Fixed point, q')
+    ax[0].set_xlabel('Sensory evidence, B')
+    ax[1].set_xlabel('Sensory evidence, B')
+    ax[0].set_title('Monostable', color='cadetblue', fontsize=14)
+    ax[1].set_title('Bistable', color='peru', fontsize=14)
+    fig.tight_layout()
+    plt.subplots_adjust(wspace=0.4)
+    fig.savefig(DATA_FOLDER + 'fixed_points_regime.png', dpi=600, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'fixed_points_regime.svg', dpi=600, bbox_inches='tight')
+
+
 if __name__ == '__main__':
     print('Mean-Field inference')
+    # fixed_points_vs_B(J_mono=0.1, J_bis=0.6, n=3,
+    #                   iters=400)
     # dummy_psychometric(nreps=1000, pshuf=[1., 0.7, 0.],
     #                    j0=0.1, j1=0.3, n=4, sigma=0.1, b1=0.2, b0=0,
     #                    dt=1e-2, tau=0.2, t_dur=1, seed=10, simulate=False,
@@ -8145,30 +8199,10 @@ if __name__ == '__main__':
     #                             num_iter=200, tol=1e-3, dim3d=False)
     # plot_adaptation_mf(j=0.6, b=0.5, theta=theta, noise=0.1, gamma_adapt=3,
     #                    tau=1, time_end=100, dt=1e-2)
-    save_images_potential_hysteresis(j=0.1,
-                                      b_list=np.linspace(-0.6, 0.6, 501),
-                                      save_folder=DATA_FOLDER, tau=0.8,
-                                      sigma=0.05)
     # save_images_potential_hysteresis(j=0.1,
     #                                   b_list=np.linspace(-0.6, 0.6, 501),
-    #                                   save_folder=DATA_FOLDER, tau=0.1,
-    #                                   sigma=0.)
-    save_images_potential_hysteresis(j=0.39,
-                                      b_list=np.linspace(-0.6, 0.6, 501),
-                                      save_folder=DATA_FOLDER, tau=0.8,
-                                      sigma=0.05)
-    # save_images_potential_hysteresis(j=0.39,
-    #                                   b_list=np.linspace(-0.6, 0.6, 501),
-    #                                   save_folder=DATA_FOLDER, tau=0.1,
-    #                                   sigma=0.)
-    create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast_noisy/',
-                                  namefile='fast')
-    create_video_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast_noisy_monostable/',
-                                  namefile='fast_monostable')
-    create_gif_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast_noisy/',
-                                 namefile='fast_noisy')
-    create_gif_from_images(image_folder=DATA_FOLDER+'/images_video_hyst/fast_noisy_monostable/',
-                                 namefile='fast_noisy_monostable')
+    #                                   save_folder=DATA_FOLDER, tau=0.8,
+    #                                   sigma=0.05)
     # plot_adaptation_1d(j=0.5, b=0., noise=0.0, gamma_adapt=0.1,
     #                    tau=1, time_end=100, dt=1e-3)
     # for b in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]:
