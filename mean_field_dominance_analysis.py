@@ -128,12 +128,12 @@ def plot_dominance_histogram(durations, color='peru', label=None, fit='gamma',
     n     = len(durations)
     color = [color]*n if isinstance(color, str) else list(color)
     label = [label]*n if (label is None or isinstance(label, str)) else list(label)
-    fit   = [fit]*n   if isinstance(fit,   str) else list(fit)
+    fit   = [fit]*n   if (fit is None or isinstance(fit, str)) else list(fit)
 
     if ax is None:
         _, ax = plt.subplots(1, figsize=figsize)
 
-    cap  = max(np.percentile(d, 98)+1 for d in durations)
+    cap  = np.max(durations)+0.1
     bins = np.linspace(0, cap, n_bins + 1)
 
     for d, c, l, f in zip(durations, color, label, fit):
@@ -148,25 +148,29 @@ def plot_dominance_histogram(durations, color='peru', label=None, fit='gamma',
                 k, loc, theta = gamma_dist.fit(d, floc=0)
                 pdf  = gamma_dist.pdf(xs, k, loc, theta)
                 mode = max((k-1)*theta, 0.0)
-                lbl  = ((l+'\n') if l else '') + f'Gamma: k={k:.2f}, θ={theta:.1f}, mode={mode:.1f}'
+                lbl  = ((l+'\n') if l else '') + f'Gamma: k={k:.2f},\nθ={theta:.1f}'
             elif f == 'exp':
                 lam = 1.0 / np.mean(d)
                 pdf = lam * np.exp(-lam * xs)
-                lbl = ((l+'\n') if l else '') + f'Exponential: λ={lam:.3f}, mean={1/lam:.1f}'
-            else:
+                lbl = ((l+'\n') if l else '') + f'Exponential: λ={lam:.3f},\nmean={1/lam:.1f}'
+            elif f == 'lognorm':
                 sh, loc, sc = lognorm.fit(d, floc=0)
                 pdf = lognorm.pdf(xs, sh, loc, sc)
                 lbl = ((l+'\n') if l else '') + f'Log-normal: μ={np.mean(np.log(d)):.2f}, σ={np.std(np.log(d)):.2f}'
-            ax.plot(xs, pdf, color=c, lw=2.5, label=lbl)
+            else:
+                show_fit = False
+                continue
+            ax.plot(xs, pdf, color=c, lw=3., label=lbl)
 
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(False)
-    ax.set_xlabel('Dominance duration (time units)')
-    ax.set_ylabel('Probability density')
+    ax.set_xlabel('Dominance duration (s)')
+    ax.set_ylabel('Density')
     ax.set_xlim(*(xlim if xlim else (0, cap)))
+    color_title = 'peru' if title == 'Bistable' else 'cadetblue'
     if title:
-        ax.set_title(title)
+        ax.set_title(title, color=color_title, fontsize=15)
     if show_fit:
         ax.legend(frameon=False)
     plt.tight_layout()
@@ -184,7 +188,7 @@ def run_bistable_vs_monostable(J_high=3.0, noise_high=0.20,
     t_hi, q_hi, a_hi, eta_hi = simulate_mf(J=J_high, B=B, noise_amp=noise_high,
                                             tau_ou=tau_ou, adapt=True, ga=ga, tau_a=tau_a,
                                             T=T, dt=dt, seed=seed)
-    dur_hi = dominance_durations_mf(t_hi, q_hi, threshold_up=threshold_up, threshold_dn=threshold_up)
+    dur_hi = dominance_durations_mf(t_hi, q_hi, threshold_up=threshold_up, threshold_dn=threshold_dn)
     cv_hi  = np.std(dur_hi) / np.mean(dur_hi)
     print(f"  [1/2] bistable   J={J_high}: n={len(dur_hi):,}  median={np.median(dur_hi):.1f}  CV={cv_hi:.2f}")
 
@@ -198,19 +202,30 @@ def run_bistable_vs_monostable(J_high=3.0, noise_high=0.20,
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
     plot_dominance_histogram(
-        dur_hi, color='peru', label=f'J={J_high} (bistable)', fit='gamma', ax=axes[0],
-        title=(f'High J = {J_high}  (bistable)\n'
-               f'n={len(dur_hi):,}   median={np.median(dur_hi):.1f}   CV={cv_hi:.2f}'))
+        dur_hi, color='peru', fit='', ax=axes[1],
+        title='Bistable',
+        xlim=(-0.1, 20.1)
+      )
+    #   title=(f'High J = {J_high}  (bistable)\n'
+    #            f'n={len(dur_hi):,}   median={np.median(dur_hi):.1f}   CV={cv_hi:.2f}')
 
     plot_dominance_histogram(
-        dur_lo, color='cadetblue', label=f'J={J_low} (monostable)', fit='exp', ax=axes[1],
-        title=(f'Low J = {J_low}  (monostable,  thr=[{threshold_dn},{threshold_up}])\n'
-               f'n={len(dur_lo):,}   median={np.median(dur_lo):.1f}   CV={cv_lo:.2f}'))
+        dur_lo, color='cadetblue', fit='', ax=axes[0],
+        title='Monostable',
+        xlim=(-0.1, 20.1)
+        )
+    # title=(f'Low J = {J_low}  (monostable,  thr=[{threshold_dn},{threshold_up}])\n'
+    #            f'n={len(dur_lo):,}   median={np.median(dur_lo):.1f}   CV={cv_lo:.2f}')
 
-    fig.suptitle(
-        r'$\dot{q}=\sigma(2J[(2q-1)-g_a a]+2B)-q+\eta(t)$'
-        f'   |   $g_a={ga},\\ \\tau_a={tau_a},\\ \\tau_{{\\rm ou}}={tau_ou}$',
-        fontsize=14)
+    # fig.suptitle(
+    #     r'$\dot{q}=\sigma(2J[(2q-1)-g_a a]+2B)-q+\eta(t)$'
+    #     f'   |   $g_a={ga},\\ \\tau_a={tau_a},\\ \\tau_{{\\rm ou}}={tau_ou}$',
+    #     fontsize=14)
+    axes[1].set_ylabel('')  # only one y-axis label for the whole figure
+    axes[1].set_xlabel('')
+    for a in axes:
+        a.set_xticks([0, 10, 20])
+
     fig.tight_layout()
 
     if save_path:
@@ -227,31 +242,23 @@ def run_bistable_vs_monostable(J_high=3.0, noise_high=0.20,
 if __name__ == '__main__':
     print('MF dominance')
     fig, results = run_bistable_vs_monostable(
-        J_high       = 4.0,
-        J_low        = 0.8,
+        J_high       = 3,
+        J_low        = 0.1,
     
-        noise_high   = 0.25,
-        noise_low    = 0.25,      # SAME — only J changes
+        noise_high   = 0.35,
+        noise_low    = 0.35,      # SAME — only J changes
     
-        tau_ou       = 0.1,       # 100 ms  (Moreno-Bote 2007)
-        ga           = 1.5,
-        tau_a        = 7.0,
+        tau_ou       = 0.1,       # 200 ms  (Moreno-Bote 2007)
+        ga           = 1.4,
+        tau_a        = 11.0,
     
         threshold_up = 0.55,
         threshold_dn = 0.45,
     
         T            = 100_000.0,
         dt           = 0.01,
-        seed         = 0,
-    )
-    # or with a custom axis:
-    ax = plot_dominance_histogram(results['bistable']['durations'],
-                                  color='peru', fit='gamma')
-    
-    # or overlay both on one panel:
-    ax = plot_dominance_histogram(
-        [results['bistable']['durations'], results['monostable']['durations']],
-        color=['peru', 'cadetblue'],
-        fit=['gamma', 'gamma'],
-        label=['Bistable', 'Monostable'],
+        seed         = 42,
+
+        save_path     = 'mf_dominance_histograms.svg',
+        figsize=(5.2, 2.5)
     )
