@@ -2937,7 +2937,116 @@ def psychometric_curve_all_subjects():
     fig.tight_layout()
     fig.savefig(SV_FOLDER + 'psychometric_curve_exp_confidence.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'psychometric_curve_exp_confidence.pdf', dpi=200, bbox_inches='tight')
-    
+
+
+def acc_vs_conf():
+    df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+
+    df['accuracy'] = (np.sign(df['confidence']) == df['side']).astype(int)
+    df['abs_conf'] = np.abs(df['confidence'])
+    df['abs_evidence'] = np.abs(df['evidence'])
+    df['pShuffle'] = df['pShuffle'] / 100
+
+    # subject-level first
+    subj = df.groupby(['subject', 'pShuffle', 'abs_evidence']).agg(
+        accuracy=('accuracy', 'mean'),
+        confidence=('abs_conf', 'mean')
+    ).reset_index()
+
+    # population mean + SE
+    vals = subj.groupby(['pShuffle', 'abs_evidence']).agg(
+        accuracy_mean=('accuracy', 'mean'),
+        accuracy_se=('accuracy', lambda x: x.std(ddof=1) / np.sqrt(len(x))),
+        confidence_mean=('confidence', 'mean'),
+        confidence_se=('confidence', lambda x: x.std(ddof=1) / np.sqrt(len(x)))
+    ).reset_index()
+
+    vals = vals.sort_values('abs_evidence')
+
+    palette = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    hue_order = [1.0, 0.7, 0.0]
+
+    fig, ax = plt.subplots(figsize=(4.5, 4))
+
+    # lines (clean seaborn use)
+    sns.lineplot(
+        data=vals,
+        x='accuracy_mean',
+        y='confidence_mean',
+        hue='pShuffle',
+        hue_order=hue_order,
+        palette=palette,
+        marker='o',
+        linewidth=3.5,
+        ax=ax
+    )
+
+    # 2D errorbars (minimal, explicit, necessary)
+    for i, p in enumerate(hue_order):
+        d = vals[vals['pShuffle'] == p]
+
+        ax.errorbar(
+            d['accuracy_mean'],
+            d['confidence_mean'],
+            xerr=d['accuracy_se'],
+            yerr=d['confidence_se'],
+            fmt='none',
+            color=palette[i],
+            alpha=0.4,
+            capsize=3
+        )
+
+    ax.set_xlabel("Accuracy")
+    ax.set_ylabel("Absolute confidence")
+    ax.legend(frameon=False, title='Shuffle')
+
+    sns.despine()
+    fig.tight_layout()
+    plt.show()
+
+
+def confidence_accuracy_coupling():
+    df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+
+    df['accuracy'] = (np.sign(df['confidence']) == df['side']).astype(int)
+    df['abs_conf'] = np.abs(df['confidence'])
+    df['abs_evidence'] = np.abs(df['evidence'])
+    df['pShuffle'] = df['pShuffle'] / 100
+
+    # subject-level means per evidence point
+    subj = df.groupby(['subject', 'pShuffle', 'abs_evidence']).agg(
+        accuracy=('accuracy', 'mean'),
+        confidence=('abs_conf', 'mean')
+    ).reset_index()
+
+    # correlation per subject × pShuffle across the 4 evidence points
+    corr = subj.groupby(['subject', 'pShuffle']).apply(
+        lambda x: x['accuracy'].corr(x['confidence'], method='spearman')
+    ).reset_index(name='corr')
+
+    # plot
+    fig, ax = plt.subplots(figsize=(5, 4))
+
+    sns.barplot(
+        data=corr,
+        x='pShuffle',
+        y='corr',
+        ax=ax,
+        errorbar='se',
+        palette=['lightskyblue', 'royalblue', 'midnightblue'][::-1]
+    )
+    # sns.swarmplot(data=corr, x='pShuffle',
+    #               y='corr',
+    #               ax=ax, palette=['k', 'k', 'k'], s=3,
+    #               alpha=0.4, edgecolor='white')
+
+    ax.set_xlabel("p(shuffle)")
+    ax.set_ylabel("Corr(accuracy, confidence)")
+
+    sns.despine()
+    plt.tight_layout()
+    plt.show()
+
 
 def plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method='Powell',
                             variable='abs_confidence'):
