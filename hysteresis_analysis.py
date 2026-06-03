@@ -31,14 +31,14 @@ from fitting_pipeline import load_data as load_data_experiment_1
 import matplotlib.patches as mpatches
 from scipy.optimize import fsolve, minimize
 from pybads import BADS
-import sbi
-from sbi.inference import infer
-from sbi.utils import MultipleIndependent
+# import sbi
+# from sbi.inference import infer
+# from sbi.utils import MultipleIndependent
 import torch
 from torch.distributions import Uniform
 import time
 import pickle
-from sbi import analysis as analysis
+# from sbi import analysis as analysis
 import tqdm
 import statsmodels.formula.api as smf
 from scipy.stats import pearsonr, zscore
@@ -55,7 +55,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.ndimage import gaussian_filter, zoom
 from scipy.interpolate import griddata
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
-import mplcairo
+# import mplcairo
 import matplotlib.animation as animation
 
 mpl.rcParams['font.size'] = 16
@@ -4089,17 +4089,17 @@ def sbi_training(n_simuls=10000, fps=60, tFrame=26, data_folder=DATA_FOLDER,
             if coupling_offset:
                 if stim_offset:
                     limits = [[-0.5, 2], [-0.2, 0.5], [-1, 1], [-0.2, 2], [0.0, 0.5]]
-                    labels = ['J1', 'J0', 'B0', 'B1', '\sigma']
+                    labels = ['J1', 'J0', 'B0', 'B1', r'$\sigma$']
                 else:
                     limits = [[-0.5, 2], [-1, 1], [-0.2, 2], [0.0, 0.5]]
-                    labels = ['J1', 'J0',  'B1', '\sigma']
+                    labels = ['J1', 'J0',  'B1', r'$\sigma$']
             else:
                 if stim_offset:
                     limits = [[-0.5, 2], [-1, 1], [-0.2, 2], [0.0, 0.5]]
-                    labels = ['J1', 'B0', 'B1', '\sigma']
+                    labels = ['J1', 'B0', 'B1', r'$\sigma$']
                 else:
                     limits = [[-0.5, 2], [-0.2, 2], [0.0, 0.5]]
-                    labels = ['J1', 'B1', '\sigma']
+                    labels = ['J1', 'B1', r'$\sigma$']
             # plot posterior samples in pairplot
             _ = analysis.pairplot(samples_posterior, limits=limits, figsize=(9, 9),
                                   labels=labels, points=theta_example,
@@ -13077,16 +13077,18 @@ if __name__ == '__main__':
     # optimal_b_escape(J=1.3, theta=0., k=1)
     # optimal_eta_and_stimuli(J=1.3, sigma=0.2, alpha=1, theta=0., T=2,
     #                         timepoints=1000)
-    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-    #                             tFrame=26, fps=60,
-    #                             steps_back=300, steps_front=200, avoid_first=True,
-    #                             n=4, load_simulations=True, normalize=False, sigma=None,
-    #                             pshuf_only=None, bis_mono='Monostable')
-    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-    #                             tFrame=26, fps=60,
-    #                             steps_back=300, steps_front=200, avoid_first=True,
-    #                             n=4, load_simulations=True, normalize=False, sigma=None,
-    #                             pshuf_only=None, bis_mono='Bistable')
+    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+                                tFrame=26, fps=60,
+                                steps_back=300, steps_front=200, avoid_first=True,
+                                n=4, load_simulations=True, normalize=False, sigma=None,
+                                pshuf_only=None, bis_mono='Monostable')
+    plt.show()
+    plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+                                tFrame=26, fps=60,
+                                steps_back=300, steps_front=200, avoid_first=True,
+                                n=4, load_simulations=True, normalize=False, sigma=None,
+                                pshuf_only=None, bis_mono='Bistable')
+    plt.show()
     # compare_likelihoods_models(load=True, loss='AIC')
     # compare_likelihoods_models(load=True, loss='BIC')
     # compare_likelihoods_models(load=True, loss='NLH')
@@ -13123,7 +13125,7 @@ if __name__ == '__main__':
     #                                                     simulated=False)
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                                     simulated=True)
-    plot_dominance_distros_noise_trials_per_subject_regime(simulated=True)
+    # plot_dominance_distros_noise_trials_per_subject_regime(simulated=True)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
     # plot_params_distros(ndt=True)
