@@ -2849,12 +2849,12 @@ def plot_all_subjects(xvar='stim_ev_cong', model=False, hue='pShuffle',
     # df_sub_final['abs_confidence'] = scipy.stats.zscore(df_sub_final.abs_confidence.values)
     # Compute the mean confidence per subject for each (stim_ev_cong, coupling) pair
     variable = 'zscore_abs_confidence' if hue == 'pShuffle' else 'abs_confidence'
-    df_subject_avg = df_sub_final.groupby(['subject', 'stim_ev_cong', 'pShuffle', 'regime'])[variable].mean().reset_index()
+    df_subject_avg = df_sub_final.groupby(['subject', 'stim_ev_cong', hue])[variable].mean().reset_index()
     # Plot
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1] if hue == 'pShuffle' else ['cadetblue', 'peru']
-    hue_order = [1, 0.7, 1] if hue == 'pShuffle' else [0, 1]
+    hue_order = [1, 0.7, 0.] if hue == 'pShuffle' else [0, 1]
     if not model:
         df_subject_avg['pShuffle'] = df_subject_avg['pShuffle']/100
     sns.lineplot(data=df_subject_avg, x='stim_ev_cong', y=variable, hue=hue, ax=ax2,
@@ -3880,8 +3880,8 @@ def plot_metad_d_prime_results(condition='regime', conf_bins=4):
 
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
-    plot_metad_d_prime_results(condition='pShuffle',
-                               conf_bins=10)
+    # plot_metad_d_prime_results(condition='pShuffle',
+    #                            conf_bins=10)
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=100, model='MF5', method='BADS')
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=100, model='MF', method='BADS')
     # fit_subjects(method=opt_algorithm, model='MF', data_augmen=False, n_init=10, extra='null')
@@ -3902,7 +3902,7 @@ if __name__ == '__main__':
     #                                 bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                data_only=True)
-    # plot_all_subjects(model=False, hue='regime')
+    plot_all_subjects(model=False)  #, hue='regime')
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
