@@ -2243,7 +2243,8 @@ def plot_dominance_distros_noise_trials_per_subject_regime(
         fps=60,
         simulated=False,
         unique_shuffle=[1., 0.7, 0.],
-        regime_threshold=0.25
+        regime_threshold=0.25,
+        adaptation=False
 ):
     """
     Plot dominance distributions conditioned on inferred regime.
@@ -2321,9 +2322,9 @@ def plot_dominance_distros_noise_trials_per_subject_regime(
     # =========================================================
     # SIMULATED RESPONSES
     # =========================================================
-
+    label = 'adaptation' if adaptation else ''
     responses_all = np.load(
-        SV_FOLDER + 'responses_simulated_noise.npy'
+        SV_FOLDER + f'responses_simulated_noise{label}.npy'
     )
 
     map_resps = {-1: 1, 0: 0, 1: 2}
@@ -2465,45 +2466,50 @@ def plot_dominance_distros_noise_trials_per_subject_regime(
     # GROUP-LEVEL DISTRIBUTIONS
     # =========================================================
 
-    f2, ax2 = plt.subplots(
-        1,
-        figsize=(5, 4)
+    fig, ax = plt.subplots(ncols=2, figsize=(7, 3.5),
+                           sharex=True, sharey=False)
+
+    for i_r, regime in enumerate(['Monostable', 'Bistable']):
+    
+        sns.histplot(
+            dominance_all_regimes[regime],
+            # stat='density',
+            bins=np.linspace(0, 25, 50),
+            color=regime_colors[regime],
+            alpha=0.5,
+            ax=ax[i_r]
+        )
+    
+        # sns.kdeplot(
+        #     dominance_all_regimes[regime],
+        #     color=regime_colors[regime],
+        #     linewidth=3,
+        #     cut=0,
+        #     ax=ax[i_r]
+        # )
+    
+    ax[0].set_xlabel('Dominance duration (s)')
+    ax[1].set_xlabel('Dominance duration (s)')
+    ax[0].set_ylabel('Number of events')
+    
+    ax[0].set_title('Monostable', color='cadetblue', fontsize=14)
+    ax[1].set_title('Bistable', color='peru', fontsize=14)
+    sns.despine()
+    fig.tight_layout()
+
+    fig.savefig(
+        SV_FOLDER + label +
+        'noise_trials_dominance_regime_average.png',
+        dpi=400,
+        bbox_inches='tight'
     )
 
-    ax2.spines['right'].set_visible(False)
-    ax2.spines['top'].set_visible(False)
-
-    for regime in ['Monostable', 'Bistable']:
-
-        sns.kdeplot(
-            dominance_all_regimes[regime],
-            color=regime_colors[regime],
-            linewidth=4,
-            label=regime,
-            cut=0,
-            ax=ax2
-        )
-
-    ax2.legend(frameon=False)
-
-    ax2.set_xlabel('Dominance (s)')
-    ax2.set_ylabel('Density')
-
-    f2.tight_layout()
-
-    # f2.savefig(
-    #     SV_FOLDER + label +
-    #     'noise_trials_dominance_regime_average.png',
-    #     dpi=400,
-    #     bbox_inches='tight'
-    # )
-
-    # f2.savefig(
-    #     SV_FOLDER + label +
-    #     'noise_trials_dominance_regime_average.pdf',
-    #     dpi=400,
-    #     bbox_inches='tight'
-    # )
+    fig.savefig(
+        SV_FOLDER + label +
+        'noise_trials_dominance_regime_average.svg',
+        dpi=400,
+        bbox_inches='tight'
+    )
 
     # =========================================================
     # SUBJECT AVERAGES + SWARMPLOT
@@ -2998,6 +3004,8 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     ax.set_xlabel('Time before switch(s)')
     ax.set_ylabel('Noise')
     figlast.tight_layout()
+    figlast.savefig(SV_FOLDER + 'average_kernel_across_subjects.png', dpi=400, bbox_inches='tight')
+    figlast.savefig(SV_FOLDER + 'average_kernel_across_subjects.svg', dpi=400, bbox_inches='tight')
     return fig, fig2, fig3, g, fignew
 
 
@@ -5993,14 +6001,27 @@ def plot_simulate_hysteresis_subject(data_folder=DATA_FOLDER, subject_name=None,
 
 
 def simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=1546, fps=60,
-                            load_simulations=True, sigma_predefined=None):
+                            load_simulations=True, sigma_predefined=None,
+                            adaptation=False,
+                            ):
     np.random.seed(50)  # 25, 50 (3 perc)
+    np.random.seed(25)  # 25, 50 (3 perc)
+    # adaptation parameters
+    # ---
+    tau_a = 50
+    ga = 0.5
+    tau_ou = 1
+    # ---
     ratio = int(nFrame/1546)
     nFrame = nFrame-ratio+1
+    # load ndt
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
+    # load parameters
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     print(len(pars), ' fitted subjects')
     label = f'_sigma_{sigma_predefined}_' if sigma_predefined is not None else ''
+    if adaptation:
+        label += 'adaptation'
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]
     subjects = df.subject.unique()[:len(pars)]
@@ -6026,60 +6047,82 @@ def simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=1546, fps=6
             choices_subject = np.zeros((len(trial_indices), time_frames))
             x_subject = np.zeros((len(trial_indices), time_frames))
             internal_noise_subject = np.random.randn(len(trial_indices), nFrame)
+        
             for i_trial, trial in enumerate(trial_indices):
-                j_eff = (1-pshuffles[i_trial])*fitted_params_subject[0] + fitted_params_subject[1]
+                j_eff = (1 - pshuffles[i_trial]) * fitted_params_subject[0]+ fitted_params_subject[1]
                 params = fitted_params_subject[1:]
                 params[0] = j_eff
                 df_sub_trial = df_sub.loc[df_sub.trial_index == trial]
                 stimulus = df_sub_trial.stimulus[:-14].values
                 stimulus = interp1d(time, stimulus)(time_interp)
-                # stimulus = np.repeat(stimulus, np.ceil(nFrame/1546))
-                x = np.zeros(choices_subject.shape[1])
+        
                 j_eff, b_par, th, sigma, ndt = params
                 if sigma_predefined is not None:
                     sigma = sigma_predefined
+        
                 lower_bound, upper_bound = np.array([-th, th]) + 0.5
-                dt = 1/fps; tau=1
-                # noise_sub = np.random.randn()*sigma*np.sqrt(dt)*0.1
-                b_eff = stimulus*b_par
-                noise = internal_noise_subject[i_trial]*sigma*np.sqrt(dt/tau)
-                x = np.zeros(time_frames)
+                dt = 1 / fps
+                tau = 1
+                b_eff = stimulus * b_par
+        
+                # --- noise setup ---
+                if adaptation:
+                    # convert fitted white-noise sigma to OU sigma (same stationary variance)
+                    sigma_ou = sigma # / np.sqrt(tau_ou / 2)
+                    ou_decay = np.exp(-dt / tau_ou)
+                    ou_sig   = sigma_ou * np.sqrt(1.0 - ou_decay**2)
+                    # pre-draw OU noise for this trial
+                    eta = np.zeros(nFrame)
+                    for t in range(1, nFrame):
+                        eta[t] = ou_decay * eta[t-1] + ou_sig * internal_noise_subject[i_trial, t]
+                    noise = eta*dt
+                else:
+                    noise = internal_noise_subject[i_trial] * sigma * np.sqrt(dt / tau)
+        
+                x = np.zeros(nFrame)
                 x[0] = 0.5
+                a = np.zeros(nFrame)
+        
                 choice = np.zeros(nFrame)
                 prev_choice = 0.0
-                pending_choice = None      # choice scheduled but not yet applied
-                pending_time = None        # when to apply it
+                pending_choice = None
+                pending_time = None
                 ndt_frames = int(ndt / dt)
-                
+        
                 for t in range(1, nFrame):
-                    # apply pending choice if NDT has elapsed
                     if pending_choice is not None and t >= pending_time:
                         prev_choice = pending_choice
                         pending_choice = None
-    
-                    # evolve freely (no stickiness)
-                    drive = sigmoid(2 * (j_eff * (2 * x[t - 1] - 1) + b_eff[t]))
-                    # noise_sub = noise_sub + np.random.randn()*np.sqrt(dt/tau)*sigma*0.1  # ou process
+        
+                    s = 2 * x[t - 1] - 1
+        
+                    if adaptation:
+                        drive = sigmoid(2 * (j_eff * (s - ga * a[t - 1]) + b_eff[t]))
+                    else:
+                        drive = sigmoid(2 * (j_eff * s + b_eff[t]))
+        
                     x[t] = x[t - 1] + dt * (drive - x[t - 1]) / tau + noise[t]
-
-                    # bound crossing
+        
+                    if adaptation:
+                        a[t] = a[t - 1] + (s - a[t - 1]) / tau_a * dt
+        
                     if x[t] >= upper_bound:
                         new_choice = 1.0
                     elif x[t] <= lower_bound:
                         new_choice = -1.0
                     else:
                         new_choice = prev_choice
-
-                    # schedule motor choice change (after NDT delay)
+        
                     if new_choice != prev_choice and pending_choice is None:
                         pending_choice = new_choice
                         pending_time = t + ndt_frames
-    
-                    # delayed decision
+        
                     choice[t] = prev_choice
-                choices_subject[i_trial, :] = choice
-                x_subject[i_trial, :] = x
-                stim_subject[i_s, i_trial, :] = stimulus    
+        
+                choices_subject[i_trial, :] = choice[:time_frames]
+                x_subject[i_trial, :] = x[:time_frames]
+                stim_subject[i_s, i_trial, :] = stimulus
+        
             responses_all[i_s, :, :] = choices_subject
             pshuffles_all[i_s] = pshuffles
             x_all[i_s, :, :] = x_subject
@@ -6459,7 +6502,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                                 tFrame=26, fps=60,
                                 steps_back=120, steps_front=20, avoid_first=True,
                                 n=4, load_simulations=True, normalize=False,
-                                sigma=None, pshuf_only=None, bis_mono=None):
+                                sigma=None, pshuf_only=None, bis_mono=None,
+                                adaptation=False):
     title = r'$\sigma = 0$' if sigma is not None else r'$\sigma \neq 0$'
     if fps == 60:
         nFrame = 1546
@@ -6468,6 +6512,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     label = f'_sigma_{sigma}_' if sigma is not None else ''
+    if adaptation:
+        label += 'adaptation'
     fitted_params_all = [np.load(par) for par in pars]
     fitted_params_all = [[n*params[0], n*params[1], params[2], params[4], params[3], ndt] for params in fitted_params_all]
     df = load_data(data_folder + '/noisy/', n_participants='all')
@@ -6553,7 +6599,6 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                 stim_vals_aligned[i+len(idx_1), :] = chi[idx - steps_back:idx+steps_front]*-1
                 internal_noise_vals_aligned[i+len(idx_1), :] = internal_noise[idx - steps_back:idx+steps_front]*-1*sigma_param
                 dxdt_full = np.full_like(conf_i, np.nan)
-                # dxdt_full[k:] = (x_vals_aligned[i+len(idx_1), :][k:]-x_vals_aligned[i+len(idx_1), :][:-k])/(k/fps)
                 min_dist_vals = np.min(np.row_stack([(conf_i-upper_bound)**2, (conf_i-lower_bound)**2]), axis=0)
                 dxdt_full[k:] = (conf_i[k:]-conf_i[:-k])/(k/fps)
                 potential_vals_aligned[i+len(idx_1), :] = dxdt_full
@@ -6684,7 +6729,7 @@ def plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
         kernels_to_plot = kernels_simul
         label_save = 'sim_to_sim_'
     idxs = np.digitize(amplitude_prediction, np.percentile(amplitude_prediction, bins_perc)+extra_for_all_vals)-1
-    fig, ax = plt.subplots(1, figsize=(5., 3.5))
+    fig, ax = plt.subplots(1, figsize=(4., 3.5))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     nbins = len(np.unique(idxs))
     # colormap = pl.cm.Oranges(np.linspace(0.3, 1, nbins))
@@ -6708,11 +6753,11 @@ def plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
                         average_across_subjects+sem_across_subjects,
                         color=colormap[i], alpha=0.1)
     ax.set_xlabel('Time before switch (s)')
-    ax.set_ylabel(label); ax.legend(title='Percentile', frameon=False)
+    ax.set_ylabel(label); ax.legend(title='Predicted\npercentile', frameon=False)
     fig.tight_layout()
     print('Saving images')
     fig.savefig(SV_FOLDER + label_save + 'kernel_noise_bf_switch_predicted_amplitude.png', dpi=200, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + label_save + 'kernel_noise_bf_switch_predicted_amplitude.pdf', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + label_save + 'kernel_noise_bf_switch_predicted_amplitude.svg', dpi=200, bbox_inches='tight')
     fig, ax = plt.subplots(ncols=1, figsize=(5.5, 4))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     if cumsum:
@@ -6735,7 +6780,8 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
                                          tFrame=26, window_conv=1,
                                          zscore_number_switches=False, fps=60, ax=None, hysteresis_area=False,
                                          normalize_variables=False, ratio=1, nFrame=1546, n=4,
-                                         load_simulations=False):
+                                         load_simulations=False,
+                                         adaptation=False):
     ndt = np.abs(np.median(np.load(DATA_FOLDER + 'kernel_latency_average.npy')))
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     fitted_params_all = [np.load(par) for par in pars]
@@ -6744,7 +6790,8 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
     nFrame = nFrame*ratio; fps= fps*ratio
     df = load_data(data_folder + '/noisy/', n_participants='all')
     noise_signal, choice, pshuffles = simulate_noise_subjects(df, data_folder=DATA_FOLDER, n=4, nFrame=nFrame, fps=fps,
-                                                              load_simulations=load_simulations)
+                                                              load_simulations=load_simulations,
+                                                              adaptation=adaptation)
     # print(len(df.trial_index.unique()))
     subs = df.subject.unique()[:pshuffles.shape[0]]
     print(subs, ', number:', len(subs))
@@ -6785,7 +6832,7 @@ def plot_simulated_subjects_noise_trials(data_folder=DATA_FOLDER,
                 responses = choice[i_sub, idx_trials[i_trial]]
                 chi = noise_signal[i_sub, idx_trials[i_trial]]
                 # chi = chi-np.nanmean(chi)
-                orders = rle(responses)
+                orders = rle(responses)  # not last one
                 if avoid_first:
                     idx_1 = orders[1][1:][orders[2][1:] == 1]
                     idx_0 = orders[1][1:][orders[2][1:] == -1]
@@ -13080,15 +13127,13 @@ if __name__ == '__main__':
     plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                                 tFrame=26, fps=60,
                                 steps_back=300, steps_front=200, avoid_first=True,
-                                n=4, load_simulations=True, normalize=False, sigma=None,
+                                n=4, load_simulations=False, normalize=False, sigma=None,
                                 pshuf_only=None, bis_mono='Monostable')
-    plt.show()
     plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                                 tFrame=26, fps=60,
                                 steps_back=300, steps_front=200, avoid_first=True,
-                                n=4, load_simulations=True, normalize=False, sigma=None,
+                                n=4, load_simulations=False, normalize=False, sigma=None,
                                 pshuf_only=None, bis_mono='Bistable')
-    plt.show()
     # compare_likelihoods_models(load=True, loss='AIC')
     # compare_likelihoods_models(load=True, loss='BIC')
     # compare_likelihoods_models(load=True, loss='NLH')
@@ -13126,6 +13171,7 @@ if __name__ == '__main__':
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                                     simulated=True)
     # plot_dominance_distros_noise_trials_per_subject_regime(simulated=True)
+    # plot_dominance_distros_noise_trials_per_subject_regime(simulated=False)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4)
     # plot_dominance_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=True)
     # plot_params_distros(ndt=True)
@@ -13150,7 +13196,9 @@ if __name__ == '__main__':
     #                                       tFrame=26, window_conv=1,
     #                                       fps=60, ax=None, hysteresis_area=True,
     #                                       normalize_variables=True, ratio=1,
-    #                                       load_simulations=True)
+    #                                       load_simulations=True,
+    #                                       adaptation=False)
+    # plot_dominance_distros_noise_trials_per_subject_regime(simulated=True, adaptation=False)
     # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
     #                                   cumsum=False, npercentiles=3, sim_predict_dat=False)
     # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
