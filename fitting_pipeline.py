@@ -2939,7 +2939,7 @@ def psychometric_curve_all_subjects():
     fig.savefig(SV_FOLDER + 'psychometric_curve_exp_confidence.pdf', dpi=200, bbox_inches='tight')
 
 
-def acc_vs_conf():
+def plot_acc_vs_conf():
     df = load_data(data_folder=DATA_FOLDER, n_participants='all')
 
     df['accuracy'] = (np.sign(df['confidence']) == df['side']).astype(int)
