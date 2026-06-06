@@ -31,11 +31,19 @@ def simulate_mf(J=3.0, B=0.0, noise_amp=0.20, tau_ou=8.0,
     eta = np.zeros(n)
     ou_decay = np.exp(-dt / tau_ou)
     ou_sig   = noise_amp * np.sqrt(1.0 - ou_decay**2)
+    time = np.arange(0, T, dt)
+    noisyframes = 15 // dt // 60
+    nFrame = len(time)
+    time_interp = np.arange(0, nFrame+noisyframes, noisyframes)*dt
+    noise_exp = np.random.randn(len(time_interp))
+    B = scipy.interpolate.interp1d(time_interp, noise_exp)(time)*0.5
+    
+    
     if adapt:
         for i in range(n - 1):
             qi, ai, ei = q[i], a[i], eta[i]
             s        = 2.0*qi - 1.0
-            dq       = scipy.special.expit(2.0*J*(s - ga*ai) + 2.0*B) - qi
+            dq       = scipy.special.expit(2.0*J*(s - ga*ai) + 2.0*B[i]) - qi
             q[i+1]   = np.clip(qi + dq*dt + ei*dt, 0, 1)
             a[i+1]   = ai + (s - ai)/tau_a * dt
             eta[i+1] = ou_decay*ei + ou_sig*rng.standard_normal()
@@ -255,10 +263,10 @@ if __name__ == '__main__':
         threshold_up = 0.55,
         threshold_dn = 0.45,
     
-        T            = 100_000.0,
+        T            = 10_000.0,
         dt           = 0.01,
         seed         = 42,
 
-        save_path     = 'mf_dominance_histograms.svg',
+        # save_path     = 'mf_dominance_histograms.svg',
         figsize=(5.2, 2.5)
     )
