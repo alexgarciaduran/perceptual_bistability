@@ -3603,8 +3603,8 @@ def plot_psychophysics_results_together():
     for i_a, a in enumerate(ax):
         a.text(-0.25, 1.22, letters[i_a], transform=a.transAxes, fontsize=15,
                fontweight='bold', va='top', ha='right')
-    fig.savefig(DATA_FOLDER + 'fbp_ddm_figure.png', dpi=200, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'fbp_ddm_figure.svg', dpi=200, bbox_inches='tight')
+    # fig.savefig(DATA_FOLDER + 'fbp_ddm_figure.png', dpi=200, bbox_inches='tight')
+    # fig.savefig(DATA_FOLDER + 'fbp_ddm_figure.svg', dpi=200, bbox_inches='tight')
 
 
 def log_ratio_FBP(noise=0.1, j=0.1, time_end=2, tau=0.1, dt=1e-2,
@@ -3816,7 +3816,7 @@ if __name__ == '__main__':
     #                      time_end=4, bound=2, tau=0.1, dt=1e-3,
     #                      alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
     #                      fig=None, ax=None)
-    # plot_psychophysics_results_together()
+    plot_psychophysics_results_together()
     # plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
     #                     time_end=2.5, bound=1, tau=0.1, dt=1e-3,
     #                     alpha=1, n=3, ntrials=7000, b=0.3, tau_ddm=0.1)
