@@ -21,6 +21,7 @@ import matplotlib.pylab as pl
 import seaborn as sns
 from fokker_planck.simulator import simulator
 import fokker_planck.forceFunctions as ff
+from tqdm import tqdm
 
 # from numba import jit, prange
 # from concurrent.futures import ProcessPoolExecutor
@@ -3224,7 +3225,7 @@ def plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
                         alpha=1, n=3, ntrials=7000, b=0.3, tau_ddm=0.1,
                         fig=None, ax=None, savefig=True):
     dict_data = pd.DataFrame()
-    for i_j, j in enumerate(j_list):
+    for i_j, j in enumerate(tqdm(j_list)):
         reac_times, sensory_ev, q_examples, dv_examples, time, sensory_ev_examples, \
         choice , confval =\
             log_ratio_FBP_ddm(drift=drift, noise=noise, j=j, 
@@ -3258,9 +3259,11 @@ def plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
     diffrt = data0.rt.values-data1.rt.values
     newcoup = data0.coupling.values
     df = pd.DataFrame({'diff_rt': diffrt, 'coupling': newcoup})
+    j_crit = np.log(3/(3-2))/(2)
+    ax[1].axvline(j_crit, color='gray', linestyle='--')
     sns.lineplot(df, x='coupling', y='diff_rt', ax=ax[1], lw=3, color='k')
     ax[1].set_xlabel('Coupling')
-    ax[1].set_ylabel(r'$\Delta RT (s) = RT(s=0)-RT(s=1)$')
+    ax[1].set_ylabel(r'$\Delta RT = RT(c=0)-RT(c=1)$')
     ax[1].axhline(0, color='k', linestyle='--', alpha=0.4)
     if savefig:
         fig.tight_layout()
@@ -3538,7 +3541,8 @@ def plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
     for a in ax:
         a.spines['top'].set_visible(False)
         a.spines['right'].set_visible(False)
-    colormap = pl.cm.coolwarm(np.linspace(0., 1, 3))
+    # colormap = pl.cm.coolwarm(np.linspace(0., 1, 3))
+    colormap = ['darkgreen', 'gainsboro', 'crimson']
     ax[0].set_xlabel('Time (s)')
     ax[0].set_title(r'Inference: $\dot{Q} = \phi(Q(t), J, B) - Q(t) + \xi_t$', fontsize=14)
     ax[0].set_ylabel('Log-belief ratio')
@@ -3564,15 +3568,20 @@ def plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
     ax[0].set_xlim(-0.05, time_end/2+1e-2)
     ax[1].set_xlim(-0.05, time_end/2+1e-2)
     ax[1].set_ylim(-2*bound-1e-2, 2*bound+1e-2)
-    legendelements = [Line2D([0], [0], color=colormap[2], lw=2, label='s=1'),
-                      Line2D([0], [0], color=colormap[1], lw=2, label='s=0'),
-                      Line2D([0], [0], color=colormap[0], lw=2, label='s=-1'),
-                      Line2D([0], [0], color='k', lw=2, label='J=0.1'),
-                      Line2D([0], [0], color='k', lw=2, label='J=0.5', linestyle='--')]
+    legendelements = [Line2D([0], [0], color=colormap[2], lw=4, label='c=1'),
+                      Line2D([0], [0], color=colormap[1], lw=4, label='c=0'),
+                      Line2D([0], [0], color=colormap[0], lw=4, label='c=-1'),
+                      Line2D([0], [0], color='cadetblue', lw=4, label='Monostable'),
+                      Line2D([0], [0], color='peru', lw=4, label='Bistable', linestyle='--')]
     ax[1].set_xlabel('Time (s)')
     ax[1].set_ylabel('Decision variable')
-    ax[1].legend(handles=legendelements, frameon=False, bbox_to_anchor=(0.5, 1.05),
-                 ncol=2, labelspacing=0.15)
+    leg = ax[1].legend(handles=legendelements, frameon=False, #  bbox_to_anchor=(0.5, 1.05),
+                       ncol=2, labelspacing=0.15)
+    legend_texts = leg.get_texts()
+    legend_texts[-2].set_color('cadetblue')
+    legend_texts[-1].set_color('peru')
+    
+    plt.show()
     if savefig:
         fig.tight_layout()
         fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_example_coupling_eff_both.png',
@@ -3594,17 +3603,17 @@ def plot_psychophysics_results_together():
                               filename='pk_kernels_J_b0_big_dJ_moreits_smaller_b.npy',
                               axes=ax[4:], fig=fig, savefig=False)
     fig.tight_layout()
-    plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
+    plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.1),
                         time_end=2.5, bound=1, tau=0.1, dt=1e-3,
-                        alpha=1, n=3, ntrials=700, b=0.3, tau_ddm=0.1,
+                        alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
                         fig=fig, ax=ax[2:4], savefig=False)
     
     letters = ['a', '', 'b', '', 'c', 'd', 'e', 'f']
     for i_a, a in enumerate(ax):
         a.text(-0.25, 1.22, letters[i_a], transform=a.transAxes, fontsize=15,
                fontweight='bold', va='top', ha='right')
-    # fig.savefig(DATA_FOLDER + 'fbp_ddm_figure.png', dpi=200, bbox_inches='tight')
-    # fig.savefig(DATA_FOLDER + 'fbp_ddm_figure.svg', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'full_fbp_ddm_figure.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'full_fbp_ddm_figure.svg', dpi=200, bbox_inches='tight')
 
 
 def log_ratio_FBP(noise=0.1, j=0.1, time_end=2, tau=0.1, dt=1e-2,
