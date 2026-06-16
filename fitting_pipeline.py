@@ -2155,7 +2155,7 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         data_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_orig.csv')
         data_model_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+model+'_orig.csv')
         data_model_null = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+modeln+'_null_model.csv')
-    linear_mixed_model(data_orig, data_model_orig, data_model_null)
+    # linear_mixed_model(data_orig, data_model_orig, data_model_null)
     # subjects = data_orig.subject.unique()
     # r2_full = []
     # r2_null = []
@@ -2206,14 +2206,16 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
     for a in ax:
         a.axhline(0, color='k', linestyle='--')
     colors = ['black', 'gray', 'lightgray']
+    linecolors = ['lightgray', 'lightgray', 'gray']
     # colors = []
     xlabs = ['Data', 'Model', 'Null']
-    ylabs = ['Intercept', 'Coupling', 'Stim. congr.', 'Coupling:stim. congr.']
+    ylabs = ['Intercept', '1-Shuffle', 'Stim. congr.', '1-Shuffle:stim. congr.']
     for j in range(4):
         ax[j].spines['right'].set_visible(False)
         ax[j].spines['top'].set_visible(False)
         sns.boxplot([weights_o[j], weights_model_o[j], weights_model_null[j]], ax=ax[j],
-                    palette=colors, flierprops={"marker": ""}, linecolor='grey', linewidth=1.4)
+                    palette=colors, flierprops={"marker": ""}, linecolor='firebrick', linewidth=1.5,
+                    zorder=1)
         ax[j].set_ylabel(ylabs[j])
         ax[j].set_xticks([0, 1, 2], xlabs, rotation=45)
     for i_s in range(len(subjects)):
@@ -2234,19 +2236,23 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
             ax[0].plot([t+jitter[t]],
                        [weights_o[0][i_s], weights_model_o[0][i_s], weights_model_null[0][i_s]][t],
                        marker='o', color=colors[t], linestyle='',
-                       markersize=5, markeredgewidth=1, markeredgecolor='white')
+                       markersize=5, markeredgewidth=1, markeredgecolor='white',
+                       zorder=10)
             ax[1].plot([t+jitter[t]],
                        [weights_o[1][i_s], weights_model_o[1][i_s], weights_model_null[1][i_s]][t],
                        marker='o', color=colors[t], linestyle='',
-                       markersize=5, markeredgewidth=1, markeredgecolor='white')
+                       markersize=5, markeredgewidth=1, markeredgecolor='white',
+                       zorder=10)
             ax[2].plot([t+jitter[t]],
                        [weights_o[2][i_s], weights_model_o[2][i_s], weights_model_null[2][i_s]][t],
                        marker='o', color=colors[t], linestyle='',
-                       markersize=5, markeredgewidth=1, markeredgecolor='white')
+                       markersize=5, markeredgewidth=1, markeredgecolor='white',
+                       zorder=10)
             ax[3].plot([t+jitter[t]],
                        [weights_o[3][i_s], weights_model_o[3][i_s], weights_model_null[3][i_s]][t],
                        marker='o', color=colors[t], linestyle='',
-                       markersize=5, markeredgewidth=1, markeredgecolor='white')
+                       markersize=5, markeredgewidth=1, markeredgecolor='white',
+                       zorder=10)
     if savefig:
         fig.tight_layout()
     pvals_o = []
@@ -2268,13 +2274,13 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         ax[a].text(2, h_null[a]+0.1, f"{pvals_null[a]}", ha='center', va='bottom', color='k',
                    fontsize=12)
         x1, x2 = [0+eps, 1-eps]
-        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_o[a]).pvalue*3)  # bonferroni correction
+        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_o[a]).pvalue)  # bonferroni correction
         y, h, col = max(map(max, np.column_stack((weights_o[a],
                                                   weights_model_o[a]))))+0.4, 0.05, 'k'
         ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
         ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
                    fontsize=12)
-        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_null[a]).pvalue*3)  # bonferroni correction
+        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_null[a]).pvalue)  # bonferroni correction
         x1, x2 = [0-eps, 2+eps]
         y, h, col = max(map(max, np.column_stack((weights_o[a],
                                                   weights_model_o[a]))))+0.65, 0.05, 'k'
@@ -2282,7 +2288,7 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
                    fontsize=12)
         x1, x2 = [1+eps, 2-eps]
-        p = stars_pval(scipy.stats.ttest_rel(weights_model_o[a],  weights_model_null[a]).pvalue*3)  # bonferroni correction
+        p = stars_pval(scipy.stats.ttest_rel(weights_model_o[a],  weights_model_null[a]).pvalue)  # bonferroni correction
         y, h, col = max(map(max, np.column_stack((weights_o[a],
                                                   weights_model_o[a]))))+0.4, 0.05, 'k'
         ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
@@ -2290,7 +2296,7 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
                    fontsize=12)
     if savefig:
         fig.savefig(SV_FOLDER + 'linear_regression_analysis.png', dpi=400, bbox_inches='tight')
-        fig.savefig(SV_FOLDER + 'linear_regression_analysis.pdf', dpi=400, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + 'linear_regression_analysis.svg', dpi=400, bbox_inches='tight')
 
 
 def stars_pval(pval):
@@ -2939,70 +2945,189 @@ def psychometric_curve_all_subjects():
     fig.savefig(SV_FOLDER + 'psychometric_curve_exp_confidence.pdf', dpi=200, bbox_inches='tight')
 
 
-def plot_acc_vs_conf():
-    df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+def plot_acc_vs_conf(column='abs_conf', n=4):
 
-    df['accuracy'] = (np.sign(df['confidence']) == df['side']).astype(int)
-    df['abs_conf'] = np.abs(df['confidence'])
-    df['abs_evidence'] = np.abs(df['evidence'])
-    df['pShuffle'] = df['pShuffle'] / 100
+    df = load_data(data_folder=DATA_FOLDER, n_participants='all').copy()
 
-    # subject-level first
-    subj = df.groupby(['subject', 'pShuffle', 'abs_evidence']).agg(
-        accuracy=('accuracy', 'mean'),
-        confidence=('abs_conf', 'mean')
+    # -----------------------------
+    # confidence transforms
+    # -----------------------------
+    x = np.abs(df["confidence"].to_numpy() * 2 - 1)
+
+    g = df.groupby("subject")["confidence"]
+    mean = g.transform(lambda s: np.abs(s * 2 - 1).mean()).to_numpy()
+    std  = g.transform(lambda s: np.abs(s * 2 - 1).std()).to_numpy()
+
+    df["zscore_abs_confidence"] = (x - mean) / std
+
+    df["accuracy"] = (np.sign(df["confidence"]) == df["side"]).astype(int)
+    df["abs_evidence"] = np.abs(df["evidence"])
+    df["abs_conf"] = np.abs(df["confidence"])
+    df["pShuffle"] = df["pShuffle"] / 100
+
+    # -----------------------------
+    # regime computation
+    # -----------------------------
+    def get_par(sub):
+        return np.load(SV_FOLDER + f"/parameters_MF5_BADS{sub}.npy", allow_pickle=True)
+
+    subjects = df["subject"].unique()
+    par_dict = {sub: get_par(sub) for sub in subjects}
+
+    pars = df["subject"].map(par_dict)
+
+    pars0 = pars.map(lambda p: p[0]).to_numpy()
+    pars1 = pars.map(lambda p: p[1]).to_numpy()
+    pars2 = pars.map(lambda p: p[2]).to_numpy()
+    pars3 = pars.map(lambda p: p[3]).to_numpy()
+
+    j_vals = pars0 * (1 - df["pShuffle"].to_numpy()) + pars1
+
+    delta = np.sqrt(1 - 1 / (j_vals * n))
+    invalid = (j_vals * n <= 0) | np.isnan(j_vals)
+    delta = np.where(invalid, np.nan, delta)
+
+    b_crit1 = (np.log((1 - delta) / (1 + delta)) + 2 * n * j_vals * delta) / 2
+    b_crit2 = (np.log((1 + delta) / (1 - delta)) - 2 * n * j_vals * delta) / 2
+
+    vals_b = pars3 + pars2 * df["evidence"].to_numpy()
+
+    regime = np.ones(len(df))
+    monostable = (
+        (vals_b > b_crit1)
+        | (vals_b < b_crit2)
+        | np.isnan(delta)
+    )
+    regime[monostable] = 0
+
+    df["regime"] = regime.astype(int)
+
+    # -----------------------------
+    # subject-level aggregation
+    # -----------------------------
+    subj = df.groupby(
+        ["subject", "pShuffle", "abs_evidence", "regime"]
+    ).agg(
+        accuracy=("accuracy", "mean"),
+        confidence=(column, "mean")
     ).reset_index()
 
-    # population mean + SE
-    vals = subj.groupby(['pShuffle', 'abs_evidence']).agg(
-        accuracy_mean=('accuracy', 'mean'),
-        accuracy_se=('accuracy', lambda x: x.std(ddof=1) / np.sqrt(len(x))),
-        confidence_mean=('confidence', 'mean'),
-        confidence_se=('confidence', lambda x: x.std(ddof=1) / np.sqrt(len(x)))
-    ).reset_index()
 
-    vals = vals.sort_values('abs_evidence')
+    # -----------------------------
+    # plotting setup
+    # -----------------------------
+    palette_shuffle = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+    hue_shuffle = [1.0, 0.7, 0.0]
 
-    palette = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
-    hue_order = [1.0, 0.7, 0.0]
+    palette_regime = {
+        0: "cadetblue",   # Monostable
+        1: "peru"         # Bistable
+    }
+    
 
-    fig, ax = plt.subplots(figsize=(4.5, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(7, 3.5), sharey=True)
 
-    # lines (clean seaborn use)
+    # =========================================================
+    # LEFT PANEL: pShuffle
+    # =========================================================
+    ax = axes[0]
+
+    # Recalculate population mean specifically by pShuffle and abs_evidence
+    vals_shuffle = subj.groupby(["pShuffle", "abs_evidence"]).agg(
+        accuracy_mean=("accuracy", "mean"),
+        accuracy_se=("accuracy", lambda x: x.std(ddof=1) / np.sqrt(len(x))),
+        confidence_mean=("confidence", "mean"),
+        confidence_se=("confidence", lambda x: x.std(ddof=1) / np.sqrt(len(x)))
+    ).reset_index().sort_values("abs_evidence")
+
     sns.lineplot(
-        data=vals,
-        x='accuracy_mean',
-        y='confidence_mean',
-        hue='pShuffle',
-        hue_order=hue_order,
-        palette=palette,
-        marker='o',
-        linewidth=3.5,
+        data=vals_shuffle,
+        x="accuracy_mean",
+        y="confidence_mean",
+        hue="pShuffle",
+        hue_order=hue_shuffle,
+        palette=palette_shuffle,
+        marker="o",
+        linewidth=3,
         ax=ax
     )
 
-    # 2D errorbars (minimal, explicit, necessary)
-    for i, p in enumerate(hue_order):
-        d = vals[vals['pShuffle'] == p]
+    for i, p in enumerate(hue_shuffle):
+        d = vals_shuffle[vals_shuffle["pShuffle"] == p]
 
         ax.errorbar(
-            d['accuracy_mean'],
-            d['confidence_mean'],
-            xerr=d['accuracy_se'],
-            yerr=d['confidence_se'],
-            fmt='none',
-            color=palette[i],
+            d["accuracy_mean"],
+            d["confidence_mean"],
+            xerr=d["accuracy_se"],
+            yerr=d["confidence_se"],
+            fmt="none",
+            color=palette_shuffle[i],
             alpha=0.4,
             capsize=3
         )
 
     ax.set_xlabel("Accuracy")
     ax.set_ylabel("Absolute confidence")
-    ax.legend(frameon=False, title='Shuffle')
+
+    # =========================================================
+    # RIGHT PANEL: regime
+    # =========================================================
+    ax = axes[1]
+
+    # Recalculate population mean specifically by regime and abs_evidence
+    vals_regime = subj.groupby(["regime", "abs_evidence"]).agg(
+        accuracy_mean=("accuracy", "mean"),
+        accuracy_se=("accuracy", lambda x: x.std(ddof=1) / np.sqrt(len(x))),
+        confidence_mean=("confidence", "mean"),
+        confidence_se=("confidence", lambda x: x.std(ddof=1) / np.sqrt(len(x)))
+    ).reset_index().sort_values("abs_evidence")
+
+    sns.lineplot(
+        data=vals_regime,
+        x="accuracy_mean",
+        y="confidence_mean",
+        hue="regime",
+        hue_order=[1, 0],
+        palette=palette_regime,
+        marker="o",
+        linewidth=3,
+        ax=ax
+    )
+
+    for reg in [1, 0]:
+        d = vals_regime[vals_regime["regime"] == reg]
+        
+        ax.errorbar(
+            d["accuracy_mean"],
+            d["confidence_mean"],
+            xerr=d["accuracy_se"],
+            yerr=d["confidence_se"],
+            fmt="none",
+            color=palette_regime[reg],
+            alpha=0.4,
+            capsize=3
+        )
+
+    ax.set_ylabel("")
+    ax.set_xlabel("Accuracy")
+
+    # clean legends
+    axes[0].legend(frameon=False, title="Shuffle")
+    axes[1].legend(
+        handles=[
+            plt.Line2D([0], [0], color="cadetblue", lw=3, label="Monostable"),
+            plt.Line2D([0], [0], color="peru", lw=3, label="Bistable"),
+        ],
+        frameon=False,
+    )
 
     sns.despine()
     fig.tight_layout()
-    plt.show()
+
+    fig.savefig(SV_FOLDER + "confidence_vs_accuracy_split.png", dpi=400, bbox_inches="tight")
+    fig.savefig(SV_FOLDER + "confidence_vs_accuracy_split.svg", dpi=200, bbox_inches="tight")
+
+    return fig, axes
 
 
 def confidence_accuracy_coupling():
@@ -3071,7 +3196,7 @@ def plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method='Powell',
         lab = 'conf.'
     else:
         lab = 'p(right)'
-    titles = ['Model '+lab, 'Null model '+lab]
+    titles = ['Original model '+lab, 'Null model '+lab]
     for a in ax2:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
@@ -3086,23 +3211,25 @@ def plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method='Powell',
         conf_data = df_data_coup[variable].values
         conf_model = df_model_coup[variable].values
         conf_null = df_null_coup[variable].values
-        ro_model = scipy.stats.pearsonr(conf_data, conf_model).statistic
-        ro_null = scipy.stats.pearsonr(conf_data, conf_null).statistic
+        ro_model, p_model = scipy.stats.pearsonr(conf_data, conf_model)
+        ro_null, p_null = scipy.stats.pearsonr(conf_data, conf_null)
+        r2_model = r2_score(conf_data, conf_model)
+        r2_null = r2_score(conf_data, conf_null)
         # ro_model = scipy.stats.linregress(conf_data, conf_model).slope
         # ro_null = scipy.stats.linregress(conf_data, conf_null).slope
         ax2[i_c].set_title(f'Shuffling = {100*(1-c)}%', fontsize=15)
         ax2[i_c].plot(conf_data, conf_model, marker='o', color='k', linestyle='')
-        ax2[i_c].text(0.06, 0.84, rf'$\rho = $ {round(ro_model, 3)}',  # , p={ro_model.pvalue: .3e}
+        ax2[i_c].text(0.06, 0.84, rf'$R^2 = $ {round(r2_model, 3)}',  # , p={ro_model.pvalue: .3e}
                       fontsize=14)
         ax2[i_c+3].plot(conf_data, conf_null, marker='o', color='r', linestyle='')
-        ax2[i_c+3].text(0.06, 0.84, rf'$\rho = $ {round(ro_null, 3)}',  # , p={ro_model.pvalue: .3e}
+        ax2[i_c+3].text(0.06, 0.84, rf'$R^2 = $ {round(r2_null, 3)}',  # , p={ro_model.pvalue: .3e}
                         fontsize=14)
         ax2[i_c+3].set_xlabel('Data ' + lab, fontsize=15)
     ax2[0].set_ylabel(titles[0], fontsize=15)
     ax2[3].set_ylabel(titles[1], fontsize=15)
     fig2.tight_layout()
     fig2.savefig(SV_FOLDER + 'full_comparison_shuffling_' + lab + '.png', dpi=200, bbox_inches='tight')
-    fig2.savefig(SV_FOLDER + 'full_comparison_shuffling_' + lab + '.pdf', dpi=200, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + 'full_comparison_shuffling_' + lab + '.svg', dpi=200, bbox_inches='tight')
     # avg. psychometrics
     df_subject_avg = df_sub_final.groupby(['subject', 'coupling', 'stim_str'])['decision'].mean().reset_index()
     df_model_subject_avg = df_sub_model.groupby(['subject', 'coupling', 'stim_str'])['decision'].mean().reset_index()
@@ -3902,10 +4029,13 @@ if __name__ == '__main__':
     #                                 bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
     #                                data_only=True)
-    plot_all_subjects(model=False)  #, hue='regime')
+    # plot_all_subjects(model=False)  #, hue='regime')
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
+    plot_acc_vs_conf(column='abs_conf')
+    # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
+    #                         variable='decision')
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
     #                                 data_only=True)
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
