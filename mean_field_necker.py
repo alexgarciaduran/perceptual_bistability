@@ -2409,7 +2409,7 @@ def trans_rate_vs_stim(b_list = np.arange(-0.2, 0.2, 1e-3),
     plt.plot(b_list, k_i_to_j(j, np.array(xstb2), np.array(xustb), noise, b_list),
              label='S1', color='g')
     plt.yscale('log')
-    plt.xlabel('Coupling, J')
+    plt.xlabel('Sensory evidence, B')
     plt.ylabel('Transition rate')
     plt.legend(title='transition')
 
@@ -8190,10 +8190,12 @@ if __name__ == '__main__':
     # calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
     # boltzmann_2d_change_sigma(j=0.5, b=0)
-    # levelts_laws(noise=0.1, j=0.3,
-    #              b_list=np.round(np.arange(-0.1, 0.11, 0.01), 4),
-    #              theta=theta, time_end=12000, dt=1e-2, tau=0.1,
-    #              n_nodes_th=50)
+    trans_rate_vs_noise(noise_list = np.arange(0.05, 0.5, 1e-2),
+                        b=0.0, j=0.7, t_dur=100)
+    levelts_laws(noise=0.1, j=0.35,
+                 b_list=np.round(np.arange(-0.1, 0.11, 0.01), 4),
+                 theta=theta, time_end=12000, dt=1e-2, tau=0.1,
+                 n_nodes_th=50)
     # plot_3d_solution_mf_vs_j_b(j_list=np.arange(0.01, 1.01, 0.00025),
     #                             b_list=np.arange(0, 0.125, 0.025), N=3,
     #                             num_iter=200, tol=1e-3, dim3d=False)
