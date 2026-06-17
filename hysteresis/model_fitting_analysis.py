@@ -1295,7 +1295,9 @@ def fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=10, ntraining=8,
             params = np.full(6, np.nan)
         # Convert to a numpy array for ease
         params = np.asarray(params)
-        np.save(SV_FOLDER + folder + f'fitted_params/fitted_with_preprocessed_data_more_bins/fitted_params_pyddm_{subject}_fixed_ndt_preprocessed.npy', params)
+        file_path = SV_FOLDER + folder + f'fitted_params/fitted_with_preprocessed_data_more_bins/fitted_params_pyddm_{subject}_fixed_ndt_preprocessed.npy'
+        os.makedirs(file_path, exist_ok=True)
+        np.save(file_path, params)
 
 
 def instanton_rhs(t, y, J, B, D):
