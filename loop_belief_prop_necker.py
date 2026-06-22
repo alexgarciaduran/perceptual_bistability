@@ -2973,7 +2973,8 @@ def get_psych_kernel(j=0.6, b=0., n_its=1000, t_end=15, dt=1e-2, tau=0.5,
             if comp_all:
                 q2 = q2 + dt*(psi_x(q2, chi_t))/tau
                 q2 = np.clip(q2, 0, 1)
-            if (q > 0.9 or q < 0.1) and not absorb:
+            qsigma = sigmoid(q)
+            if (qsigma > 0.9 or qsigma < 0.1) and not absorb:
                 absorb = True
                 d_absorbing[it] = np.sign(q)
         if not absorb:
@@ -3062,13 +3063,15 @@ def area_slope_PK_vs_alpha(alpha_list=np.arange(0.1, 1.5, 0.01), j=0.6, b=0,
 def area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1, b=0, 
                               n_its=1000, t_end=15, dt=1e-2, tau=0.5,
                               noise=0.2, nboots=1, n=3, load_data=True,
-                              filename='', axes=None, fig=None, savefig=True):
+                              filename='', axes=None, fig=None, savefig=True,
+                              seed=1):
     
     slope = []
     area = []
     colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(j_list)))
     time = np.arange(0, t_end, dt)
     time_2 = np.arange(0, len(time), 5)*dt
+    np.random.seed(seed)
     if load_data:
         kernel_array = np.load(DATA_FOLDER + filename)
         # j_list=np.arange(0.1, 1.5, 0.1)
@@ -3079,7 +3082,7 @@ def area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1, b=0,
             area.append(mfn.total_area_kernel(conv_kern))
     else:
         kernel_array = np.zeros((len(j_list), len(time_2)))
-        for i_a, j in enumerate(j_list):
+        for i_a, j in enumerate(tqdm(j_list)):
             kernel = get_psych_kernel(j=j, b=b, n_its=n_its, t_end=t_end, dt=dt, tau=tau,
                                       noise=noise, nboots=nboots, n=n, alpha=alpha, comp_all=False)
             # conv_kern = np.convolve(kernel_array[i_a, :], np.ones(50)/50, mode='valid')
@@ -3243,17 +3246,43 @@ def plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
     colormap = pl.cm.Oranges(np.linspace(0.2, 1, len(j_list)))
     newcmp = mpl.colors.ListedColormap(colormap)
     mpl.cm.register_cmap("cmap", newcmp)
-    sns.lineplot(dict_data, x='coh', y='rt', hue='coupling', ax=ax[0], legend=False,
-                 palette='cmap')
-    ax_pos = ax[0].get_position()
-    ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.1, ax_pos.y0+ax_pos.height*1.1,
-                            ax_pos.width*0.8, ax_pos.height*0.05])
-    colorbar = mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling, J',
-                                         orientation='horizontal')
-    colorbar.ax.xaxis.set_ticks_position('top')
-    colorbar.ax.xaxis.set_label_position('top')
+    # sns.lineplot(dict_data, x='coh', y='rt', hue='coupling', ax=ax[0], legend=False,
+    #              palette='cmap')
+    # Find coupling values closest to 0.1 and 0.6
+    j_low = min(j_list, key=lambda x: abs(x - 0.1))
+    j_high = min(j_list, key=lambda x: abs(x - 0.6))
+    
+    # Keep only those couplings
+    plot_data = dict_data[dict_data['coupling'].isin([round(j_low, 3),
+                                                      round(j_high, 3)])]
+    
+    # Explicit colors
+    palette = {
+        round(j_low, 3): 'cadetblue',
+        round(j_high, 3): 'peru'
+    }
+    
+    sns.lineplot(
+        data=plot_data,
+        x='coh',
+        y='rt',
+        hue='coupling',
+        ax=ax[0],
+        palette=palette,
+        lw=3
+    )
+    
+    ax[0].legend(title='', frameon=False)
+    # ax_pos = ax[0].get_position()
+    # ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*0.1, ax_pos.y0+ax_pos.height*1.1,
+    #                         ax_pos.width*0.8, ax_pos.height*0.05])
+    # colorbar = mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label=r'Coupling, J',
+    #                                      orientation='horizontal')
+    # colorbar.ax.xaxis.set_ticks_position('top')
+    # colorbar.ax.xaxis.set_label_position('top')
     ax[0].set_xlabel('Sensory evidence, s')
     ax[0].set_ylabel('Reaction time (s)')
+    ax[0].set_ylim(0, 2.05)
     data1 = dict_data[dict_data.coh == 1]
     data0 = dict_data[dict_data.coh.abs() == 0]
     diffrt = data0.rt.values-data1.rt.values
@@ -3818,9 +3847,9 @@ if __name__ == '__main__':
     #                           b_list=np.round(np.arange(0., 0.5005, 1e-2), 4), noise=0.2,
     #                           n=3)
     # area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1.09864,
-    #                           b=1, n_its=100000, t_end=10, dt=1e-2, tau=0.5,
-    #                           noise=0.2, nboots=10, n=3, load_data=True,
-    #                           filename='pk_kernels_J_b0_big_dJ_moreits_smaller_b.npy')
+    #                           b=1, n_its=100000, t_end=10, dt=1e-2, tau=0.2,
+    #                           noise=0.15, nboots=10, n=3, load_data=False,
+    #                           filename='pk_kernels_final.npy')
     # plot_rt_FBP_ddm_both(drift=.2, noise=0.1, jvals=[0.2, 0.6], 
     #                      time_end=4, bound=2, tau=0.1, dt=1e-3,
     #                      alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
