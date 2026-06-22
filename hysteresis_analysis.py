@@ -4222,6 +4222,8 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
         else:
             vmin = 0
             cmap = 'Reds'
+        cmap = 'bwr'
+        vmin = -1
         im = ax.imshow(corr_mat.T, cmap=cmap, vmin=vmin, vmax=1)
         # tune panels
         plt.colorbar(im, cax=cax, label='Correlation')
@@ -4242,9 +4244,9 @@ def parameter_recovery_5_params(n_simuls_network=100000, fps=60, tFrame=26,
         ax2.set_ylabel('Inferred parameters', fontsize=14)
         fig2.tight_layout()
         fig.savefig(SV_FOLDER + 'param_recovery_all.png', dpi=400, bbox_inches='tight')
-        fig.savefig(SV_FOLDER + 'param_recovery_all.pdf', dpi=400, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + 'param_recovery_all.svg', dpi=400, bbox_inches='tight')
         fig2.savefig(SV_FOLDER + 'param_recovery_correlations.png', dpi=400, bbox_inches='tight')
-        fig2.savefig(SV_FOLDER + 'param_recovery_correlations.pdf', dpi=400, bbox_inches='tight')
+        fig2.savefig(SV_FOLDER + 'param_recovery_correlations.svg', dpi=400, bbox_inches='tight')
 
 
 def build_prior_sample_theta(n_simuls=100, coupling_offset=False,
@@ -14015,7 +14017,7 @@ if __name__ == '__main__':
     # comparison_between_experiments_bis_mono(unique_shuffle=[1., 0.7, 0.],
     #                                         estimator='mean', n=4)
     # comparison_between_experiments(estimator='mean', data_only=True)
-    compare_parameters_two_experiments()
+    # compare_parameters_two_experiments()
     # experiment_comparison_altogether()
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                                     simulated=False)
@@ -14124,11 +14126,11 @@ if __name__ == '__main__':
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
     # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=12, ntraining=8, t_dur=13,
     #                subj_ini=None, nbins=54, fitting_method='bads')
-    # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
-    #                             n_pars_to_fit=100, n_sims_per_par=100,
-    #                             sv_folder=SV_FOLDER, simulate=True,
-    #                             load_net=False, not_plot_and_return=False,
-    #                             pyddmfit=True, transform=False, ini_par=0)
+    parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
+                                n_pars_to_fit=100, n_sims_per_par=100,
+                                sv_folder=SV_FOLDER, simulate=True,
+                                load_net=False, not_plot_and_return=False,
+                                pyddmfit=True, transform=False, ini_par=0)
     # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                   ntraining=8, coupling_levels=[0, 0.3, 1],
     #                   window_conv=5, bin_size=0.35, switch_01=False)
