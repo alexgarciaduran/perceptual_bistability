@@ -21,6 +21,8 @@ from matplotlib.colors import ListedColormap
 import matplotlib.patches as mpatches
 from gibbs_necker import rle
 from collections import defaultdict
+from tqdm import tqdm
+from joblib import Parallel, delayed
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -205,16 +207,26 @@ class ring:
         H preferred over V when ratio > 1.
         Idle-ring suppression is handled by get_likelihood_quartet_small_rings.
         """
-        if s_t[1] == 1:
-            z_center = z_triplet[1]
-            ring_offset = 0 if state == 1 else 4
-            edge_type = QUARTET_NODE_DEFS[ring_offset + central_idx]['type']
-            d = 1.0 if edge_type == 'H' else ratio
-            if z_center == 1:
-                return np.log(d)-d / noise
-            return np.log(epsilon)
-        else:
-            return 0
+        z_center = z_triplet[1]
+        ring_offset = 0 if state == 1 else 4
+        edge_type = QUARTET_NODE_DEFS[ring_offset + central_idx]['type']
+        d = 1.0 if edge_type == 'H' else ratio
+        nlh = 0
+        if z_center == 1:
+            nlh += np.log(d)-d / noise
+        z_im1 = z_triplet[0]
+        edge_type_left = QUARTET_NODE_DEFS[(ring_offset + central_idx-1)%8]['type']
+        d = 1.0 if edge_type_left == 'H' else ratio
+        if z_im1 == 1:
+            nlh += np.log(d)-d / noise
+        z_ip1 = z_triplet[2]
+        edge_type_right = QUARTET_NODE_DEFS[(ring_offset + central_idx+1)%8]['type']
+        d = 1.0 if edge_type_right == 'H' else ratio
+        if z_ip1 == 1:
+            nlh += np.log(d)-d / noise
+        if nlh == 0:
+            nlh = np.log(epsilon)    
+        return nlh
 
     # def compute_likelihood_quartet_stim_ising(
     #     self,
@@ -958,11 +970,11 @@ class ring:
             llh1.append(likelihood[1, 0])
             llh2.append(likelihood[2, 0])
             llh3.append(likelihood[3, 0])
-        plt.figure()
-        plt.plot(llh)
-        plt.plot(llh1)
-        plt.plot(llh2)
-        plt.plot(llh3)
+        # plt.figure()
+        # plt.plot(llh)
+        # plt.plot(llh1)
+        # plt.plot(llh2)
+        # plt.plot(llh3)
         if not plot:
             if not return_all:
                 return q_mf
@@ -3719,10 +3731,10 @@ def motion_quartet_example(n_iters=100, dt=0.01, nreps=50, cols=True,
 
 def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
                          stamps=200):
-    # np.random.seed(123)  # with tau=10*dt
-    np.random.seed(910)
+    # np.random.seed(9)
+    np.random.seed(21)
     posterior = ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=dt, tau=50*dt, n_iters=n_iters, j=1,
-                                                            true='CW', noise=0.05, plot=False,
+                                                            true='CW', noise=0.125, plot=False,
                                                             discrete_stim=True, s=[0., 1],
                                                             b=[0., 3.], noise_stim=1, coh=None,
                                                             nstates=2, quartet=True, ratio=1,
@@ -3737,14 +3749,9 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
     fig, ax = plt.subplots(ncols=1, figsize=(6.5, 3.5))
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    colormap1 = ['firebrick', 'indianred']*2
-    colormap2 = ['forestgreen', 'mediumseagreen']*2
     colormap_full = ['firebrick', 'forestgreen', 'firebrick', 'forestgreen',
-                     'mediumseagreen', 'indianred', 'mediumseagreen', 'indianred']
-    # ax.axhline(0.5, color='k', alpha=0.4, linewidth=4, linestyle='--')
-    # ax.axvline(10.5, color='k', linestyle='--', alpha=0.4, linewidth=4)
+                     'indianred', 'mediumseagreen', 'indianred', 'mediumseagreen']
     time = np.arange(0, n_iters, downsample)*dt
-    # time -= np.min(time)
     # create vertical shaded blocks every 200 with width 200
     step_time = stamps * dt # convert steps → time units
     for start in np.arange(time.min(), time.max(), 2*step_time):
@@ -3753,11 +3760,9 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
     for i in range(1):
         for c in range(8):
             post = posterior[c, i, :]
-            # butterworth_filter = scipy.signal.butter(3, 0.1, output='sos')
-            # smoothed_version = scipy.signal.sosfilt(butterworth_filter, post)
             ax.plot(time, post, color=colormap_full[c], linewidth=4)
     ax.set_xlabel('Time (s)'); 
-    # ax.set_xlim(2.2, 18)
+    ax.set_xlim(4.49, 6.51)
     ax.set_yticks([0, 0.5, 1])
     ax.set_ylabel('Posterior, q')
     # ax.fill_between([11, 14], [1.1, 1.1], [-0.1, -0.1], color='k', alpha=0.2)
@@ -3768,6 +3773,79 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
                 bbox_inches='tight')
 
 
+def run_one(ratio, rep, dt, n_iters):
+    posterior = ring(epsilon=1e-4, n_dots=8).mean_field_sde(
+        dt=dt,
+        tau=0.1,
+        n_iters=n_iters,
+        j=0.5,
+        true='CW',
+        noise=0.,
+        plot=False,
+        discrete_stim=True,
+        s=[0., 1],
+        b=[0., 3.],
+        noise_stim=1,
+        coh=None,
+        nstates=2,
+        quartet=True,
+        ratio=ratio+1e-6,      # <-- use ratio here
+        stim_stamps=n_iters//4,
+        return_all=True,
+        seed=rep
+    )
+
+    post_horiz = np.nanmean(posterior[[0, 2], 0, -1])
+    post_vert = np.nanmean(posterior[[1, 3], 0, -1])
+
+    return (post_horiz + 1 - post_vert) * 0.5
+
+
+def fixed_points_vs_ratio(
+        ratio_list=np.arange(0.1, 2, 1e-2),
+        dt=1e-2,
+        n_iters=400,
+        n_reps=10,
+        n_jobs=-1):
+
+    tasks = [
+        (i_r, rep, ratio)
+        for i_r, ratio in enumerate(ratio_list)
+        for rep in range(n_reps)
+    ]
+
+    results = Parallel(
+        n_jobs=n_jobs,
+        backend="loky"
+    )(
+        delayed(run_one)(ratio, rep, dt, n_iters)
+        for _, rep, ratio in tqdm(tasks)
+    )
+
+    post_vals = np.zeros((len(ratio_list), n_reps))
+
+    for (i_r, rep, _), val in zip(tasks, results):
+        post_vals[i_r, rep] = val
+
+    np.save(
+        DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy',
+        post_vals
+    )
+
+    return post_vals
+    
+def plot_quartet_fps_vs_ratio(reps=50):
+    ratio_list=np.arange(0.0, 2, 5e-3)+1e-6
+    post_vals = np.load(DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy')
+    fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    for rep in range(reps):
+        ax.plot(ratio_list, post_vals[:, rep], color='k',
+                linestyle='', marker='.', alpha=0.5,
+                markersize=3)
+    
+    
 if __name__ == '__main__':
     print('Running ring analyses')
     # number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
@@ -3855,31 +3933,31 @@ if __name__ == '__main__':
     #                                               true='CCW', noise=0.01, plot=True,
     #                                               discrete_stim=True, s=[0., 1],
     #                                               b=[0., 0., 0.], noise_stim=0.0, coh=0.2)
-    # nice_quartet_example(n_iters=2000, dt=1e-3, downsample=10, stamps=250)
+    # nice_quartet_example(n_iters=8000, dt=1e-3, downsample=20, stamps=250)
     # motion_quartet_example(n_iters=5000, dt=0.01, nreps=50, cols=True,
     #                         downsample=25)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1,
-                                                true='CW', noise=0.05, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=0.1,
-                                                stim_stamps=50, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1,
-                                                true='CW', noise=0.05, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=1,
-                                                stim_stamps=50, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=1,
-                                                true='CW', noise=0.05, plot=True,
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.5,
+                                                true='CW', noise=0.0, plot=True,
                                                 discrete_stim=True, s=[0., 1],
                                                 b=[0.0, 2.5], noise_stim=1, coh=None,
                                                 nstates=2, quartet=True, ratio=2,
-                                                stim_stamps=50, stim_weight=1,
+                                                stim_stamps=100, stim_weight=1,
+                                                colors=True,
+                                                seed=6)
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.5,
+                                                true='CW', noise=0.0, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=1,
+                                                stim_stamps=100, stim_weight=1,
+                                                colors=True,
+                                                seed=6)
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.5,
+                                                true='CW', noise=0.0, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=0.1,
+                                                stim_stamps=100, stim_weight=1,
                                                 colors=True,
                                                 seed=6)
     # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.8,
@@ -3898,6 +3976,13 @@ if __name__ == '__main__':
     #                                             stim_stamps=50, stim_weight=1,
     #                                             colors=True,
     #                                             seed=3)
+    # fixed_points_vs_ratio(
+    #                     ratio_list=np.arange(0.0, 2, 5e-3),
+    #                     dt=1e-2,
+    #                     n_iters=400,
+    #                     n_reps=50,
+    #                     n_jobs=10)
+    # plot_quartet_fps_vs_ratio(reps=50)
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
