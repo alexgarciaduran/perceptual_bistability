@@ -31,6 +31,8 @@ import statsmodels.formula.api as smf
 from diptest import diptest
 from sklearn import linear_model
 from sklearn.linear_model import LogisticRegression, LinearRegression
+from scipy.special import logit
+from scipy.stats import linregress
 from sklearn.metrics import r2_score
 from scipy.special import psi, logsumexp
 import warnings
@@ -1153,7 +1155,7 @@ def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method=
         ax[-2].axis('off')
     fig.tight_layout()
     fig.savefig(SV_FOLDER + f'param_recovery_model_{model}.png', dpi=200, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + f'param_recovery_model_{model}.pdf', dpi=200, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'param_recovery_model_{model}.svg', dpi=200, bbox_inches='tight')
     fig2 = plt.figure(figsize=(10, 4))
     gs = gridspec.GridSpec(1, 3, width_ratios=[1, 1, 0.075], wspace=0.2)
     
@@ -1187,7 +1189,7 @@ def plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=50, model='FBP', method=
     ax2.set_xlabel('Inferred parameters', fontsize=14)
     ax2.set_ylabel('Inferred parameters', fontsize=14)
     fig2.savefig(SV_FOLDER + f'param_recovery_matrix_model_{model}.png', dpi=200, bbox_inches='tight')
-    fig2.savefig(SV_FOLDER + f'param_recovery_matrix_model_{model}.pdf', dpi=200, bbox_inches='tight')
+    fig2.savefig(SV_FOLDER + f'param_recovery_matrix_model_{model}.svg', dpi=200, bbox_inches='tight')
 
 
 def fit_subjects(method='BADS', model='MF', subjects='separated',
@@ -3629,6 +3631,217 @@ def plot_pars_distros(sv_folder=SV_FOLDER,
         sns.swarmplot(pars_all[i_a], ax=a,
                       linewidth=3, color='k')
 
+def compute_signed_confidence_efficiency(
+    data_folder=DATA_FOLDER,
+    min_trials=1
+):
+
+    df = load_data(
+        data_folder=data_folder,
+        n_participants="all"
+    )
+
+    results = []
+
+    for pid in np.unique(df.subject):
+
+        for pshuffle in [0, 70, 100]:
+
+            sub = df[
+                (df.subject == pid)
+                & (df.pShuffle == pshuffle)
+            ].copy()
+
+            if len(sub) < min_trials:
+                continue
+
+            # -----------------------------
+            # Encode responses (0/1)
+            # -----------------------------
+            responses = (sub["response"].values+1)/2
+            unique_resp = np.unique(responses)
+
+            if len(unique_resp) != 2:
+                continue
+
+            y = (responses == unique_resp.max()).astype(int)
+
+            # -----------------------------
+            # Psychometric fit
+            # -----------------------------
+            X = sub["evidence"].values.reshape(-1, 1)
+
+            clf = LogisticRegression()
+            clf.fit(X, y)
+
+            p_right = clf.predict_proba(X)[:, 1]
+            
+            beta1 = clf.coef_[0][0]
+            beta0 = clf.intercept_[0]
+
+            # -----------------------------
+            # signed decision evidence
+            # -----------------------------
+            eps = 1e-5
+            p_right = np.clip(p_right, eps, 1 - eps)
+
+            x_signed = np.where(
+                y == 1,
+                logit(p_right),
+                -logit(p_right)
+            )
+
+            # -----------------------------
+            # signed confidence
+            # -----------------------------
+            c = sub["confidence"].values.astype(float)
+
+            # optional normalization per subject
+            # c = (c - np.mean(c)) / (np.std(c) + 1e-10)
+
+            # -----------------------------
+            # regression
+            # -----------------------------
+            slope, intercept, r, p, stderr = linregress(
+                x_signed,
+                c
+            )
+
+            results.append({
+                "participant": pid,
+                "pShuffle": pshuffle,
+                "slope": slope,
+                "intercept": intercept,
+                "beta1_psychometric": beta1,
+                "beta0_psychometric": beta0,
+                "r2": r**2,
+                "ntrials": len(sub)
+            })
+
+    return pd.DataFrame(results)
+
+
+def plot_confidence_efficiency():
+
+    res = compute_signed_confidence_efficiency()
+
+    plt.figure(figsize=(6,4))
+
+    sns.stripplot(
+        data=res,
+        x="pShuffle",
+        y="slope",
+        alpha=.6
+    )
+
+    sns.pointplot(
+        data=res,
+        x="pShuffle",
+        y="slope",
+        errorbar=("ci",95),
+        color="black"
+    )
+
+    plt.ylabel("Confidence efficiency")
+    plt.xlabel("pShuffle")
+    plt.tight_layout()
+
+    return res
+
+
+def plot_type2_psychometric(
+    participant,
+    pshuffle
+):
+
+    df = load_data(
+        data_folder=DATA_FOLDER,
+        n_participants="all"
+    )
+
+    sub = df[
+        (df.subject == participant)
+        & (df.pShuffle == pshuffle)
+    ].copy()
+
+    responses = np.asarray(sub["response"])
+
+    y = (
+        responses == np.max(np.unique(responses))
+    ).astype(int)
+
+    X = sub["evidence"].values.reshape(-1,1)
+
+    clf = LogisticRegression()
+    clf.fit(X,y)
+
+    p_right = clf.predict_proba(X)[:,1]
+
+    p_choice = np.where(
+        y==1,
+        p_right,
+        1-p_right
+    )
+
+    p_choice = np.clip(
+        p_choice,
+        1e-6,
+        1-1e-6
+    )
+
+    conf = np.abs(sub["confidence"])
+
+    bins = np.linspace(
+        p_choice.min(),
+        p_choice.max(),
+        8
+    )
+
+    centers = []
+    means = []
+
+    for b0, b1 in zip(
+        bins[:-1],
+        bins[1:]
+    ):
+
+        idx = (
+            (p_choice >= b0)
+            & (p_choice < b1)
+        )
+
+        if idx.sum() < 3:
+            continue
+
+        centers.append(
+            (b0+b1)/2
+        )
+
+        means.append(
+            conf[idx].mean()
+        )
+
+    plt.figure(figsize=(5,4))
+
+    plt.plot(
+        centers,
+        means,
+        "o-"
+    )
+
+    plt.xlabel(
+        "P(choice | evidence)"
+    )
+
+    plt.ylabel(
+        "Mean confidence"
+    )
+
+    plt.title(
+        f"{participant}, pShuffle={pshuffle}"
+    )
+
+    plt.tight_layout()
 
 
 def compute_dprime(stimulus, choice):
@@ -4007,6 +4220,7 @@ def plot_metad_d_prime_results(condition='regime', conf_bins=4):
 
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
+    # plot_confidence_efficiency()
     # plot_metad_d_prime_results(condition='pShuffle',
     #                            conf_bins=10)
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=100, model='MF5', method='BADS')
@@ -4033,7 +4247,7 @@ if __name__ == '__main__':
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
-    plot_acc_vs_conf(column='abs_conf')
+    # plot_acc_vs_conf(column='abs_conf')
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                         variable='decision')
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
