@@ -2058,8 +2058,8 @@ def plot_density_regime_trials(n=4, unique_shuffle=[1., 0.7, 0.]):
 if __name__ == '__main__':
     print('Running model_fitting_analysis.py')
     # Example entry points (uncomment to run):
-    fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=12, ntraining=8, t_dur=13,
-                    subj_ini=None, nbins=54, fitting_method='bads')
+    # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=12, ntraining=8, t_dur=13,
+    #                 subj_ini=None, nbins=54, fitting_method='bads')
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
     # compare_likelihoods_models(load=True, loss='BIC')
     # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
