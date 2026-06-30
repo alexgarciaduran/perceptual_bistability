@@ -8092,6 +8092,371 @@ def fixed_points_vs_B(J_mono=0.1, J_bis=0.45, n=3,
     fig.savefig(DATA_FOLDER + 'fixed_points_regime.svg', dpi=600, bbox_inches='tight')
 
 
+
+def plot_projection_validation(
+    j=0.4,
+    b=0.,
+    theta=theta,
+    sigma=0,
+    tau=0.1,
+    time_end=50,
+    dt=1e-2,
+    ini_cond=None,
+    max_units_to_plot=20,
+    seed=0
+):
+    """
+    Validate the reduction
+
+        x_i(t)  -->  q(t)
+
+    for an N-regular graph.
+
+    Parameters
+    ----------
+    j, b, theta, sigma, tau :
+        Same parameters as solution_mf_sdo_euler
+
+    Returns
+    -------
+    fig, axs
+    """
+    np.random.seed(0)
+    # --------------------------------------------------
+    # Full M-dimensional simulation
+    # --------------------------------------------------
+
+    time, x = solution_mf_sdo_euler(
+        j=j,
+        b=b,
+        theta=theta,
+        noise=sigma,
+        tau=tau,
+        time_end=time_end,
+        dt=dt,
+        ini_cond=ini_cond,
+    )
+
+    q_mf = np.mean(x, axis=1)
+
+    # --------------------------------------------------
+    # Reduced 1D simulation
+    # --------------------------------------------------
+
+    N = int(np.sum(theta[0]))
+
+    q = q_mf[0]
+
+    q_1d = np.empty_like(q_mf)
+    q_1d[0] = q
+
+    timescale = dt / tau
+
+    for t in range(len(time) - 1):
+
+        drift = (
+            gn.sigmoid(
+                2 * N * j * (2 * q - 1)
+                + 2 * (b[t] if hasattr(b, "__len__") else b)
+            )
+            - q
+        )
+
+        q += drift * timescale + np.random.randn() * sigma * np.sqrt(timescale)
+
+        q_1d[t + 1] = q
+
+    # --------------------------------------------------
+    # Synchronization error
+    # --------------------------------------------------
+
+    sync_error = np.std(x, axis=1)
+
+    # --------------------------------------------------
+    # R² between reduced and full
+    # --------------------------------------------------
+
+    r = np.corrcoef(q_mf, q_1d)[0, 1]
+    r2 = r**2
+
+    rmse = np.sqrt(np.mean((q_mf - q_1d) ** 2))
+
+    # --------------------------------------------------
+    # Figure
+    # --------------------------------------------------
+
+    fig, axs = plt.subplots(
+        2,
+        2,
+        figsize=(10, 8),
+        constrained_layout=True,
+    )
+    for a in axs.flatten():
+        a.spines[['right', 'top']].set_visible(False)
+
+    # ==================================================
+    # A. Individual units collapse to mean field
+    # ==================================================
+
+    ax = axs[0, 0]
+
+    n_plot = min(max_units_to_plot, x.shape[1])
+    
+    for i in range(n_plot):
+        ax.plot(
+            time,
+            x[:, i],
+            alpha=0.25,
+            lw=0.8,
+            color="k",
+        )
+
+    # ax.plot(
+    #     time,
+    #     q_mf,
+    #     lw=3,
+    #     label="M-D mean field",
+    # )
+
+    ax.plot(
+        time,
+        q_1d,
+        "--",
+        lw=2,
+        label="1D reduction",
+    )
+
+    ax.set_title("Trajectory collapse", fontsize=14)
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Activity")
+    ax.legend(frameon=False)
+
+    # ==================================================
+    # B. Direct agreement
+    # ==================================================
+
+    ax = axs[0, 1]
+
+    ax.scatter(
+        q_mf,
+        q_1d,
+        s=3,
+        alpha=0.3,
+    )
+
+    mn = min(q_mf.min(), q_1d.min())
+    mx = max(q_mf.max(), q_1d.max())
+
+    ax.plot([mn, mx], [mn, mx], "k--")
+
+    ax.set_xlabel("Full model mean field")
+    ax.set_ylabel("1D reduction")
+
+    ax.set_title(
+        rf"$R^2={r2:.3f}$" + "\n" +
+        rf"RMSE={rmse:.3f}", fontsize=14
+    )
+
+    # ==================================================
+    # C. Synchronization manifold error
+    # ==================================================
+
+    ax = axs[1, 0]
+
+    ax.plot(time, sync_error)
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel(r"$\sigma_i(x_i)$")
+
+    ax.set_title(
+        rf"Mean sync error = {np.mean(sync_error):.3f}", fontsize=14
+    )
+
+    # ==================================================
+    # D. Distribution of deviations
+    # ==================================================
+
+    ax = axs[1, 1]
+
+    deviations = (x - q_mf[:, None]).ravel()
+
+    ax.hist(
+        deviations,
+        bins=50,
+        density=True,
+    )
+
+    ax.set_xlabel(r"$x_i-\langle x\rangle$")
+    ax.set_ylabel("Density")
+    ax.set_title("Deviation from mean-field manifold", fontsize=14)
+
+    fig.savefig(DATA_FOLDER + '1d_reduction_validation.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + '1d_reduction_validation.svg', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + '1d_reduction_validation.pdf', dpi=400, bbox_inches='tight')
+
+
+def plot_collapse_panelA(
+    J_list,
+    B_list,
+    theta,
+    sigma,
+    tau,
+    time_end=50,
+    dt=1e-2,
+    ini_cond=None,
+    mode="same",   # "same", "separate", "both"
+    max_units_to_plot=15,
+    seed=0
+):
+    """
+    Panel A-style figure for M-D vs 1D reduction.
+
+    mode:
+        - "same": all conditions in one plot
+        - "separate": one subplot per condition
+        - "both": both representations
+    """
+    np.random.seed(0)
+
+    assert len(J_list) == len(B_list)
+
+    N = int(np.sum(theta[0]))
+    timescale = dt / tau
+
+    n_cond = len(J_list)
+    
+    colors_list = ['tab:blue', 'tab:orange', 'tab:green',
+                   'tab:red', 'tab:olive']
+
+    # =========================================================
+    # SAME PANEL MODE
+    # =========================================================
+    if mode in ["same", "both"]:
+
+        fig, ax = plt.subplots(1, 1, figsize=(5, 4))
+        ax.spines[['right', 'top']].set_visible(False)
+
+        for c, (j, b) in enumerate(zip(J_list, B_list)):
+
+            time, x = solution_mf_sdo_euler(
+                j=j,
+                b=b,
+                theta=theta,
+                noise=sigma,
+                tau=tau,
+                time_end=time_end,
+                dt=dt,
+                ini_cond=ini_cond,
+            )
+
+            q_mf = x.mean(axis=1)
+
+            # 1D reduction
+            q = q_mf[0]
+            q_1d = np.zeros_like(q_mf)
+            q_1d[0] = q
+
+            for t in range(len(time) - 1):
+
+                b_t = b[t] if hasattr(b, "__len__") else b
+
+                drift = (
+                    gn.sigmoid(2 * N * j * (2 * q - 1) + 2 * b_t)
+                    - q
+                )
+
+                q += drift * timescale + np.random.randn() * sigma * np.sqrt(timescale)
+                q_1d[t + 1] = q
+
+            # -----------------------------
+            # plot M-D units (light)
+            # -----------------------------
+            for i in range(min(max_units_to_plot, x.shape[1])):
+                ax.plot(time, x[:, i], color=colors_list[c], alpha=0.25, lw=0.8)
+
+            # mean field
+            # ax.plot(time, q_mf, lw=3, label=f"M-D mean (J={j}, B={b})")
+
+            # 1D reduction
+            ax.plot(time, q_1d, "--", lw=2, label=f"1D (J={j}, B={b})",
+                    color=colors_list[c])
+
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Posterior, q")
+        ax.legend(frameon=False)
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + '1d_reduction_examples.png', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + '1d_reduction_examples.svg', dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + '1d_reduction_examples.pdf', dpi=400, bbox_inches='tight')
+
+        if mode == "same":
+            return fig, ax
+
+    # =========================================================
+    # SEPARATE PANELS
+    # =========================================================
+    if mode in ["separate", "both"]:
+
+        fig2, axs = plt.subplots(
+            n_cond, 1,
+            figsize=(10, 3 * n_cond),
+            sharex=True
+        )
+
+        if n_cond == 1:
+            axs = [axs]
+
+        for idx, (j, b) in enumerate(zip(J_list, B_list)):
+
+            ax = axs[idx]
+
+            time, x = solution_mf_sdo_euler(
+                j=j,
+                b=b,
+                theta=theta,
+                noise=sigma,
+                tau=tau,
+                time_end=time_end,
+                dt=dt,
+                ini_cond=ini_cond,
+            )
+
+            q_mf = x.mean(axis=1)
+
+            # 1D reduction
+            q = q_mf[0]
+            q_1d = np.zeros_like(q_mf)
+            q_1d[0] = q
+
+            for t in range(len(time) - 1):
+
+                b_t = b[t] if hasattr(b, "__len__") else b
+
+                drift = (
+                    gn.sigmoid(2 * N * j * (2 * q - 1) + 2 * b_t)
+                    - q
+                )
+
+                q += drift * timescale + np.random.randn() * sigma * np.sqrt(timescale)
+                q_1d[t + 1] = q
+
+            for i in range(min(max_units_to_plot, x.shape[1])):
+                ax.plot(time, x[:, i], color="black", alpha=0.12, lw=0.8)
+
+            # ax.plot(time, q_mf, lw=3, color="C0", label="M-D mean field")
+            ax.plot(time, q_1d, "--", lw=2.5, color="C1", label="1D reduction")
+
+            ax.set_ylabel(f"J={j}, B={b}")
+            ax.legend(frameon=False, loc="upper right")
+
+        axs[-1].set_xlabel("Time (s)")
+
+        if mode == "separate":
+            return fig2, axs
+
+    return fig, ax, fig2, axs
+
+
 if __name__ == '__main__':
     print('Mean-Field inference')
     # fixed_points_vs_B(J_mono=0.1, J_bis=0.6, n=3,
@@ -8190,12 +8555,12 @@ if __name__ == '__main__':
     # calc_min_action_path_and_plot(j=0.8, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
     # boltzmann_2d_change_sigma(j=0.5, b=0)
-    trans_rate_vs_noise(noise_list = np.arange(0.05, 0.5, 1e-2),
-                        b=0.0, j=0.7, t_dur=100)
-    levelts_laws(noise=0.1, j=0.35,
-                 b_list=np.round(np.arange(-0.1, 0.11, 0.01), 4),
-                 theta=theta, time_end=12000, dt=1e-2, tau=0.1,
-                 n_nodes_th=50)
+    # trans_rate_vs_noise(noise_list = np.arange(0.05, 0.5, 1e-2),
+    #                     b=0.0, j=0.7, t_dur=100)
+    # levelts_laws(noise=0.1, j=0.35,
+    #              b_list=np.round(np.arange(-0.1, 0.11, 0.01), 4),
+    #              theta=theta, time_end=12000, dt=1e-2, tau=0.1,
+    #              n_nodes_th=50)
     # plot_3d_solution_mf_vs_j_b(j_list=np.arange(0.01, 1.01, 0.00025),
     #                             b_list=np.arange(0, 0.125, 0.025), N=3,
     #                             num_iter=200, tol=1e-3, dim3d=False)
@@ -8255,3 +8620,27 @@ if __name__ == '__main__':
     #                        tau=0.05, time_end=30.1, dt=1e-3,
     #                        downsample=1, wdow=200)
     # plt.show()
+    # plot_projection_validation(
+    #     j=0.38,
+    #     b=0.,
+    #     theta=theta,
+    #     sigma=0.0,
+    #     tau=0.2,
+    #     time_end=10,
+    #     dt=1e-3,
+    #     ini_cond=None,
+    #     max_units_to_plot=20,
+    #     seed=0
+    # )
+    fig, ax = plot_collapse_panelA(
+        J_list=[0.1, 0.5, 0.1, 0.5],
+        B_list=[0.0, 0., -0.2, 0.2],
+        theta=theta,
+        sigma=0.0,
+        tau=1.0,
+        mode="same",
+        dt=1e-3,
+        time_end=10,
+        seed=0
+        )
+    plt.show()
