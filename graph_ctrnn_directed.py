@@ -11,7 +11,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from matplotlib.colors import ListedColormap, BoundaryNorm
-
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -277,6 +277,79 @@ def plot_critical_z_vs_W_K(W_list=np.arange(0.0, 1.0, 1e-3),
         fig.savefig(f, dpi=300, bbox_inches="tight")
 
 
+def plot_keff_vs_z(ei, ej, N, A, keff_matrix, K, wqu, wuq, d,
+                   z_range=np.linspace(0, 6, 31),
+                   inset_zs=(0.0, 2.0, 4.0),
+                   save=None):
+    """
+    Panel C: measured mean effective coupling vs stimulus z (dots),
+    overlaid on the analytic per-edge curve  J_edge(z) = 2K + 8 W sigma'(z),
+    with the fixed-K floor marked and optional inset K_eff matrices.
+ 
+    Parameters
+    ----------
+    ei, ej, N, A : graph (edge endpoints, #nodes, adjacency) for the model.
+    keff_matrix  : your directed keff_matrix function
+                   (signature keff_matrix(ei,ej,N,z,wqu,wuq,K) -> NxN).
+    K, wqu, wuq, d : model parameters (d = degree, for the analytic curve).
+    z_range      : stimulus values at which to MEASURE mean edge K_eff.
+    inset_zs     : up to 3 z-values for inset matrices (low/mid/high).
+    save         : optional path prefix; saves <save>.png and <save>.svg.
+    """
+    W = wqu*wuq
+ 
+    # ---- measured mean edge K_eff across z ----
+    meas = []
+    for z in z_range:
+        M = keff_matrix(ei, ej, N, z, wqu, wuq, K)
+        meas.append(M[A > 0].mean())          # mean over existing edges
+    meas = np.array(meas)
+ 
+    # ---- analytic per-edge coupling: 2K + 8 W sigma'(z) ----
+    zz = np.linspace(z_range.min(), z_range.max(), 400)
+    analytic = 2*K + 8*W*sig(zz)*(1-sig(zz))
+ 
+    # ---- figure ----
+    fig, ax = plt.subplots(figsize=(6.2, 4.6))
+    ax.plot(zz, analytic, '-', color="#2471a3", lw=2.2,
+            label="analytical", zorder=1)
+    ax.plot(z_range, meas, 'o', color="#c0392b", ms=5, alpha=0.85,
+            label="measured", zorder=3)
+ 
+    # fixed-K floor
+    ax.axhline(2*K, color="gray", lw=1.2, ls="--", zorder=0)
+    ax.text(z_range.max()*0.3, 2*K + 0.04, r"fixed-$K$ floor  ($2K$)",
+            ha="right", va="bottom", color="gray", fontsize=11)
+ 
+    ax.set_xlabel("Stimulus  z  (velocity difference)")
+    ax.set_ylabel(r"Effective coupling  $K_{\mathrm{eff}}$")
+    # ax.set_title("Stimulus sets effective coupling via the dynamics",
+    #              fontsize=13)
+    ax.legend(frameon=False, loc="upper right")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylim(bottom=-0.2)
+
+    # ---- inset K_eff matrices (low / mid / high z) ----
+    if inset_zs:
+        mats = [keff_matrix(ei, ej, N, z, wqu, wuq, K) for z in inset_zs]
+        vmax = max(np.abs(m).max() for m in mats)
+        # place small insets across the top-left
+        for k, (z, M) in enumerate(zip(inset_zs, mats)):
+            iax = inset_axes(ax, width="20%", height="20%",
+                             loc="lower left",
+                             bbox_to_anchor=(0.0 + 0.25*k, 0.05, 1, 1),
+                             bbox_transform=ax.transAxes, borderpad=0)
+            iax.imshow(M, cmap="RdBu_r", vmin=-vmax, vmax=vmax)
+            iax.set_xticks([]); iax.set_yticks([])
+            iax.set_title(f"z={z:g}", fontsize=9, pad=1)
+ 
+    fig.tight_layout()
+    if save:
+        for ext in (".png", ".svg"):
+            fig.savefig(save + ext, dpi=300, bbox_inches="tight")
+    return fig, ax
+
+
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     N, d = 50, 4
@@ -330,10 +403,10 @@ if __name__ == "__main__":
     zc_real = zc_directed(PARS['K'], d, W)            # diagonal-free analytic
     zc1, zc2 = solve_z(PARS['K'], d, W)               # two-root logit form
     if z_c is not None:
-        ax[0].axvline(z_c, color="#2471a3", lw=1.2, ls="--",
-                      label=f"z_c ~ {z_c:.2f}")
+        # ax[0].axvline(z_c, color="#2471a3", lw=1.2, ls="--",
+        #               label=f"z_c ~ {z_c:.2f}")
         ax[0].axvline(zc_real, color="#27ae60", lw=1.2, ls="--",
-                      label=f"z_c_true ~ {zc_real:.2f}")
+                      label=f"z* ~ {zc_real:.2f}")
         ax[0].legend(frameon=False)
     ax[0].set_xlabel("Stimulus: difference in velocity")
     ax[0].set_ylabel("Fixed point")
@@ -379,3 +452,11 @@ if __name__ == "__main__":
 
     # ====================== FIGURE 3: regime / z_c / J_eff ==================
     plot_critical_z_vs_W_K()
+    
+    # ====================== FIGURE 4: eff vs analytical ==================
+    K, wqu, wuq = PARS['K'], PARS['wqu'], PARS['wuq']
+    save_f = os.path.join(DATA_DIR, "panel_c.svg")
+    fig, ax = plot_keff_vs_z(ei, ej, N, A, keff_matrix, K, wqu, wuq, d,
+                             save=save_f)
+    
+    
