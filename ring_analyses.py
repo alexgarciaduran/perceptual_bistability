@@ -3844,8 +3844,8 @@ def plot_quartet_fps_vs_ratio(reps=50):
         ax.plot(ratio_list, post_vals[:, rep], color='k',
                 linestyle='', marker='.', alpha=0.5,
                 markersize=3)
-    
-    
+
+
 if __name__ == '__main__':
     print('Running ring analyses')
     # number_fps_vs_a_j_bprop(alist=np.arange(0, 0.525, 2.5e-2).round(4),
@@ -3936,11 +3936,19 @@ if __name__ == '__main__':
     # nice_quartet_example(n_iters=8000, dt=1e-3, downsample=20, stamps=250)
     # motion_quartet_example(n_iters=5000, dt=0.01, nreps=50, cols=True,
     #                         downsample=25)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.5,
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.,
                                                 true='CW', noise=0.0, plot=True,
                                                 discrete_stim=True, s=[0., 1],
                                                 b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=2,
+                                                nstates=2, quartet=True, ratio=0.5,
+                                                stim_stamps=100, stim_weight=1,
+                                                colors=True,
+                                                seed=6)
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+                                                true='CW', noise=0.0, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=0.5,
                                                 stim_stamps=100, stim_weight=1,
                                                 colors=True,
                                                 seed=6)
@@ -3948,34 +3956,10 @@ if __name__ == '__main__':
                                                 true='CW', noise=0.0, plot=True,
                                                 discrete_stim=True, s=[0., 1],
                                                 b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=1,
+                                                nstates=2, quartet=True, ratio=0.5,
                                                 stim_stamps=100, stim_weight=1,
                                                 colors=True,
                                                 seed=6)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.5,
-                                                true='CW', noise=0.0, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=0.1,
-                                                stim_stamps=100, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.8,
-    #                                             true='CW', noise=0.0, plot=True,
-    #                                             discrete_stim=True, s=[0., 1],
-    #                                             b=[0.0, 0.], noise_stim=0.1, coh=None,
-    #                                             nstates=2, quartet=True, ratio=2,
-    #                                             stim_stamps=50, stim_weight=1,
-    #                                             colors=True,
-    #                                             seed=3)
-    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.,
-    #                                             true='CW', noise=0.0, plot=True,
-    #                                             discrete_stim=True, s=[0., 1],
-    #                                             b=[0.0, 0.], noise_stim=0.1, coh=None,
-    #                                             nstates=2, quartet=True, ratio=0.1,
-    #                                             stim_stamps=50, stim_weight=1,
-    #                                             colors=True,
-    #                                             seed=3)
     # fixed_points_vs_ratio(
     #                     ratio_list=np.arange(0.0, 2, 5e-3),
     #                     dt=1e-2,
