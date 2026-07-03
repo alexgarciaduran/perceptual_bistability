@@ -3277,9 +3277,10 @@ def plot_model_data_average_kernel(steps_back=150, steps_front=10,
     kernels_data = np.load(DATA_FOLDER + 'all_kernels_noise_switch_aligned.npy')
     kernels_model = np.load(DATA_FOLDER + 'simulated_all_kernels_noise_switch_aligned.npy')
     
-    fig, ax = plt.subplots(1, 1, figsize=(5, 4))
+    fig, ax = plt.subplots(1, 1, figsize=(3.5, 3.))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
+    ax.axhline(0, linestyle='--', color='gray', linewidth=2)
     mean_data = np.nanmean(kernels_data, axis=0)
     err_data = np.nanstd(kernels_data, axis=0) / np.sqrt(kernels_data.shape[0])
     mean_model = np.nanmean(kernels_model, axis=0)
@@ -3294,6 +3295,7 @@ def plot_model_data_average_kernel(steps_back=150, steps_front=10,
     ax.legend(frameon=False)
     ax.set_xlabel('Time from switch (s)')
     ax.set_ylabel('Noise')
+    ax.set_ylim(-0.12, 0.65)
     fig.tight_layout()
     fig.savefig(SV_FOLDER + 'average_kernel_model_data.png', dpi=400, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'average_kernel_model_data.svg', dpi=400, bbox_inches='tight')
@@ -7198,7 +7200,7 @@ def plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
         kernels_to_plot = kernels_simul
         label_save = 'sim_to_sim_'
     idxs = np.digitize(amplitude_prediction, np.percentile(amplitude_prediction, bins_perc)+extra_for_all_vals)-1
-    fig, ax = plt.subplots(1, figsize=(4., 3.5))
+    fig, ax = plt.subplots(1, figsize=(3.5, 3.5))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     nbins = len(np.unique(idxs))
     # colormap = pl.cm.Oranges(np.linspace(0.3, 1, nbins))
@@ -7227,7 +7229,7 @@ def plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
     print('Saving images')
     fig.savefig(SV_FOLDER + label_save + 'kernel_noise_bf_switch_predicted_amplitude.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + label_save + 'kernel_noise_bf_switch_predicted_amplitude.svg', dpi=200, bbox_inches='tight')
-    fig, ax = plt.subplots(ncols=1, figsize=(4, 3.5))
+    fig, ax = plt.subplots(ncols=1, figsize=(1.5, 2))
     ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
     if cumsum:
         var_data = np.sum(kernels_data, axis=1)
@@ -7236,16 +7238,20 @@ def plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
     else:
         var_data = amplitude_data
         var_simul = amplitude_simul
-        ax.set_xlabel('Kernel peak, data'); ax.set_ylabel('Kernel peak, simulation')
-    ax.plot(var_data, var_simul, marker='o', linestyle='', color='k')
+        ax.set_xlabel('Data'); ax.set_ylabel('Model')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.plot(var_data, var_simul, marker='o', linestyle='', color='gray',
+            markersize=4)
     r, p = pearsonr(var_data, var_simul)
-    ax.annotate(f'r = {r:.3f}\np={p:.3f}', xy=(.6, 0.3), xycoords=ax.transAxes)
+    ax.annotate(f'r = {r:.3f}\np={p:.3f}', xy=(.5, 0.1), xycoords=ax.transAxes, fontsize=11)
     linreg = LinearRegression(fit_intercept=True).fit(var_data.reshape(-1, 1), var_simul.reshape(-1, 1))
     minmax_array = np.array([np.min(var_data)-0.1, np.max(var_data)+0.1]).reshape(-1, 1)
     pred_y = linreg.predict(minmax_array)
     ax.plot(minmax_array,
            pred_y, color='gray', linestyle='--', alpha=0.4, linewidth=3)
     fig.tight_layout()
+    ax.set_title('Kernel peak', fontsize=14)
     fig.savefig(SV_FOLDER + label_save + 'kernel_peak_comparison.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + label_save + 'kernel_peak_comparison.svg', dpi=200, bbox_inches='tight')
 
@@ -14053,13 +14059,13 @@ if __name__ == '__main__':
     #                                       normalize_variables=True, ratio=1,
     #                                       load_simulations=True,
     #                                       adaptation=True)
+    plot_model_data_average_kernel(steps_back=150, steps_front=10,
+                                    fps=60)
     # plot_dominance_bis_mono_data_model(n=4, ax=None,
     #                                    estimator='mean')
     # plt.close('all')
-    # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
-    #                                   cumsum=False, npercentiles=3, sim_predict_dat=True)
-    # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
-    #                                   cumsum=False, npercentiles=3, sim_predict_dat=True)
+    plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
+                                      cumsum=False, npercentiles=3, sim_predict_dat=True)
     # plot_dominance_monostable_vs_bistable()
     # plot_subject_dominance_distributions()
     # for variable in ['J0', 'J1', 'B1', 'SIGMA', 'THETA']:
@@ -14126,11 +14132,11 @@ if __name__ == '__main__':
     # recovery_pyddm(n_pars=30, sv_folder=SV_FOLDER, n_cpus=11, i_ini=0)
     # fit_data_pyddm(data_folder=DATA_FOLDER, ncpus=12, ntraining=8, t_dur=13,
     #                subj_ini=None, nbins=54, fitting_method='bads')
-    parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
-                                n_pars_to_fit=100, n_sims_per_par=100,
-                                sv_folder=SV_FOLDER, simulate=True,
-                                load_net=False, not_plot_and_return=False,
-                                pyddmfit=True, transform=False, ini_par=0)
+    # parameter_recovery_5_params(n_simuls_network=1, fps=60, tFrame=26,
+    #                             n_pars_to_fit=100, n_sims_per_par=100,
+    #                             sv_folder=SV_FOLDER, simulate=True,
+    #                             load_net=False, not_plot_and_return=False,
+    #                             pyddmfit=True, transform=False, ini_par=0)
     # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     #                   ntraining=8, coupling_levels=[0, 0.3, 1],
     #                   window_conv=5, bin_size=0.35, switch_01=False)
