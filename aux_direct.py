@@ -39,6 +39,10 @@ import numpy as np
 import itertools
 from scipy.optimize import brentq
 import matplotlib.pyplot as plt
+import os
+
+# ---- path to save imgs ----
+DATA_DIR = 'C:/Users/alexg/Onedrive/Escritorio/phd/folder_save/pgm_aux/figures/'  # Alex
 
 # ---- cube and the 8 parity regressors (orthogonal basis) ----
 CONFIGS = np.array(list(itertools.product([-1, 1], repeat=3)))
@@ -198,8 +202,6 @@ fig.suptitle(
     r"(symmetric family $b_7=b_8=b_9=b_{10}=t$)",
     fontsize=13, y=1.04)
 fig.tight_layout()
-fig.savefig("/home/claude/fig_b_direct_panels.png", dpi=150, bbox_inches="tight")
-plt.close()
 print("Saved: fig_b_direct_panels.png")
 
 # ===========================================================================
@@ -265,8 +267,6 @@ ax[1,1].legend(fontsize=9); ax[1,1].grid(alpha=0.25)
 
 fig2.suptitle("Verification of the closed-form analytic transform", fontsize=14, y=1.00)
 fig2.tight_layout()
-fig2.savefig("/home/claude/fig_verify_analytic.png", dpi=150, bbox_inches="tight")
-plt.close()
 print("Saved: fig_verify_analytic.png")
 
 # ===========================================================================
@@ -330,8 +330,6 @@ axm[1].grid(alpha=0.25)
 fig3.suptitle(r"Marginalizing $u$ reproduces the original joint ($a_7=0.5$)",
               fontsize=13, y=1.02)
 fig3.tight_layout()
-fig3.savefig("/home/claude/fig_marginalization.png", dpi=150, bbox_inches="tight")
-plt.close()
 print("Saved: fig_marginalization.png")
 
 # ===========================================================================
@@ -385,8 +383,6 @@ ax4[1].set_ylabel(r"$b_i - a_i$"); ax4[1].legend(fontsize=8); ax4[1].grid(alpha=
 fig4.suptitle(r"Different $a$-vectors (fixed $a_7=0.4$): same $t$, diagonal shift $p$",
               fontsize=13, y=1.01)
 fig4.tight_layout()
-fig4.savefig("/home/claude/fig_multiconfig.png", dpi=150, bbox_inches="tight")
-plt.close()
 print("Saved: fig_multiconfig.png")
 
 # ===========================================================================
@@ -437,8 +433,6 @@ ax5[1].legend(fontsize=9); ax5[1].grid(alpha=0.25, which="both")
 fig5.suptitle(r"Fixed-$t$ tests: analytic$\leftrightarrow$numeric and marginalization",
               fontsize=13, y=1.01)
 fig5.tight_layout()
-fig5.savefig("/home/claude/fig_fixed_t_tests.png", dpi=150, bbox_inches="tight")
-plt.close()
 print("  fixed t:", t_fixed_vals)
 print("  realized a7:", [f"{v:.4f}" for v in realized_a7])
 print("  max |t_ana - t_num|:", f"{max(ana_num_err):.1e}")
@@ -467,7 +461,7 @@ def make_paper_figure(save=None, show=True,
     a_base = np.array([0.0, 0.30, -0.20, 0.10, 0.40, -0.15, 0.25, 0.0])
     a7_grid = np.linspace(0.0, 1.2, 200)
     t_ana = np.array([solve_b_analytic(np.r_[a_base[:7], v])[1] for v in a7_grid])
-    a7_mk = np.linspace(0.05, 1.2, 10)
+    a7_mk = np.linspace(0.05, 1.2, 25)
     t_num = np.array([solve_b(np.r_[a_base[:7], v])["b7"] for v in a7_mk])
 
     # ---------- (B) probability match ----------
@@ -510,7 +504,7 @@ def make_paper_figure(save=None, show=True,
         "ytick.labelsize": fs-2, "legend.fontsize": fs-3,
         "axes.spines.top": False, "axes.spines.right": False,
     })
-    fig = plt.figure(figsize=(12, 7.5), constrained_layout=True)
+    fig = plt.figure(figsize=(12, 6.8), constrained_layout=True)
     gs = GridSpec(2, 3, figure=fig)
     axA = fig.add_subplot(gs[0, 0])
     axB = fig.add_subplot(gs[0, 1:])
@@ -522,25 +516,23 @@ def make_paper_figure(save=None, show=True,
 
     # (A)
     axA.plot(a7_grid, t_ana, color=base, lw=2.4, label="analytic")
-    axA.scatter(a7_mk, t_num, s=40, facecolor="white", edgecolor=accent,
-                linewidth=1.8, zorder=3, label="numeric")
+    # axA.scatter(a7_mk, t_num, s=20, facecolor="white", edgecolor=accent,
+    #             linewidth=1.8, zorder=3, label="numeric")
     axA.set_xlabel(r"$a_{xyz}$")
-    axA.set_ylabel(r"$t$")
-    axA.grid(alpha=0.2)
-    axA.legend(loc="upper left", frameon=False)
+    axA.set_ylabel(r"Weight $b_7=b_8=b_9=b_{10}=t$")
+    # axA.legend(loc="upper left", frameon=False)
 
     # (B)
     xi = np.arange(8); w = 0.4
-    axB.bar(xi - w/2, po, width=w, color=base, label=r"$p_{\mathrm{orig}}$")
+    axB.bar(xi - w/2, po, width=w, color=base, label=r"$p_{\mathrm{orig}}(x,y,z)$")
     axB.bar(xi + w/2, pm, width=w, color=accent, alpha=0.85,
-            label=r"$\sum_u p_{\mathrm{aux}}$")
+            label=r"$\sum_u p_{\mathrm{aux}}(x,y,z, u)$")
     axB.set_xticks(xi); axB.set_xticklabels(conf_lab)
     axB.set_xlabel(r"$(x,y,z)$")
     axB.set_ylabel(r"$p$")
-    axB.grid(alpha=0.2, axis="y")
     axB.legend(loc="upper right", frameon=False)
     # inset: reconstruction error |Δp| vs a_xyz across the whole range
-    ins = axB.inset_axes([0.10, 0.58, 0.34, 0.36])
+    ins = axB.inset_axes([0.36, 0.65, 0.34, 0.45])
     ins.semilogy(sweep, err_sweep, color="#6a3d9a", lw=1.6)
     ins.set_xlabel(r"$a_{xyz}$", fontsize=fs-4, labelpad=1)
     ins.set_ylabel(r"$|\Delta p|$", fontsize=fs-4, labelpad=1)
@@ -554,7 +546,6 @@ def make_paper_figure(save=None, show=True,
         axC.plot(sweep, B[key], color=col, lw=2.2)
     axC.set_xlabel(r"$a_{xyz}$")
     axC.set_ylabel(r"$b_1,\,b_2,\,b_3$")
-    axC.grid(alpha=0.2)
 
     # (D) pairwise curves vs a7
     pair = [("b4", "#2a7f62"), ("b5", "#3faf88"), ("b6", "#8fd6bd")]
@@ -562,14 +553,12 @@ def make_paper_figure(save=None, show=True,
         axD.plot(sweep, B[key], color=col, lw=2.2)
     axD.set_xlabel(r"$a_{xyz}$")
     axD.set_ylabel(r"$b_4,\,b_5,\,b_6$")
-    axD.grid(alpha=0.2)
 
     # (E) the shared lift p(t): every visible b_i equals a_i + p(t(a_xyz)).
     # Plotting p makes the "a_i + constant" structure of panels C,D explicit.
     axE.plot(sweep, lift, color="#6a3d9a", lw=2.6, label=r"$p(t)$")
     axE.set_xlabel(r"$a_{xyz}$")
     axE.set_ylabel(r"lift  $p(t)=b_i-a_i$")
-    axE.grid(alpha=0.2)
     axE.legend(loc="upper left", frameon=False)
 
     if save:
@@ -581,5 +570,9 @@ def make_paper_figure(save=None, show=True,
     return fig
 
 
-if __name__ == "__main__" and False:  # guarded so the main script above still runs standalone
-    make_paper_figure()
+if __name__ == "__main__":
+    plt.close('all')
+    path_save = DATA_DIR
+    os.makedirs(path_save, exist_ok=True)
+    make_paper_figure(save=path_save, show=True,
+                      a_demo=(0.0, 0.1, 0.1, 0.05, -0.8, 0.0, 0.0, 0.1))
