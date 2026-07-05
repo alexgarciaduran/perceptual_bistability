@@ -4220,7 +4220,7 @@ def plot_metad_d_prime_results(condition='regime', conf_bins=4):
 
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
-    # plot_confidence_efficiency()
+    plot_confidence_efficiency()
     # plot_metad_d_prime_results(condition='pShuffle',
     #                            conf_bins=10)
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=100, model='MF5', method='BADS')
