@@ -572,7 +572,6 @@ def make_paper_figure(save=None, show=True,
 
 if __name__ == "__main__":
     plt.close('all')
-    path_save = DATA_DIR
-    os.makedirs(path_save, exist_ok=True)
+    path_save = DATA_DIR + 'pgm_aux'
     make_paper_figure(save=path_save, show=True,
                       a_demo=(0.0, 0.1, 0.1, 0.05, -0.8, 0.0, 0.0, 0.1))
