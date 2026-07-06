@@ -7176,10 +7176,10 @@ def compute_lyapunov_exponent(j_list=np.arange(0, 1, 1e-3),
 
 def predictions_hysteresis_coupling(b_list=[0, 0.1, 0.2], sigma=0.05,
                                     ini_cond=None):
-    j_array = np.concatenate((np.arange(0, 1, 1e-4), np.arange(0, 1, 1e-4)[::-1]))
+    j_array = np.concatenate((np.arange(0, 0.5, 5e-5), np.arange(0, 0.5, 5e-5)[::-1]))
     q_all = np.zeros((len(b_list), len(j_array)))
     dt = 1e-2
-    tau = 0.1
+    tau = 1
     timescale = dt/tau
     for i_b, b in enumerate(b_list):
         q = ini_cond if ini_cond is not None else np.random.randn()*0.01+0.5
@@ -8474,8 +8474,8 @@ if __name__ == '__main__':
     # tau_coupling_hysteresis(b_list=np.linspace(-0.53, 0.53, 2001),
     #                         save_folder=DATA_FOLDER, sigma=0,
     #                         dt=0.05, simulate=False)
-    # predictions_hysteresis_coupling(b_list=[0, 0.05, 0.1], sigma=0.001,
-    #                                 ini_cond=None)
+    predictions_hysteresis_coupling(b_list=[0, 0.05, 0.1], sigma=0.001,
+                                    ini_cond=0.55)
     # mf_dyn_sys_circle(n_iters=100, b=0.)
     # plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
     # plot_density_map_2d_mf(j=5, b=0, noise=0.1, tau=0.02, time_end=3000, dt=5e-3)
@@ -8632,15 +8632,3 @@ if __name__ == '__main__':
     #     max_units_to_plot=20,
     #     seed=0
     # )
-    fig, ax = plot_collapse_panelA(
-        J_list=[0.1, 0.5, 0.1, 0.5],
-        B_list=[0.0, 0., -0.2, 0.2],
-        theta=theta,
-        sigma=0.0,
-        tau=1.0,
-        mode="same",
-        dt=1e-3,
-        time_end=10,
-        seed=0
-        )
-    plt.show()
