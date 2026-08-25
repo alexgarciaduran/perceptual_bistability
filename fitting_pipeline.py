@@ -2947,43 +2947,70 @@ def psychometric_curve_all_subjects():
     fig.savefig(SV_FOLDER + 'psychometric_curve_exp_confidence.pdf', dpi=200, bbox_inches='tight')
 
 
-def plot_acc_vs_conf(column='abs_conf', n=4):
+def _fill_model_confidence(df, source='original', model='MF5', method='BADS',
+                           n=4, n_iters=400):
+    """Replace ``df['confidence']`` with model-simulated signed confidence.
+    """
+    df = df.copy()
+    appendix = '_BADS' if method == 'BADS' else ''
 
-    df = load_data(data_folder=DATA_FOLDER, n_participants='all').copy()
+    if source == 'original':
+        sim_model, extra = model, ''
+    else:  # 'null'
+        sim_model, extra = ('MF' if model == 'MF5' else 'LBP'), 'null'
 
-    # -----------------------------
-    # confidence transforms
-    # -----------------------------
-    x = np.abs(df["confidence"].to_numpy() * 2 - 1)
+    for sub in df["subject"].unique():
+        mask = (df["subject"] == sub).to_numpy()
+        stim = df.loc[mask, "evidence"].to_numpy()
 
-    g = df.groupby("subject")["confidence"]
-    mean = g.transform(lambda s: np.abs(s * 2 - 1).mean()).to_numpy()
-    std  = g.transform(lambda s: np.abs(s * 2 - 1).std()).to_numpy()
+        if source == 'null':
+            coupling = np.ones(len(stim))
+        else:
+            coupling = 1 - df.loc[mask, "pShuffle"].to_numpy()
 
-    df["zscore_abs_confidence"] = (x - mean) / std
+        pars = np.load(SV_FOLDER + f"/parameters_{sim_model}{appendix}{sub}{extra}.npy")
+        sim = simulate_FBP(pars, n_iters, stim, coupling,
+                           sv_folder=SV_FOLDER, n_iter=sub, model=sim_model,
+                           recovery=False, resimulate=False, extra=extra, n=n)
 
-    df["accuracy"] = (np.sign(df["confidence"]) == df["side"]).astype(int)
-    df["abs_evidence"] = np.abs(df["evidence"])
-    df["abs_conf"] = np.abs(df["confidence"])
-    df["pShuffle"] = df["pShuffle"] / 100
+        # simulate_FBP returns confidence in [0, 1] (posterior for one side);
+        # map to the signed [-1, 1] convention used for the empirical data so
+        # that sign() is the choice and abs() is the confidence magnitude.
+        df.loc[mask, "confidence"] = sim["confidence"].to_numpy() * 2 - 1
 
-    # -----------------------------
-    # regime computation
-    # -----------------------------
-    def get_par(sub):
-        return np.load(SV_FOLDER + f"/parameters_MF5_BADS{sub}.npy", allow_pickle=True)
+    return df
 
-    subjects = df["subject"].unique()
-    par_dict = {sub: get_par(sub) for sub in subjects}
 
+def _compute_regime(df, source='data', model='MF5', method='BADS', n=4):
+    """Per-trial dynamical regime (1 = bistable, 0 = monostable).
+
+    For ``source='data'`` and ``'original'`` the split uses the full model
+    parameters (5-param ``MF5``/``LBP5``, coupling = ``1 - pShuffle``). For
+    ``source='null'`` it uses the null model parameters (4-param ``MF``/``LBP``,
+    which are shuffle-agnostic, so coupling = 1 for every trial).
+    """
+    appendix = '_BADS' if method == 'BADS' else ''
+    if source == 'null':
+        reg_model, extra = ('MF' if model == 'MF5' else 'LBP'), 'null'
+    else:
+        reg_model, extra = model, ''
+
+    par_dict = {
+        sub: np.load(SV_FOLDER + f"/parameters_{reg_model}{appendix}{sub}{extra}.npy",
+                     allow_pickle=True)
+        for sub in df["subject"].unique()
+    }
     pars = df["subject"].map(par_dict)
+    p = {i: pars.map(lambda a: a[i]).to_numpy() for i in range(4)}
 
-    pars0 = pars.map(lambda p: p[0]).to_numpy()
-    pars1 = pars.map(lambda p: p[1]).to_numpy()
-    pars2 = pars.map(lambda p: p[2]).to_numpy()
-    pars3 = pars.map(lambda p: p[3]).to_numpy()
-
-    j_vals = pars0 * (1 - df["pShuffle"].to_numpy()) + pars1
+    if source == 'null':
+        # null model params: [jpar, b1par, biaspar, noise], coupling = 1
+        j_vals = p[0]
+        vals_b = p[2] + p[1] * df["evidence"].to_numpy()
+    else:
+        # full model params: [jpar, jbiaspar, b1par, biaspar, noise]
+        j_vals = p[0] * (1 - df["pShuffle"].to_numpy()) + p[1]
+        vals_b = p[3] + p[2] * df["evidence"].to_numpy()
 
     delta = np.sqrt(1 - 1 / (j_vals * n))
     invalid = (j_vals * n <= 0) | np.isnan(j_vals)
@@ -2992,142 +3019,162 @@ def plot_acc_vs_conf(column='abs_conf', n=4):
     b_crit1 = (np.log((1 - delta) / (1 + delta)) + 2 * n * j_vals * delta) / 2
     b_crit2 = (np.log((1 + delta) / (1 - delta)) - 2 * n * j_vals * delta) / 2
 
-    vals_b = pars3 + pars2 * df["evidence"].to_numpy()
-
     regime = np.ones(len(df))
-    monostable = (
-        (vals_b > b_crit1)
-        | (vals_b < b_crit2)
-        | np.isnan(delta)
-    )
+    monostable = (vals_b > b_crit1) | (vals_b < b_crit2) | np.isnan(delta)
     regime[monostable] = 0
+    return regime.astype(int)
 
-    df["regime"] = regime.astype(int)
 
-    # -----------------------------
-    # subject-level aggregation
-    # -----------------------------
+def _acc_conf_subject_table(column='abs_conf', n=4, source='data', model='MF5',
+                            method='BADS'):
+    df = load_data(data_folder=DATA_FOLDER, n_participants='all').copy()
+    df["pShuffle"] = df["pShuffle"] / 100
+
+    # optionally replace empirical confidence/choice with model simulations
+    if source != 'data':
+        df = _fill_model_confidence(df, source=source, model=model,
+                                    method=method, n=n)
+
+    # confidence transforms
+    x = np.abs(df["confidence"].to_numpy() * 2 - 1)
+    g = df.groupby("subject")["confidence"]
+    mean = g.transform(lambda s: np.abs(s * 2 - 1).mean()).to_numpy()
+    std  = g.transform(lambda s: np.abs(s * 2 - 1).std()).to_numpy()
+    df["zscore_abs_confidence"] = (x - mean) / std
+
+    df["accuracy"] = (np.sign(df["confidence"]) == df["side"]).astype(int)
+    df["abs_evidence"] = np.abs(df["evidence"])
+    df["abs_conf"] = np.abs(df["confidence"])
+
+    df["regime"] = _compute_regime(df, source=source, model=model,
+                                   method=method, n=n)
+
     subj = df.groupby(
         ["subject", "pShuffle", "abs_evidence", "regime"]
     ).agg(
         accuracy=("accuracy", "mean"),
         confidence=(column, "mean")
     ).reset_index()
+    return subj
 
 
-    # -----------------------------
-    # plotting setup
-    # -----------------------------
-    palette_shuffle = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
-    hue_shuffle = [1.0, 0.7, 0.0]
+# palettes shared across accuracy-vs-confidence panels
+_PALETTE_SHUFFLE = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+_HUE_SHUFFLE = [1.0, 0.7, 0.0]
+_PALETTE_REGIME = {0: "cadetblue",   # Monostable
+                   1: "peru"}        # Bistable
 
-    palette_regime = {
-        0: "cadetblue",   # Monostable
-        1: "peru"         # Bistable
-    }
-    
+
+def _acc_conf_group_stats(subj, by):
+    return subj.groupby([by, "abs_evidence"]).agg(
+        accuracy_mean=("accuracy", "mean"),
+        accuracy_se=("accuracy", lambda x: x.std(ddof=1) / np.sqrt(len(x))),
+        confidence_mean=("confidence", "mean"),
+        confidence_se=("confidence", lambda x: x.std(ddof=1) / np.sqrt(len(x)))
+    ).reset_index().sort_values("abs_evidence")
+
+
+def _plot_shuffle_panel(subj, ax):
+    vals = _acc_conf_group_stats(subj, "pShuffle")
+    sns.lineplot(data=vals, x="accuracy_mean", y="confidence_mean",
+                 hue="pShuffle", hue_order=_HUE_SHUFFLE, palette=_PALETTE_SHUFFLE,
+                 marker="o", linewidth=3, ax=ax, legend=False)
+    for i, p in enumerate(_HUE_SHUFFLE):
+        d = vals[vals["pShuffle"] == p]
+        ax.errorbar(d["accuracy_mean"], d["confidence_mean"],
+                    xerr=d["accuracy_se"], yerr=d["confidence_se"],
+                    fmt="none", color=_PALETTE_SHUFFLE[i], alpha=0.4, capsize=3)
+
+
+def _plot_regime_panel(subj, ax):
+    vals = _acc_conf_group_stats(subj, "regime")
+    sns.lineplot(data=vals, x="accuracy_mean", y="confidence_mean",
+                 hue="regime", hue_order=[1, 0], palette=_PALETTE_REGIME,
+                 marker="o", linewidth=3, ax=ax, legend=False)
+    for reg in [1, 0]:
+        d = vals[vals["regime"] == reg]
+        ax.errorbar(d["accuracy_mean"], d["confidence_mean"],
+                    xerr=d["accuracy_se"], yerr=d["confidence_se"],
+                    fmt="none", color=_PALETTE_REGIME[reg], alpha=0.4, capsize=3)
+
+
+def _shuffle_legend(ax):
+    ax.legend(
+        handles=[plt.Line2D([0], [0], color=_PALETTE_SHUFFLE[i], lw=3,
+                            label=f"{p:g}")
+                 for i, p in enumerate(_HUE_SHUFFLE)],
+        frameon=False, title="Shuffle")
+
+
+def _regime_legend(ax):
+    ax.legend(
+        handles=[plt.Line2D([0], [0], color="cadetblue", lw=3, label="Monostable"),
+                 plt.Line2D([0], [0], color="peru", lw=3, label="Bistable")],
+        frameon=False)
+
+
+_SOURCE_LABELS = {'data': 'Data', 'original': 'Full model', 'null': 'Null model'}
+
+
+def plot_acc_vs_conf(column='abs_conf', n=4, source='data', model='MF5',
+                     method='BADS'):
+    """Accuracy vs. confidence, split by shuffle and by dynamical regime.
+    """
+    if source not in ('data', 'original', 'null', 'all'):
+        raise ValueError("source must be 'data', 'original', 'null' or 'all'")
+
+    if source == 'all':
+        sources = ['data', 'original', 'null']
+        fig, axes = plt.subplots(len(sources), 2, figsize=(7, 8.5),
+                                 sharex=True, sharey=True)
+        for i, src in enumerate(sources):
+            subj = _acc_conf_subject_table(column=column, n=n, source=src,
+                                           model=model, method=method)
+            _plot_shuffle_panel(subj, axes[i, 0])
+            _plot_regime_panel(subj, axes[i, 1])
+            axes[i, 0].set_ylabel(f"{_SOURCE_LABELS[src]}\nAbsolute confidence")
+            axes[i, 1].set_ylabel("")
+            for ax in axes[i]:
+                ax.set_xlabel("")
+        axes[-1, 0].set_xlabel("Accuracy")
+        axes[-1, 1].set_xlabel("Accuracy")
+        _shuffle_legend(axes[0, 0])
+        _regime_legend(axes[0, 1])
+
+        sns.despine()
+        fig.tight_layout()
+        fig.savefig(SV_FOLDER + "confidence_vs_accuracy_split_all.png",
+                    dpi=400, bbox_inches="tight")
+        fig.savefig(SV_FOLDER + "confidence_vs_accuracy_split_all.svg",
+                    dpi=200, bbox_inches="tight")
+        return fig, axes
+
+    # =====================================================================
+    # single source: two panels (shuffle, regime)
+    # =====================================================================
+    subj = _acc_conf_subject_table(column=column, n=n, source=source,
+                                   model=model, method=method)
 
     fig, axes = plt.subplots(1, 2, figsize=(7, 3.5), sharey=True)
 
-    # =========================================================
-    # LEFT PANEL: pShuffle
-    # =========================================================
-    ax = axes[0]
+    _plot_shuffle_panel(subj, axes[0])
+    axes[0].set_xlabel("Accuracy")
+    axes[0].set_ylabel("Absolute confidence")
 
-    # Recalculate population mean specifically by pShuffle and abs_evidence
-    vals_shuffle = subj.groupby(["pShuffle", "abs_evidence"]).agg(
-        accuracy_mean=("accuracy", "mean"),
-        accuracy_se=("accuracy", lambda x: x.std(ddof=1) / np.sqrt(len(x))),
-        confidence_mean=("confidence", "mean"),
-        confidence_se=("confidence", lambda x: x.std(ddof=1) / np.sqrt(len(x)))
-    ).reset_index().sort_values("abs_evidence")
+    _plot_regime_panel(subj, axes[1])
+    axes[1].set_xlabel("Accuracy")
+    axes[1].set_ylabel("")
 
-    sns.lineplot(
-        data=vals_shuffle,
-        x="accuracy_mean",
-        y="confidence_mean",
-        hue="pShuffle",
-        hue_order=hue_shuffle,
-        palette=palette_shuffle,
-        marker="o",
-        linewidth=3,
-        ax=ax
-    )
-
-    for i, p in enumerate(hue_shuffle):
-        d = vals_shuffle[vals_shuffle["pShuffle"] == p]
-
-        ax.errorbar(
-            d["accuracy_mean"],
-            d["confidence_mean"],
-            xerr=d["accuracy_se"],
-            yerr=d["confidence_se"],
-            fmt="none",
-            color=palette_shuffle[i],
-            alpha=0.4,
-            capsize=3
-        )
-
-    ax.set_xlabel("Accuracy")
-    ax.set_ylabel("Absolute confidence")
-
-    # =========================================================
-    # RIGHT PANEL: regime
-    # =========================================================
-    ax = axes[1]
-
-    # Recalculate population mean specifically by regime and abs_evidence
-    vals_regime = subj.groupby(["regime", "abs_evidence"]).agg(
-        accuracy_mean=("accuracy", "mean"),
-        accuracy_se=("accuracy", lambda x: x.std(ddof=1) / np.sqrt(len(x))),
-        confidence_mean=("confidence", "mean"),
-        confidence_se=("confidence", lambda x: x.std(ddof=1) / np.sqrt(len(x)))
-    ).reset_index().sort_values("abs_evidence")
-
-    sns.lineplot(
-        data=vals_regime,
-        x="accuracy_mean",
-        y="confidence_mean",
-        hue="regime",
-        hue_order=[1, 0],
-        palette=palette_regime,
-        marker="o",
-        linewidth=3,
-        ax=ax
-    )
-
-    for reg in [1, 0]:
-        d = vals_regime[vals_regime["regime"] == reg]
-        
-        ax.errorbar(
-            d["accuracy_mean"],
-            d["confidence_mean"],
-            xerr=d["accuracy_se"],
-            yerr=d["confidence_se"],
-            fmt="none",
-            color=palette_regime[reg],
-            alpha=0.4,
-            capsize=3
-        )
-
-    ax.set_ylabel("")
-    ax.set_xlabel("Accuracy")
-
-    # clean legends
-    axes[0].legend(frameon=False, title="Shuffle")
-    axes[1].legend(
-        handles=[
-            plt.Line2D([0], [0], color="cadetblue", lw=3, label="Monostable"),
-            plt.Line2D([0], [0], color="peru", lw=3, label="Bistable"),
-        ],
-        frameon=False,
-    )
+    _shuffle_legend(axes[0])
+    _regime_legend(axes[1])
 
     sns.despine()
     fig.tight_layout()
 
-    fig.savefig(SV_FOLDER + "confidence_vs_accuracy_split.png", dpi=400, bbox_inches="tight")
-    fig.savefig(SV_FOLDER + "confidence_vs_accuracy_split.svg", dpi=200, bbox_inches="tight")
+    fig.savefig(SV_FOLDER + f"confidence_vs_accuracy_split_{source}.png",
+                dpi=400, bbox_inches="tight")
+    fig.savefig(SV_FOLDER + f"confidence_vs_accuracy_split_{source}.svg",
+                dpi=200, bbox_inches="tight")
 
     return fig, axes
 
@@ -4220,7 +4267,7 @@ def plot_metad_d_prime_results(condition='regime', conf_bins=4):
 
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
-    plot_confidence_efficiency()
+    # plot_confidence_efficiency()
     # plot_metad_d_prime_results(condition='pShuffle',
     #                            conf_bins=10)
     # plot_parameter_recovery(sv_folder=SV_FOLDER, n_pars=100, model='MF5', method='BADS')
@@ -4247,7 +4294,8 @@ if __name__ == '__main__':
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
-    # plot_acc_vs_conf(column='abs_conf')
+    plot_acc_vs_conf(column='zscore_abs_confidence', source='all', model='MF5')
+    plot_acc_vs_conf(column='abs_conf', source='all', model='MF5')
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                         variable='decision')
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
