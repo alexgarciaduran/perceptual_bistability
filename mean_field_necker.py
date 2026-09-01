@@ -8457,8 +8457,167 @@ def plot_collapse_panelA(
     return fig, ax, fig2, axs
 
 
+def dominance_fraction(B, J=0.45, N=4, sigma=0.18, n_grid=5001):
+    """
+    Fraction of time percept A dominates = P(q>0.5) under the Boltzmann stationary
+    distribution. B is the *total* (combined) bias current. J>J*=1/N -> bistable.
+    Accepts scalar or array B.
+    """
+    B = np.atleast_1d(np.asarray(B, dtype=float))
+    q = np.linspace(1e-4, 1 - 1e-4, n_grid)
+    out = np.empty_like(B)
+    for k, b in enumerate(B):
+        V = potential_mf_neighs(q, J, b, N)
+        logp = -V / (2 * sigma**2)
+        logp -= logp.max()            # numerical stability
+        p = np.exp(logp)
+        p /= np.trapz(p, q)       # normalise
+        mask = q > 0.5
+        out[k] = np.trapz(p[mask], q[mask])
+    return out
+ 
+ 
+# ----------------------------------------------------------------------
+# Cue mapping: each cue value maps to an additive bias current; they SUM.
+# ----------------------------------------------------------------------
+def combined_bias(cue1, cue2, w1=1.0, w2=1.0, b0=0.0):
+    """Linear (current-additive) combination of two cues -> total bias."""
+    return w1 * np.asarray(cue1) + w2 * np.asarray(cue2) + b0
+ 
+ 
+def plot_cue_combination(J=0.45, N=4, sigma=0.18, w1=1.0, w2=1.0,
+                         n_cue_levels=15, cue_range=(-1.0, 1.0),
+                         noise=0.03, seed=0):
+    """
+    Reproduce the Moreno-Bote et al. cue-combination figure.
+ 
+    Returns the matplotlib Figure.
+    """
+    rng = np.random.default_rng(seed)
+    cues = np.linspace(cue_range[0], cue_range[1], n_cue_levels)
+ 
+    # --- Panel A: multiplicative-combination prediction vs. actual combined dominance
+    # Single-cue dominance fractions (other cue held at 0)
+    pA_cue1 = {c: dominance_fraction(combined_bias(c, 0, w1, w2)) for c in cues}
+    pA_cue2 = {c: dominance_fraction(combined_bias(0, c, w1, w2)) for c in cues}
+ 
+    predicted, actual = [], []
+    for c1 in cues:
+        for c2 in cues:
+            # Bayesian multiplicative rule from the two single-cue fractions:
+            #   odds combine by multiplication  ->  p = p1 p2 / (p1 p2 + (1-p1)(1-p2))
+            p1, p2 = pA_cue1[c1], pA_cue2[c2]
+            odds = (p1 * p2) / max((1 - p1) * (1 - p2), 1e-12)
+            pred = odds / (1 + odds)
+            # "Observed": full two-cue model + a little measurement/sampling noise
+            obs = dominance_fraction(combined_bias(c1, c2, w1, w2))
+            obs = np.clip(obs + rng.normal(0, noise), 0, 1)
+            predicted.append(pred)
+            actual.append(obs)
+    predicted, actual = np.array(predicted), np.array(actual)
+ 
+    # --- Panel B: combined dominance surface vs. the two cues
+    C1, C2 = np.meshgrid(cues, cues)
+    surface = dominance_fraction(combined_bias(C1.ravel(), C2.ravel(), w1, w2)).reshape(C1.shape)
+ 
+    fig, (axA, axB) = plt.subplots(1, 2, figsize=(10, 4.4))
+    
+    axA.spines['right'].set_visible(False)
+    axA.spines['top'].set_visible(False)
+ 
+    # Panel A
+    axA.plot([0, 1], [0, 1], 'k--', lw=1, label='Bayesian optimal\n(multiplicative)')
+    axA.scatter(predicted, actual, s=10, c='#c0392b', alpha=0.75, edgecolor='none')
+    axA.set_xlabel('Predicted fraction')
+    axA.set_ylabel('Empirical fraction')
+    axA.set_xlim(0, 1); axA.set_ylim(0, 1)
+    axA.set_aspect('equal')
+    axA.legend(frameon=False, fontsize=11, loc='upper left')
+    axA.set_title('Cue combination is multiplicative', fontsize=14)
+ 
+    # Panel B
+    im = axB.imshow(surface, origin='lower', extent=[*cue_range, *cue_range],
+                    vmin=0, vmax=1, cmap='RdYlGn_r', aspect='equal')
+    cs = axB.contour(C1, C2, surface, levels=[0.25, 0.5, 0.75],
+                     colors='k', linewidths=0.8)
+    axB.clabel(cs, inline=True, fontsize=7, fmt='%.2f')
+    axB.set_xlabel('Cue 1 (e.g. contrast)')
+    axB.set_ylabel('Cue 2 (e.g. velocity)')
+    axB.set_title('Combined dominance fraction', fontsize=14)
+    cb = fig.colorbar(im, ax=axB, fraction=0.046, pad=0.04)
+    cb.set_label('P(percept A dominates)', fontsize=8)
+
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'cue_combination_MB_2011.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'cue_combination_MB_2011.svg', dpi=400, bbox_inches='tight')
+
+
+def _logit(p, eps=1e-9):
+    p = np.clip(p, eps, 1 - eps)
+    return np.log(p / (1 - p))
+
+
+def predicted_vs_actual_dominance_proportion(J, cues, w1=1.0, w2=1.0, b0=0.0, N=4, sigma=0.18):
+    """
+    Returns (pred, actual) dominance fractions across the full cue1 x cue2 grid.
+    `pred` = multiplicative combination of single-cue fractions (baseline removed).
+    `actual` = true two-cue model dominance.
+    """
+    # single-cue and baseline dominance (log-odds add, so work in log-odds)
+    L1 = {c: _logit(float(np.asarray(dominance_fraction(w1 * c + b0, J, N, sigma)).ravel()[0])) for c in cues}
+    L2 = {c: _logit(float(np.asarray(dominance_fraction(w2 * c + b0, J, N, sigma)).ravel()[0])) for c in cues}
+    L0 = _logit(float(np.asarray(dominance_fraction(b0, J, N, sigma)).ravel()[0]))           # no-cue baseline
+ 
+    pred, actual = [], []
+    for c1 in cues:
+        for c2 in cues:
+            Lpred = L1[c1] + L2[c2] - L0          # divide out baseline odds
+            pred.append(1 / (1 + np.exp(-Lpred)))
+            actual.append(float(np.asarray(dominance_fraction(w1 * c1 + w2 * c2 + b0, J, N, sigma)).ravel()[0]))
+    return np.array(pred), np.array(actual)
+
+ 
+def r2(pred, actual, on_logodds=True):
+    """R^2 of actual vs pred. On log-odds scale by default (fair near 0/1)."""
+    x = _logit(pred) if on_logodds else pred
+    y = _logit(actual) if on_logodds else actual
+    ss_res = np.sum((y - x) ** 2)
+    ss_tot = np.sum((y - y.mean()) ** 2)
+    return 1 - ss_res / ss_tot
+ 
+ 
+def plot_r2_vs_J(J_values=None, N=4, sigma=0.18, w1=1.0, w2=1.0, b0=0.0,
+                 n_cue_levels=7, cue_range=(-1.0, 1.0), on_logodds=True):
+    if J_values is None:
+        Jc = 1.0 / N
+        J_values = np.linspace(0.03, 3 * Jc, 40)
+    cues = np.linspace(*cue_range, n_cue_levels)
+ 
+    r2s = []
+    for J in J_values:
+        pred, actual = predicted_vs_actual_dominance_proportion(J, cues, w1, w2, b0, N, sigma)
+        r2s.append(r2(pred, actual, on_logodds))
+    r2s = np.array(r2s)
+ 
+    fig, ax = plt.subplots(figsize=(6.2, 4.2))
+    ax.plot(J_values, r2s, '-o', ms=4, color='#2c3e50')
+    ax.axvline(1.0 / N, ls='--', color='#c0392b', lw=1,
+               label=f'$J^* = 1/N = {1/N:.2f}$')
+    ax.set_xlabel('Coupling  $J$')
+    ax.set_ylabel('$R^2$  (actual vs. multiplicative Bayes)\n'
+                  + ('log-odds scale' if on_logodds else 'probability scale'))
+    ax.set_title('Fidelity of Bayesian cue combination vs. coupling')
+    ax.legend(frameon=False)
+    ax.set_ylim(min(0.0, r2s.min() - 0.02), 1.005)
+    fig.tight_layout()
+    return fig, J_values, r2s
+ 
+    
 if __name__ == '__main__':
     print('Mean-Field inference')
+    plot_cue_combination(J=0.38, N=3, sigma=0.2, w1=1.0, w2=1.0,
+                          n_cue_levels=50, cue_range=(-0.5, 0.5),
+                          noise=0.02, seed=0)
     # fixed_points_vs_B(J_mono=0.1, J_bis=0.6, n=3,
     #                   iters=400)
     # dummy_psychometric(nreps=1000, pshuf=[1., 0.7, 0.],
@@ -8474,8 +8633,8 @@ if __name__ == '__main__':
     # tau_coupling_hysteresis(b_list=np.linspace(-0.53, 0.53, 2001),
     #                         save_folder=DATA_FOLDER, sigma=0,
     #                         dt=0.05, simulate=False)
-    predictions_hysteresis_coupling(b_list=[0, 0.05, 0.1], sigma=0.001,
-                                    ini_cond=0.55)
+    # predictions_hysteresis_coupling(b_list=[0, 0.05, 0.1], sigma=0.001,
+    #                                 ini_cond=0.55)
     # mf_dyn_sys_circle(n_iters=100, b=0.)
     # plot_2d_mean_passage_time(J=2, B=0., sigma=0.1)
     # plot_density_map_2d_mf(j=5, b=0, noise=0.1, tau=0.02, time_end=3000, dt=5e-3)
@@ -8620,15 +8779,16 @@ if __name__ == '__main__':
     #                        tau=0.05, time_end=30.1, dt=1e-3,
     #                        downsample=1, wdow=200)
     # plt.show()
-    # plot_projection_validation(
-    #     j=0.38,
-    #     b=0.,
+    # plot_collapse_panelA(
+    #     J_list=[0., 1, 3, 5],
+    #     B_list=[0, 0, 0, 0],
     #     theta=theta,
-    #     sigma=0.0,
-    #     tau=0.2,
-    #     time_end=10,
-    #     dt=1e-3,
+    #     sigma=0.,
+    #     tau=1,
+    #     time_end=50,
+    #     dt=1e-2,
     #     ini_cond=None,
-    #     max_units_to_plot=20,
+    #     mode="same",   # "same", "separate", "both"
+    #     max_units_to_plot=15,
     #     seed=0
     # )
