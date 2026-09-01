@@ -191,92 +191,72 @@ class ring:
 
 
     
+    # def compute_likelihood_quartet_stim_ising(
+    #     self, s_t_1, z_triplet, s_t, central_idx,
+    #     noise=0.1, epsilon=1e-12, ratio=1.0, state=1
+    # ):
+    #     """
+    #     Edge-based likelihood for quartet Ising model.
+
+    #     Depends only on z_center and the edge type defined in QUARTET_NODE_DEFS.
+    #     No stim-content dependency — stim_t_1 = 1-stim[t] means every position
+    #     alternates at every step, so any stim-based formula introduces asymmetry.
+
+    #     d = 1.0 for H-type edges, d = ratio for V-type edges.
+    #     With ratio=1 all 4 latents in a ring receive identical signal.
+    #     H preferred over V when ratio > 1.
+    #     Idle-ring suppression is handled by get_likelihood_quartet_small_rings.
+    #     """
+    #     z_center = z_triplet[1]
+    #     ring_offset = 0 if state == 1 else 4
+    #     edge_type = QUARTET_NODE_DEFS[ring_offset + central_idx]['type']
+    #     d = 1.0 if edge_type == 'H' else ratio
+    #     nlh = 0
+    #     if z_center == 1:
+    #         nlh += np.log(d)-d / noise
+    #     z_im1 = z_triplet[0]
+    #     edge_type_left = QUARTET_NODE_DEFS[(ring_offset + central_idx-1)%8]['type']
+    #     d = 1.0 if edge_type_left == 'H' else ratio
+    #     if z_im1 == 1:
+    #         nlh += np.log(d)-d / noise
+    #     z_ip1 = z_triplet[2]
+    #     edge_type_right = QUARTET_NODE_DEFS[(ring_offset + central_idx+1)%8]['type']
+    #     d = 1.0 if edge_type_right == 'H' else ratio
+    #     if z_ip1 == 1:
+    #         nlh += np.log(d)-d / noise
+    #     if nlh == 0:
+    #         nlh = np.log(epsilon)    
+    #     return nlh
+
+
     def compute_likelihood_quartet_stim_ising(
         self, s_t_1, z_triplet, s_t, central_idx,
         noise=0.1, epsilon=1e-12, ratio=1.0, state=1
     ):
-        """
-        Edge-based likelihood for quartet Ising model.
-
-        Depends only on z_center and the edge type defined in QUARTET_NODE_DEFS.
-        No stim-content dependency — stim_t_1 = 1-stim[t] means every position
-        alternates at every step, so any stim-based formula introduces asymmetry.
-
-        d = 1.0 for H-type edges, d = ratio for V-type edges.
-        With ratio=1 all 4 latents in a ring receive identical signal.
-        H preferred over V when ratio > 1.
-        Idle-ring suppression is handled by get_likelihood_quartet_small_rings.
-        """
         z_center = z_triplet[1]
         ring_offset = 0 if state == 1 else 4
-        edge_type = QUARTET_NODE_DEFS[ring_offset + central_idx]['type']
-        d = 1.0 if edge_type == 'H' else ratio
+    
+        # edge length: horizontal edges ~ 1, vertical edges ~ ratio (aspect ratio)
+        def edge_len(idx):
+            etype = QUARTET_NODE_DEFS[idx % 8]['type']
+            return 1.0 if etype == 'H' else ratio
+        # def edge_len(idx):
+        #     etype = QUARTET_NODE_DEFS[idx % 8]['type']
+        #     return np.sqrt(ratio) if etype == 'V' else 1.0/np.sqrt(ratio)
+
         nlh = 0
         if z_center == 1:
-            nlh += np.log(d)-d / noise
-        z_im1 = z_triplet[0]
-        edge_type_left = QUARTET_NODE_DEFS[(ring_offset + central_idx-1)%8]['type']
-        d = 1.0 if edge_type_left == 'H' else ratio
-        if z_im1 == 1:
-            nlh += np.log(d)-d / noise
-        z_ip1 = z_triplet[2]
-        edge_type_right = QUARTET_NODE_DEFS[(ring_offset + central_idx+1)%8]['type']
-        d = 1.0 if edge_type_right == 'H' else ratio
-        if z_ip1 == 1:
-            nlh += np.log(d)-d / noise
+            L = edge_len(ring_offset + central_idx)
+            nlh += -L / (noise)
+        if z_triplet[0] == 1:
+            L = edge_len(ring_offset + central_idx - 1)
+            nlh += -L / (noise)
+        if z_triplet[2] == 1:
+            L = edge_len(ring_offset + central_idx + 1)
+            nlh += -L / (noise)
         if nlh == 0:
-            nlh = np.log(epsilon)    
+            nlh = np.log(epsilon)
         return nlh
-
-    # def compute_likelihood_quartet_stim_ising(
-    #     self,
-    #     s_t_1,
-    #     z,
-    #     s_t,
-    #     idxs,
-    #     noise=0.1,
-    #     epsilon=1e-6,
-    #     ratio=1
-    # ):
-    #     """
-    #     Likelihood for a local triplet (left, center, right).
-        
-    #     z      = [z_L, z_C, z_R]
-    #     s_t_1  = [d_L, d_C, d_R]   (we use d_L = s_t_1[0], d_R = s_t_1[2])
-    #     idxs   = [i_L, i_C, i_R]
-    #     """
-    
-    #     zL, zC, zR = z
-    #     dL, dR = s_t_1[0], s_t_1[2]
-    #     iC = idxs[1]
-    
-    #     # orientation rule (same logic as your original 4 cases)
-    #     # even center index = one orientation, odd = flipped
-    #     if iC % 2 == 0:
-    #         wL = dL / noise
-    #         wR = ratio * dR / noise
-    #     else:
-    #         wL = ratio * dL / noise
-    #         wR = dR / noise
-    
-    #     candidates = []
-    
-    #     # pairing with left neighbor
-    #     if zC == zL:
-    #         candidates.append(-wL)
-    #     else:
-    #         candidates.append(np.log(epsilon))
-    
-    #     # pairing with right neighbor
-    #     if zC == zR:
-    #         candidates.append(-wR)
-    #     else:
-    #         candidates.append(np.log(epsilon))
-    
-    #     # combine like your original log(exp(a)+exp(b))
-    #     candidates = np.array(candidates)
-    #     m = np.max(candidates)
-    #     return m + np.log(np.sum(np.exp(candidates - m)))
 
 
     def compute_likelihood_continuous_stim_ising(self, s_t_1, z, s_t, noise=0.1, epsilon=1e-6,
@@ -3773,69 +3753,59 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
                 bbox_inches='tight')
 
 
-def run_one(ratio, rep, dt, n_iters):
+def _simulate_quartet(ratio, seed, dt, n_iters, noise):
+    """One quartet simulation; returns (post_cont, choice_h) read from ring1's
+    active window. noise=0 for fixed points, noise>0 for stochastic choice."""
     posterior = ring(epsilon=1e-4, n_dots=8).mean_field_sde(
-        dt=dt,
-        tau=0.1,
-        n_iters=n_iters,
-        j=0.5,
-        true='CW',
-        noise=0.,
-        plot=False,
-        discrete_stim=True,
-        s=[0., 1],
-        b=[0., 3.],
-        noise_stim=1,
-        coh=None,
-        nstates=2,
-        quartet=True,
-        ratio=ratio+1e-6,      # <-- use ratio here
-        stim_stamps=n_iters//4,
-        return_all=True,
-        seed=rep
-    )
+        dt=dt, tau=0.1, n_iters=n_iters, j=0.5, true='CW',
+        noise=noise, plot=False, discrete_stim=True, s=[0., 1], b=[0., 3.],
+        noise_stim=0.2, coh=None, nstates=2, quartet=True,
+        ratio=ratio+1e-6, stim_stamps=n_iters//4, return_all=True, seed=seed)
 
-    post_horiz = np.nanmean(posterior[[0, 2], 0, -1])
-    post_vert = np.nanmean(posterior[[1, 3], 0, -1])
-
-    return (post_horiz + 1 - post_vert) * 0.5
+    W = n_iters // 6
+    q_h = np.nanmean(posterior[[0, 2], 0, -W:])   # H edges of ring1
+    q_v = np.nanmean(posterior[[1, 3], 0, -W:])   # V edges of ring1
+    return (q_h + 1 - q_v) * 0.5, (1.0 if q_h > q_v else 0.0)
 
 
-def fixed_points_vs_ratio(
-        ratio_list=np.arange(0.1, 2, 1e-2),
-        dt=1e-2,
-        n_iters=400,
-        n_reps=10,
-        n_jobs=-1):
+def _run_grid(ratio_list, n_reps, dt, n_iters, noise, n_jobs, seed):
+    """Run (ratio x rep) grid in parallel; return (post_vals, choice_vals)."""
+    np.random.seed(seed)
+    tasks = [(i_r, rep, ratio)
+             for i_r, ratio in enumerate(ratio_list)
+             for rep in range(n_reps)]
+    results = Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(_simulate_quartet)(ratio, rep, dt, n_iters, noise)
+        for _, rep, ratio in tqdm(tasks))
+    post_vals   = np.zeros((len(ratio_list), n_reps))
+    choice_vals = np.zeros((len(ratio_list), n_reps))
+    for (i_r, rep, _), (pc, ch) in zip(tasks, results):
+        post_vals[i_r, rep]   = pc
+        choice_vals[i_r, rep] = ch
+    return post_vals, choice_vals
 
-    tasks = [
-        (i_r, rep, ratio)
-        for i_r, ratio in enumerate(ratio_list)
-        for rep in range(n_reps)
-    ]
 
-    results = Parallel(
-        n_jobs=n_jobs,
-        backend="loky"
-    )(
-        delayed(run_one)(ratio, rep, dt, n_iters)
-        for _, rep, ratio in tqdm(tasks)
-    )
-
-    post_vals = np.zeros((len(ratio_list), n_reps))
-
-    for (i_r, rep, _), val in zip(tasks, results):
-        post_vals[i_r, rep] = val
-
-    np.save(
-        DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy',
-        post_vals
-    )
-
+def save_fixed_points_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
+                               dt=1e-2, n_iters=400, n_reps=10, n_jobs=-1, seed=0):
+    """Deterministic (noise=0) run for fixed points -> saves continuous posterior."""
+    post_vals, _ = _run_grid(ratio_list, n_reps, dt, n_iters,
+                             noise=0.0, n_jobs=n_jobs, seed=seed)
+    np.save(DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy', post_vals)
     return post_vals
-    
+
+
+def save_choice_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
+                         dt=1e-2, n_iters=400, n_reps=50, n_jobs=-1,
+                         noise=0.2, seed=0):
+    """Stochastic (noise>0) run for choice probability -> saves choices."""
+    _, choice_vals = _run_grid(ratio_list, n_reps, dt, n_iters,
+                               noise=noise, n_jobs=n_jobs, seed=seed)
+    np.save(DATA_FOLDER + 'choice_vs_ratio_quartet.npy', choice_vals)
+    return choice_vals
+
+
 def plot_quartet_fps_vs_ratio(reps=50):
-    ratio_list=np.arange(0.0, 2, 5e-3)+1e-6
+    ratio_list=np.arange(0.1, 2, 5e-3)+1e-6
     post_vals = np.load(DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy')
     fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
     ax.spines['top'].set_visible(False)
@@ -3844,6 +3814,28 @@ def plot_quartet_fps_vs_ratio(reps=50):
         ax.plot(ratio_list, post_vals[:, rep], color='k',
                 linestyle='', marker='.', alpha=0.5,
                 markersize=3)
+
+
+def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1)):
+    choice_vals = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet.npy')
+    p_h = np.nanmean(choice_vals, axis=1)                 # P(horizontal) per ratio
+    n   = choice_vals.shape[1]
+    err = np.sqrt(p_h * (1 - p_h) / n)                    # binomial SE
+
+    fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.plot(ratio_list, p_h, color='forestgreen', linewidth=2.5)
+    ax.fill_between(ratio_list, p_h - err, p_h + err,
+                    color='forestgreen', alpha=0.25)
+    ax.axhline(0.5, color='gray', linestyle='--', alpha=0.6)
+    ax.axvline(1.0, color='gray', linestyle=':', alpha=0.6)
+    ax.set_xlabel('Aspect ratio')
+    ax.set_ylabel('p(horizontal)')
+    ax.set_ylim(-0.02, 1.02)
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'pH_vs_ratio_quartet.png', dpi=200, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'pH_vs_ratio_quartet.svg', dpi=200, bbox_inches='tight')
 
 
 if __name__ == '__main__':
@@ -3936,37 +3928,36 @@ if __name__ == '__main__':
     # nice_quartet_example(n_iters=8000, dt=1e-3, downsample=20, stamps=250)
     # motion_quartet_example(n_iters=5000, dt=0.01, nreps=50, cols=True,
     #                         downsample=25)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.,
-                                                true='CW', noise=0.0, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=0.5,
-                                                stim_stamps=100, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
-                                                true='CW', noise=0.0, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=0.5,
-                                                stim_stamps=100, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.5,
-                                                true='CW', noise=0.0, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=0.5,
-                                                stim_stamps=100, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    # fixed_points_vs_ratio(
-    #                     ratio_list=np.arange(0.0, 2, 5e-3),
-    #                     dt=1e-2,
-    #                     n_iters=400,
-    #                     n_reps=50,
-    #                     n_jobs=10)
-    # plot_quartet_fps_vs_ratio(reps=50)
+    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=0.5,
+    #                                             stim_stamps=100, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=6)
+    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=1,
+    #                                             stim_stamps=100, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=6)
+    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=2,
+    #                                             stim_stamps=100, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=6)
+    # save_choice_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-1),
+    #                      dt=1e-2, n_iters=400, n_reps=100, n_jobs=10,
+    #                      noise=0.2, seed=0)
+    plot_quartet_pH_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-1))
+    plot_quartet_fps_vs_ratio(reps=50)
+    
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
