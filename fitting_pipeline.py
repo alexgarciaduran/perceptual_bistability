@@ -2312,6 +2312,218 @@ def stars_pval(pval):
     return s
 
 
+def _bimodality_coefficient(x):
+    """Sarle's bimodality coefficient of a 1-D sample (NaN-safe).
+
+    BC = (skew^2 + 1) / (excess_kurtosis + 3(n-1)^2 / ((n-2)(n-3))).
+    Values above 5/9 ~= 0.555 are indicative of a bimodal distribution.
+    """
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+    n = len(x)
+    if n < 4:
+        return np.nan
+    s = scipy.stats.skew(x)
+    k = scipy.stats.kurtosis(x, fisher=True)   # excess kurtosis
+    val_sum = 3 * (n - 1) ** 2 / ((n - 2) * (n - 3))
+    return (s ** 2 + 1) / (k + val_sum)
+
+
+def _sig_bracket(ax, x1, x2, y, p, h=None, color='k', fontsize=9, lw=1.0):
+    """Draw a significance bracket with stars between x positions x1 and x2."""
+    if np.isnan(p):
+        return
+    if h is None:
+        h = 0.02 * (ax.get_ylim()[1] - ax.get_ylim()[0])
+    ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y], lw=lw, color=color)
+    ax.text((x1 + x2) / 2, y + h, stars_pval(p), ha='center', va='bottom',
+            color=color, fontsize=fontsize)
+
+
+def plot_bimodality_coefficient(model='MF5', method='BADS', evidence_level=0.,
+                                variable='confidence', load=True, stat='median',
+                                regime_panels=False):
+    """Sarle's bimodality coefficient of confidence vs p(Shuffle).
+    """
+    modeln = 'MF' if model == 'MF5' else 'LBP'
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    subjects = np.sort(all_df.subject.unique())
+
+    if load:
+        d = SV_FOLDER + 'simulated_data'
+        data_orig = pd.read_csv(d + '/df_orig.csv')
+        data_model_orig = pd.read_csv(d + '/df_simul_' + model + '_orig.csv')
+        data_model_null = pd.read_csv(d + '/df_simul_' + modeln + '_null_model.csv')
+    else:
+        data_orig, data_model_orig, data_model_null = \
+            load_all_data(all_df, model=model, method=method, sv_folder=SV_FOLDER)
+
+    # coupling -> p(Shuffle): 1.0 -> 0, 0.3 -> 0.7, 0.0 -> 1.0
+    for df in (data_orig, data_model_orig, data_model_null):
+        df['pShuffle'] = (1 - df['coupling']).round(1)
+    pshuffles = [0.0, 0.7, 1.0]
+
+    # ---------------------------------------------------------------
+    # top row: BC per subject for data / full model / null model
+    # ---------------------------------------------------------------
+    sources = [('Data', data_orig), ('Full model', data_model_orig),
+               ('Null model', data_model_null)]
+    rows = []
+    for name, df in sources:
+        sub_ev = df[df['stim_str'] == evidence_level]
+        for sub in subjects:
+            for ps in pshuffles:
+                vals = sub_ev.loc[(sub_ev.subject == sub) &
+                                  (np.isclose(sub_ev.pShuffle, ps)), variable]
+                rows.append({'source': name, 'subject': sub, 'pShuffle': ps,
+                             'BC': _bimodality_coefficient(vals.values)})
+    bc_top = pd.DataFrame(rows)
+
+    # ---------------------------------------------------------------
+    # bottom row: data BC split by regime (full-model / null-model params)
+    # ---------------------------------------------------------------
+    if regime_panels:
+        data_ev = data_orig[data_orig['stim_str'] == evidence_level].copy()
+        for mdl, extra, col in [(model, '', 'regime_full'),
+                                (modeln, 'null', 'regime_null')]:
+            states = np.empty(len(data_ev), dtype=object)
+            for sub in subjects:
+                mask = (data_ev.subject == sub).values
+                if not mask.any():
+                    continue
+                _, _, st = compute_jstar_bstar(sub, data_ev.loc[mask], model=mdl,
+                                               method=method, extra=extra)
+                states[mask] = st
+            data_ev[col] = states
+
+        rows = []
+        for col, label in [('regime_full', 'Full model'), ('regime_null', 'Null model')]:
+            for sub in subjects:
+                for ps in pshuffles:
+                    sel = data_ev.loc[(data_ev.subject == sub) &
+                                      (np.isclose(data_ev.pShuffle, ps))]
+                    for reg in ['Bistable', 'Monostable']:
+                        vals = sel.loc[sel[col] == reg, variable]
+                        rows.append({'regime_src': label, 'subject': sub,
+                                     'pShuffle': ps, 'regime': reg,
+                                     'BC': _bimodality_coefficient(vals.values)})
+        bc_bot = pd.DataFrame(rows)
+
+    # ---------------------------------------------------------------
+    # plotting
+    # ---------------------------------------------------------------
+    palette_regime = {'Monostable': 'cadetblue', 'Bistable': 'peru'}
+    # p(Shuffle) 0 -> dark, 1 -> light (same blues as the other figures)
+    shuffle_colors = {0.0: 'midnightblue', 0.7: 'royalblue', 1.0: 'lightskyblue'}
+    thr = 5 / 9  # bimodality threshold
+
+    # central tendency (bar height) and its standard error
+    def _center(s):
+        return np.nanmedian(s) if stat == 'median' else np.nanmean(s)
+
+    def _se(s):
+        s = np.asarray(s, float)
+        n = np.sum(~np.isnan(s))
+        if n < 2:
+            return np.nan
+        sd = np.nanstd(s, ddof=1) / np.sqrt(n)
+        return 1.2533 * sd if stat == 'median' else sd  # ~s.e. of the median
+
+    if regime_panels:
+        fig, axd = plt.subplot_mosaic("AABBCC\nDDDEEE", figsize=(9, 6.2))
+    else:
+        fig, axes = plt.subplots(1, 3, figsize=(7, 3.2), sharey=True)
+        axd = {'A': axes[0], 'B': axes[1], 'C': axes[2]}
+
+    # --- top row: 3 blue bars (one per p(Shuffle)) with per-subject dots ---
+    top_keys = [('A', 'Data'), ('B', 'Full model'), ('C', 'Null model')]
+    pairs = [(0.0, 0.7), (0.7, 1.0), (0.0, 1.0)]
+    for key, name in top_keys:
+        ax = axd[key]
+        sub_bc = bc_top[bc_top.source == name]
+        g = sub_bc.groupby('pShuffle')['BC']
+        m = g.agg(_center).reindex(pshuffles)
+        e = g.agg(_se).reindex(pshuffles)
+        ax.bar(range(3), m, yerr=e, width=0.7,
+               color=[shuffle_colors[p] for p in pshuffles], alpha=0.9,
+               capsize=3, zorder=2, error_kw={'zorder': 3, 'lw': 1.2})
+        sns.stripplot(data=sub_bc, x='pShuffle', y='BC', order=pshuffles,
+                      color='0.3', size=3.5, alpha=0.55, jitter=0.18, ax=ax,
+                      zorder=4, edgecolor='white', linewidth=0.5)
+        ax.axhline(thr, ls='--', color='gray', alpha=0.6, zorder=1)
+        ax.set_title(name, fontsize=13)
+        ax.set_xlabel('p(Shuffle)')
+
+    # compact, data-driven y limits (leave room for the sig. brackets)
+    dmin = np.nanmin(bc_top['BC'].values)
+    dmax = np.nanmax(bc_top['BC'].values)
+    span = dmax - dmin
+    step = 0.055 * span         # tight vertical spacing between bracket levels
+    htick = 0.011 * span
+    base = dmax + 0.008 * span
+    # adjacent comparisons share a level; only the wide 0<->1 stacks above
+    pair_level = {(0.0, 0.7): 0, (0.7, 1.0): 0, (0.0, 1.0): 1}
+    ytop = base + step + htick + 0.03 * span
+    for key, _ in top_keys:
+        axd[key].set_ylim(dmin - 0.02 * span, ytop)
+
+    # paired t-tests on the top row (drawn after y-limits are fixed)
+    for key, name in top_keys:
+        ax = axd[key]
+        piv = bc_top[bc_top.source == name].pivot(index='subject',
+                                                  columns='pShuffle', values='BC')
+        for a_ps, b_ps in pairs:
+            dd = piv[[a_ps, b_ps]].dropna()
+            if len(dd) < 2:
+                continue
+            _, p = scipy.stats.ttest_rel(dd[a_ps], dd[b_ps])
+            x1, x2 = pshuffles.index(a_ps), pshuffles.index(b_ps)
+            _sig_bracket(ax, x1, x2, base + pair_level[(a_ps, b_ps)] * step, p,
+                         h=htick, fontsize=9, lw=1.0)
+
+    # --- optional bottom row: 2 bars (bistable / monostable) over shuffle ---
+    if regime_panels:
+        bot_keys = [('D', 'Full model'), ('E', 'Null model')]
+        regimes = ['Bistable', 'Monostable']
+        for key, label in bot_keys:
+            ax = axd[key]
+            sub_bc = bc_bot[bc_bot.regime_src == label].dropna(subset=['BC'])
+            g = sub_bc.groupby('regime')['BC']
+            m = g.agg(_center).reindex(regimes)
+            e = g.agg(_se).reindex(regimes)
+            ax.bar(range(2), m, yerr=e, width=0.6,
+                   color=[palette_regime[r] for r in regimes], alpha=0.9,
+                   capsize=3, zorder=2, error_kw={'zorder': 3, 'lw': 1.2})
+            ax.axhline(thr, ls='--', color='gray', alpha=0.6, zorder=1)
+            ax.set_xticks(range(2))
+            ax.set_xticklabels(regimes)
+            ax.set_title(f'Regime by {label} params', fontsize=13)
+            ax.set_xlabel('')
+            b_vals = sub_bc.loc[sub_bc.regime == 'Bistable', 'BC'].values
+            m_vals = sub_bc.loc[sub_bc.regime == 'Monostable', 'BC'].values
+            if len(b_vals) > 1 and len(m_vals) > 1:
+                _, p = scipy.stats.ttest_ind(b_vals, m_vals, equal_var=False)
+                top = np.nanmax([_center(b_vals), _center(m_vals)]) + 0.12 * span
+                _sig_bracket(ax, 0, 1, top, p, h=htick, fontsize=9, lw=1.0)
+        axd['D'].set_ylabel('Bimodality coefficient')
+
+    # y labels only on the leftmost panel of each row
+    for a in axd.values():
+        a.set_ylabel('')
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    axd['A'].set_ylabel('Bimodality coefficient')
+    if regime_panels:
+        axd['D'].set_ylabel('Bimodality coefficient')
+
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'bimodality_coefficient_vs_pshuffle.png',
+                dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'bimodality_coefficient_vs_pshuffle.svg',
+                dpi=200, bbox_inches='tight')
+    return fig, axd
+
+
 def p_corr_vs_noise(n_trials=2000, n_iters=300, noiselist=np.arange(0.1, 0.525, 0.025),
                     j_vals=[0.1, 0.45, 0.8], b_list=[0.1, 0.4, 0.8], load_data=True):
     if load_data:
