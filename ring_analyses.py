@@ -3928,35 +3928,35 @@ if __name__ == '__main__':
     # nice_quartet_example(n_iters=8000, dt=1e-3, downsample=20, stamps=250)
     # motion_quartet_example(n_iters=5000, dt=0.01, nreps=50, cols=True,
     #                         downsample=25)
-    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
-    #                                             true='CW', noise=0.0, plot=True,
-    #                                             discrete_stim=True, s=[0., 1],
-    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
-    #                                             nstates=2, quartet=True, ratio=0.5,
-    #                                             stim_stamps=100, stim_weight=1,
-    #                                             colors=True,
-    #                                             seed=6)
-    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
-    #                                             true='CW', noise=0.0, plot=True,
-    #                                             discrete_stim=True, s=[0., 1],
-    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
-    #                                             nstates=2, quartet=True, ratio=1,
-    #                                             stim_stamps=100, stim_weight=1,
-    #                                             colors=True,
-    #                                             seed=6)
-    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
-    #                                             true='CW', noise=0.0, plot=True,
-    #                                             discrete_stim=True, s=[0., 1],
-    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
-    #                                             nstates=2, quartet=True, ratio=2,
-    #                                             stim_stamps=100, stim_weight=1,
-    #                                             colors=True,
-    #                                             seed=6)
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+                                                true='CW', noise=0.0, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=1,
+                                                stim_stamps=100, stim_weight=1,
+                                                colors=True,
+                                                seed=6)
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+                                                true='CW', noise=0.0, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=1,
+                                                stim_stamps=100, stim_weight=1,
+                                                colors=True,
+                                                seed=6)
+    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+                                                true='CW', noise=0.0, plot=True,
+                                                discrete_stim=True, s=[0., 1],
+                                                b=[0.0, 2.5], noise_stim=1, coh=None,
+                                                nstates=2, quartet=True, ratio=1,
+                                                stim_stamps=100, stim_weight=1,
+                                                colors=True,
+                                                seed=6)
     # save_choice_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-1),
     #                      dt=1e-2, n_iters=400, n_reps=100, n_jobs=10,
     #                      noise=0.2, seed=0)
-    plot_quartet_pH_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-1))
-    plot_quartet_fps_vs_ratio(reps=50)
+    # plot_quartet_pH_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-1))
+    # plot_quartet_fps_vs_ratio(reps=50)
     
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
