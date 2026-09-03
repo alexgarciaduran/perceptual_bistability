@@ -8487,7 +8487,8 @@ def combined_bias(cue1, cue2, w1=1.0, w2=1.0, b0=0.0):
  
 def plot_cue_combination(J=0.45, N=4, sigma=0.18, w1=1.0, w2=1.0,
                          n_cue_levels=15, cue_range=(-1.0, 1.0),
-                         noise=0.03, seed=0):
+                         noise=0.03, seed=0,
+                         method='boltzmann'):
     """
     Reproduce the Moreno-Bote et al. cue-combination figure.
  
@@ -8510,8 +8511,15 @@ def plot_cue_combination(J=0.45, N=4, sigma=0.18, w1=1.0, w2=1.0,
             odds = (p1 * p2) / max((1 - p1) * (1 - p2), 1e-12)
             pred = odds / (1 + odds)
             # "Observed": full two-cue model + a little measurement/sampling noise
-            obs = dominance_fraction(combined_bias(c1, c2, w1, w2))
-            obs = np.clip(obs + rng.normal(0, noise), 0, 1)
+            B = combined_bias(c1, c2, w1, w2)
+            if method == 'mean_field':
+                q = 0.5; dt=1e-2
+                for _ in range(200):
+                    q = q + dt*(sigmoid(2*N*J*(2*q-1) + 2*B) - q) + np.sqrt(dt)*np.random.randn()*sigma
+                obs = q
+            if method == 'boltzmann':
+                obs = dominance_fraction(B)
+                obs = np.clip(obs + rng.normal(0, noise), 0, 1)
             predicted.append(pred)
             actual.append(obs)
     predicted, actual = np.array(predicted), np.array(actual)
@@ -8615,9 +8623,14 @@ def plot_r2_vs_J(J_values=None, N=4, sigma=0.18, w1=1.0, w2=1.0, b0=0.0,
     
 if __name__ == '__main__':
     print('Mean-Field inference')
-    plot_cue_combination(J=0.38, N=3, sigma=0.2, w1=1.0, w2=1.0,
-                          n_cue_levels=50, cue_range=(-0.5, 0.5),
-                          noise=0.02, seed=0)
+    plot_cue_combination(J=0.1, N=3, sigma=0.07, w1=1.0, w2=1.0,
+                          n_cue_levels=50, cue_range=(-1, 1),
+                          noise=0.03, seed=0,
+                          method='mean_field')
+    plot_cue_combination(J=0.1, N=3, sigma=0.18, w1=1.0, w2=1.0,
+                          n_cue_levels=50, cue_range=(-1, 1),
+                          noise=0.03, seed=0,
+                          method='boltzmann')
     # fixed_points_vs_B(J_mono=0.1, J_bis=0.6, n=3,
     #                   iters=400)
     # dummy_psychometric(nreps=1000, pshuf=[1., 0.7, 0.],
