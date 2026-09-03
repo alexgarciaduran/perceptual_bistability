@@ -14,13 +14,15 @@ import seaborn as sns
 import pandas as pd
 import scipy
 import matplotlib as mpl
+import pickle
 from matplotlib import font_manager
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pylab as pl
 from matplotlib.lines import Line2D
+from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Patch
 import glob
-from sklearn.metrics import roc_curve, auc
+from sklearn.metrics import roc_curve, auc, r2_score
 import statsmodels.api as sm
 from sklearn import manifold
 from sklearn.linear_model import LogisticRegression, LinearRegression
@@ -43,6 +45,7 @@ import pickle
 import tqdm
 import statsmodels.formula.api as smf
 from scipy.stats import pearsonr, zscore
+from scipy import stats
 from scipy.signal import sawtooth, medfilt
 from scipy.optimize import curve_fit, root_scalar, brentq, fsolve
 from scipy.integrate import quad, cumulative_trapezoid, solve_bvp, solve_ivp
@@ -3001,8 +3004,11 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     err_vals_noise_switch_coupling[:] = np.nan
     mean_number_switchs_coupling = np.empty((len(shuffle_vals), len(subs)))
     mean_number_switchs_coupling[:] = np.nan
+    cv_dominance = np.empty((len(shuffle_vals), len(subs)))
+    cv_dominance[:] = np.nan
     zscor = scipy.stats.zscore
     latency_avg = []
+    all_dominance_durations = {}
     fignew, axnew = plt.subplots(nrows=2, figsize=(5.5, 7.5))
     axnew[0].set_xlabel('Time from switch (s)'); axnew[0].set_ylabel('Noise')
     axnew[0].set_title('Average across trials', fontsize=13)
@@ -3012,6 +3018,7 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
         mean_vals_noise_switch_all_shuffles_subject = np.empty((1, steps_back+steps_front))
         mean_vals_noise_switch_all_shuffles_subject[:] = np.nan
         dominances = {1: [], 2: []}
+        all_dominance_durations[subject] = {}
         for i_sh, pshuffle in enumerate(shuffle_vals):
             df_coupling = df_sub.loc[df_sub.pShuffle == pshuffle]
             trial_index = df_coupling.trial_index.unique()
@@ -3041,7 +3048,10 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
                     idx_1 = orders[1][orders[2] == 2]
                     idx_0 = orders[1][orders[2] == 1]
                 number_switches.append(len(idx_1)+len(idx_0))
-                dominance_durations.extend(orders[0])
+                durs_trial = orders[0]
+                # if avoid_first and len(durs_trial) > 2:
+                #     durs_trial = durs_trial[1:-1]     # drop onset + censored last
+                dominance_durations.extend(durs_trial)
                 idx_1 = idx_1[(idx_1 > steps_back) & (idx_1 < (len(responses))-steps_front)]
                 idx_0 = idx_0[(idx_0 > steps_back) & (idx_0 < (len(responses))-steps_front)]
                 # original order
@@ -3058,7 +3068,10 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
             # it's better to compute afterwards, with the average peak per coupling
             # because trial by trial there is a lot of noise and that breaks the mean/latency
             # it gets averaged out
-            mean_number_switchs_coupling[i_sh, i_sub] = np.nanmean(dominance_durations)/fps  # tFrame/ np.max([np.nanmean(np.array(number_switches)), 1])
+            dur_s = np.array(dominance_durations, dtype=float) / fps
+            all_dominance_durations[subject][pshuffle] = dur_s
+            mean_number_switchs_coupling[i_sh, i_sub] = np.nanmean(dur_s)
+            cv_dominance[i_sh, i_sub] = np.nanstd(dur_s) / np.nanmean(dur_s)
             # axis=0 means average across switches (leaves time coords)
             # axis=1 means average across time (leaves switches coords)
             averaged_and_convolved_values = np.convolve(np.nanmean(mean_vals_noise_switch_all_trials, axis=0),
@@ -3104,6 +3117,9 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
         np.save(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy', mean_peak_amplitude)
         np.save(DATA_FOLDER + 'mean_peak_latency_per_subject.npy', mean_peak_latency)
         np.save(DATA_FOLDER + 'mean_number_switches_per_subject.npy', mean_number_switchs_coupling)
+        np.save(DATA_FOLDER + 'cv_dominance_per_subject.npy', cv_dominance)
+        with open(DATA_FOLDER + 'all_dominance_durations.pkl', 'wb') as f:
+            pickle.dump(all_dominance_durations, f)
         hyst_width_2 = np.load(DATA_FOLDER + 'hysteresis_width_freq_2.npy')
         hyst_width_4 = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
         datframe = pd.DataFrame({'Amplitude': mean_peak_amplitude.flatten(),
@@ -7970,6 +7986,12 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
                  'J1': j1s, 'J0': j0s, 'B/sigma': b1s/sigmas,
                  'theta/sigma': thetas/sigmas}
     labels = ['J1', 'J0', 'B1', 'Threshold', 'Sigma']
+    if variable == 'cv_dominance':
+        file = 'cv_dominance_per_subject.npy'
+        label = 'CV dominance'
+    if variable == 'std_dominance':
+        file = 'cv_dominance_per_subject.npy'
+        label = 'STD dominance'
     if variable == 'dominance':
         file = 'mean_number_switches_per_subject.npy'
         label = 'dominance'
@@ -8001,6 +8023,10 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
         file = os.path.join('aligned_eye_tracker_data','plots', 'average_fixation_break_rate.npy')
         label = 'Mean FB rate'
     var = np.load(DATA_FOLDER + file)
+    if variable == 'std_dominance':
+        file_dom = 'mean_number_switches_per_subject.npy'
+        var_dom = np.load(DATA_FOLDER + file_dom)
+        var = var * var_dom
     mean_variable = np.nanmean(var, axis=0)[:fitted_subs]
     r, p = pearsonr(variables[fitted_variable], mean_variable)
     fig, ax = plt.subplots(1, figsize=(3.4, 3))
@@ -8033,6 +8059,12 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
                 ax[i].plot(j_coupling, dominance_dur_coup,
                             color='k', marker='o', linestyle='')
                 ax[i].set_title('p(sh)=' + str(1-couplings[i]) + ';   r = ' + str(round(rho, 3)))
+                if variable == 'cv_dominance':
+                    poly_params = np.polyfit(x=j_coupling, y=dominance_dur_coup, deg=2)
+                    poly = np.poly1d(poly_params)
+                    x = np.arange(0, 0.5, 1e-3)
+                    ax[i].plot(x, poly(x), color='firebrick', lw=2, alpha=0.5)
+                    ax[i].axvline(1/4, color='firebrick', linestyle='--', alpha=0.3)
             else:
                 j_coupling_0 = (j0s)*n
                 j_coupling_03 = (j1s*0.3+j0s)*n
@@ -8042,6 +8074,20 @@ def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
                 rho = pearsonr(all_coups, all_doms).statistic
                 ax[i].plot(all_coups, all_doms, color='k', marker='o', linestyle='')
                 ax[i].set_title('All p(sh);   r = ' + str(round(rho, 3)))
+                if variable == 'cv_dominance':
+                    poly_params = np.polyfit(x=all_coups, y=all_doms, deg=2)
+                    poly = np.poly1d(poly_params)
+                    x = np.arange(0, 0.5, 1e-3)
+                    ax[i].plot(x, poly(x), color='firebrick', lw=4)
+                    r2 = r2_score(all_doms, poly(all_coups))
+                    ax[i].axvline(1/4, color='firebrick', linestyle='--', alpha=0.3)
+                    ax[i].text(
+                        0.65, 0.95,
+                        fr'$R^2 = {r2:.2f}$',
+                        transform=ax[i].transAxes,
+                        va='top',
+                        color='firebrick'
+                    )
             ax[i].set_xlabel('Fitted J = (1-p(sh))*J1 + J0')
         ax[0].set_ylabel(label)
         fig.tight_layout()
@@ -13941,6 +13987,377 @@ def plot_pupil_traces():
                                              region_interval=[-2, 2])
                 # plt.close('all')
 
+def plot_cv_vs_J(n=1, n_bins=8, min_durations=8, use_log=False,
+                 agg='median', n_boot=2000, seed=0, jstar=1/4,
+                 dur_file='all_dominance_durations.pkl',
+                 shuffle_vals=(1, 0.7, 0), couplings=(0, 0.3, 1),
+                 quantile_bins=False, peak_panel='hist'):
+    """
+    CV of dominance durations vs fitted effective coupling J.
+
+    Main panel:  black = data (bootstrap mean +/- 95% CI);
+                 firebrick = polynomial (parabola) fit + peak line.
+    Top panel:   distribution of bootstrap peak locations
+                 (peak_panel='hist' -> firebrick vertical histogram,
+                  peak_panel='box'  -> horizontal boxplot).
+
+    Colormap: data black, everything fit-related firebrick.
+    """
+    rng = np.random.default_rng(seed)
+    aggfun = np.nanmedian if agg == 'median' else np.nanmean
+
+    # ---- fitted params ----
+    pars = sorted(glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy'))
+    j1s = np.array([np.load(p)[0] for p in pars])
+    j0s = np.array([np.load(p)[1] for p in pars])
+
+    # ---- raw durations ----
+    with open(DATA_FOLDER + dur_file, 'rb') as f:
+        all_dur = pickle.load(f)
+    subjects = list(all_dur.keys())[:len(pars)]
+
+    # ---- per-subject, per-shuffle CV (within subject) ----
+    def dispersion(d):
+        d = np.asarray(d, float)
+        d = d[np.isfinite(d) & (d > 0)]
+        if d.size < min_durations:
+            return np.nan
+        if use_log:
+            return np.std(np.log(d), ddof=1)
+        return np.std(d, ddof=1) / np.mean(d)
+
+    J_rows, CV_rows, S_rows = [], [], []
+    for si, subj in enumerate(subjects):
+        for psh, cpl in zip(shuffle_vals, couplings):
+            cv = dispersion(all_dur[subj].get(psh, []))
+            if not np.isfinite(cv):
+                continue
+            J_rows.append((j1s[si] * cpl + j0s[si]) * n)
+            CV_rows.append(cv)
+            S_rows.append(si)
+    Jarr = np.array(J_rows)
+    CVarr = np.array(CV_rows)
+    Sarr = np.array(S_rows)
+
+    # ---- bin edges / centers ----
+    if quantile_bins:
+        edges = np.unique(np.quantile(Jarr, np.linspace(0, 1, n_bins + 1)))
+        centers = np.array([np.median(Jarr[(Jarr >= edges[b]) &
+                            ((Jarr < edges[b + 1]) if b < len(edges) - 2
+                             else (Jarr <= edges[b + 1]))])
+                            for b in range(len(edges) - 1)])
+    else:
+        edges = np.linspace(Jarr.min(), Jarr.max(), n_bins + 1)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+    nb = len(edges) - 1
+
+    def binned_curve(J, CV):
+        out = np.full(nb, np.nan)
+        for b in range(nb):
+            hi = (J < edges[b + 1]) if b < nb - 1 else (J <= edges[b + 1])
+            sel = (J >= edges[b]) & hi
+            if sel.sum() >= 1:
+                out[b] = aggfun(CV[sel])
+        return out
+
+    cv_point = binned_curve(Jarr, CVarr)
+
+    # ---- bootstrap over subjects ----
+    uniq = np.unique(Sarr)
+    rows_of = {s: np.where(Sarr == s)[0] for s in uniq}
+    boot = np.full((n_boot, nb), np.nan)
+    for bi in range(n_boot):
+        pick = rng.choice(uniq, size=uniq.size, replace=True)
+        idx = np.concatenate([rows_of[s] for s in pick])
+        boot[bi] = binned_curve(Jarr[idx], CVarr[idx])
+    lo, mean_boot, hi = (np.nanpercentile(boot, 2.5, axis=0),
+                         np.nanmean(boot, axis=0),
+                         np.nanpercentile(boot, 97.5, axis=0))
+
+    # ---- parabola fit + bootstrap peaks ----
+    def parab(x, a, x0, c):
+        return a * (x - x0) ** 2 + c
+
+    def fit_peak(xc, yc, xlo, xhi, min_curv=1e-3):
+        ok = np.isfinite(xc) & np.isfinite(yc)
+        if ok.sum() < 3:
+            return np.nan
+        try:
+            p0 = [-1.0, xc[ok][np.nanargmax(yc[ok])], np.nanmax(yc[ok])]
+            popt, _ = curve_fit(parab, xc[ok], yc[ok], p0=p0, maxfev=10000)
+            a, x0 = popt[0], popt[1]
+            if xlo <= x0 <= xhi:   # concave & vertex in range
+                return x0
+            return np.nan
+        except Exception:
+            return np.nan
+
+    xlo, xhi = centers.min(), centers.max()
+    peak_hat = fit_peak(centers, cv_point, xlo, xhi)
+    peak_boot = np.array([fit_peak(centers, boot[bi], xlo, xhi)
+                          for bi in range(n_boot)])
+    peak_boot = peak_boot[np.isfinite(peak_boot)]
+    frac_concave = peak_boot.size / n_boot
+    peak_ci = (np.percentile(peak_boot, [2.5, 97.5])
+               if peak_boot.size else (np.nan, np.nan))
+    # if the single full-data fit failed but bootstraps found peaks, use their median
+    if not np.isfinite(peak_hat) and peak_boot.size:
+        peak_hat = np.median(peak_boot)
+
+    # ================= figure: top peak panel + main panel =================
+    fig = plt.figure(figsize=(5, 4.8), constrained_layout=True)
+    gs = GridSpec(2, 1, height_ratios=[1, 4], figure=fig, hspace=0.05)
+    axtop = fig.add_subplot(gs[0])
+    ax = fig.add_subplot(gs[1], sharex=axtop)
+
+    # ---- top: bootstrap peak distribution ----
+    axtop.spines[['right', 'top', 'left']].set_visible(False)
+    if peak_boot.size:
+        if peak_panel == 'box':
+            axtop.boxplot(peak_boot, vert=False, widths=0.6,
+                          patch_artist=True,
+                          boxprops=dict(facecolor='firebrick', alpha=0.4,
+                                        edgecolor='firebrick'),
+                          medianprops=dict(color='firebrick', lw=2),
+                          whiskerprops=dict(color='firebrick'),
+                          capprops=dict(color='firebrick'),
+                          flierprops=dict(marker='.', markersize=2,
+                                          markerfacecolor='firebrick',
+                                          markeredgecolor='none', alpha=0.3))
+            axtop.set_yticks([])
+        else:  # hist
+            axtop.hist(peak_boot, bins=30, color='firebrick', alpha=0.7)
+            axtop.set_yticks([])
+    axtop.axvline(jstar, color='k', ls='--', lw=1.5)
+    if np.isfinite(peak_hat):
+        axtop.axvline(peak_hat, color='firebrick', lw=1.5)
+    axtop.tick_params(labelbottom=False)
+    axtop.set_title('bootstrap peak distribution', fontsize=9, color='firebrick')
+
+    # ---- main: data (black) + fit (firebrick) ----
+    ax.spines[['right', 'top']].set_visible(False)
+    # data: bootstrap mean + 95% CI, in black
+    ax.fill_between(centers, lo, hi, color='k', alpha=0.15,
+                    label='95% CI (bootstrap)')
+    ax.plot(centers, mean_boot, color='k', lw=2, marker='o', ms=4,
+            label='bootstrap mean')
+    # fit: parabola + peak, in firebrick. Fit to the point curve if possible,
+    # else to the bootstrap-mean curve (keeps a sensible overlay when the single
+    # full-data fit was rejected by the concavity/range check).
+    if np.isfinite(peak_hat):
+        yfit = cv_point if np.isfinite(cv_point).sum() >= 3 else mean_boot
+        ok = np.isfinite(centers) & np.isfinite(yfit)
+        try:
+            popt, _ = curve_fit(parab, centers[ok], yfit[ok],
+                                p0=[-1, peak_hat, np.nanmax(yfit[ok])], maxfev=10000)
+            xx = np.linspace(xlo, xhi, 200)
+            ax.plot(xx, parab(xx, *popt), color='firebrick', lw=2, label='parabola fit')
+        except Exception:
+            pass
+        ax.axvline(peak_hat, color='firebrick', lw=1.5, label='peak')
+    ax.axvline(jstar, color='k', ls='--', lw=1.5, label=fr'$J^*=1/N={jstar:.2f}$')
+
+    ax.set_xlabel('Fitted effective J = (1-p(sh))·J1 + J0' + (f'  (×{n})' if n != 1 else ''))
+    ax.set_ylabel('std(log duration)' if use_log else 'CV dominance')
+    ax.legend(frameon=False, fontsize=8)
+
+    if np.isfinite(peak_hat):
+        sup = ('peak J = {:.3f}  [{:.3f}, {:.3f}]   ({:.0%} concave)'
+               .format(peak_hat, peak_ci[0], peak_ci[1], frac_concave))
+    else:
+        sup = 'no concave peak ({:.0%} of bootstraps concave)'.format(frac_concave)
+    fig.suptitle(sup, fontsize=10)
+
+    fig.savefig(SV_FOLDER + 'curve_cv_vs_effective_j_fit.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'curve_cv_vs_effective_j_fit.svg', dpi=400, bbox_inches='tight')
+
+    return fig, dict(centers=centers, cv=cv_point, boot=boot,
+                     lo=lo, mean=mean_boot, hi=hi, peak=peak_hat, peak_ci=peak_ci,
+                     peak_boot=peak_boot, frac_concave=frac_concave,
+                     J_subj=Jarr, CV_subj=CVarr, subj=Sarr)
+
+
+def peak_vs_nbins(n=1, nbins_range=range(4, 16), min_durations=5,
+                  use_log=False, agg='median', n_boot=200, n_seeds=20,
+                  jstar=1/4, dur_file='all_dominance_durations.pkl',
+                  shuffle_vals=(1, 0.7, 0), couplings=(0, 0.3, 1),
+                  min_curv=1e-3):
+    """
+    Stability of the estimated critical coupling (peak of CV vs J) as a function
+    of the number of bins, for two binning schemes:
+        - equal-width  edges (left panel)
+        - quantile     edges, median-J centers (right panel)
+ 
+    For each (scheme, n_bins) it runs `n_seeds` independent subject-cluster
+    bootstraps (each of n_boot resamples), fits a concave parabola to the median
+    binned curve of each bootstrap, and records the peak (vertex) location. The
+    plot shows, per n_bins, the distribution of recovered peaks across seeds
+    (median + IQR band), with J* marked. A flat line near J* across n_bins means
+    the estimate is robust; scatter means it is binning-dependent.
+ 
+    Returns
+    -------
+    fig, results  (results['equal'] and results['quantile']:
+                   dict with nbins, peak_median, peak_lo, peak_hi, frac_concave)
+    """
+    # ---- fitted params ----
+    pars = sorted(glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy'))
+    j1s = np.array([np.load(p)[0] for p in pars])
+    j0s = np.array([np.load(p)[1] for p in pars])
+ 
+    # ---- raw durations ----
+    with open(DATA_FOLDER + dur_file, 'rb') as f:
+        all_dur = pickle.load(f)
+    subjects = list(all_dur.keys())[:len(pars)]
+ 
+    # ---- per-(subject, shuffle) CV, computed WITHIN subject ----
+    def dispersion(d):
+        d = np.asarray(d, float)
+        d = d[np.isfinite(d) & (d > 0)]
+        if d.size < min_durations:
+            return np.nan
+        if use_log:
+            return np.std(np.log(d), ddof=1)
+        return np.std(d, ddof=1) / np.mean(d)
+ 
+    J_rows, CV_rows, S_rows = [], [], []
+    for si, subj in enumerate(subjects):
+        for psh, cpl in zip(shuffle_vals, couplings):
+            cv = dispersion(all_dur[subj].get(psh, []))
+            if np.isfinite(cv):
+                J_rows.append((j1s[si] * cpl + j0s[si]) * n)
+                CV_rows.append(cv)
+                S_rows.append(si)
+    Jarr = np.array(J_rows)
+    CVarr = np.array(CV_rows)
+    Sarr = np.array(S_rows)
+ 
+    aggfun = np.nanmedian if agg == 'median' else np.nanmean
+    uniq = np.unique(Sarr)
+    rows_of = {s: np.where(Sarr == s)[0] for s in uniq}
+ 
+    def parab(x, a, x0, c):
+        return a * (x - x0) ** 2 + c
+ 
+    def fit_peak(xc, yc, xlo, xhi):
+        ok = np.isfinite(xc) & np.isfinite(yc)
+        if ok.sum() < 3:
+            return np.nan
+        try:
+            p0 = [-1.0, xc[ok][np.nanargmax(yc[ok])], np.nanmax(yc[ok])]
+            popt, _ = curve_fit(parab, xc[ok], yc[ok], p0=p0, maxfev=10000)
+            a, x0 = popt[0], popt[1]
+            if xlo <= x0 <= xhi:   # vertex in range
+                return x0
+            return np.nan
+        except Exception:
+            return np.nan
+ 
+    def make_edges_centers(J, n_bins, scheme):
+        if scheme == 'equal':
+            edges = np.linspace(J.min(), J.max(), n_bins + 1)
+            centers = 0.5 * (edges[:-1] + edges[1:])
+        else:  # quantile
+            edges = np.unique(np.quantile(J, np.linspace(0, 1, n_bins + 1)))
+            centers = np.full(len(edges) - 1, np.nan)
+            for b in range(len(edges) - 1):
+                hi = (J < edges[b + 1]) if b < len(edges) - 2 else (J <= edges[b + 1])
+                sel = (J >= edges[b]) & hi
+                if sel.any():
+                    centers[b] = np.median(J[sel])
+        return edges, centers
+ 
+    def binned_curve(J, CV, edges):
+        nb = len(edges) - 1
+        out = np.full(nb, np.nan)
+        for b in range(nb):
+            hi = (J < edges[b + 1]) if b < nb - 1 else (J <= edges[b + 1])
+            sel = (J >= edges[b]) & hi
+            if sel.sum() >= 3:
+                out[b] = aggfun(CV[sel])
+        return out
+ 
+    xlo, xhi = Jarr.min(), Jarr.max()
+    schemes = ['equal', 'quantile']
+    results = {}
+ 
+    for scheme in schemes:
+        nbins_list, peak_med, peak_lo, peak_hi, frac_conc = [], [], [], [], []
+        for n_bins in tqdm.tqdm(nbins_range):
+            total_draws = 0
+            ok_draws = 0
+            # edges/centers on the FULL data define the grid for this n_bins
+            edges_full, centers_full = make_edges_centers(Jarr, n_bins, scheme)
+            seed_peaks = []
+            for seed in range(n_seeds):
+                rng = np.random.default_rng(seed)
+                # one bootstrap draw: resample subjects, median binned curve,
+                # fit peak. Repeat n_boot times, take the median peak for this seed.
+                draw_peaks = []
+                for _ in range(n_boot):
+                    pick = rng.choice(uniq, size=uniq.size, replace=True)
+                    idx = np.concatenate([rows_of[s] for s in pick])
+                    Jb, CVb = Jarr[idx], CVarr[idx]
+                    if scheme == 'equal':
+                        edges = edges_full
+                        centers = centers_full
+                    else:
+                        # recompute quantile edges/centers on the resample so the
+                        # grid tracks the resampled J-distribution
+                        edges, centers = make_edges_centers(Jb, n_bins, scheme)
+                    curve = binned_curve(Jb, CVb, edges)
+                    pk = fit_peak(centers, curve, xlo, xhi)
+                    total_draws += 1
+                    if np.isfinite(pk):
+                        ok_draws += 1
+                        draw_peaks.append(pk)
+                if draw_peaks:
+                    seed_peaks.append(np.median(draw_peaks))
+            seed_peaks = np.array(seed_peaks)
+            nbins_list.append(n_bins)
+            if seed_peaks.size:
+                peak_med.append(np.median(seed_peaks))
+                peak_lo.append(np.percentile(seed_peaks, 25))
+                peak_hi.append(np.percentile(seed_peaks, 75))
+            else:
+                peak_med.append(np.nan); peak_lo.append(np.nan); peak_hi.append(np.nan)
+            frac_conc.append(ok_draws / max(total_draws, 1))
+            # frac_conc.append(seed_peaks.size / max(n_seeds, 1))
+        results[scheme] = dict(
+            nbins=np.array(nbins_list), peak_median=np.array(peak_med),
+            peak_lo=np.array(peak_lo), peak_hi=np.array(peak_hi),
+            frac_concave=np.array(frac_conc))
+ 
+    # ---- plot ----
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+    titles = {'equal': 'Equal-width bins', 'quantile': 'Quantile bins (median-J centers)'}
+    for ax, scheme in zip(axes, schemes):
+        r = results[scheme]
+        ax.spines[['right', 'top']].set_visible(False)
+        ax.fill_between(r['nbins'], r['peak_lo'], r['peak_hi'],
+                        color='royalblue', alpha=0.2, label='IQR across seeds')
+        ax.plot(r['nbins'], r['peak_median'], '-o', color='royalblue',
+                ms=5, label='median peak')
+        ax.axhline(jstar, color='firebrick', ls='--', lw=1.5,
+                   label=fr'$J^*=1/N={jstar:.2f}$')
+        # annotate fraction of seeds that yielded a concave peak
+        for x, y, f in zip(r['nbins'], r['peak_median'], r['frac_concave']):
+            if np.isfinite(y):
+                ax.annotate(f'{f:.0%}', (x, y), textcoords='offset points',
+                            xytext=(0, 8), ha='center', fontsize=6, color='gray')
+        ax.set_xlabel('number of bins')
+        ax.set_title(titles[scheme], fontsize=11)
+        ax.set_ylim(0, 0.51)
+    axes[0].set_ylabel('estimated peak  $J^*$')
+    axes[0].legend(frameon=False, fontsize=8)
+    fig.suptitle('Peak-J stability vs binning  (grey % = fraction of draws with a concave peak)',
+                 fontsize=11)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(SV_FOLDER + 'peak_cv_vs_effective_j_fit.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'peak_cv_vs_effective_j_fit.svg', dpi=400, bbox_inches='tight')
+ 
+    return fig, results
+
 
 if __name__ == '__main__':
     print('Running hysteresis_analysis.py')
@@ -14059,13 +14476,13 @@ if __name__ == '__main__':
     #                                       normalize_variables=True, ratio=1,
     #                                       load_simulations=True,
     #                                       adaptation=True)
-    plot_model_data_average_kernel(steps_back=150, steps_front=10,
-                                    fps=60)
+    # plot_model_data_average_kernel(steps_back=150, steps_front=10,
+    #                                 fps=60)
     # plot_dominance_bis_mono_data_model(n=4, ax=None,
     #                                    estimator='mean')
     # plt.close('all')
-    plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
-                                      cumsum=False, npercentiles=3, sim_predict_dat=True)
+    # plot_kernels_predicted_amplitude(steps_back=150, steps_front=10, fps=60,
+    #                                   cumsum=False, npercentiles=3, sim_predict_dat=True)
     # plot_dominance_monostable_vs_bistable()
     # plot_subject_dominance_distributions()
     # for variable in ['J0', 'J1', 'B1', 'SIGMA', 'THETA']:
@@ -14152,6 +14569,14 @@ if __name__ == '__main__':
     #                           avoid_first=True, window_conv=1,
     #                           zscore_number_switches=False, 
     #                           normalize_variables=True, hysteresis_area=True)
+    plot_cv_vs_J(n=1, n_bins=9, min_durations=2, use_log=False,
+                  n_boot=100, seed=0, jstar=1/4, agg='median',
+                  dur_file='all_dominance_durations.pkl')
+    peak_vs_nbins(n=1, nbins_range=range(4, 19), min_durations=2,
+                  use_log=False, agg='median', n_boot=100, n_seeds=5,
+                  jstar=1/4, dur_file='all_dominance_durations.pkl')
+    plot_noise_variables_vs_fitted_params(n=1, variable='std_dominance',
+                                          fitted_variable='J', full=True)
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
     # for sims in [1000000]:
     #     parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
