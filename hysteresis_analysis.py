@@ -6864,6 +6864,10 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                                 sigma=None, pshuf_only=None, bis_mono=None,
                                 adaptation=False,
                                 k_steps=None):
+    """
+    Computes switch-locked noise average traces.
+    Also computes perceptual surprise as the lagged discrete time derivative of q.
+    """
     title = r'$\sigma = 0$' if sigma is not None else r'$\sigma \neq 0$'
     if fps == 60:
         nFrame = 1546
