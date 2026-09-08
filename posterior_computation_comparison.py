@@ -588,30 +588,39 @@ def compute_error_vs_alpha(d_list=(2, 3, 4, 5, 6), B_values=(0.0, 0.1, 0.3, 0.5)
                            n=8, max_iter=300):
     """Compute FBP error maps E[(d,B)] = mean|q_FBP(alpha,J) - exact| (nodes),
     and analytic alpha_hat per (d,B,J). Returned as a dict ready to pickle."""
-    E = {}
+    def _kl(q, p, eps=1e-9):
+        q = np.clip(q, eps, 1 - eps)
+        p = np.clip(p, eps, 1 - eps)
+        return np.mean(q*np.log(q/p) + (1-q)*np.log((1-q)/(1-p)))
+
+    mae, mse, kl = {}, {}, {}
     ah = {}
     jstar = {}
     Jmax = float(np.asarray(J_grid)[-1])
     for d in d_list:
         A = get_regular_graph(d, n, seed=0)
         for B0 in B_values:
-            Emat = np.zeros((len(alpha_grid), len(J_grid)))
+            Emae = np.zeros((len(alpha_grid), len(J_grid)))
+            Emse = np.zeros((len(alpha_grid), len(J_grid)))
+            Ekl = np.zeros((len(alpha_grid), len(J_grid)))
             ahl = []
             for jj, J in enumerate(tqdm(J_grid, desc=f"err(alpha) d={d} B={B0}")):
                 Jm, Bv = create_ising_params_with_B(A, J, B0)
                 ex = exact_marginals(Jm, Bv)
                 for ai, a in enumerate(alpha_grid):
                     q = fractional_bp(Jm, Bv, alpha=a, max_iter=max_iter)
-                    Emat[ai, jj] = np.mean(np.abs(q - ex))
+                    Emae[ai, jj] = np.mean(np.abs(q - ex))
+                    Emse[ai, jj] = np.mean((q - ex)**2)
+                    Ekl[ai, jj] = _kl(q, ex)
                 ahl.append(optimal_alpha(J, B0, float(np.mean(ex)), d))
-            E[(d, round(float(B0), 4))] = Emat
-            ah[(d, round(float(B0), 4))] = np.array(ahl)
+            key = (d, round(float(B0), 4))
+            mae[key], mse[key], kl[key] = Emae, Emse, Ekl
+            ah[key] = np.array(ahl)
             # numeric bistability onset J*(alpha) at this field B (saddle-node
             # for B!=0, pitchfork for B=0) -- the per-B red curve
-            jstar[(d, round(float(B0), 4))] = jstar_curve(d, B0, alpha_grid,
-                                                          J_max=Jmax)
-    return {"E": E, "ah": ah, "jstar": jstar, "J_grid": np.asarray(J_grid),
-            "alpha_grid": np.asarray(alpha_grid),
+            jstar[key] = jstar_curve(d, B0, alpha_grid, J_max=Jmax)
+    return {"mae": mae, "mse": mse, "kl": kl, "ah": ah, "jstar": jstar,
+            "J_grid": np.asarray(J_grid), "alpha_grid": np.asarray(alpha_grid),
             "d_list": list(d_list), "B_values": [round(float(b), 4) for b in B_values]}
 
 
@@ -619,25 +628,40 @@ def plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
                                 B_values=(0.0, 0.1, 0.3, 0.5),
                                 J_grid=np.round(np.arange(0.0, 1.01, 0.04), 3),
                                 alpha_grid=np.linspace(0.1, 3.5, 40),
-                                n=8, max_iter=300,
+                                n=8, max_iter=300, metric='kl',
                                 load_data=True, data_path=None, save=True):
     """
     Grid of FBP error heatmaps: rows = field B, columns = degree d.
+
+    metric : 'kl' (mean D_KL(q||exact), the minimised objective -- default),
+             'mse' (mean squared error) or 'mae' (mean abs error). The white
+             ridge is the argmin of the displayed metric; for 'kl' it coincides
+             with the analytic alpha_hat (cyan) by construction.
     """
+    if metric not in ('kl', 'mse', 'mae'):
+        raise ValueError("metric must be 'kl', 'mse' or 'mae'")
     if data_path is None:
         data_path = DATA_FOLDER + 'error_vs_alpha_data.pkl'
+    cache = None
     if load_data and os.path.exists(data_path):
         with open(data_path, 'rb') as f:
             cache = pickle.load(f)
-        print(f"loaded error-vs-alpha data from {data_path}")
-    else:
+        if metric not in cache:   # old-schema cache -> recompute
+            print("cache lacks metric maps; recomputing ...")
+            cache = None
+        else:
+            print(f"loaded error-vs-alpha data from {data_path}")
+    if cache is None:
         cache = compute_error_vs_alpha(d_list, B_values, J_grid, alpha_grid,
                                        n=n, max_iter=max_iter)
         with open(data_path, 'wb') as f:
             pickle.dump(cache, f)
         print(f"saved error-vs-alpha data to {data_path}")
 
-    E, ah = cache["E"], cache["ah"]
+    E, ah = cache[metric], cache["ah"]
+    metric_label = {'kl': r'mean $D_{KL}(q\,\|\,$exact$)$',
+                    'mse': 'mean squared error',
+                    'mae': 'mean |q - exact|'}[metric]
     J_grid, alpha_grid = cache["J_grid"], cache["alpha_grid"]
     d_list, B_values = cache["d_list"], cache["B_values"]
     # backward-compat: older caches have no numeric onset -> compute + resave
@@ -685,11 +709,12 @@ def plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
     fig.legend(handles=handles, loc='upper center', ncol=3, framealpha=0.8,
                bbox_to_anchor=(0.5, 1.02))
     cbar = fig.colorbar(im, ax=axes, fraction=0.02, pad=0.01)
-    cbar.set_label('Mean |q_FBP - exact|')
+    cbar.set_label(metric_label)
     if save:
-        fig.savefig(DATA_FOLDER + 'error_vs_alpha_regular.png', dpi=200,
+        fig.savefig(DATA_FOLDER + f'error_vs_alpha_regular_{metric}.png', dpi=200,
                     bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'error_vs_alpha_regular.svg', bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + f'error_vs_alpha_regular_{metric}.svg',
+                    bbox_inches='tight')
     return fig
 
 
