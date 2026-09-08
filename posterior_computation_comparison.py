@@ -224,6 +224,27 @@ def find_solution_bp(j, b, min_r=0., max_r=30, w_size=0.1,
     return sols
 
 
+def bistability_onset_J(alpha, b, n, J_scan, min_r=1e-9, max_r=30, w_size=0.05):
+    """Smallest J in J_scan at which FBP becomes bistable at field b and degree
+    n (i.e. g(r)=r_stim has >1 positive root -- the saddle-node/pitchfork onset).
+
+    Valid for any b: at b=0 it reproduces the closed form J*(alpha)=
+    1/(2a)log(n/(n-2a)); for b!=0 the transition is a saddle-node found here
+    numerically. Returns np.nan if no fold occurs on J_scan."""
+    for J in J_scan:
+        sols = find_solution_bp(J, b, min_r=min_r, max_r=max_r, w_size=w_size,
+                                tol=1e-2, n_neigh=n, alpha=alpha)
+        if len(sols) > 1:
+            return float(J)
+    return np.nan
+
+
+def jstar_curve(d, b, alpha_grid, J_max=1.0, dJ=0.01):
+    """J*(alpha) at fixed field b for a degree-d node: onset J per alpha."""
+    J_scan = np.arange(0.0, J_max + 1e-9, dJ)
+    return np.array([bistability_onset_J(a, b, d, J_scan) for a in alpha_grid])
+
+
 def d_kl_d_q(q, p):
     # derivative of D_KL(q || p) w.r.t. q  [minimised objective: D_KL(q||p)]
     return np.log(q/p) - np.log((1-q)/(1-p))
@@ -569,6 +590,8 @@ def compute_error_vs_alpha(d_list=(2, 3, 4, 5, 6), B_values=(0.0, 0.1, 0.3, 0.5)
     and analytic alpha_hat per (d,B,J). Returned as a dict ready to pickle."""
     E = {}
     ah = {}
+    jstar = {}
+    Jmax = float(np.asarray(J_grid)[-1])
     for d in d_list:
         A = get_regular_graph(d, n, seed=0)
         for B0 in B_values:
@@ -583,7 +606,11 @@ def compute_error_vs_alpha(d_list=(2, 3, 4, 5, 6), B_values=(0.0, 0.1, 0.3, 0.5)
                 ahl.append(optimal_alpha(J, B0, float(np.mean(ex)), d))
             E[(d, round(float(B0), 4))] = Emat
             ah[(d, round(float(B0), 4))] = np.array(ahl)
-    return {"E": E, "ah": ah, "J_grid": np.asarray(J_grid),
+            # numeric bistability onset J*(alpha) at this field B (saddle-node
+            # for B!=0, pitchfork for B=0) -- the per-B red curve
+            jstar[(d, round(float(B0), 4))] = jstar_curve(d, B0, alpha_grid,
+                                                          J_max=Jmax)
+    return {"E": E, "ah": ah, "jstar": jstar, "J_grid": np.asarray(J_grid),
             "alpha_grid": np.asarray(alpha_grid),
             "d_list": list(d_list), "B_values": [round(float(b), 4) for b in B_values]}
 
@@ -613,6 +640,16 @@ def plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
     E, ah = cache["E"], cache["ah"]
     J_grid, alpha_grid = cache["J_grid"], cache["alpha_grid"]
     d_list, B_values = cache["d_list"], cache["B_values"]
+    # backward-compat: older caches have no numeric onset -> compute + resave
+    if "jstar" not in cache:
+        Jmax = float(np.asarray(J_grid)[-1])
+        cache["jstar"] = {(d, round(float(B0), 4)):
+                          jstar_curve(d, B0, alpha_grid, J_max=Jmax)
+                          for d in d_list for B0 in B_values}
+        with open(data_path, 'wb') as f:
+            pickle.dump(cache, f)
+        print(f"added numeric J*(alpha,B) to {data_path}")
+    jstar = cache["jstar"]
     vmax = max(np.nanmax(v) for v in E.values())
 
     nr, nc = len(B_values), len(d_list)
@@ -628,7 +665,9 @@ def plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
             ridge = alpha_grid[np.argmin(Emat, axis=0)]
             ax.plot(J_grid, ridge, color='w', lw=1.8)
             ax.plot(J_grid, ah[(d, round(float(B0), 4))], color='cyan', lw=1.4, ls=':')
-            Js = [(1.0/(2*a))*np.log(d/(d-2*a)) if d > 2*a else np.nan for a in alpha_grid]
+            # numeric bistability onset J*(alpha) at this B (red). Empty where
+            # no fold exists (e.g. large B). B=0 matches the closed form.
+            Js = jstar[(d, round(float(B0), 4))]
             ax.plot(Js, alpha_grid, color='r', lw=1.2, ls='--')
             ax.set_xlim(J_grid[0], J_grid[-1])
             ax.set_ylim(alpha_grid[0], alpha_grid[-1])
@@ -642,7 +681,7 @@ def plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
     from matplotlib.lines import Line2D
     handles = [Line2D([0], [0], color='w', lw=2, label=r'empirical $\alpha^\ast$'),
                Line2D([0], [0], color='cyan', lw=2, ls=':', label=r'analytic $\hat\alpha$'),
-               Line2D([0], [0], color='r', lw=2, ls='--', label=r'$J^\ast(\alpha)$')]
+               Line2D([0], [0], color='r', lw=2, ls='--', label=r'$J^\ast(\alpha,B)$')]
     fig.legend(handles=handles, loc='upper center', ncol=3, framealpha=0.8,
                bbox_to_anchor=(0.5, 1.02))
     cbar = fig.colorbar(im, ax=axes, fraction=0.02, pad=0.01)
