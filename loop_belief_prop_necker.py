@@ -29,11 +29,11 @@ from tqdm import tqdm
 THETA = gn.THETA
 
 
-mpl.rcParams['font.size'] = 18
-plt.rcParams['legend.title_fontsize'] = 16
-plt.rcParams['legend.fontsize'] = 14
-plt.rcParams['xtick.labelsize']= 16
-plt.rcParams['ytick.labelsize']= 16
+mpl.rcParams['font.size'] = 15
+plt.rcParams['legend.title_fontsize'] = 14
+plt.rcParams['legend.fontsize'] = 12
+plt.rcParams['xtick.labelsize']= 13
+plt.rcParams['ytick.labelsize']= 13
 
 
 pc_name = 'alex'
@@ -360,19 +360,21 @@ def plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.0
         vals_gibs_10000 = mat_gn_1e4[i_j, ind_0:]
         conf_g1e4.append(np.trapz(abs(vals_gibs_10000-true_posterior), true_posterior))
     fig, ax = plt.subplots(1, figsize=(5, 3.4))
-    ax.plot(j_list, conf_lbp, color='k', label='LBP')
-    ax.plot(j_list, conf_mf, color='r', label='MF')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.plot(j_list, conf_lbp, color='k', label='LBP', linewidth=3)
+    ax.plot(j_list, conf_mf, color='r', label='MF', linewidth=3)
     colormap = pl.cm.Blues(np.linspace(0.2, 1, 3))
-    wsize = 1
-    ax.plot(j_list, np.convolve(conf_g1e2, np.ones(wsize)/wsize, 'same'), color=colormap[0], label='Gibbs 1e2')
-    ax.plot(j_list, np.convolve(conf_g1e3, np.ones(wsize)/wsize, 'same'), color=colormap[1], label='Gibbs 1e3')
-    ax.plot(j_list, np.convolve(conf_g1e4, np.ones(wsize)/wsize, 'same'), color=colormap[2], label='Gibbs 1e4')
-    ax.legend()
+    wsize = 5
+    ax.plot(j_list[:-wsize], np.convolve(conf_g1e2, np.ones(wsize)/wsize, 'same')[:-wsize], color=colormap[0], label='Gibbs, T=1e2', linewidth=3)
+    ax.plot(j_list[:-wsize], np.convolve(conf_g1e3, np.ones(wsize)/wsize, 'same')[:-wsize], color=colormap[1], label='Gibbs, T=1e3', linewidth=3)
+    ax.plot(j_list[:-wsize], np.convolve(conf_g1e4, np.ones(wsize)/wsize, 'same')[:-wsize], color=colormap[2], label='Gibbs, T=1e4', linewidth=3)
+    ax.legend(frameon=False)
     ax.set_xlabel(r'Coupling $J$')
     ax.set_ylabel('Over-confidence')
     fig.tight_layout()
-    fig.savefig(data_folder + 'over_confidence_all.png')
-    fig.savefig(data_folder + 'over_confidence_all.svg')
+    fig.savefig(data_folder + 'over_confidence_all.png', dpi=400)
+    fig.savefig(data_folder + 'over_confidence_all.svg', dpi=400)
 
 
 def posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1000), j=0.1,
@@ -524,26 +526,28 @@ def solutions_bp(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
 
 
 def plot_sol_LBP(j_list=np.arange(0.00001, 2, 0.000001), stim=0.1):
-    fig = plt.figure(figsize=(6, 4))
+    fig, ax = plt.subplots(1, figsize=(5, 4))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     q0_l, q1_l, q2_l = solutions_bp(j_list=j_list, stim=stim)
     # plt.plot(j_list, q0_l, color='grey', linestyle='--')
-    plt.plot([0, np.log(3)/2], [0.5, 0.5], color='k', alpha=1, label='Stable FP')
-    plt.plot(j_list, q1_l, color='k')
-    plt.plot(j_list, q2_l, color='k')
+    plt.plot([0, np.log(3)/2], [0.5, 0.5], color='k', alpha=1, label='Stable FP', linewidth=3)
+    plt.plot(j_list, q1_l, color='k', linewidth=3)
+    plt.plot(j_list, q2_l, color='k', linewidth=3)
     plt.xlabel(r'Coupling $J$')
     plt.plot([np.log(3)/2, 1], [0.5, 0.5], color='grey', alpha=1, linestyle='--',
-             label='Unstable FP')
-    plt.axvline(np.log(3)/2, color='r', alpha=0.2)
+             label='Unstable FP', linewidth=3)
+    plt.axvline(np.log(3)/2, color='r', alpha=0.2, linewidth=2)
     # xtcks = np.sort(np.unique([0, 0.25, 0.75, 0.5, np.log(3)/2, 1]))
     # labs = [x for x in xtcks]
     # pos = np.where(xtcks == np.log(3)/2)[0][0]
     # labs[pos] = r'$J^{\ast}$'
     # plt.xticks(xtcks, labs)
-    plt.text(np.log(3)/2 - 0.05, 0.08, r'$J^{\ast} = \log{(3)}/2$',
+    plt.yticks([0, 0.25, 0.5, 0.75, 1])
+    plt.text(np.log(3)/2 - 0.125, 0.08, r'$J^{\ast} = \log{\frac{3}{2}}$',
              rotation='vertical')
     plt.ylabel(r'Posterior $q$')
-    # plt.title('Solutions of the dynamical system')
-    plt.legend()
+    plt.legend(frameon=False)
     plt.tight_layout()
     fig.savefig(DATA_FOLDER + 'bp_solutions.png', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'bp_solutions.svg', dpi=400, bbox_inches='tight')
@@ -587,37 +591,98 @@ def cubic(a,b,c,d):
     r2 = (n-s)**(1/3)+(n-s)**(1/3) - b/3/a
     return (r0,r1,r2)
 
+# deprecated:
+    
+# def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
+#                      tol=1e-2, n_neigh=3, alpha=1):
+#     """
+#     Searches for roots using bisection method in a interval of r, given by
+#     [min_r, max_r], using a sliding window of size w_size.
+#     """
+#     j_e = np.exp(2*j)
+#     b_e = np.exp(2*b)
+#     count = 0
+#     sols = []
+#     while (min_r + (count+1) * w_size) <= max_r:
+#         a = min_r+count*w_size
+#         b = min_r+(count+1)*w_size
+#         if np.sign(r_stim(a, j_e, b_e, n_neigh=n_neigh, alpha=alpha)*
+#                    r_stim(b, j_e, b_e, n_neigh=n_neigh, alpha=alpha)) > 0:
+#             count += 1
+#         else:
+#             solution_bisection = bisect(r_stim, a=a, b=b,
+#                                         args=(j_e, b_e, n_neigh, alpha),
+#                                         xtol=1e-12)
+#             if len(sols) > 0:
+#                 if (np.abs(np.array(sols) - solution_bisection).any()> tol):
+#                     sols.append(solution_bisection)
+#             else:
+#                 sols.append(solution_bisection)
+#             if len(sols) == 3:
+#                 count += 1000
+#                 break
+#             count += 1
+#     return sols
 
 def find_solution_bp(j, b, min_r=-10, max_r=10, w_size=0.1,
-                     tol=1e-2, n_neigh=3, alpha=1):
+                     tol=1e-2, n_neigh=3, alpha=1, max_sols=3):
     """
-    Searches for roots using bisection method in a interval of r, given by
-    [min_r, max_r], using a sliding window of size w_size.
+    Root-finding via grid sign-change detection + bracketed bisection.
+    Returns up to `max_sols` distinct roots (distinct = farther than `tol`).
     """
-    j_e = np.exp(2*j)
-    b_e = np.exp(2*b)
-    count = 0
+    j_e = np.exp(2.0 * j)
+    b_e = np.exp(2.0 * b)
+
+    grid = np.arange(min_r, max_r + w_size, w_size)
+    vals = r_stim(grid, j_e, b_e, n_neigh=n_neigh, alpha=alpha)  # vectorized
+
+    idx = np.flatnonzero(np.signbit(vals[:-1]) != np.signbit(vals[1:]))
+
     sols = []
-    while (min_r + (count+1) * w_size) <= max_r:
-        a = min_r+count*w_size
-        b = min_r+(count+1)*w_size
-        if np.sign(r_stim(a, j_e, b_e, n_neigh=n_neigh, alpha=alpha)*
-                   r_stim(b, j_e, b_e, n_neigh=n_neigh, alpha=alpha)) > 0:
-            count += 1
-        else:
-            solution_bisection = bisect(r_stim, a=a, b=b,
-                                        args=(j_e, b_e, n_neigh, alpha),
-                                        xtol=1e-12)
-            if len(sols) > 0:
-                if (np.abs(np.array(sols) - solution_bisection).any()> tol):
-                    sols.append(solution_bisection)
-            else:
-                sols.append(solution_bisection)
-            if len(sols) == 3:
-                count += 1000
+    for k in idx:
+        root = bisect(r_stim, grid[k], grid[k + 1],
+                      args=(j_e, b_e, n_neigh, alpha), xtol=1e-12)
+        if not sols or min(abs(root - s) for s in sols) > tol:
+            sols.append(root)
+            if len(sols) == max_sols:
                 break
-            count += 1
     return sols
+
+
+def _n_sols_at(j, b, min_r, max_r, w_size, tol, n_neigh, alpha, cap=2):
+    """Cheap counter: stops as soon as `cap` distinct roots are found."""
+    j_e = np.exp(2.0 * j)
+    b_e = np.exp(2.0 * b)
+    grid = np.arange(min_r, max_r + w_size, w_size)
+    vals = r_stim(grid, j_e, b_e, n_neigh=n_neigh, alpha=alpha)
+    idx = np.flatnonzero(np.signbit(vals[:-1]) != np.signbit(vals[1:]))
+    sols = []
+    for k in idx:
+        root = bisect(r_stim, grid[k], grid[k + 1],
+                      args=(j_e, b_e, n_neigh, alpha), xtol=1e-12)
+        if not sols or min(abs(root - s) for s in sols) > tol:
+            sols.append(root)
+            if len(sols) == cap:
+                return cap
+    return len(sols)
+
+
+def _first_bistable_j(j_list, b, min_r, max_r, w_size, tol, n_neigh, alpha):
+    """
+    Binary-search the smallest j in j_list giving >1 distinct root,
+    assuming bistability turns on monotonically in j. Returns np.nan if none.
+    """
+    lo, hi = 0, len(j_list) - 1
+    if _n_sols_at(j_list[hi], b, min_r, max_r, w_size, tol, n_neigh, alpha) <= 1:
+        return np.nan  # never bistable on this grid
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if _n_sols_at(j_list[mid], b, min_r, max_r, w_size,
+                      tol, n_neigh, alpha) > 1:
+            hi = mid
+        else:
+            lo = mid + 1
+    return j_list[lo]
 
 
 def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
@@ -629,37 +694,33 @@ def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
         ax = plt.figure().add_subplot(projection='3d')
     else:
         fig, ax = plt.subplots(1, figsize=(5, 4))
-        fig2, ax2 = plt.subplots(1)
-        ax2.set_xlabel('B')
-        ax2.set_ylabel(r'$( J^{*}_{sim.} - J^{*}_{app.})^2$')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        # fig2, ax2 = plt.subplots(1)
+        # ax2.set_xlabel('B')
+        # ax2.set_ylabel(r'$( J^{*}_{sim.} - J^{*}_{app.})^2$')
         colormap = pl.cm.Blues(np.linspace(0.2, 1, len(neigh_list)))
     for n_neigh in neigh_list:
         print(n_neigh)
         first_j = []
-        for i_b, b in enumerate(b_list):
-            for j in j_list:
-                sol = find_solution_bp(j, b=b, min_r=min_r, max_r=max_r, w_size=w_size,
-                                       tol=tol, n_neigh=n_neigh)
-                if len(sol) > 1:
-                    first_j.append(j)
-                    break
-            if len(first_j) != (i_b+1):
-                first_j.append(np.nan)
+        for b in b_list:
+            first_j.append(_first_bistable_j(j_list, b, min_r, max_r,
+                                             w_size, tol, n_neigh, alpha=1))
         z = np.repeat(n_neigh, len(first_j))
         if dim3:
             ax.plot3D(z, b_list, first_j, color='k')
         else:
-            sol_list = []
-            for b in b_list:
-                solution = fsolve(equation_for_g_derivative_at_1_eps_no_small,
-                                  args=(b, n_neigh), x0=3, xtol=1e-10,
-                                  maxfev=1000)
-                sol_list.append(np.log(solution[0])/2)
+            # sol_list = []
+            # for b in b_list:
+            #     solution = fsolve(equation_for_g_derivative_at_1_eps_no_small,
+            #                       args=(b, n_neigh), x0=3, xtol=1e-10,
+            #                       maxfev=1000)
+            #     sol_list.append(np.log(solution[0])/2)
             first_j_arr = np.array(first_j)
-            ax2.plot(b_list, (np.array(sol_list)-first_j_arr)**2,
-                     color=colormap[int(n_neigh-np.min(neigh_list))])
+            # ax2.plot(b_list, (np.array(sol_list)-first_j_arr)**2,
+            #          color=colormap[int(n_neigh-np.min(neigh_list))])
             ax.plot(b_list, first_j, color=colormap[int(n_neigh-min(neigh_list))],
-                    label=n_neigh)
+                    label=n_neigh, linewidth=2.5)
             # ax.plot(0, np.log(n_neigh/(n_neigh-2))/2, marker='o', color='k')
     vals_b0 = np.log(neigh_list / (neigh_list - 2)) / 2
     # vals = solution_of_g_with_stim(-0.01, neigh_list, pos_sqrt=False)
@@ -673,6 +734,7 @@ def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
     else:
         ax.set_xlabel(r'Sensory evidence $B$')
         ax.set_ylabel(r'Critical coupling $J^{\ast}$')
+        fig.tight_layout()
         ax_pos = ax.get_position()
         ax_cbar = fig.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
                                 ax_pos.width*0.06, ax_pos.height*0.5])
@@ -682,9 +744,9 @@ def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
         ax_cbar.set_yticks([0, 0.5, 1], [np.min(neigh_list),
                                          int(np.mean(neigh_list)),
                                          np.max(neigh_list)])
-        ax_pos = ax2.get_position()
-        ax_cbar = fig2.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
-                                 ax_pos.width*0.06, ax_pos.height*0.5])
+        # ax_pos = ax2.get_position()
+        # ax_cbar = fig2.add_axes([ax_pos.x0+ax_pos.width*1.05, ax_pos.y0+ax_pos.height*0.2,
+        #                          ax_pos.width*0.06, ax_pos.height*0.5])
         newcmp = mpl.colors.ListedColormap(colormap)
         mpl.colorbar.ColorbarBase(ax_cbar, cmap=newcmp, label='Neighbors N')
         # ax_cbar.set_title('N')
@@ -693,7 +755,7 @@ def plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.01),
                                          np.max(neigh_list)])
         fig.savefig(DATA_FOLDER+'/J_vs_NB_BP.png', dpi=400, bbox_inches='tight')
         fig.savefig(DATA_FOLDER+'/J_vs_NB_BP.svg', dpi=400, bbox_inches='tight')
-        fig2.savefig(DATA_FOLDER+'/J_vs_NB_BP_error.png', dpi=400, bbox_inches='tight')
+        # fig2.savefig(DATA_FOLDER+'/J_vs_NB_BP_error.png', dpi=400, bbox_inches='tight')
 
 
 def plot_j_b_crit_BP(j_list=np.arange(0.001, 1, 0.001),
@@ -3822,10 +3884,13 @@ if __name__ == '__main__':
     #                 j_list=np.arange(0.01, 2, 0.05), theta=THETA,
     #                 num_iter=100, stim=0.)
     # plot_sols_FLBP(alphalist=[1.8],
-    #                j_list=np.arange(0, 20, .1), theta=THETA,
-    #                num_iter=1000, stim=0.)
-    # plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
-    #                             b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
+    #                 j_list=np.arange(0, 20, .1), theta=THETA,
+    #                 num_iter=1000, stim=0.)
+    # plot_sols_FLBP(alphalist=[1.],
+    #                 j_list=np.arange(0, 20, .1), theta=THETA,
+    #                 num_iter=1000, stim=0.)
+    plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
+                                b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
     # all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
     #                         b_list=np.arange(-.5, .5005, 0.005),
     #                         data_folder=DATA_FOLDER,
@@ -3854,7 +3919,7 @@ if __name__ == '__main__':
     #                      time_end=4, bound=2, tau=0.1, dt=1e-3,
     #                      alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
     #                      fig=None, ax=None)
-    plot_psychophysics_results_together()
+    # plot_psychophysics_results_together()
     # plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
     #                     time_end=2.5, bound=1, tau=0.1, dt=1e-3,
     #                     alpha=1, n=3, ntrials=7000, b=0.3, tau_ddm=0.1)
@@ -3879,10 +3944,10 @@ if __name__ == '__main__':
     #                    b=0, n=3)
     # posterior_comparison_MF_BP(stim_list=np.linspace(-2, 2, 1001), j=0.28,
     #                             num_iter=40, thr=1e-8, theta=THETA)
-    # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 0.005),
+    # plot_j_b_crit_BP_vs_N(j_list=np.arange(0.001, 1.01, 1e-5),
     #                       b_list=np.arange(-0.5, 0.5, 0.01),
-    #                       tol=1e-8, min_r=0, max_r=20,
-    #                       w_size=0.05, neigh_list=np.arange(3, 12),
+    #                       tol=1e-12, min_r=0, max_r=25,
+    #                       w_size=0.01, neigh_list=np.arange(3, 12),
     #                       dim3=False)
     # plt.figure()
     # solve_equation_g_derivative()
