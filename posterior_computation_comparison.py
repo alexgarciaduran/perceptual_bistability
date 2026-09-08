@@ -6,6 +6,7 @@ Created on Thu Mar 19 16:30:09 2026
 """
 
 import numpy as np
+import os
 import itertools
 import pickle
 import matplotlib as mpl
@@ -13,6 +14,8 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import networkx as nx
 import scipy.optimize
+from numba import njit
+from tqdm import tqdm
 
 
 mpl.rcParams['font.size'] = 18
@@ -65,25 +68,32 @@ def exact_marginals(J, B):
     return marginals
 
 # ----------------------------
-# Gibbs sampling
+# Gibbs sampling (numba-accelerated)
 # ----------------------------
-def gibbs_sampling(J, B, steps=10000, burn_in=1000):
-    n = len(B)
-    s = np.random.choice([-1, 1], size=n)
-
-    samples = []
+@njit(cache=True)
+def _gibbs_kernel(J, B, steps, burn_in):
+    n = B.shape[0]
+    s = np.where(np.random.random(n) < 0.5, -1.0, 1.0)
+    counts = np.zeros(n)
+    nsamp = 0
     for t in range(steps):
         for i in range(n):
-            h = B[i] + np.dot(J[i], s)
-            prob = 1 / (1 + np.exp(-2 * h))
-            s[i] = 1 if np.random.rand() < prob else -1
-
+            h = B[i]
+            for k in range(n):
+                h += J[i, k] * s[k]
+            prob = 1.0 / (1.0 + np.exp(-2.0 * h))
+            s[i] = 1.0 if np.random.random() < prob else -1.0
         if t >= burn_in:
-            samples.append(s.copy())
+            for i in range(n):
+                if s[i] == 1.0:
+                    counts[i] += 1.0
+            nsamp += 1
+    return counts / nsamp
 
-    samples = np.array(samples)
-    marginals = (samples == 1).mean(axis=0)
-    return marginals
+
+def gibbs_sampling(J, B, steps=10000, burn_in=1000):
+    return _gibbs_kernel(np.asarray(J, float), np.asarray(B, float),
+                         int(steps), int(burn_in))
 
 # ----------------------------
 # Mean-field inference
@@ -133,6 +143,58 @@ def loopy_bp(J, B, max_iter=100, tol=1e-6, alpha=1.0, damping=0.5):
         marginals[i] = (1 + np.tanh(h)) / 2
 
     return marginals
+
+# ----------------------------------------------------------------------------
+# Fractional Belief Propagation (numba), paper log-ratio convention
+# ----------------------------------------------------------------------------
+@njit(cache=True)
+def _fbp_kernel(J, B, alpha, M, max_iter, tol, damping):
+    n = B.shape[0]
+    for _ in range(max_iter):
+        Q = np.empty(n)
+        for i in range(n):
+            acc = B[i]
+            for k in range(n):
+                if J[k, i] != 0.0:
+                    acc += M[k, i]
+            Q[i] = acc
+        newM = M.copy()
+        maxchange = 0.0
+        for i in range(n):
+            for j in range(n):
+                if J[i, j] == 0.0:
+                    continue
+                h = Q[i] - alpha * M[j, i]          # cavity field for i->j
+                val = (1.0 / alpha) * np.arctanh(np.tanh(J[i, j] * alpha) * np.tanh(h))
+                val = damping * val + (1.0 - damping) * M[i, j]
+                c = abs(val - M[i, j])
+                if c > maxchange:
+                    maxchange = c
+                newM[i, j] = val
+        M[:, :] = newM
+        if maxchange < tol:
+            break
+    q = np.zeros(n)
+    for i in range(n):
+        acc = B[i]
+        for k in range(n):
+            if J[k, i] != 0.0:
+                acc += M[k, i]
+        q[i] = 1.0 / (1.0 + np.exp(-2.0 * acc))
+    return q
+
+
+def fractional_bp(J, B, alpha=1.0, max_iter=300, tol=1e-8, damping=0.5, seed=0):
+    """Fractional BP marginals P(x_i=1) in the paper's log-ratio convention.
+
+    alpha=1 recovers loopy BP; alpha->0 tends to mean field. Uses a numba
+    kernel; the reverse message M_{j->i} enters the cavity field with weight
+    alpha (the m_{j->i}^{1-alpha} term of the message update)."""
+    rng = np.random.default_rng(seed)
+    n = len(B)
+    M = (np.asarray(J) != 0.0).astype(np.float64) * 0.01 * rng.standard_normal((n, n))
+    return _fbp_kernel(np.asarray(J, float), np.asarray(B, float),
+                       float(alpha), M, int(max_iter), float(tol), float(damping))
 
 
 def r_stim(x, j_e, b_e, n_neigh=3, alpha=1):
@@ -228,10 +290,9 @@ def run_experiment_multi_p(p_list, N=30, n=8):
     all_results = {}
 
     for p in p_list:
-        print(f"\n=== Running for p = {p} ===")
         results = []
 
-        for graph_id in range(N):
+        for graph_id in tqdm(range(N), desc=f"multi_p p={p}"):
             A, J, B = generate_ising_graph(n, p)
 
             res = {
@@ -252,23 +313,16 @@ def run_experiment_multi_p(p_list, N=30, n=8):
             # LBP
             res["lbp"] = loopy_bp(J, B, alpha=1.0, max_iter=200)
 
-            # Fractional BP
+            # Fractional BP (paper log-ratio convention)
             for alpha in [0.5, 0.75, 1.25, 1.5, 2, 2.5, 3]:
-                res[f"fbp_{alpha}"] = loopy_bp(J, B, alpha=alpha, max_iter=200)
+                res[f"fbp_{alpha}"] = fractional_bp(J, B, alpha=alpha, max_iter=200)
 
-            # Fractional BP at the degree-aware optimal (inference) alpha. The
-            # homogeneous theory needs scalars: j = mean nonzero |J|, b = mean B,
-            # n = mean degree, true marginal p = mean(exact).
-            Jvals = np.abs(J)[J != 0]
-            j_scalar = Jvals.mean() if Jvals.size else 0.0
-            n_mean = np.mean(np.sum(A != 0, axis=1))
-            res["alpha_opt"] = optimal_alpha(j_scalar, np.mean(B),
-                                             float(np.mean(res["exact"])), n_mean)
-            res["fbp_opt"] = loopy_bp(J, B, alpha=res["alpha_opt"], max_iter=200)
+            # NB: no optimal-alpha row here. The homogeneous n-regular theory
+            # does not transfer to heterogeneous Erdos-Renyi graphs: feeding it a
+            # mean-field surrogate (mean j/b/degree) gives an alpha that is worse
+            # than plain LBP (empirically 10-30x higher L2 at low p).
 
             results.append(res)
-
-            print(f"Graph {graph_id+1}/{N} done")
 
         all_results[p] = results
 
@@ -285,11 +339,11 @@ def plot_grid_by_method_and_p(all_results, methods=None):
 
     if methods is None:
         methods = ["gibbs", "mean_field", "lbp",
-                   "fbp_1.5", "fbp_2.5", "fbp_opt"]
+                   "fbp_0.5", "fbp_1.25", "fbp_1.5"]
 
     method_names = ['Gibbs\nsampling', 'Mean-Field',
-                    'LBP', r'FBP ($\alpha=1.5$)',
-                    r'FBP ($\alpha=2.5$)', r'FBP ($\hat{\alpha}$)']
+                    'LBP', r'FBP ($\alpha=0.5$)',
+                    r'FBP ($\alpha=1.25$)', r'FBP ($\alpha=1.5$)']
     p_list = sorted(all_results.keys())
     p_list = [0.2, 0.4, 0.6, 0.8, 1]
 
@@ -378,14 +432,12 @@ def run_regular_graph_experiment(d_list, J_list, n=10, N=30, fbp_alphas=[0.5,0.7
     for d in d_list:
         results[d] = {}
         A = get_regular_graph(d, n, seed=0)
-        for J_val in J_list:
-            print(f"\n=== d={d}, J={J_val} ===")
+        for J_val in tqdm(J_list, desc=f"regular d={d}"):
             results[d][J_val] = []
 
             for graph_id in range(N):
                 B_val = B_list[graph_id]
                 J_mat, B = create_ising_params_with_B(A, J_val, B_val)
-
 
                 res = {"A": A, "J": J_mat, "B": B}
 
@@ -401,20 +453,19 @@ def run_regular_graph_experiment(d_list, J_list, n=10, N=30, fbp_alphas=[0.5,0.7
                 # LBP
                 res["lbp"] = loopy_bp(J_mat, B, max_iter=200)
 
-                # Fractional BP
+                # Fractional BP (paper log-ratio convention)
                 for alpha in [0.5, 0.75, 1.25, 1.5, 2, 2.5, 3]:
-                    res[f"fbp_{alpha}"] = loopy_bp(J_mat, B, alpha=alpha, max_iter=200)
+                    res[f"fbp_{alpha}"] = fractional_bp(J_mat, B, alpha=alpha, max_iter=200)
 
                 # Fractional BP at the degree-aware optimal (inference) alpha.
                 # (J_val, B_val) scalar, every node has degree d -> n = d,
-                # true marginal p = mean(exact).
+                # true marginal p = mean(exact). Same convention as g(r), so
+                # fbp_opt sits on the diagonal (up to loop effects).
                 res["alpha_opt"] = optimal_alpha(J_val, B_val,
                                                  float(np.mean(res["exact"])), d)
-                res["fbp_opt"] = loopy_bp(J_mat, B, alpha=res["alpha_opt"], max_iter=200)
+                res["fbp_opt"] = fractional_bp(J_mat, B, alpha=res["alpha_opt"], max_iter=200)
 
                 results[d][J_val].append(res)
-
-                print(f"Graph {graph_id+1}/{N} done")
 
     return results
 
@@ -446,6 +497,7 @@ def plot_regular_results_dcolor(all_results, d_list, J_list=None, methods=None, 
     if J_list is None:
         # assume all d have same J values
         J_list = sorted(all_results[d_list[0]].keys())
+    J_list = [0., 0.2, 0.4, 0.6, 0.8, 1]
 
     n_rows = len(methods)
     n_cols = len(J_list)
@@ -509,31 +561,146 @@ def plot_regular_results_dcolor(all_results, d_list, J_list=None, methods=None, 
     fig.savefig(DATA_FOLDER + 'multi_dJ_regular.svg')
 
 
+def compute_error_vs_alpha(d_list=(2, 3, 4, 5, 6), B_values=(0.0, 0.1, 0.3, 0.5),
+                           J_grid=np.round(np.arange(0.0, 1.01, 0.04), 3),
+                           alpha_grid=np.linspace(0.1, 3.5, 40),
+                           n=8, max_iter=300):
+    """Compute FBP error maps E[(d,B)] = mean|q_FBP(alpha,J) - exact| (nodes),
+    and analytic alpha_hat per (d,B,J). Returned as a dict ready to pickle."""
+    E = {}
+    ah = {}
+    for d in d_list:
+        A = get_regular_graph(d, n, seed=0)
+        for B0 in B_values:
+            Emat = np.zeros((len(alpha_grid), len(J_grid)))
+            ahl = []
+            for jj, J in enumerate(tqdm(J_grid, desc=f"err(alpha) d={d} B={B0}")):
+                Jm, Bv = create_ising_params_with_B(A, J, B0)
+                ex = exact_marginals(Jm, Bv)
+                for ai, a in enumerate(alpha_grid):
+                    q = fractional_bp(Jm, Bv, alpha=a, max_iter=max_iter)
+                    Emat[ai, jj] = np.mean(np.abs(q - ex))
+                ahl.append(optimal_alpha(J, B0, float(np.mean(ex)), d))
+            E[(d, round(float(B0), 4))] = Emat
+            ah[(d, round(float(B0), 4))] = np.array(ahl)
+    return {"E": E, "ah": ah, "J_grid": np.asarray(J_grid),
+            "alpha_grid": np.asarray(alpha_grid),
+            "d_list": list(d_list), "B_values": [round(float(b), 4) for b in B_values]}
+
+
+def plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
+                                B_values=(0.0, 0.1, 0.3, 0.5),
+                                J_grid=np.round(np.arange(0.0, 1.01, 0.04), 3),
+                                alpha_grid=np.linspace(0.1, 3.5, 40),
+                                n=8, max_iter=300,
+                                load_data=True, data_path=None, save=True):
+    """
+    Grid of FBP error heatmaps: rows = field B, columns = degree d.
+
+    Color = mean |q_FBP(alpha) - exact| over nodes for the homogeneous
+    d-regular graph (uniform coupling J, field B). Overlays per panel: the
+    empirical error-minimising alpha (white ridge), the analytic alpha_hat
+    (cyan) -- these coincide where alpha is well determined -- and the
+    bistability onset J*(alpha)=1/(2a)log(d/(d-2a)) (red dashed, defined only
+    for a < d/2 and diverging as a -> d/2).
+
+    Data (the E maps) are cached to `data_path`: with load_data=True it is read
+    back instead of recomputed. Delete the file (or pass load_data=False) to
+    force a recompute.
+    """
+    if data_path is None:
+        data_path = DATA_FOLDER + 'error_vs_alpha_data.pkl'
+    if load_data and os.path.exists(data_path):
+        with open(data_path, 'rb') as f:
+            cache = pickle.load(f)
+        print(f"loaded error-vs-alpha data from {data_path}")
+    else:
+        cache = compute_error_vs_alpha(d_list, B_values, J_grid, alpha_grid,
+                                       n=n, max_iter=max_iter)
+        with open(data_path, 'wb') as f:
+            pickle.dump(cache, f)
+        print(f"saved error-vs-alpha data to {data_path}")
+
+    E, ah = cache["E"], cache["ah"]
+    J_grid, alpha_grid = cache["J_grid"], cache["alpha_grid"]
+    d_list, B_values = cache["d_list"], cache["B_values"]
+    vmax = max(np.nanmax(v) for v in E.values())
+
+    nr, nc = len(B_values), len(d_list)
+    fig, axes = plt.subplots(nr, nc, figsize=(3.1*nc, 2.9*nr),
+                             sharex=True, sharey=True, squeeze=False)
+    for ri, B0 in enumerate(B_values):
+        for ci, d in enumerate(d_list):
+            ax = axes[ri, ci]
+            Emat = E[(d, round(float(B0), 4))]
+            im = ax.imshow(Emat, origin='lower', aspect='auto', cmap='viridis',
+                           vmin=0, vmax=vmax,
+                           extent=[J_grid[0], J_grid[-1], alpha_grid[0], alpha_grid[-1]])
+            ridge = alpha_grid[np.argmin(Emat, axis=0)]
+            ax.plot(J_grid, ridge, color='w', lw=1.8)
+            ax.plot(J_grid, ah[(d, round(float(B0), 4))], color='cyan', lw=1.4, ls=':')
+            Js = [(1.0/(2*a))*np.log(d/(d-2*a)) if d > 2*a else np.nan for a in alpha_grid]
+            ax.plot(Js, alpha_grid, color='r', lw=1.2, ls='--')
+            ax.set_xlim(J_grid[0], J_grid[-1])
+            ax.set_ylim(alpha_grid[0], alpha_grid[-1])
+            if ri == 0:
+                ax.set_title(f"d = {d}")
+            if ci == 0:
+                ax.set_ylabel(f"B = {B0}\n" + r"$\alpha$")
+            if ri == nr - 1:
+                ax.set_xlabel('Coupling J')
+    # one legend (proxy handles) + shared colorbar
+    from matplotlib.lines import Line2D
+    handles = [Line2D([0], [0], color='w', lw=2, label=r'empirical $\alpha^\ast$'),
+               Line2D([0], [0], color='cyan', lw=2, ls=':', label=r'analytic $\hat\alpha$'),
+               Line2D([0], [0], color='r', lw=2, ls='--', label=r'$J^\ast(\alpha)$')]
+    fig.legend(handles=handles, loc='upper center', ncol=3, framealpha=0.8,
+               bbox_to_anchor=(0.5, 1.02))
+    cbar = fig.colorbar(im, ax=axes, fraction=0.02, pad=0.01)
+    cbar.set_label('Mean |q_FBP - exact|')
+    if save:
+        fig.savefig(DATA_FOLDER + 'error_vs_alpha_regular.png', dpi=200,
+                    bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'error_vs_alpha_regular.svg', bbox_inches='tight')
+    return fig
+
+
 if __name__ == "__main__":
     p_list = np.round(np.arange(0.2, 1.01, 0.1), 2)
     d_list = list(range(2, 7))   # degrees 2-6
-    J_list = np.round(np.arange(0., 1.01, 0.1), 2) # J = 0.0, 0.05, ..., 0.5
+    J_list = np.round(np.arange(0., 1.01, 0.1), 2)  # J = 0.0, 0.1, ..., 1.0
 
-    # --- (re)generate the data ONCE: this now stores res["fbp_opt"] too -----
-    results_regular = run_regular_graph_experiment(d_list, J_list, n=8, N=30)
+    # Set REGENERATE = True to recompute the experiments (needed after any change
+    # to the inference engines); otherwise cached pkls are loaded if present.
+    REGENERATE = False
+    reg_pkl = DATA_FOLDER + "ising_results_multi_J_d.pkl"
+    p_pkl = DATA_FOLDER + "ising_results_multi_p.pkl"
 
-    with open(DATA_FOLDER + "/ising_results_multi_J_d.pkl", "wb") as f:
-        pickle.dump(results_regular, f)
-
-    results = run_experiment_multi_p(p_list, N=30, n=8)
-
-    with open(DATA_FOLDER + "/ising_results_multi_p.pkl", "wb") as f:
-        pickle.dump(results, f)
-
-    print(f"Saved to {DATA_FOLDER}/ising_results_multi_J_d.pkl")
-
-    # --- afterwards: just load + plot (fbp_opt is already in the pkl) --------
-    with open(DATA_FOLDER + "/ising_results_multi_J_d.pkl", "rb") as f:
+    # --- regular d-regular graphs: generate (once) or load ------------------
+    if REGENERATE or not os.path.exists(reg_pkl):
+        print("Generating regular-graph experiment ...")
+        results_regular = run_regular_graph_experiment(d_list, J_list, n=8, N=30)
+        with open(reg_pkl, "wb") as f:
+            pickle.dump(results_regular, f)
+        print(f"Saved {reg_pkl}")
+    with open(reg_pkl, "rb") as f:
         all_results = pickle.load(f)
-
     plot_regular_results_dcolor(all_results, d_list, N=30)
 
-    with open(DATA_FOLDER + "/ising_results_multi_p.pkl", "rb") as f:
+    # --- Erdos-Renyi multi-p graphs: generate (once) or load ----------------
+    if REGENERATE or not os.path.exists(p_pkl):
+        print("Generating multi-p (Erdos-Renyi) experiment ...")
+        results = run_experiment_multi_p(p_list, N=30, n=8)
+        with open(p_pkl, "wb") as f:
+            pickle.dump(results, f)
+        print(f"Saved {p_pkl}")
+    with open(p_pkl, "rb") as f:
         all_results = pickle.load(f)
-
     plot_grid_by_method_and_p(all_results, methods=None)
+
+    # --- effect of alpha: error vs (alpha, J) grid over B (cached) ----------
+    plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
+                                B_values=(0.0, 0.1, 0.3, 0.5),
+                                load_data=True)
+
+    plt.show()
