@@ -339,11 +339,11 @@ def plot_grid_by_method_and_p(all_results, methods=None):
 
     if methods is None:
         methods = ["gibbs", "mean_field", "lbp",
-                   "fbp_0.5", "fbp_1.25", "fbp_1.5"]
+                   "fbp_0.5", "fbp_1.5", "fbp_3"]
 
     method_names = ['Gibbs\nsampling', 'Mean-Field',
                     'LBP', r'FBP ($\alpha=0.5$)',
-                    r'FBP ($\alpha=1.25$)', r'FBP ($\alpha=1.5$)']
+                    r'FBP ($\alpha=1.5$)', r'FBP ($\alpha=3$)']
     p_list = sorted(all_results.keys())
     p_list = [0.2, 0.4, 0.6, 0.8, 1]
 
@@ -596,17 +596,6 @@ def plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
                                 load_data=True, data_path=None, save=True):
     """
     Grid of FBP error heatmaps: rows = field B, columns = degree d.
-
-    Color = mean |q_FBP(alpha) - exact| over nodes for the homogeneous
-    d-regular graph (uniform coupling J, field B). Overlays per panel: the
-    empirical error-minimising alpha (white ridge), the analytic alpha_hat
-    (cyan) -- these coincide where alpha is well determined -- and the
-    bistability onset J*(alpha)=1/(2a)log(d/(d-2a)) (red dashed, defined only
-    for a < d/2 and diverging as a -> d/2).
-
-    Data (the E maps) are cached to `data_path`: with load_data=True it is read
-    back instead of recomputed. Delete the file (or pass load_data=False) to
-    force a recompute.
     """
     if data_path is None:
         data_path = DATA_FOLDER + 'error_vs_alpha_data.pkl'
