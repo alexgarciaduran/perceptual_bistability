@@ -12,6 +12,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import networkx as nx
+import scipy.optimize
 
 
 mpl.rcParams['font.size'] = 18
@@ -133,44 +134,96 @@ def loopy_bp(J, B, max_iter=100, tol=1e-6, alpha=1.0, damping=0.5):
 
     return marginals
 
+
+def r_stim(x, j_e, b_e, n_neigh=3, alpha=1):
+    return b_e*x**(n_neigh) - (j_e**alpha) * b_e * x**(n_neigh-alpha) + (j_e**alpha) * x**alpha - 1
+
+
+def find_solution_bp(j, b, min_r=0., max_r=30, w_size=0.1,
+                     tol=1e-2, n_neigh=3, alpha=1, max_sols=3):
+    """Roots of the FBP fixed-point polynomial r_stim, via grid sign-change
+    detection + bracketed bisection. Copied from loop_belief_prop_necker.py."""
+    j_e = np.exp(2.0 * j)
+    b_e = np.exp(2.0 * b)
+
+    grid = np.arange(min_r, max_r + w_size, w_size)
+    vals = r_stim(grid, j_e, b_e, n_neigh=n_neigh, alpha=alpha)
+
+    idx = np.flatnonzero(np.signbit(vals[:-1]) != np.signbit(vals[1:]))
+
+    sols = []
+    for k in idx:
+        root = scipy.optimize.bisect(r_stim, grid[k], grid[k + 1],
+                                     args=(j_e, b_e, n_neigh, alpha), xtol=1e-12)
+        if not sols or min(abs(root - s) for s in sols) > tol:
+            sols.append(root)
+            if len(sols) == max_sols:
+                break
+    return sols
+
+
+def d_kl_d_q(q, p):
+    # derivative of D_KL(q || p) w.r.t. q  [minimised objective: D_KL(q||p)]
+    return np.log(q/p) - np.log((1-q)/(1-p))
+
+
+def _q_of_r(r, b, n=3):
+    # FBP single-node marginal from the message ratio r, for a degree-n node
+    return np.exp(b)*r**n / (np.exp(-b) + np.exp(b)*r**n)
+
+
+def optimal_alpha_grad_descent(j, b, p, n=3, lr=1e-2, n_iter=5000, a0=2,
+                               tol=1e-12, eps=1e-3, epsgrad=1e-10):
+    """alpha minimising D_KL(q(alpha) || p) by AdaGrad + heavy-ball descent.
+
+    Degree-aware: q(alpha) is the FBP marginal at the upper fixed point r(alpha)
+    for a node with n neighbours, and p is the TRUE marginal of that same n-node
+    system (passed in). dKL/dalpha = dKL/dq * dq/dalpha, with dq/dalpha a central
+    finite difference (spacing 2*eps). Generalises the inference-mode
+    optimal_alpha_grad_descent from loop_belief_prop_necker.py from n=3 to any n."""
+    a = float(a0)
+    alpha_vals = [a]
+    der_memory = [0.0]
+    grad_memory = 0.0
+    for i in range(n_iter):
+        sols_m = find_solution_bp(j, b, min_r=0., max_r=30, w_size=0.1,
+                                  tol=1e-2, n_neigh=n, alpha=a-eps)
+        sols_p = find_solution_bp(j, b, min_r=0., max_r=30, w_size=0.1,
+                                  tol=1e-2, n_neigh=n, alpha=a+eps)
+        if not sols_m or not sols_p:
+            break  # no fixed point bracketed -> stop at current alpha
+        q_a = _q_of_r(np.max(sols_m), b, n)        # q(alpha - eps)
+        q_a_eps = _q_of_r(np.max(sols_p), b, n)    # q(alpha + eps)
+        d_q_d_a = (q_a_eps - q_a)/eps/2             # central difference
+        derivative = d_kl_d_q(q_a, p)*d_q_d_a
+        grad_memory += derivative**2
+        learning_rate = lr / (np.sqrt(grad_memory) + epsgrad)
+        change_a = derivative*learning_rate + der_memory[i]*0.9
+        a = a - change_a
+        alpha_vals.append(a)
+        der_memory.append(change_a)
+        if np.abs(alpha_vals[i] - alpha_vals[i-1]) <= tol:
+            break
+    return a
+
+
+# Memoised wrapper: alpha-hat now depends on (j, b, p, n) -- so degree d enters
+# through n, and the true marginal p enters directly.
+_OPT_ALPHA_CACHE = {}
+
+
+def optimal_alpha(j, b, p, n):
+    key = (round(float(j), 6), round(float(b), 6),
+           round(float(p), 6), int(round(n)))
+    if key not in _OPT_ALPHA_CACHE:
+        _OPT_ALPHA_CACHE[key] = optimal_alpha_grad_descent(
+            j, b, p, n=int(round(n)), lr=1e-2, tol=1e-7, epsgrad=1e-3)
+    return _OPT_ALPHA_CACHE[key]
+
+
 # ----------------------------
-# Main experiment
+# Main experiments
 # ----------------------------
-def run_experiment(N=30, n=8, p=0.3):
-    results = []
-
-    for graph_id in range(N):
-        A, J, B = generate_ising_graph(n, p)
-
-        res = {
-            "A": A,
-            "J": J,
-            "B": B,
-        }
-
-        # Exact
-        res["exact"] = exact_marginals(J, B)
-
-        # Gibbs
-        res["gibbs"] = gibbs_sampling(J, B)
-
-        # Mean-field
-        res["mean_field"] = mean_field(J, B)
-
-        # LBP
-        res["lbp"] = loopy_bp(J, B, alpha=1.0)
-
-        # Fractional BP
-        for alpha in [0.5, 0.75, 1.25, 1.5]:
-            res[f"fbp_{alpha}"] = loopy_bp(J, B, alpha=alpha)
-
-        results.append(res)
-
-        print(f"Graph {graph_id+1}/{N} done")
-
-    return results
-
-
 def run_experiment_multi_p(p_list, N=30, n=8):
     all_results = {}
 
@@ -203,6 +256,16 @@ def run_experiment_multi_p(p_list, N=30, n=8):
             for alpha in [0.5, 0.75, 1.25, 1.5, 2, 2.5, 3]:
                 res[f"fbp_{alpha}"] = loopy_bp(J, B, alpha=alpha, max_iter=200)
 
+            # Fractional BP at the degree-aware optimal (inference) alpha. The
+            # homogeneous theory needs scalars: j = mean nonzero |J|, b = mean B,
+            # n = mean degree, true marginal p = mean(exact).
+            Jvals = np.abs(J)[J != 0]
+            j_scalar = Jvals.mean() if Jvals.size else 0.0
+            n_mean = np.mean(np.sum(A != 0, axis=1))
+            res["alpha_opt"] = optimal_alpha(j_scalar, np.mean(B),
+                                             float(np.mean(res["exact"])), n_mean)
+            res["fbp_opt"] = loopy_bp(J, B, alpha=res["alpha_opt"], max_iter=200)
+
             results.append(res)
 
             print(f"Graph {graph_id+1}/{N} done")
@@ -222,11 +285,11 @@ def plot_grid_by_method_and_p(all_results, methods=None):
 
     if methods is None:
         methods = ["gibbs", "mean_field", "lbp",
-                   "fbp_1.5", "fbp_2.5"]
-    
+                   "fbp_1.5", "fbp_2.5", "fbp_opt"]
+
     method_names = ['Gibbs\nsampling', 'Mean-Field',
                     'LBP', r'FBP ($\alpha=1.5$)',
-                    r'FBP ($\alpha=2.5$)']
+                    r'FBP ($\alpha=2.5$)', r'FBP ($\hat{\alpha}$)']
     p_list = sorted(all_results.keys())
     p_list = [0.2, 0.4, 0.6, 0.8, 1]
 
@@ -291,16 +354,6 @@ def get_regular_graph(d=4, n=10, seed=None):
     return A
 
 # ----------------------------
-# Create Ising parameters
-# ----------------------------
-def create_ising_params(A, J_val):
-    n = A.shape[0]
-    J = A * J_val           # all edges have same coupling strength
-    B = np.zeros(n)         # zero external field
-    return J, B
-
-
-# ----------------------------
 # Create Ising parameters with variable B
 # ----------------------------
 def create_ising_params_with_B(A, J_val, B_val):
@@ -352,6 +405,13 @@ def run_regular_graph_experiment(d_list, J_list, n=10, N=30, fbp_alphas=[0.5,0.7
                 for alpha in [0.5, 0.75, 1.25, 1.5, 2, 2.5, 3]:
                     res[f"fbp_{alpha}"] = loopy_bp(J_mat, B, alpha=alpha, max_iter=200)
 
+                # Fractional BP at the degree-aware optimal (inference) alpha.
+                # (J_val, B_val) scalar, every node has degree d -> n = d,
+                # true marginal p = mean(exact).
+                res["alpha_opt"] = optimal_alpha(J_val, B_val,
+                                                 float(np.mean(res["exact"])), d)
+                res["fbp_opt"] = loopy_bp(J_mat, B, alpha=res["alpha_opt"], max_iter=200)
+
                 results[d][J_val].append(res)
 
                 print(f"Graph {graph_id+1}/{N} done")
@@ -378,10 +438,10 @@ def plot_regular_results_dcolor(all_results, d_list, J_list=None, methods=None, 
     """
     if methods is None:
         methods = ["gibbs", "mean_field", "lbp",
-                   "fbp_2", "fbp_3"]
+                   "fbp_2", "fbp_3", "fbp_opt"]
     method_names = ['Gibbs\nsampling', 'Mean-Field',
                     'LBP', r'FBP ($\alpha=2$)',
-                    r'FBP ($\alpha=3$)']
+                    r'FBP ($\alpha=3$)', r'FBP ($\hat{\alpha}$)']
 
     if J_list is None:
         # assume all d have same J values
@@ -454,17 +514,20 @@ if __name__ == "__main__":
     d_list = list(range(2, 7))   # degrees 2-6
     J_list = np.round(np.arange(0., 1.01, 0.1), 2) # J = 0.0, 0.05, ..., 0.5
 
-    # results_regular = run_regular_graph_experiment(d_list, J_list, n=8, N=30)
+    # --- (re)generate the data ONCE: this now stores res["fbp_opt"] too -----
+    results_regular = run_regular_graph_experiment(d_list, J_list, n=8, N=30)
 
-    # with open(DATA_FOLDER + "/ising_results_multi_J_d.pkl", "wb") as f:
-    #     pickle.dump(results_regular, f)
+    with open(DATA_FOLDER + "/ising_results_multi_J_d.pkl", "wb") as f:
+        pickle.dump(results_regular, f)
 
-    # results = run_experiment_multi_p(p_list, N=30, n=8)
+    results = run_experiment_multi_p(p_list, N=30, n=8)
 
-    # with open(DATA_FOLDER + "/ising_results_multi_p.pkl", "wb") as f:
-    #     pickle.dump(results, f)
+    with open(DATA_FOLDER + "/ising_results_multi_p.pkl", "wb") as f:
+        pickle.dump(results, f)
 
-    # print(f"Saved to {DATA_FOLDER}/ising_results_multi_J_d.pkl")
+    print(f"Saved to {DATA_FOLDER}/ising_results_multi_J_d.pkl")
+
+    # --- afterwards: just load + plot (fbp_opt is already in the pkl) --------
     with open(DATA_FOLDER + "/ising_results_multi_J_d.pkl", "rb") as f:
         all_results = pickle.load(f)
 
