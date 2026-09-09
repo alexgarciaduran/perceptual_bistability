@@ -50,7 +50,7 @@ EPOCHS = 10
 N_SEEDS = 10
 RUN_VARIANTS = ['gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']  # gibbs20 only from the gibbs family
 
-torch.set_num_threads(16)
+# torch.set_num_threads(16)
 
 # --------------------------------------------------------------- graph ------
 def grid_adjacency(g):
@@ -114,6 +114,8 @@ def infer_fbp(B, Jmat, alpha=1.0, iters=10, damping=0.5):
 
 
 def infer_sampling(B, Jmat, iters=12, n_samples=20, noise=0.6):
+    """RELAXED sampling: differentiable Gumbel-sigmoid (Concrete) surrogate,
+    parallel synchronous sweeps. Used for training and white-box gradients."""
     bsz, n = B.shape
     x = torch.zeros(bsz, n_samples, n)
     for _ in range(iters):
@@ -123,6 +125,25 @@ def infer_sampling(B, Jmat, iters=12, n_samples=20, noise=0.6):
         logit = torch.log(p) - torch.log(1 - p) + noise * (torch.log(u) - torch.log(1 - u))
         x = torch.tanh(logit / 2)
     return x.mean(1)
+
+
+@torch.no_grad()
+def infer_gibbs_discrete(B, Jmat, iters=20, n_samples=20, burn=None):
+    """TRUE discrete Gibbs: sequential hard +/-1 resampling of each node from its
+    conditional; marginals = spin mean over post-burn sweeps and chains. Not
+    differentiable -- for evaluation only."""
+    bsz, n = B.shape
+    burn = iters // 2 if burn is None else burn
+    x = torch.where(torch.rand(bsz, n_samples, n) < 0.5, 1.0, -1.0)
+    acc = torch.zeros(bsz, n_samples, n); cnt = 0
+    for t in range(iters):
+        for i in range(n):
+            field = torch.einsum('bsn,n->bs', x, Jmat[:, i]) + B[:, i:i+1]
+            p = torch.sigmoid(2 * field)
+            x[:, :, i] = torch.where(torch.rand(bsz, n_samples) < p, 1.0, -1.0)
+        if t >= burn:
+            acc += x; cnt += 1
+    return (acc / cnt).mean(1)
 
 
 class MRFClassifier(nn.Module):
@@ -151,17 +172,22 @@ class MRFClassifier(nn.Module):
         J = self.Jraw * self.mask
         return (J + J.t()) / 2                             # keep symmetric
 
-    def marginals(self, x):
+    def marginals(self, x, sampler=None):
+        """sampler only affects the 'sampling' variant: None/'relaxed' -> the
+        differentiable Gumbel surrogate (default, used for training + PGD craft);
+        'gibbs' -> true discrete Gibbs (eval only, non-differentiable)."""
         B = self.encoder(x)
         Jm = self.Jmat()
         if self.algo == 'mf':
             return infer_mf(B, Jm, self.iters)
         if self.algo == 'sampling':
+            if sampler == 'gibbs':
+                return infer_gibbs_discrete(B, Jm, iters=self.samp_iters)
             return infer_sampling(B, Jm, iters=self.samp_iters)
         return infer_fbp(B, Jm, alpha=self.alpha, iters=self.iters)
 
-    def forward(self, x):
-        return self.readout(self.marginals(x))
+    def forward(self, x, sampler=None):
+        return self.readout(self.marginals(x, sampler=sampler))
 
 
 # --------------------------------------------------------------- attacks ----
@@ -196,6 +222,77 @@ def pgd_l2(model, x, y, eps, steps=20):
 
 
 ATTACKS = {'linf': pgd_linf, 'l2': pgd_l2}
+
+
+# ------------------------------------------------- naturalistic corruptions -
+# Each fn(x, s, gen) maps images in [0,1] and strength s in [0,1] -> corrupted
+# images in [0,1]. Same paradigm as the attacks: sweep s. Stochastic ones take
+# a torch.Generator so the SAME corrupted images are used for every model.
+def _gauss_kernel(sigma):
+    r = max(1, int(3 * sigma))
+    xs = torch.arange(-r, r + 1).float()
+    k = torch.exp(-xs ** 2 / (2 * sigma ** 2)); k /= k.sum()
+    return k, r
+
+
+def corrupt_gaussian(x, s, gen):                 # white noise
+    return (x + s * 0.6 * torch.randn(x.shape, generator=gen)).clamp(0, 1)
+
+
+def corrupt_shot(x, s, gen):                     # Poisson / photon noise
+    lam = max(1.0, (1 - s) * 60.0 + 1.0)
+    return (torch.poisson(x * lam, generator=gen) / lam).clamp(0, 1)
+
+
+def corrupt_impulse(x, s, gen):                  # salt & pepper
+    m = torch.rand(x.shape, generator=gen)
+    out = x.clone()
+    out[m < s / 2] = 0.0
+    out[m > 1 - s / 2] = 1.0
+    return out
+
+
+def corrupt_fog(x, s, gen):                      # low-frequency haze overlay
+    low = torch.rand((x.shape[0], 1, 7, 7), generator=gen)
+    fog = F.interpolate(low, size=x.shape[-2:], mode='bilinear', align_corners=False)
+    return (x * (1 - 0.8 * s) + 0.8 * s * fog).clamp(0, 1)
+
+
+def corrupt_blur(x, s, gen=None):                # defocus / gaussian blur
+    if s <= 0:
+        return x
+    sigma = 0.3 + 2.5 * s
+    k, r = _gauss_kernel(sigma)
+    xp = F.pad(x, (r, r, r, r), mode='reflect')
+    xb = F.conv2d(xp, k.view(1, 1, 1, -1))
+    xb = F.conv2d(xb, k.view(1, 1, -1, 1))
+    return xb.clamp(0, 1)
+
+
+def corrupt_contrast(x, s, gen=None):            # contrast reduction
+    return ((x - 0.5) * (1 - 0.9 * s) + 0.5).clamp(0, 1)
+
+
+CORRUPTIONS = {'gaussian': corrupt_gaussian, 'shot': corrupt_shot,
+               'impulse': corrupt_impulse, 'fog': corrupt_fog,
+               'blur': corrupt_blur, 'contrast': corrupt_contrast}
+
+
+def _acc(model, x, y, mode='relaxed'):
+    """Accuracy under an eval mode: 'gibbs' uses true discrete Gibbs, anything
+    else ('relaxed'/'det') uses the model's default differentiable forward."""
+    with torch.no_grad():
+        out = model(x, sampler=('gibbs' if mode == 'gibbs' else None))
+        return (out.argmax(1) == y).float().mean().item()
+
+
+def _corrupt_curve(model, X, Y, fn, strengths, mode='relaxed', seed=0):
+    curve = []
+    for s in strengths:
+        gen = torch.Generator().manual_seed(seed)      # same noise for every model
+        xc = fn(X, s, gen) if s > 0 else X
+        curve.append(_acc(model, xc, Y, mode))
+    return curve
 
 
 # --------------------------------------------------------------- data -------
@@ -279,37 +376,63 @@ def train_all(seeds, variants, types, data, epochs=30, g=7, lean=False):
 
 def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False, steps=20,
                eps_linf=(0, 0.05, 0.1, 0.15, 0.2, 0.3),
-               eps_l2=(0, 0.5, 1.0, 1.5, 2.0, 3.0)):
-    """PGD robustness, resumable PER NETWORK: each net's curves are saved to its
-    own folder as robustness.json and skipped if already present; all per-net
-    files are then aggregated into results/robustness.pkl for plotting."""
+               eps_l2=(0, 0.5, 1.0, 1.5, 2.0, 3.0),
+               eps_transfer=(0, 0.1, 0.2, 0.3),
+               nat_strengths=(0, 0.2, 0.4, 0.6, 0.8, 1.0)):
+    """All perturbation families, resumable PER NETWORK. For each (type, seed)
+    the trained variants are loaded together so TRANSFER attacks can reuse one
+    source-crafted adversarial set. Each net's full record is saved to its own
+    robustness.json (skipped if present):
+        rec['linf'|'l2']  : white-box PGD accuracy vs epsilon
+        rec['transfer']   : {source_variant: acc vs eps} on Linf adv from others
+        rec['nat']        : {corruption: acc vs strength} (gaussian/shot/... )
+    Per-net files are aggregated into results/robustness.pkl for plotting."""
     _, _, Xte, Yte = data
     X, Y = Xte[:n_imgs], Yte[:n_imgs]
-    results = {'linf': {}, 'l2': {}, 'eps': {'linf': eps_linf, 'l2': eps_l2}}
+    results = {'linf': {}, 'l2': {}, 'nat': {},
+               'eps': {'linf': eps_linf, 'l2': eps_l2, 'transfer': eps_transfer},
+               'nat_strengths': nat_strengths}
     for type_ in types:
-        for variant in variants:
-            for s in seeds:
-                d, mp, meta = _paths(type_, variant, s, lean)
-                if not os.path.exists(mp):
-                    continue
+        for s in seeds:
+            avail = {v: _paths(type_, v, s, lean)[1] for v in variants
+                     if os.path.exists(_paths(type_, v, s, lean)[1])}
+            if not avail:
+                continue
+            todo = [v for v in avail
+                    if not os.path.exists(os.path.join(_paths(type_, v, s, lean)[0], 'robustness.json'))]
+            models, adv = {}, {}
+            if todo:                                    # load all variants + craft transfer sets once
+                for v, mp in avail.items():
+                    m = MRFClassifier(v, g=g, learn_J=TYPES[type_], seed=s, lean=lean)
+                    m.load_state_dict(torch.load(mp)); m.eval(); models[v] = m
+                for v, m in models.items():
+                    adv[v] = {e: (pgd_linf(m, X, Y, e, steps=steps) if e else X)
+                              for e in eps_transfer}
+            for v in avail:
+                d, mp, meta = _paths(type_, v, s, lean)
                 rp = os.path.join(d, 'robustness.json')
-                if os.path.exists(rp):                       # resume: reuse
+                if os.path.exists(rp):
                     rec = json.load(open(rp))
                 else:
-                    model = MRFClassifier(variant, g=g, learn_J=TYPES[type_], seed=s, lean=lean)
-                    model.load_state_dict(torch.load(mp)); model.eval()
+                    model = models[v]
                     rec = {}
                     for norm, epslist in (('linf', eps_linf), ('l2', eps_l2)):
-                        curve = []
-                        for e in tqdm(epslist, desc=f'atk {variant} s{s} {norm}', leave=False):
-                            xa = ATTACKS[norm](model, X, Y, e, steps=steps) if e else X
-                            with torch.no_grad():
-                                curve.append((model(xa).argmax(1) == Y).float().mean().item())
-                        rec[norm] = {'eps': list(epslist), 'acc': curve}
+                        rec[norm] = {'eps': list(epslist), 'acc': [
+                            _acc(model, ATTACKS[norm](model, X, Y, e, steps=steps) if e else X, Y)
+                            for e in tqdm(epslist, desc=f'{v} s{s} {norm}', leave=False)]}
+                    rec['transfer'] = {src: {'eps': list(eps_transfer),
+                        'acc': [_acc(model, adv[src][e], Y) for e in eps_transfer]}
+                        for src in models}
+                    rec['nat'] = {name: {'strength': list(nat_strengths),
+                        'acc': _corrupt_curve(model, X, Y, fn, nat_strengths)}
+                        for name, fn in CORRUPTIONS.items()}
                     json.dump(rec, open(rp, 'w'), indent=2)
-                    print(f"attacked {type_}/{variant}/seed{s}")
-                for norm in ('linf', 'l2'):
-                    results[norm].setdefault((type_, variant), []).append(rec[norm]['acc'])
+                    print(f"attacked {type_}/{v}/seed{s}")
+                results['linf'].setdefault((type_, v), []).append(rec['linf']['acc'])
+                results['l2'].setdefault((type_, v), []).append(rec['l2']['acc'])
+                for name in CORRUPTIONS:
+                    if name in rec.get('nat', {}):
+                        results['nat'].setdefault((type_, v, name), []).append(rec['nat'][name]['acc'])
     os.makedirs(os.path.join(SAVE_ROOT, 'results'), exist_ok=True)
     pickle.dump(results, open(os.path.join(SAVE_ROOT, 'results', 'robustness.pkl'), 'wb'))
     return results
@@ -340,6 +463,28 @@ def plot_results(results=None):
         fig.tight_layout()
         fig.savefig(os.path.join(SAVE_ROOT, 'results', f'robustness_{norm}.png'),
                     dpi=180, bbox_inches='tight')
+
+    # naturalistic corruptions: one figure per corruption
+    strengths = results.get('nat_strengths')
+    corruptions = sorted({name for (_, _, name) in results.get('nat', {})})
+    for name in corruptions:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), sharey=True)
+        for ax, type_ in zip(axes, ['typeA_imposed', 'typeB_learned']):
+            for variant in VARIANTS:
+                key = (type_, variant, name)
+                if key not in results['nat']:
+                    continue
+                arr = np.array(results['nat'][key])
+                mu, sd = arr.mean(0), arr.std(0)
+                ax.plot(strengths, mu, 'o-', color=cmap[variant], label=variant)
+                ax.fill_between(strengths, mu - sd, mu + sd, color=cmap[variant], alpha=0.15)
+            ax.set(xlabel=f'{name} strength', title=type_.replace('_', ' '))
+            ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+        axes[0].set_ylabel('accuracy'); axes[0].legend(frameon=False, fontsize=9)
+        fig.suptitle(f'Naturalistic corruption ({name}): imposed vs learned PGM')
+        fig.tight_layout()
+        fig.savefig(os.path.join(SAVE_ROOT, 'results', f'corruption_{name}.png'),
+                    dpi=180, bbox_inches='tight')
     return fig
 
 
@@ -369,5 +514,4 @@ if __name__ == '__main__':
                    n_imgs=(8 if args.fast else 50), lean=args.lean)
     if args.mode in ('plot', 'all'):
         plot_results()
-    if args.mode in ('plot', 'all'):
-        plot_results()
+
