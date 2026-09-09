@@ -374,24 +374,36 @@ def train_all(seeds, variants, types, data, epochs=30, g=7, lean=False):
                 print(f"{type_}/{variant}/seed{s}: acc={acc:.3f} (best {best:.3f}, {epochs} ep)")
 
 
+def _eval_modes(variant):
+    """Which eval modes a variant is scored under. Sampling nets are scored with
+    BOTH the relaxed surrogate and true discrete Gibbs; others with one ('det')."""
+    return ['relaxed_sampling', 'gibbs_sampling'] if VARIANTS[variant][0] == 'sampling' else ['det']
+
+
+def _mode_tag(mode):
+    return 'gibbs' if mode == 'gibbs_sampling' else 'relaxed'
+
+
 def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False, steps=20,
                eps_linf=(0, 0.05, 0.1, 0.15, 0.2, 0.3),
                eps_l2=(0, 0.5, 1.0, 1.5, 2.0, 3.0),
-               eps_transfer=(0, 0.1, 0.2, 0.3),
                nat_strengths=(0, 0.2, 0.4, 0.6, 0.8, 1.0)):
-    """All perturbation families, resumable PER NETWORK. For each (type, seed)
-    the trained variants are loaded together so TRANSFER attacks can reuse one
-    source-crafted adversarial set. Each net's full record is saved to its own
+    """All perturbation families, resumable PER NETWORK. Per (type, seed) the
+    trained variants are loaded together so TRANSFER reuses one source-crafted
+    adversarial set. Adversarials are ALWAYS crafted on the differentiable
+    forward (relaxed for sampling); each net is then EVALUATED under its eval
+    mode(s): sampling nets under both 'relaxed_sampling' and 'gibbs_sampling'
+    (true discrete Gibbs), others under 'det'. Saved to each net's
     robustness.json (skipped if present):
-        rec['linf'|'l2']  : white-box PGD accuracy vs epsilon
-        rec['transfer']   : {source_variant: acc vs eps} on Linf adv from others
-        rec['nat']        : {corruption: acc vs strength} (gaussian/shot/... )
-    Per-net files are aggregated into results/robustness.pkl for plotting."""
+        rec[mode]['linf'|'l2']         : white-box PGD acc vs epsilon
+        rec[mode]['transfer'][src][norm]: acc vs epsilon on src-crafted PGD (both norms)
+        rec[mode]['nat'][corruption]   : acc vs strength
+    Aggregated to results/robustness.pkl with mode-suffixed variant labels."""
     _, _, Xte, Yte = data
     X, Y = Xte[:n_imgs], Yte[:n_imgs]
-    results = {'linf': {}, 'l2': {}, 'nat': {},
-               'eps': {'linf': eps_linf, 'l2': eps_l2, 'transfer': eps_transfer},
-               'nat_strengths': nat_strengths}
+    results = {'linf': {}, 'l2': {}, 'nat': {}, 'transfer': {},
+               'eps': {'linf': eps_linf, 'l2': eps_l2}, 'nat_strengths': nat_strengths}
+    norms = (('linf', eps_linf), ('l2', eps_l2))
     for type_ in types:
         for s in seeds:
             avail = {v: _paths(type_, v, s, lean)[1] for v in variants
@@ -401,13 +413,13 @@ def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False, steps=2
             todo = [v for v in avail
                     if not os.path.exists(os.path.join(_paths(type_, v, s, lean)[0], 'robustness.json'))]
             models, adv = {}, {}
-            if todo:                                    # load all variants + craft transfer sets once
+            if todo:                                   # load all variants; craft PGD sets once per source (both norms)
                 for v, mp in avail.items():
                     m = MRFClassifier(v, g=g, learn_J=TYPES[type_], seed=s, lean=lean)
                     m.load_state_dict(torch.load(mp)); m.eval(); models[v] = m
                 for v, m in models.items():
-                    adv[v] = {e: (pgd_linf(m, X, Y, e, steps=steps) if e else X)
-                              for e in eps_transfer}
+                    adv[v] = {norm: {e: (ATTACKS[norm](m, X, Y, e, steps=steps) if e else X)
+                                     for e in epslist} for norm, epslist in norms}
             for v in avail:
                 d, mp, meta = _paths(type_, v, s, lean)
                 rp = os.path.join(d, 'robustness.json')
@@ -415,76 +427,172 @@ def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False, steps=2
                     rec = json.load(open(rp))
                 else:
                     model = models[v]
-                    rec = {}
-                    for norm, epslist in (('linf', eps_linf), ('l2', eps_l2)):
-                        rec[norm] = {'eps': list(epslist), 'acc': [
-                            _acc(model, ATTACKS[norm](model, X, Y, e, steps=steps) if e else X, Y)
-                            for e in tqdm(epslist, desc=f'{v} s{s} {norm}', leave=False)]}
-                    rec['transfer'] = {src: {'eps': list(eps_transfer),
-                        'acc': [_acc(model, adv[src][e], Y) for e in eps_transfer]}
-                        for src in models}
-                    rec['nat'] = {name: {'strength': list(nat_strengths),
-                        'acc': _corrupt_curve(model, X, Y, fn, nat_strengths)}
-                        for name, fn in CORRUPTIONS.items()}
+                    rec = {'modes': _eval_modes(v)}
+                    for mode in rec['modes']:
+                        tag = _mode_tag(mode)
+                        r = {}
+                        # white-box PGD (craft on this model's own diff forward, eval under mode)
+                        for norm, epslist in norms:
+                            r[norm] = {'eps': list(epslist),
+                                       'acc': [_acc(model, adv[v][norm][e], Y, tag)
+                                               for e in epslist]}
+                        # transfer: eval on adversarials crafted by every source, both norms
+                        r['transfer'] = {src: {norm: {'eps': list(epslist),
+                            'acc': [_acc(model, adv[src][norm][e], Y, tag) for e in epslist]}
+                            for norm, epslist in norms} for src in models}
+                        # naturalistic corruptions
+                        r['nat'] = {name: {'strength': list(nat_strengths),
+                            'acc': _corrupt_curve(model, X, Y, fn, nat_strengths, tag)}
+                            for name, fn in CORRUPTIONS.items()}
+                        rec[mode] = r
                     json.dump(rec, open(rp, 'w'), indent=2)
                     print(f"attacked {type_}/{v}/seed{s}")
-                results['linf'].setdefault((type_, v), []).append(rec['linf']['acc'])
-                results['l2'].setdefault((type_, v), []).append(rec['l2']['acc'])
-                for name in CORRUPTIONS:
-                    if name in rec.get('nat', {}):
-                        results['nat'].setdefault((type_, v, name), []).append(rec['nat'][name]['acc'])
+                    # save this net's own strongest-eps adversarials (.pt + .png grid)
+                    try:
+                        from torchvision.utils import save_image
+                        for norm, epslist in norms:
+                            xa = adv[v][norm][epslist[-1]]
+                            torch.save(xa, os.path.join(d, f'adv_{norm}.pt'))
+                            save_image(xa, os.path.join(d, f'adv_{norm}.png'), nrow=10)
+                    except Exception as ex:
+                        print('adv image save skipped:', ex)
+                for mode in rec['modes']:
+                    label = v if mode == 'det' else f'{v}::{mode}'
+                    results['linf'].setdefault((type_, label), []).append(rec[mode]['linf']['acc'])
+                    results['l2'].setdefault((type_, label), []).append(rec[mode]['l2']['acc'])
+                    for name in CORRUPTIONS:
+                        results['nat'].setdefault((type_, label, name), []).append(rec[mode]['nat'][name]['acc'])
+                    for norm, _ in norms:
+                        for src in rec[mode]['transfer']:
+                            results['transfer'].setdefault((type_, norm, label, src), []).append(
+                                rec[mode]['transfer'][src][norm]['acc'])
     os.makedirs(os.path.join(SAVE_ROOT, 'results'), exist_ok=True)
     pickle.dump(results, open(os.path.join(SAVE_ROOT, 'results', 'robustness.pkl'), 'wb'))
     return results
 
 
-def plot_results(results=None):
+def _color(label):
+    base = {'gibbs10': '0.55', 'gibbs20': '0.3', 'gibbs30': 'k', 'mf': 'r',
+            'fbp0.5': 'green', 'lbp': 'C0', 'fbp1.5': 'purple', 'fbp2.0': 'orange'}
+    v = label.split('::')[0]
+    return base.get(v, 'gray')
+
+
+def _style(label):
+    # sampling eval mode -> line style: relaxed dashed, gibbs solid
+    if label.endswith('gibbs_sampling'):
+        return '-'
+    if label.endswith('relaxed_sampling'):
+        return '--'
+    return '-'
+
+
+def plot_results(results=None, transfer_summary='max'):
+    """transfer_summary: 'max' (strongest eps), 'auc' (mean over eps), or an int
+    eps index -- controls only the single summary transfer heatmap; the per-eps
+    grid always shows the full epsilon dependence."""
     import matplotlib.pyplot as plt
     if results is None:
         results = pickle.load(open(os.path.join(SAVE_ROOT, 'results', 'robustness.pkl'), 'rb'))
-    cmap = {'gibbs10': '0.55', 'gibbs20': '0.3', 'gibbs30': 'k', 'mf': 'r',
-            'fbp0.5': 'green', 'lbp': 'C0', 'fbp1.5': 'purple', 'fbp2.0': 'orange'}
+
+    # PGD (both norms)
     for norm in ('linf', 'l2'):
         eps = results['eps'][norm]
         fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), sharey=True)
         for ax, type_ in zip(axes, ['typeA_imposed', 'typeB_learned']):
-            for variant in VARIANTS:
-                key = (type_, variant)
-                if key not in results[norm]:
-                    continue
-                arr = np.array(results[norm][key])            # [seeds, eps]
+            labels = sorted({lab for (t, lab) in results[norm] if t == type_})
+            for lab in labels:
+                arr = np.array(results[norm][(type_, lab)])
                 mu, sd = arr.mean(0), arr.std(0)
-                ax.plot(eps, mu, 'o-', color=cmap[variant], label=variant)
-                ax.fill_between(eps, mu - sd, mu + sd, color=cmap[variant], alpha=0.15)
+                ax.plot(eps, mu, _style(lab), marker='o', ms=3, color=_color(lab), label=lab)
+                ax.fill_between(eps, mu - sd, mu + sd, color=_color(lab), alpha=0.12)
             ax.set(xlabel=f'PGD {norm} epsilon', title=type_.replace('_', ' '))
             ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-        axes[0].set_ylabel('accuracy'); axes[0].legend(frameon=False, fontsize=9)
+        axes[0].set_ylabel('accuracy'); axes[0].legend(frameon=False, fontsize=8)
         fig.suptitle(f'Adversarial robustness (PGD-{norm}): imposed vs learned PGM')
         fig.tight_layout()
         fig.savefig(os.path.join(SAVE_ROOT, 'results', f'robustness_{norm}.png'),
                     dpi=180, bbox_inches='tight')
 
-    # naturalistic corruptions: one figure per corruption
+    # naturalistic corruptions
     strengths = results.get('nat_strengths')
     corruptions = sorted({name for (_, _, name) in results.get('nat', {})})
     for name in corruptions:
         fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), sharey=True)
         for ax, type_ in zip(axes, ['typeA_imposed', 'typeB_learned']):
-            for variant in VARIANTS:
-                key = (type_, variant, name)
-                if key not in results['nat']:
-                    continue
-                arr = np.array(results['nat'][key])
+            labels = sorted({lab for (t, lab, nm) in results['nat'] if t == type_ and nm == name})
+            for lab in labels:
+                arr = np.array(results['nat'][(type_, lab, name)])
                 mu, sd = arr.mean(0), arr.std(0)
-                ax.plot(strengths, mu, 'o-', color=cmap[variant], label=variant)
-                ax.fill_between(strengths, mu - sd, mu + sd, color=cmap[variant], alpha=0.15)
+                ax.plot(strengths, mu, _style(lab), marker='o', ms=3, color=_color(lab), label=lab)
+                ax.fill_between(strengths, mu - sd, mu + sd, color=_color(lab), alpha=0.12)
             ax.set(xlabel=f'{name} strength', title=type_.replace('_', ' '))
             ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-        axes[0].set_ylabel('accuracy'); axes[0].legend(frameon=False, fontsize=9)
+        axes[0].set_ylabel('accuracy'); axes[0].legend(frameon=False, fontsize=8)
         fig.suptitle(f'Naturalistic corruption ({name}): imposed vs learned PGM')
         fig.tight_layout()
         fig.savefig(os.path.join(SAVE_ROOT, 'results', f'corruption_{name}.png'),
                     dpi=180, bbox_inches='tight')
+
+    # transfer matrices M[target, source] (diagonal = white-box, off-diag =
+    # transfer). Each cell is a curve over epsilon; we render a selectable
+    # SUMMARY heatmap (transfer_summary in {'max','auc',int}) plus a per-epsilon
+    # GRID of heatmaps so the epsilon dependence is explicit.
+    tr = results.get('transfer', {})
+
+    def _matrix(type_, norm, reduce_):
+        keys = [(t, nm, tg, sc) for (t, nm, tg, sc) in tr if t == type_ and nm == norm]
+        if not keys:
+            return None, None, None
+        targets = sorted({tg for (_, _, tg, _) in keys})
+        sources = sorted({sc for (_, _, _, sc) in keys})
+        M = np.full((len(targets), len(sources)), np.nan)
+        for i, tg in enumerate(targets):
+            for j, sc in enumerate(sources):
+                k = (type_, norm, tg, sc)
+                if k in tr:
+                    curve = np.array(tr[k]).mean(0)          # mean over seeds, vs eps
+                    M[i, j] = curve.mean() if reduce_ == 'auc' else curve[reduce_]
+        return M, targets, sources
+
+    def _draw(ax, M, targets, sources, title):
+        im = ax.imshow(M, vmin=0, vmax=1, cmap='viridis')
+        ax.set_xticks(range(len(sources))); ax.set_xticklabels(sources, rotation=90, fontsize=6)
+        ax.set_yticks(range(len(targets))); ax.set_yticklabels(targets, fontsize=6)
+        for i in range(M.shape[0]):
+            for j in range(M.shape[1]):
+                if not np.isnan(M[i, j]):
+                    ax.text(j, i, f'{M[i,j]:.2f}', ha='center', va='center',
+                            color='w' if M[i, j] < 0.5 else 'k', fontsize=5)
+        ax.set_title(title, fontsize=9)
+        return im
+
+    for norm in ('linf', 'l2'):
+        eps = results['eps'][norm]
+        for type_ in ('typeA_imposed', 'typeB_learned'):
+            red = len(eps) - 1 if transfer_summary == 'max' else transfer_summary
+            M, targets, sources = _matrix(type_, norm, red)
+            if M is None:
+                continue
+            # summary heatmap
+            fig, ax = plt.subplots(figsize=(1.4 + 0.7*len(sources), 1.4 + 0.6*len(targets)))
+            tag = 'AUC' if red == 'auc' else f'eps={eps[red]}'
+            im = _draw(ax, M, targets, sources, f'Transfer {norm} ({tag}): {type_.replace("_"," ")}')
+            ax.set_xlabel('source (crafted on)'); ax.set_ylabel('target (evaluated)')
+            fig.colorbar(im, ax=ax, fraction=0.046, label='accuracy')
+            fig.tight_layout()
+            fig.savefig(os.path.join(SAVE_ROOT, 'results', f'transfer_{type_}_{norm}.png'),
+                        dpi=180, bbox_inches='tight')
+            # per-epsilon grid (skip eps=0)
+            idxs = [k for k in range(len(eps)) if eps[k] != 0]
+            fig, axes = plt.subplots(1, len(idxs), figsize=(3.2*len(idxs), 3.0), squeeze=False)
+            for ax, k in zip(axes[0], idxs):
+                Mk, tgs, scs = _matrix(type_, norm, k)
+                _draw(ax, Mk, tgs, scs, f'{norm} eps={eps[k]}')
+            fig.suptitle(f'Transfer vs epsilon: {type_.replace("_"," ")} ({norm})')
+            fig.tight_layout()
+            fig.savefig(os.path.join(SAVE_ROOT, 'results', f'transfer_{type_}_{norm}_byeps.png'),
+                        dpi=170, bbox_inches='tight')
     return fig
 
 
