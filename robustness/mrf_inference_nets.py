@@ -60,13 +60,25 @@ def grid_adjacency(g):
 
 # --------------------------------------------------------------- encoder ----
 class Encoder(nn.Module):
-    def __init__(self, n_latent, in_ch=1):
+    """Maps image -> evidence B over the n latents.
+    lean=False: high-capacity CNN (encoder dominates, MRF ~ pass-through).
+    lean=True : tiny conv stack pooled to a g x g evidence map, so each latent
+                is a local patch and the classifier must rely on the MRF."""
+    def __init__(self, n_latent, g, in_ch=1, lean=False):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(in_ch, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
-            nn.Flatten(), nn.Linear(64 * 49, 256), nn.ReLU(),
-            nn.Linear(256, n_latent))
+        self.lean = lean
+        if lean:
+            self.net = nn.Sequential(
+                nn.Conv2d(in_ch, 8, 3, padding=1), nn.ReLU(),
+                nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(),
+                nn.Conv2d(8, 1, 3, padding=1),
+                nn.AdaptiveAvgPool2d(g), nn.Flatten())     # -> g*g evidence
+        else:
+            self.net = nn.Sequential(
+                nn.Conv2d(in_ch, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+                nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+                nn.Flatten(), nn.Linear(64 * 49, 256), nn.ReLU(),
+                nn.Linear(256, n_latent))
 
     def forward(self, x):
         return self.net(x)
@@ -107,7 +119,7 @@ def infer_sampling(B, Jmat, iters=12, n_samples=8, noise=0.6):
 
 class MRFClassifier(nn.Module):
     def __init__(self, variant, g=7, n_classes=10, learn_J=False,
-                 J_sigma=0.15, iters=10, seed=0):
+                 J_sigma=0.15, iters=10, seed=0, lean=False):
         super().__init__()
         self.variant = variant
         self.algo, param = VARIANTS[variant]
@@ -124,7 +136,7 @@ class MRFClassifier(nn.Module):
             self.Jraw = nn.Parameter(J0)
         else:
             self.register_buffer('Jraw', J0)
-        self.encoder = Encoder(self.n)
+        self.encoder = Encoder(self.n, g, lean=lean)
         self.readout = nn.Linear(self.n, n_classes)
 
     def Jmat(self):
@@ -227,7 +239,7 @@ def _paths(type_, variant, seed):
     return d, os.path.join(d, 'model.pt'), os.path.join(d, 'meta.json')
 
 
-def train_all(seeds, variants, types, data, target=0.85, max_epochs=30, g=7):
+def train_all(seeds, variants, types, data, target=0.85, max_epochs=30, g=7, lean=False):
     for type_ in types:
         for variant in variants:
             for s in seeds:
@@ -236,7 +248,7 @@ def train_all(seeds, variants, types, data, target=0.85, max_epochs=30, g=7):
                     print(f"skip {type_}/{variant}/seed{s} (done)"); continue
                 os.makedirs(d, exist_ok=True)
                 torch.manual_seed(s); np.random.seed(s)
-                model = MRFClassifier(variant, g=g, learn_J=TYPES[type_], seed=s)
+                model = MRFClassifier(variant, g=g, learn_J=TYPES[type_], seed=s, lean=lean)
                 acc, ep = train_model(model, data, target=target, max_epochs=max_epochs)
                 torch.save(model.state_dict(), mp)
                 json.dump({'type': type_, 'variant': variant, 'seed': s,
@@ -245,7 +257,7 @@ def train_all(seeds, variants, types, data, target=0.85, max_epochs=30, g=7):
                 print(f"{type_}/{variant}/seed{s}: acc={acc:.3f} ({ep} ep)")
 
 
-def attack_all(seeds, variants, types, data, g=7, n_imgs=50,
+def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False,
                eps_linf=(0, 0.05, 0.1, 0.15, 0.2, 0.3),
                eps_l2=(0, 0.5, 1.0, 1.5, 2.0, 3.0)):
     _, _, Xte, Yte = data
@@ -257,7 +269,7 @@ def attack_all(seeds, variants, types, data, g=7, n_imgs=50,
                 d, mp, meta = _paths(type_, variant, s)
                 if not os.path.exists(mp):
                     continue
-                model = MRFClassifier(variant, g=g, learn_J=TYPES[type_], seed=s)
+                model = MRFClassifier(variant, g=g, learn_J=TYPES[type_], seed=s, lean=lean)
                 model.load_state_dict(torch.load(mp)); model.eval()
                 for norm, epslist in (('linf', eps_linf), ('l2', eps_l2)):
                     curve = []
@@ -309,6 +321,7 @@ if __name__ == '__main__':
     ap.add_argument('--max_epochs', type=int, default=30)
     ap.add_argument('--variants', nargs='*', default=list(VARIANTS))
     ap.add_argument('--types', nargs='*', default=list(TYPES))
+    ap.add_argument('--lean', action='store_true', help='lean encoder: MRF carries the representation')
     args = ap.parse_args()
 
     if args.fast:
@@ -317,9 +330,10 @@ if __name__ == '__main__':
     data = get_data(fake=args.fast, n_train=20000)
     seeds = list(range(args.n_seeds))
     if args.mode in ('train', 'all'):
-        train_all(seeds, args.variants, args.types, data, args.target, args.max_epochs)
+        train_all(seeds, args.variants, args.types, data, args.target,
+                  args.max_epochs, lean=args.lean)
     if args.mode in ('attack', 'all'):
         attack_all(seeds, args.variants, args.types, data,
-                   n_imgs=(8 if args.fast else 50))
+                   n_imgs=(8 if args.fast else 50), lean=args.lean)
     if args.mode in ('plot', 'all'):
         plot_results()
