@@ -1333,33 +1333,39 @@ if __name__ == "__main__":
     # Set REGENERATE = True to recompute the experiments (needed after any change
     # to the inference engines); otherwise cached pkls are loaded if present.
     REGENERATE = False
-    reg_pkl = DATA_FOLDER + "ising_results_multi_J_d.pkl"
-    p_pkl = DATA_FOLDER + "ising_results_multi_p.pkl"
+    # reg_pkl = DATA_FOLDER + "ising_results_multi_J_d.pkl"
+    # p_pkl = DATA_FOLDER + "ising_results_multi_p.pkl"
 
-    # --- regular d-regular graphs: generate (once) or load ------------------
-    if REGENERATE or not os.path.exists(reg_pkl):
-        print("Generating regular-graph experiment ...")
-        results_regular = run_regular_graph_experiment(d_list, J_list, n=8, N=30)
-        with open(reg_pkl, "wb") as f:
-            pickle.dump(results_regular, f)
-        print(f"Saved {reg_pkl}")
-    with open(reg_pkl, "rb") as f:
-        all_results = pickle.load(f)
-    plot_regular_results_dcolor(all_results, d_list, N=30)
+    # # --- regular d-regular graphs: generate (once) or load ------------------
+    # if REGENERATE or not os.path.exists(reg_pkl):
+    #     print("Generating regular-graph experiment ...")
+    #     results_regular = run_regular_graph_experiment(d_list, J_list, n=8, N=30)
+    #     with open(reg_pkl, "wb") as f:
+    #         pickle.dump(results_regular, f)
+    #     print(f"Saved {reg_pkl}")
+    # with open(reg_pkl, "rb") as f:
+    #     all_results = pickle.load(f)
+    # plot_regular_results_dcolor(all_results, d_list, N=30)
 
-    # --- Erdos-Renyi multi-p graphs: generate (once) or load ----------------
-    if REGENERATE or not os.path.exists(p_pkl):
-        print("Generating multi-p (Erdos-Renyi) experiment ...")
-        results = run_experiment_multi_p(p_list, N=30, n=8)
-        with open(p_pkl, "wb") as f:
-            pickle.dump(results, f)
-        print(f"Saved {p_pkl}")
-    with open(p_pkl, "rb") as f:
-        all_results = pickle.load(f)
-    plot_grid_by_method_and_p(all_results, methods=None)
+    # # --- Erdos-Renyi multi-p graphs: generate (once) or load ----------------
+    # if REGENERATE or not os.path.exists(p_pkl):
+    #     print("Generating multi-p (Erdos-Renyi) experiment ...")
+    #     results = run_experiment_multi_p(p_list, N=30, n=8)
+    #     with open(p_pkl, "wb") as f:
+    #         pickle.dump(results, f)
+    #     print(f"Saved {p_pkl}")
+    # with open(p_pkl, "rb") as f:
+    #     all_results = pickle.load(f)
+    # plot_grid_by_method_and_p(all_results, methods=None)
 
-    # --- effect of alpha: error vs (alpha, J) grid over B (cached) ----------
-    plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
-                                B_values=(0.0, 0.1, 0.3, 0.5),
-                                load_data=True, metric='kl')
+    # # --- effect of alpha: error vs (alpha, J) grid over B (cached) ----------
+    # plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
+    #                             B_values=(0.0, 0.1, 0.3, 0.5),
+    #                             load_data=True, metric='kl')
     
+    
+    plot_cycle_by_method_and_type(n=9, levels=(0, 1, 3, 6, 11), n_graphs=5,
+                                  J_list=(0.2, 0.4, 0.6, 0.8),
+                                  B_list=np.repeat(np.round(np.linspace(-0.5, 0.5, 7), 3), 2),
+                                  methods=None, gibbs_steps=8000,
+                                  load_data=True, data_path=None, save=True)
