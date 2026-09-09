@@ -1325,6 +1325,101 @@ def coupling_response(kind, Jmat, Bvec, edge, delta=1e-3, alpha=1.0, max_iter=40
     return (mp - mm) / (2 * delta)
 
 
+# ----------------------------------------------------------------------------
+# Input susceptibility  chi_ij = d<x_i>/dB_j  vs graph distance d(i,j)
+# ----------------------------------------------------------------------------
+@njit(cache=True)
+def _gibbs_cov_kernel(J, B, steps, burn_in):
+    n = B.shape[0]
+    s = np.where(np.random.random(n) < 0.5, -1.0, 1.0)
+    sum1 = np.zeros(n)
+    sum2 = np.zeros((n, n))
+    nsamp = 0
+    for t in range(steps):
+        for i in range(n):
+            h = B[i]
+            for k in range(n):
+                h += J[i, k] * s[k]
+            prob = 1.0 / (1.0 + np.exp(-2.0 * h))
+            s[i] = 1.0 if np.random.random() < prob else -1.0
+        if t >= burn_in:
+            for i in range(n):
+                sum1[i] += s[i]
+                for k in range(n):
+                    sum2[i, k] += s[i] * s[k]
+            nsamp += 1
+    mean = sum1 / nsamp
+    cov = sum2 / nsamp
+    for i in range(n):
+        for k in range(n):
+            cov[i, k] -= mean[i] * mean[k]
+    return cov
+
+
+def gibbs_susceptibility(J, B, theta=THETA_NECKER, steps=300000, burn_in=20000):
+    """Gibbs estimate of chi_ij = d<x_i>/dB_j = Cov(x_i, x_j) (fluctuation-
+    dissipation theorem). This is the sampler's implied input-susceptibility and
+    converges to the exact chi as steps -> inf."""
+    n = theta.shape[0]
+    return _gibbs_cov_kernel(theta * float(J), np.full(n, float(B)),
+                             int(steps), int(burn_in))
+
+
+def plot_input_susceptibility(J_list=(0.15, 0.30), B=0.0, alphas=(0.5, 1.0, 1.5),
+                              gibbs_steps=300000, gibbs_burn=20000,
+                              theta=THETA_NECKER, save=True):
+    """Input susceptibility chi_ij = d<x_i>/dB_j on the Necker cube, grouped by
+    graph distance d(i,j). Shows how a perturbation of the evidence at node j
+    propagates to node i's marginal as a function of their separation, per
+    algorithm. Exact = ground truth; Gibbs -> exact (sampling, via FDT);
+    MF/LBP/FBP give each scheme's *implied* response and its (generally wrong)
+    decay with distance. One panel per coupling J.
+
+    Note the MF mean-field onset for a 3-regular graph is J*=1/3: as J -> 1/3
+    the symmetric-branch MF susceptibility inflates, a visible signature."""
+    G = nx.from_numpy_array(theta)
+    D = dict(nx.all_pairs_shortest_path_length(G))
+    n = theta.shape[0]
+    dist = np.array([[D[i][j] for j in range(n)] for i in range(n)])
+    dvals = np.arange(0, int(dist.max()) + 1)
+
+    methods = [dict(kind='exact', lab='exact', c='k', ls='-'),
+               dict(kind='gibbs', lab='Gibbs', c='0.5', ls=':')]
+    ac = plt.cm.viridis(np.linspace(0.15, 0.85, len(alphas)))
+    for a, c in zip(alphas, ac):
+        lab = 'LBP' if abs(a - 1.0) < 1e-9 else rf'FBP $\alpha$={a}'
+        methods.append(dict(kind='fbp', lab=lab, c=c, ls='-', alpha=a))
+    methods.append(dict(kind='mf', lab='MF', c='r', ls='--'))
+
+    fig, axes = plt.subplots(1, len(J_list), figsize=(5.8 * len(J_list), 4.6),
+                             squeeze=False)
+    for ax, J in zip(axes[0], J_list):
+        for md in methods:
+            if md['kind'] == 'gibbs':
+                C = gibbs_susceptibility(J, B, theta, gibbs_steps, gibbs_burn)
+            elif md['kind'] == 'fbp':
+                C, _ = linear_response_cov('lbp', J, B, theta=theta, alpha=md['alpha'])
+            else:
+                C, _ = linear_response_cov(md['kind'], J, B, theta=theta)
+            mu = np.array([C[dist == d].mean() for d in dvals])
+            sd = np.array([C[dist == d].std() for d in dvals])
+            ax.errorbar(dvals, mu, yerr=sd, fmt=md['ls'], marker='o', ms=5,
+                        color=md['c'], label=md['lab'], capsize=3, lw=2)
+        ax.set_xlabel('graph distance  d(i, j)')
+        ax.set_ylabel(r'$\partial \langle x_i\rangle / \partial B_j$')
+        ax.set_title(f'J = {J},  B = {B}')
+        ax.set_xticks(dvals)
+        ax.axhline(0, color='0.8', lw=1)
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    axes[0][0].legend(frameon=False, fontsize=11)
+    fig.suptitle('Input susceptibility vs graph distance (Necker cube)')
+    fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + 'input_susceptibility.png', dpi=200,
+                    bbox_inches='tight')
+    return fig
+
+
 if __name__ == "__main__":
     p_list = np.round(np.arange(0.2, 1.01, 0.1), 2)
     d_list = list(range(2, 7))   # degrees 2-6
