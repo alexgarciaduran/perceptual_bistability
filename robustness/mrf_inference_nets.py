@@ -49,7 +49,7 @@ LEAN = True
 EPOCHS = 10
 N_SEEDS = 1
 RUN_VARIANTS = ['gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']  # gibbs20 only from the gibbs family
-N_LAYERS = 3        # stacked inference blocks -> inference is the load-bearing computation
+N_LAYERS = 2        # stacked inference blocks -> inference is the load-bearing computation
 B_SCALE = 0.5       # bound evidence B = b_scale*tanh(.) so coupling J matters each layer
 ITERS = 10          # inference sweeps per layer -- SAME for every variant (matched compute)
 N_SAMPLES = 20      # chains for sampling variants (matched across gibbs/relaxed)
@@ -414,7 +414,8 @@ def _mode_tag(mode):
 def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False, steps=20,
                eps_linf=(0, 0.05, 0.1, 0.15, 0.2, 0.3),
                eps_l2=(0, 0.5, 1.0, 1.5, 2.0, 3.0),
-               nat_strengths=(0, 0.2, 0.4, 0.6, 0.8, 1.0)):
+               nat_strengths=(0, 0.2, 0.4, 0.6, 0.8, 1.0),
+               re_compute=True):
     """All perturbation families, resumable PER NETWORK. Per (type, seed) the
     trained variants are loaded together so TRANSFER reuses one source-crafted
     adversarial set. Adversarials are ALWAYS crafted on the differentiable
@@ -448,9 +449,10 @@ def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False, steps=2
                     adv[v] = {norm: {e: (ATTACKS[norm](m, X, Y, e, steps=steps) if e else X)
                                      for e in epslist} for norm, epslist in norms}
             for v in avail:
+                print(v)
                 d, mp, meta = _paths(type_, v, s, lean)
                 rp = os.path.join(d, 'robustness.json')
-                if os.path.exists(rp):
+                if os.path.exists(rp) and not re_compute:
                     rec = json.load(open(rp))
                 else:
                     model = models[v]
@@ -459,7 +461,7 @@ def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False, steps=2
                         tag = _mode_tag(mode)
                         r = {}
                         # white-box PGD (craft on this model's own diff forward, eval under mode)
-                        for norm, epslist in norms:
+                        for norm, epslist in tqdm(norms):
                             r[norm] = {'eps': list(epslist),
                                        'acc': [_acc(model, adv[v][norm][e], Y, tag)
                                                for e in epslist]}
