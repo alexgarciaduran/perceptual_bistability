@@ -181,20 +181,27 @@ def _fbp_kernel(J, B, alpha, M, max_iter, tol, damping):
             if J[k, i] != 0.0:
                 acc += M[k, i]
         q[i] = 1.0 / (1.0 + np.exp(-2.0 * acc))
-    return q
+    return q, M
 
 
-def fractional_bp(J, B, alpha=1.0, max_iter=300, tol=1e-8, damping=0.5, seed=0):
+def fractional_bp(J, B, alpha=1.0, max_iter=300, tol=1e-8, damping=0.5, seed=0,
+                  M_init=None, return_messages=False):
     """Fractional BP marginals P(x_i=1) in the paper's log-ratio convention.
 
     alpha=1 recovers loopy BP; alpha->0 tends to mean field. Uses a numba
     kernel; the reverse message M_{j->i} enters the cavity field with weight
-    alpha (the m_{j->i}^{1-alpha} term of the message update)."""
-    rng = np.random.default_rng(seed)
+    alpha (the m_{j->i}^{1-alpha} term of the message update). Pass M_init (a
+    converged message matrix) to warm-start -- needed for stable linear-response
+    finite differences that must stay on one fixed-point branch."""
     n = len(B)
-    M = (np.asarray(J) != 0.0).astype(np.float64) * 0.01 * rng.standard_normal((n, n))
-    return _fbp_kernel(np.asarray(J, float), np.asarray(B, float),
+    if M_init is None:
+        rng = np.random.default_rng(seed)
+        M = (np.asarray(J) != 0.0).astype(np.float64) * 0.01 * rng.standard_normal((n, n))
+    else:
+        M = np.array(M_init, dtype=float)
+    q, M = _fbp_kernel(np.asarray(J, float), np.asarray(B, float),
                        float(alpha), M, int(max_iter), float(tol), float(damping))
+    return (q, M) if return_messages else q
 
 
 def r_stim(x, j_e, b_e, n_neigh=3, alpha=1):
@@ -706,16 +713,616 @@ def plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
     handles = [Line2D([0], [0], color='w', lw=2, label=r'empirical $\alpha^\ast$'),
                Line2D([0], [0], color='cyan', lw=2, ls=':', label=r'analytic $\hat\alpha$'),
                Line2D([0], [0], color='r', lw=2, ls='--', label=r'$J^\ast(\alpha,B)$')]
-    fig.legend(handles=handles, loc='upper center', ncol=3, framealpha=0.8,
-               bbox_to_anchor=(0.5, 1.02))
+    fig.legend(handles=handles, loc='upper center', ncol=3,
+               bbox_to_anchor=(0.5, 0.99), frameon=False)
     cbar = fig.colorbar(im, ax=axes, fraction=0.02, pad=0.01)
     cbar.set_label(metric_label)
     if save:
-        fig.savefig(DATA_FOLDER + f'error_vs_alpha_regular_{metric}.png', dpi=200,
+        fig.savefig(DATA_FOLDER + f'error_vs_alpha_regular_{metric}.png', dpi=300,
                     bbox_inches='tight')
         fig.savefig(DATA_FOLDER + f'error_vs_alpha_regular_{metric}.svg',
                     bbox_inches='tight')
     return fig
+
+
+# ============================================================================
+# Algorithm-discriminating signatures
+# ============================================================================
+# Necker cube adjacency (3-regular, 8 nodes) -- from gibbs_necker.THETA.
+THETA_NECKER = np.array([[0, 1, 1, 0, 1, 0, 0, 0], [1, 0, 0, 1, 0, 1, 0, 0],
+                         [1, 0, 0, 1, 0, 0, 1, 0], [0, 1, 1, 0, 0, 0, 0, 1],
+                         [1, 0, 0, 0, 0, 1, 1, 0], [0, 1, 0, 0, 1, 0, 0, 1],
+                         [0, 0, 1, 0, 1, 0, 0, 1], [0, 0, 0, 1, 0, 1, 1, 0]],
+                        dtype=float)
+
+
+# ----------------------------------------------------------------------------
+# #1  Critical coupling vs connectivity N  (theory / identifiability view)
+# ----------------------------------------------------------------------------
+def plot_critical_coupling_vs_N(N_list=np.arange(3, 13), alphas=(1.0, 1.5),
+                                save=True):
+    """
+    J*(N) for MF (1/N) and FBP/LBP (numeric onset at B=0), in three views:
+      (a) raw J*(N); (b) normalized J*(N)/J*(N0); (c) the product J*(N)*N.
+    View (c) makes the identifiability caveat explicit: since only the effective
+    coupling ~ J*lambda_max is observable and N (the PGM connectivity) is a
+    modelling choice, curves that differ in (a)/(b) can collapse when the
+    controllable quantity is the product J*N. MF gives J*N = 1 exactly (a flat
+    line); BP-family curves are not flat, i.e. they *would* separate IF N were
+    controllable -- which experimentally it is not.
+    """
+    N_list = np.asarray(N_list, float)
+    J_scan = np.arange(0.0, 3.0001, 0.005)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+    series = {'MF (1/N)': 1.0 / N_list}
+    for a in alphas:
+        lab = 'LBP' if a == 1.0 else rf'FBP $\alpha$={a}'
+        series[lab] = np.array([bistability_onset_J(a, 0.0, int(N), J_scan,
+                                                     w_size=0.02)
+                                for N in N_list])
+    colors = plt.cm.viridis(np.linspace(0, 0.85, len(series)))
+    for c, (lab, Js) in zip(colors, series.items()):
+        axes[0].plot(N_list, Js, 'o-', color=c, label=lab)
+        axes[1].plot(N_list, Js / Js[0], 'o-', color=c, label=lab)
+        axes[2].plot(N_list, Js * N_list, 'o-', color=c, label=lab)
+    for ax in axes:
+        ax.set_xlabel('Connectivity N')
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    axes[0].set_ylabel(r'$J^\ast$'); axes[0].set_title('raw critical coupling')
+    axes[1].set_ylabel(r'$J^\ast(N)/J^\ast(N_0)$'); axes[1].set_title('normalized')
+    axes[2].set_ylabel(r'$J^\ast \cdot N$')
+    axes[2].set_title('product view (only this axis is\nexperimentally accessible)')
+    axes[0].legend(frameon=False, fontsize=11)
+    fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + 'critical_coupling_vs_N.png', dpi=200,
+                    bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# #3  Sampling vs variational: switching dynamics
+# ----------------------------------------------------------------------------
+@njit(cache=True)
+def _gibbs_traj(J, B, steps, burn_in):
+    """Gibbs trajectory: returns the magnetisation m_t = mean(s) per sweep."""
+    n = B.shape[0]
+    s = np.where(np.random.random(n) < 0.5, -1.0, 1.0)
+    out = np.zeros(steps - burn_in)
+    for t in range(steps):
+        for i in range(n):
+            h = B[i]
+            for k in range(n):
+                h += J[i, k] * s[k]
+            s[i] = 1.0 if np.random.random() < 1.0/(1.0+np.exp(-2.0*h)) else -1.0
+        if t >= burn_in:
+            out[t - burn_in] = s.mean()
+    return out
+
+
+def langevin_1d(kind, J, B, N=3, alpha=1.0, sigma=0.25, tau=1.0, dt=0.01,
+                T=4000.0, seed=0):
+    """1D reduced Langevin for the variational schemes (returns q(t)).
+
+    kind='mf' : dq = (sigmoid(2NJ(2q-1)+2B) - q) dt/tau + noise
+    kind='fbp': dM = (f(M(N-a)+B,a) - M) dt/tau + noise, q = sigmoid(2(NM+B)),
+                f(x,a) = (1/a) arctanh(tanh(Ja) tanh(x)).  (a=1 -> LBP)
+    """
+    rng = np.random.default_rng(seed)
+    nstep = int(T / dt)
+    s = np.sqrt(dt / tau) * sigma
+    q = np.empty(nstep)
+    if kind == 'mf':
+        x = 0.5
+        for t in range(nstep):
+            x += (1.0/(1.0+np.exp(-(2*N*J*(2*x-1)+2*B))) - x)*dt/tau + s*rng.standard_normal()
+            q[t] = x
+    elif kind == 'fbp':
+        M = 0.0
+        for t in range(nstep):
+            f = (1.0/alpha)*np.arctanh(np.tanh(J*alpha)*np.tanh(M*(N-alpha)+B))
+            M += (f - M)*dt/tau + s*rng.standard_normal()
+            q[t] = 1.0/(1.0+np.exp(-2.0*(N*M + B)))
+    else:
+        raise ValueError("kind must be 'mf' or 'fbp'")
+    return q
+
+
+def _schmitt_switches(order, hi, lo):
+    """Count committed switches of a scalar series using a Schmitt trigger
+    with thresholds (lo, hi); returns switch indices. Ignores small jitter
+    around the centre so a monostable trace registers no switches."""
+    state = 0  # +1 above hi, -1 below lo, 0 undecided
+    idx = []
+    for t, v in enumerate(order):
+        if v > hi:
+            if state == -1:
+                idx.append(t)
+            state = 1
+        elif v < lo:
+            if state == 1:
+                idx.append(t)
+            state = -1
+    return np.array(idx)
+
+
+def switching_dynamics(J, B=0.0, sigma=0.25, dt=0.01, T=4000.0,
+                       gibbs_steps=120000, gibbs_burn=2000, seed=0):
+    """Run Gibbs, MF-Langevin and LBP-Langevin on the Necker cube and return
+    per-algorithm order-parameter traces + switch statistics (rate, dominance
+    times). Sampling (Gibbs) and variational (MF/LBP) are compared by the SHAPE
+    and J-scaling of these statistics, not absolute rates (which depend on the
+    arbitrary noise/temperature)."""
+    Jm = THETA_NECKER * J
+    Bv = np.full(THETA_NECKER.shape[0], B)
+    out = {}
+    # Gibbs: magnetisation trace (order parameter in [-1,1])
+    m = _gibbs_traj(Jm, Bv, int(gibbs_steps), int(gibbs_burn))
+    sw = _schmitt_switches(m, 0.5, -0.5)
+    out['gibbs'] = {'trace': m, 'switch_idx': sw,
+                    'rate': len(sw)/len(m), 'dwell': np.diff(sw) if len(sw) > 1 else np.array([])}
+    # Variational: q(t) in [0,1] -> centre at 0.5
+    for kind, alpha in [('mf', None), ('fbp', 1.0)]:
+        q = langevin_1d(kind, J, B, N=3, alpha=(alpha or 1.0), sigma=sigma,
+                        dt=dt, T=T, seed=seed)
+        sw = _schmitt_switches(q, 0.75, 0.25)
+        out['mf' if kind == 'mf' else 'lbp'] = {
+            'trace': q, 'switch_idx': sw,
+            'rate': len(sw)/len(q), 'dwell': np.diff(sw)*dt if len(sw) > 1 else np.array([])}
+    return out
+
+
+def plot_sampling_vs_variational(J_traj=0.8, J_list=np.round(np.arange(0.3, 1.21, 0.1), 2),
+                                 B=0.0, sigma=0.25, save=True):
+    """
+    Sampling vs variational discriminating dynamics on the Necker cube:
+      (a) example order-parameter traces at J_traj;
+      (b) switch rate vs coupling J (scaling / onset);
+      (c) dominance-time distributions at J_traj (shape).
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    dyn0 = switching_dynamics(J_traj, B=B, sigma=sigma)
+    labels = {'gibbs': 'Gibbs (sampling)', 'mf': 'Mean-Field', 'lbp': 'LBP'}
+    colors = {'gibbs': 'k', 'mf': 'r', 'lbp': 'C0'}
+    # (a) traces (Gibbs magnetisation mapped to [0,1] for overlay)
+    for key in ['gibbs', 'mf', 'lbp']:
+        tr = dyn0[key]['trace']
+        y = (tr + 1)/2 if key == 'gibbs' else tr
+        axes[0].plot(np.linspace(0, 1, len(y))[:3000], y[:3000],
+                     color=colors[key], lw=0.8, alpha=0.8, label=labels[key])
+    axes[0].set_title(f'traces (J={J_traj}, B={B})')
+    axes[0].set_xlabel('time (norm.)'); axes[0].set_ylabel('percept / q')
+    axes[0].legend(frameon=False, fontsize=10)
+    # (b) switch rate vs J
+    rates = {k: [] for k in ['gibbs', 'mf', 'lbp']}
+    for Jv in tqdm(J_list, desc='switch-rate vs J'):
+        d = switching_dynamics(Jv, B=B, sigma=sigma)
+        for k in rates:
+            rates[k].append(d[k]['rate'])
+    for k in rates:
+        r = np.array(rates[k]); r = r/ (r.max() + 1e-12)
+        axes[1].plot(J_list, r, 'o-', color=colors[k], label=labels[k])
+    axes[1].axvline(0.5*np.log(3), color='gray', ls=':', label=r'LBP $J^\ast$')
+    axes[1].set_title('switch rate vs J (norm.)')
+    axes[1].set_xlabel('coupling J'); axes[1].set_ylabel('rate / max')
+    axes[1].legend(frameon=False, fontsize=9)
+    # (c) dominance-time distributions at J_traj
+    for key in ['gibbs', 'mf', 'lbp']:
+        dw = dyn0[key]['dwell']
+        if len(dw) > 5:
+            dw = dw / dw.mean()
+            axes[2].hist(dw, bins=25, density=True, histtype='step',
+                         color=colors[key], label=labels[key])
+    axes[2].set_title(f'dominance times (J={J_traj}, norm.)')
+    axes[2].set_xlabel('dwell / mean'); axes[2].set_ylabel('density')
+    axes[2].legend(frameon=False, fontsize=10)
+    for ax in axes:
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + 'sampling_vs_variational.png', dpi=200,
+                    bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# A  Variability signature: does internal variance track the TRUE posterior?
+# ----------------------------------------------------------------------------
+# Sampling (Gibbs) *is* the posterior, so the variance of its percept trace
+# equals the true posterior variance. A variational point estimate (MF/FBP
+# Langevin) has a variance set by the injected noise + well curvature -- a floor
+# decoupled from the true uncertainty. Coupling-invariant test (Orban 2016;
+# Festa 2021): calibrate the variational noise to match the true variance at ONE
+# operating point, then sweep -- sampling stays on the identity, variational
+# drifts off it.
+def exact_order_param_moments(J, B, theta=THETA_NECKER):
+    """Mean and variance of the order parameter om=(mean_i x_i + 1)/2 under the
+    exact Boltzmann distribution (uniform coupling J, field B on the cube)."""
+    n = theta.shape[0]
+    states = np.array(list(itertools.product([-1, 1], repeat=n)), dtype=float)
+    k = 0.5 * J * np.einsum('si,ij,sj->s', states, theta, states) + B * states.sum(1)
+    w = np.exp(k - k.max())
+    w /= w.sum()
+    om = (states.mean(1) + 1) / 2
+    mean = float((w * om).sum())
+    var = float((w * om**2).sum() - mean**2)
+    return mean, var
+
+
+def _percept_variance(kind, J, B, sigma, alpha=1.0, dt=0.01, T=3000.0,
+                      gibbs_steps=150000, gibbs_burn=5000, seed=0):
+    """Variance of the global percept in [0,1] for one scheme."""
+    if kind == 'gibbs':
+        m = _gibbs_traj(THETA_NECKER * J,
+                        np.full(THETA_NECKER.shape[0], B),
+                        int(gibbs_steps), int(gibbs_burn))
+        return float(np.var((m + 1) / 2))
+    q = langevin_1d('mf' if kind == 'mf' else 'fbp', J, B, N=3, alpha=alpha,
+                    sigma=sigma, dt=dt, T=T, seed=seed)
+    return float(np.var(q[len(q)//5:]))
+
+
+def _calibrate_sigma(kind, J_ref, B_ref, target_var, alpha=1.0,
+                     sigmas=np.linspace(0.05, 0.7, 14)):
+    """Pick the variational noise sigma whose percept variance best matches
+    target_var at the reference (J_ref, B_ref)."""
+    errs = [abs(_percept_variance(kind, J_ref, B_ref, s, alpha=alpha) - target_var)
+            for s in sigmas]
+    return float(sigmas[int(np.argmin(errs))])
+
+
+def plot_variability_signature(J_curve=0.5,
+                               B_curve=np.round(np.linspace(-0.5, 0.5, 31), 3),
+                               J_grid=(0.1, 0.2, 0.4, 0.5, 0.7, 0.8),
+                               B_grid=np.round(np.linspace(-0.4, 0.4, 11), 3),
+                               J_ref=0.4, B_ref=0.15, save=True):
+    """
+    (a) percept variance vs B at fixed coupling J_curve: true posterior (black),
+        Gibbs (should overlap true), MF and LBP Langevin (noise floors,
+        calibrated to true at the reference point);
+    (b) internal variance vs true posterior variance across a (J,B) grid: Gibbs
+        on the identity line, variational off it -- the coupling-invariant
+        signature that sampling represents uncertainty and variational does not.
+    """
+    # calibrate variational noise once, at a monostable reference point
+    _, var_ref = exact_order_param_moments(J_ref, B_ref)
+    sig_mf = _calibrate_sigma('mf', J_ref, B_ref, var_ref)
+    sig_lbp = _calibrate_sigma('lbp', J_ref, B_ref, var_ref, alpha=1.0)
+    print(f"calibrated sigma: MF={sig_mf:.3f}, LBP={sig_lbp:.3f} (target var={var_ref:.4f})")
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.4))
+    # (a) variance vs B at fixed J
+    tv, gv, mv, lv = [], [], [], []
+    for B0 in tqdm(B_curve, desc='var vs B'):
+        tv.append(exact_order_param_moments(J_curve, B0)[1])
+        gv.append(_percept_variance('gibbs', J_curve, B0, 0.0))
+        mv.append(_percept_variance('mf', J_curve, B0, sig_mf))
+        lv.append(_percept_variance('lbp', J_curve, B0, sig_lbp, alpha=1.0))
+    axes[0].plot(B_curve, tv, 'k-', lw=2.5, label='true posterior')
+    axes[0].plot(B_curve, gv, 'o-', color='0.4', ms=4, label='Gibbs (sampling)')
+    axes[0].plot(B_curve, mv, 's-', color='r', ms=4, label='Mean-Field')
+    axes[0].plot(B_curve, lv, '^-', color='C0', ms=4, label='LBP')
+    axes[0].set_xlabel('Sensory evidence B'); axes[0].set_ylabel('percept variance')
+    axes[0].set_title(f'variance vs evidence (J={J_curve})')
+    axes[0].legend(frameon=False, fontsize=10)
+
+    # (b) internal var vs true var over a grid
+    pts = {'gibbs': ([], []), 'mf': ([], []), 'lbp': ([], [])}
+    for J0 in tqdm(J_grid, desc='var scatter'):
+        for B0 in B_grid:
+            true_v = exact_order_param_moments(J0, B0)[1]
+            pts['gibbs'][0].append(true_v); pts['gibbs'][1].append(_percept_variance('gibbs', J0, B0, 0.0))
+            pts['mf'][0].append(true_v);    pts['mf'][1].append(_percept_variance('mf', J0, B0, sig_mf))
+            pts['lbp'][0].append(true_v);   pts['lbp'][1].append(_percept_variance('lbp', J0, B0, sig_lbp, alpha=1.0))
+    mx = max(max(v[1]) for v in pts.values()) * 1.05
+    axes[1].plot([0, mx], [0, mx], 'k--', lw=1, label='identity')
+    for key, c, mk, lab in [('gibbs', '0.4', 'o', 'Gibbs (sampling)'),
+                            ('mf', 'r', 's', 'Mean-Field'), ('lbp', 'C0', '^', 'LBP')]:
+        axes[1].scatter(pts[key][0], pts[key][1], c=c, marker=mk, s=28, alpha=0.75, label=lab)
+    axes[1].scatter([var_ref], [var_ref], marker='*', s=200, facecolor='none',
+                    edgecolor='green', linewidth=1.6, label='calibration point', zorder=5)
+    axes[1].set_xlabel('true posterior variance'); axes[1].set_ylabel('internal variance')
+    axes[1].set_title('does variance track uncertainty?')
+    axes[1].legend(frameon=False, fontsize=9)
+    for ax in axes:
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + 'variability_signature.png', dpi=200,
+                    bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# A (rigorous)  Implied covariance via linear response (FDT), sigma-free
+# ----------------------------------------------------------------------------
+# Every scheme defines an implied covariance through Cov(x_i,x_j)=d<x_i>/dB_j.
+# For the exact model this is an identity; for MF/BP it is the linear-response
+# covariance of that algorithm's own marginals -- a parameter-free notion of the
+# uncertainty each scheme represents, with no injected noise (no sigma). We
+# compare the order-parameter variance Var(om)=(1/4n^2) sum_ij d<x_i>/dB_j
+# across exact / Gibbs / MF / LBP. Warm-starting keeps the finite differences on
+# one fixed-point branch.
+def _mf_magnetization(Jmat, Bvec, m0, max_iter=2000, tol=1e-12):
+    """Deterministic MF fixed point (magnetisation <x_i>), warm-started at m0."""
+    m = m0.copy()
+    for _ in range(max_iter):
+        mn = np.tanh(Bvec + Jmat @ m)
+        if np.max(np.abs(mn - m)) < tol:
+            break
+        m = mn
+    return m
+
+
+def linear_response_cov(kind, J, B, theta=THETA_NECKER, delta=1e-3, alpha=1.0,
+                        max_iter=4000):
+    """Implied covariance matrix C_ij = d<x_i>/dB_j (symmetric finite diff).
+
+    kind in {'exact','mf','lbp'}. Uses spins <x_i> = 2*P(x_i=1) - 1. Warm-starts
+    each perturbed solve at the unperturbed fixed point so the response is that
+    of a single branch. Returns (C, var_om) with var_om = C.sum()/(4 n^2)."""
+    n = theta.shape[0]
+    Jmat = J * theta
+    Bvec = np.full(n, float(B))
+
+    if kind == 'exact':
+        def spins(Bv):
+            return 2.0 * exact_marginals(Jmat, Bv) - 1.0
+        base = spins(Bvec)
+        pert = lambda Bv: spins(Bv)
+    elif kind == 'mf':
+        base = _mf_magnetization(Jmat, Bvec, np.zeros(n), max_iter=max_iter)
+        pert = lambda Bv: _mf_magnetization(Jmat, Bv, base, max_iter=max_iter)
+    elif kind == 'lbp':
+        q0, M0 = fractional_bp(Jmat, Bvec, alpha=alpha, max_iter=max_iter,
+                               return_messages=True)
+        base = 2.0 * q0 - 1.0
+        pert = lambda Bv: 2.0 * fractional_bp(Jmat, Bv, alpha=alpha,
+                                              max_iter=max_iter, M_init=M0) - 1.0
+    else:
+        raise ValueError("kind must be 'exact', 'mf' or 'lbp'")
+
+    C = np.zeros((n, n))
+    for j in range(n):
+        Bp = Bvec.copy(); Bp[j] += delta
+        Bm = Bvec.copy(); Bm[j] -= delta
+        C[:, j] = (pert(Bp) - pert(Bm)) / (2.0 * delta)
+    C = 0.5 * (C + C.T)                     # symmetrise (exact for 'exact')
+    var_om = float(C.sum() / (4.0 * n**2))
+    return C, var_om
+
+
+def plot_variability_signature_lr(J_list=(0.3, 0.5),
+                                  B_curve=np.round(np.linspace(-0.6, 0.6, 25), 3),
+                                  gibbs_steps=400000, gibbs_burn=20000, save=True):
+    """
+    Rigorous, sigma-free variability signature: order-parameter variance Var(om)
+    vs sensory evidence B, one panel per coupling J. Curves:
+      - exact (enumeration, ground truth),
+      - exact via linear response (correctness check; must overlap exact),
+      - Gibbs (sample variance of the trace -> the sampling estimate),
+      - MF and LBP linear-response covariance (each scheme's *implied* variance).
+    No injected noise, no free scale: differences are intrinsic to the algorithm.
+    """
+    fig, axes = plt.subplots(1, len(J_list), figsize=(5.2*len(J_list), 4.2),
+                             squeeze=False)
+    for ax, J in zip(axes[0], J_list):
+        v_true, v_lr_exact, v_gibbs, v_mf, v_lbp = [], [], [], [], []
+        for B0 in tqdm(B_curve, desc=f'Var(om) vs B, J={J}'):
+            v_true.append(exact_order_param_moments(J, B0)[1])
+            v_lr_exact.append(linear_response_cov('exact', J, B0)[1])
+            v_mf.append(linear_response_cov('mf', J, B0)[1])
+            v_lbp.append(linear_response_cov('lbp', J, B0)[1])
+            m = _gibbs_traj(THETA_NECKER * J, np.full(THETA_NECKER.shape[0], B0),
+                            int(gibbs_steps), int(gibbs_burn))
+            v_gibbs.append(float(np.var((m + 1) / 2)))
+        ax.plot(B_curve, v_true, 'k-', lw=2.5, label='exact (enumeration)')
+        ax.plot(B_curve, v_lr_exact, color='0.6', lw=4, alpha=0.4,
+                label='exact via linear response')
+        ax.plot(B_curve, v_gibbs, 'o', color='C2', ms=4, label='Gibbs (sampling)')
+        ax.plot(B_curve, v_mf, 's-', color='r', ms=4, label='MF (linear response)')
+        ax.plot(B_curve, v_lbp, '^-', color='C0', ms=4, label='LBP (linear response)')
+        ax.set_xlabel('Sensory evidence B')
+        ax.set_ylabel('order-parameter variance')
+        ax.set_title(f'J = {J}')
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    axes[0][0].legend(frameon=False, fontsize=9)
+    fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + 'variability_signature_lr.png', dpi=200,
+                    bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# Task 1  Cycle-structure graph family: approximation error vs loopiness
+# ----------------------------------------------------------------------------
+def make_cycle_family(n=9, levels=(0, 1, 2, 4, 7, 11), n_graphs=6, seed=0):
+    """Graph family indexed by loopiness L = number of edges added to a random
+    spanning tree (= independent cycles E-N+1). L=0 is a tree; larger L adds
+    short cycles. Returns {L: [adjacency, ...]}."""
+    rng = np.random.default_rng(seed)
+    try:
+        rand_tree = nx.random_labeled_tree
+    except AttributeError:
+        rand_tree = nx.random_tree
+    fam = {}
+    for L in levels:
+        graphs = []
+        for _ in range(n_graphs):
+            A = nx.to_numpy_array(rand_tree(n, seed=int(rng.integers(1_000_000_000))))
+            non = [(i, j) for i in range(n) for j in range(i + 1, n) if A[i, j] == 0]
+            rng.shuffle(non)
+            for (i, j) in non[:L]:
+                A[i, j] = A[j, i] = 1.0
+            graphs.append(A)
+        fam[L] = graphs
+    return fam
+
+
+def run_cycle_family(fam, J_list=(0.3, 0.6, 0.9), B=0.1, alphas=(0.5, 1.0, 1.5)):
+    """Mean |q_alg - exact| (per node, averaged over graphs) vs loopiness and J,
+    for MF and FBP(alpha). Returns {(L, J): {method: err, 'degree': deg}}."""
+    res = {}
+    for L, graphs in fam.items():
+        for J in tqdm(J_list, desc=f"cycle family L={L}"):
+            acc = {'mf': [], **{f'fbp_{a}': [] for a in alphas}}
+            degs = []
+            for A in graphs:
+                n = A.shape[0]
+                Jm, Bv = A * J, np.full(n, B)
+                ex = exact_marginals(Jm, Bv)
+                degs.append(A.sum(1).mean())
+                acc['mf'].append(np.mean(np.abs(mean_field(Jm, Bv, max_iter=500) - ex)))
+                for a in alphas:
+                    acc[f'fbp_{a}'].append(
+                        np.mean(np.abs(fractional_bp(Jm, Bv, alpha=a, max_iter=3000) - ex)))
+            res[(L, J)] = {k: float(np.mean(v)) for k, v in acc.items()}
+            res[(L, J)]['degree'] = float(np.mean(degs))
+    return res
+
+
+def plot_cycle_family(n=9, levels=(0, 1, 2, 4, 7, 11), n_graphs=6,
+                      J_list=(0.3, 0.6, 0.9), B=0.1, alphas=(0.5, 1.0, 1.5),
+                      load_data=True, data_path=None, save=True):
+    """Approximation error (vs exact) as cycle structure grows, per J. On a tree
+    (L=0) BP is exact; error grows with the number of short cycles."""
+    if data_path is None:
+        data_path = DATA_FOLDER + 'cycle_family_data.pkl'
+    if load_data and os.path.exists(data_path):
+        with open(data_path, 'rb') as f:
+            res = pickle.load(f)
+    else:
+        res = run_cycle_family(make_cycle_family(n, levels, n_graphs), J_list, B, alphas)
+        with open(data_path, 'wb') as f:
+            pickle.dump(res, f)
+    methods = ['mf'] + [f'fbp_{a}' for a in alphas]
+    labels = {'mf': 'MF', **{f'fbp_{a}': ('LBP' if a == 1.0 else f'FBP {a}') for a in alphas}}
+    fig, axes = plt.subplots(1, len(J_list), figsize=(5*len(J_list), 4.2), squeeze=False)
+    for ax, J in zip(axes[0], J_list):
+        for meth in methods:
+            ax.plot(levels, [res[(L, J)][meth] for L in levels], 'o-', label=labels[meth])
+        deg = np.mean([res[(L, J)]['degree'] for L in levels])
+        ax.set(xlabel='loopiness  L = independent cycles', ylabel='mean |q - exact|',
+               title=f'J = {J}  (mean deg {deg:.1f})')
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    axes[0][0].legend(frameon=False, fontsize=10)
+    fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + 'cycle_family.png', dpi=200, bbox_inches='tight')
+    return fig
+
+
+def run_cycle_family_grid(fam, J_list=(0.2, 0.4, 0.6, 0.8),
+                          B_list=np.round(np.linspace(-0.5, 0.5, 7), 3),
+                          alphas=(0.5, 1.0, 1.5), gibbs_steps=8000):
+    """Per-node marginals of every method vs exact, for each graph type (loopiness
+    level), swept over J and B. Returns {L: [ {method: q_array, 'J':J,'exact':..}, ...]}
+    with one entry per (graph, J, B) -- the raw data for the method x graph-type grid."""
+    out = {}
+    for L, graphs in fam.items():
+        entries = []
+        for A in tqdm(graphs, desc=f"cycle grid L={L}"):
+            n = A.shape[0]
+            for J in J_list:
+                for B in B_list:
+                    Jm, Bv = A * J, np.full(n, B)
+                    e = {'J': J, 'B': B, 'exact': exact_marginals(Jm, Bv),
+                         'gibbs': gibbs_sampling(Jm, Bv, steps=gibbs_steps),
+                         'mean_field': mean_field(Jm, Bv, max_iter=500),
+                         'lbp': fractional_bp(Jm, Bv, alpha=1.0, max_iter=3000)}
+                    for a in alphas:
+                        if a != 1.0:
+                            e[f'fbp_{a}'] = fractional_bp(Jm, Bv, alpha=a, max_iter=3000)
+                    entries.append(e)
+        out[L] = entries
+    return out
+
+
+def plot_cycle_by_method_and_type(n=9, levels=(0, 1, 3, 6, 11), n_graphs=5,
+                                  J_list=(0.2, 0.4, 0.6, 0.8),
+                                  B_list=np.round(np.linspace(-0.5, 0.5, 7), 3),
+                                  methods=None, gibbs_steps=8000,
+                                  load_data=True, data_path=None, save=True):
+    """Grid like plot_grid_by_method_and_p: rows = inference method, columns =
+    graph type (loopiness L). Each cell scatters approximate q vs exact q over
+    all graphs/nodes, coloured by the graph coupling J, swept over fields B."""
+    if methods is None:
+        methods = ['gibbs', 'mean_field', 'lbp', 'fbp_0.5', 'fbp_1.5']
+    method_names = {'gibbs': 'Gibbs\nsampling', 'mean_field': 'Mean-Field',
+                    'lbp': 'LBP', 'fbp_0.5': r'FBP ($\alpha$=0.5)',
+                    'fbp_1.5': r'FBP ($\alpha$=1.5)'}
+    if data_path is None:
+        data_path = DATA_FOLDER + 'cycle_grid_data.pkl'
+    if load_data and os.path.exists(data_path):
+        with open(data_path, 'rb') as f:
+            res = pickle.load(f)
+        levels = res['levels']; J_list = res['J_list']
+        data = res['data']
+    else:
+        fam = make_cycle_family(n, levels, n_graphs)
+        data = run_cycle_family_grid(fam, J_list, B_list, gibbs_steps=gibbs_steps)
+        with open(data_path, 'wb') as f:
+            pickle.dump({'data': data, 'levels': levels, 'J_list': J_list}, f)
+
+    import matplotlib.colors as mcolors
+    norm = mcolors.Normalize(vmin=min(J_list), vmax=max(J_list))
+    cmap = cm.get_cmap('viridis')
+    nr, nc = len(methods), len(levels)
+    fig, axes = plt.subplots(nr, nc, figsize=(2.6*nc, 2.6*nr),
+                             sharex=True, sharey=True, squeeze=False)
+    for i, meth in enumerate(methods):
+        for j, L in enumerate(levels):
+            ax = axes[i, j]
+            ax.plot([-0.05, 1.05], [-0.05, 1.05], 'k--', lw=0.8, zorder=1)
+            x = np.concatenate([e['exact'] for e in data[L]])
+            y = np.concatenate([e[meth] for e in data[L]])
+            cvals = np.concatenate([np.full(len(e['exact']), e['J']) for e in data[L]])
+            ax.scatter(x, y, c=cvals, cmap=cmap, norm=norm, s=8, alpha=0.5, zorder=20)
+            ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
+            ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+            if i == 0:
+                ax.set_title(f'L = {L}')
+            if j == 0:
+                ax.set_ylabel(method_names.get(meth, meth))
+            if i == nr - 1:
+                ax.set_xlabel('Exact')
+    fig.tight_layout()
+    sm = cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
+    fig.colorbar(sm, ax=axes, fraction=0.02, pad=0.01, label='coupling J')
+    if save:
+        fig.savefig(DATA_FOLDER + 'cycle_grid.png', dpi=180, bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# Task 2  Coupling perturbation: d<x_k>/dJ_ij (warm-started finite difference)
+# ----------------------------------------------------------------------------
+def coupling_response(kind, Jmat, Bvec, edge, delta=1e-3, alpha=1.0, max_iter=4000):
+    """Response vector d<x_k>/dJ_ij (spins <x>=2q-1) to perturbing the single
+    coupling on `edge`=(i,j). Warm-started so BP/MF stay on one branch.
+    kind in {'exact','mf','lbp'} ('lbp' with alpha!=1 is FBP)."""
+    i, j = edge
+    n = len(Bvec)
+
+    def spins(Jm, warm):
+        if kind == 'exact':
+            return 2 * exact_marginals(Jm, Bvec) - 1, None
+        if kind == 'mf':
+            m = _mf_magnetization(Jm, Bvec,
+                                  warm if warm is not None else np.zeros(n),
+                                  max_iter=max_iter)
+            return m, m
+        q, M = fractional_bp(Jm, Bvec, alpha=alpha, max_iter=max_iter,
+                             tol=1e-12, M_init=warm, return_messages=True)
+        return 2 * q - 1, M
+
+    base, warm = spins(Jmat, None)
+    Jp = Jmat.copy(); Jp[i, j] += delta; Jp[j, i] += delta
+    Jm_ = Jmat.copy(); Jm_[i, j] -= delta; Jm_[j, i] -= delta
+    mp, _ = spins(Jp, warm)
+    mm, _ = spins(Jm_, warm)
+    return (mp - mm) / (2 * delta)
 
 
 if __name__ == "__main__":
@@ -754,6 +1361,5 @@ if __name__ == "__main__":
     # --- effect of alpha: error vs (alpha, J) grid over B (cached) ----------
     plot_error_vs_alpha_regular(d_list=(2, 3, 4, 5, 6),
                                 B_values=(0.0, 0.1, 0.3, 0.5),
-                                load_data=True)
-
-    plt.show()
+                                load_data=True, metric='kl')
+    
