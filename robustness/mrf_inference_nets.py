@@ -47,7 +47,7 @@ TYPES = {'typeA_imposed': False, 'typeB_learned': True}   # learn_J flag
 # ---- defaults for a plain run (Spyder F5, no CLI args) ----
 LEAN = True
 EPOCHS = 10
-N_SEEDS = 10
+N_SEEDS = 1
 RUN_VARIANTS = ['gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']  # gibbs20 only from the gibbs family
 
 # torch.set_num_threads(16)
@@ -312,10 +312,11 @@ def get_data(fake=False, n_train=20000, n_test=2000):
 
 
 @torch.no_grad()
-def test_acc(model, Xte, Yte, bs=500):
+@torch.no_grad()
+def test_acc(model, Xte, Yte, bs=500, sampler=None):
     model.eval(); correct = 0
     for i in range(0, len(Xte), bs):
-        correct += (model(Xte[i:i+bs]).argmax(1) == Yte[i:i+bs]).sum().item()
+        correct += (model(Xte[i:i+bs], sampler=sampler).argmax(1) == Yte[i:i+bs]).sum().item()
     return correct / len(Xte)
 
 
@@ -366,12 +367,18 @@ def train_all(seeds, variants, types, data, epochs=30, g=7, lean=False):
                 print(f"training {type_}/{variant}/seed{s} ...")
                 acc, best, hist = train_model(model, data, epochs=epochs)
                 torch.save(model.state_dict(), mp)
-                json.dump({'type': type_, 'variant': variant, 'seed': s,
-                           'test_acc': acc, 'best_acc': best, 'epochs': epochs,
-                           'epoch_acc': hist['epoch_acc'], 'epoch_loss': hist['epoch_loss']},
-                          open(meta, 'w'), indent=2)
+                info = {'type': type_, 'variant': variant, 'seed': s,
+                        'test_acc': acc, 'best_acc': best, 'epochs': epochs,
+                        'epoch_acc': hist['epoch_acc'], 'epoch_loss': hist['epoch_loss']}
+                gibbs_msg = ''
+                if VARIANTS[variant][0] == 'sampling':      # also record true-Gibbs clean acc
+                    acc_g = test_acc(model, data[2], data[3], sampler='gibbs')
+                    info['test_acc_relaxed'] = acc
+                    info['test_acc_gibbs'] = acc_g
+                    gibbs_msg = f"  [relaxed={acc:.3f} gibbs={acc_g:.3f}]"
+                json.dump(info, open(meta, 'w'), indent=2)
                 json.dump(hist, open(os.path.join(d, 'history.json'), 'w'))  # full curves incl per-step loss
-                print(f"{type_}/{variant}/seed{s}: acc={acc:.3f} (best {best:.3f}, {epochs} ep)")
+                print(f"{type_}/{variant}/seed{s}: acc={acc:.3f} (best {best:.3f}, {epochs} ep){gibbs_msg}")
 
 
 def _eval_modes(variant):
