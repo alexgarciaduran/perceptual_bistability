@@ -118,9 +118,32 @@ def corrupt_flip(x, s, gen):                 # pixel-flip as a corruption family
 CORR = {**CORRUPTIONS, 'flip': corrupt_flip}
 
 
+# ----------------------------------------------------- sparse fractional BP -
+def infer_fbp_sparse(B, Jmat, alpha=1.0, iters=15, damping=0.5):
+    """Fractional BP with messages stored ONLY on the graph's directed edges.
+    Mathematically identical to mrf_inference_nets.infer_fbp but O(E) memory
+    and compute instead of O(n^2) -- the grid is ~99.5% non-edges at 28x28.
+    Differentiable in B and Jmat (training / white-box PGD)."""
+    bsz, n = B.shape
+    idx = (Jmat != 0).nonzero(as_tuple=False)
+    src, tgt = idx[:, 0], idx[:, 1]                      # directed edge i->j
+    key = src * n + tgt
+    order = torch.argsort(key)
+    rev = order[torch.searchsorted(key[order], tgt * n + src)]   # (j->i) index
+    Jt = torch.tanh(alpha * Jmat[src, tgt])              # [E]
+    M = torch.zeros(bsz, src.shape[0])
+    for _ in range(iters):
+        Q = B.index_add(1, tgt, M)                       # Q_j = B_j + sum_i m_{i->j}
+        h = Q[:, src] - alpha * M[:, rev]                # cavity field for i->j
+        arg = (Jt * torch.tanh(h)).clamp(-0.999, 0.999)
+        newM = (1.0 / alpha) * torch.atanh(arg)
+        M = damping * newM + (1 - damping) * M
+    return torch.tanh(B.index_add(1, tgt, M))
+
+
 # --------------------------------------------------------------- model ------
 class BinaryMRF(nn.Module):
-    """Identity(+fixed pool) encoder over a LOCAL pixel-lattice Ising graph.
+    """Identity encoder over a LOCAL pixel-lattice Ising graph (B = beta*(2x-1)).
     learn_J=False -> Type A: frozen FERROMAGNETIC (positive) couplings, a real
     smoothing prior. learn_J=True -> Type B: trained signed couplings."""
     def __init__(self, variant, learn_J=True, seed=0, beta=BETA, iters=ITERS):
@@ -152,7 +175,7 @@ class BinaryMRF(nn.Module):
             if sampler == 'gibbs':
                 return infer_gibbs_discrete(B, Jm, iters=self.iters, n_samples=N_SAMPLES)
             return infer_sampling(B, Jm, iters=self.iters, n_samples=N_SAMPLES)
-        return infer_fbp(B, Jm, alpha=self.alpha, iters=self.iters)
+        return infer_fbp_sparse(B, Jm, alpha=self.alpha, iters=self.iters)
 
     def forward(self, x, sampler=None):
         B = self.beta * (2 * x.view(x.shape[0], -1) - 1)   # evidence field
