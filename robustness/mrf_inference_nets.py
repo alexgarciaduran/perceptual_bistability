@@ -49,6 +49,10 @@ LEAN = True
 EPOCHS = 10
 N_SEEDS = 1
 RUN_VARIANTS = ['gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']  # gibbs20 only from the gibbs family
+N_LAYERS = 3        # stacked inference blocks -> inference is the load-bearing computation
+B_SCALE = 0.5       # bound evidence B = b_scale*tanh(.) so coupling J matters each layer
+ITERS = 10          # inference sweeps per layer -- SAME for every variant (matched compute)
+N_SAMPLES = 20      # chains for sampling variants (matched across gibbs/relaxed)
 
 # torch.set_num_threads(16)
 
@@ -148,14 +152,16 @@ def infer_gibbs_discrete(B, Jmat, iters=20, n_samples=20, burn=None):
 
 class MRFClassifier(nn.Module):
     def __init__(self, variant, g=7, n_classes=10, learn_J=False,
-                 J_sigma=0.15, iters=10, seed=0, lean=False):
+                 J_sigma=0.6, iters=ITERS, seed=0, lean=False,
+                 n_layers=N_LAYERS, b_scale=B_SCALE):
         super().__init__()
         self.variant = variant
         self.algo, param = VARIANTS[variant]
         self.alpha = float(param) if self.algo == 'fbp' else 1.0
-        self.samp_iters = int(param) if self.algo == 'sampling' else 12
-        self.iters = iters
+        self.iters = iters                      # matched sweep count for ALL variants
         self.n = g * g
+        self.n_layers = n_layers
+        self.b_scale = b_scale
         A = grid_adjacency(g)
         self.register_buffer('mask', A)
         gen = torch.Generator().manual_seed(seed)
@@ -166,25 +172,39 @@ class MRFClassifier(nn.Module):
         else:
             self.register_buffer('Jraw', J0)
         self.encoder = Encoder(self.n, g, lean=lean)
+        # between-layer evidence remix (marginals_l -> evidence_{l+1}); the ONLY
+        # other transform, kept linear so the inference is the sole nonlinearity
+        self.mix = nn.ModuleList([nn.Linear(self.n, self.n) for _ in range(n_layers - 1)])
         self.readout = nn.Linear(self.n, n_classes)
 
     def Jmat(self):
         J = self.Jraw * self.mask
         return (J + J.t()) / 2                             # keep symmetric
 
-    def marginals(self, x, sampler=None):
-        """sampler only affects the 'sampling' variant: None/'relaxed' -> the
-        differentiable Gumbel surrogate (default, used for training + PGD craft);
-        'gibbs' -> true discrete Gibbs (eval only, non-differentiable)."""
-        B = self.encoder(x)
-        Jm = self.Jmat()
+    def _bound(self, B):
+        return self.b_scale * torch.tanh(B) if self.b_scale else B
+
+    def _infer(self, B, Jm, sampler):
         if self.algo == 'mf':
             return infer_mf(B, Jm, self.iters)
         if self.algo == 'sampling':
             if sampler == 'gibbs':
-                return infer_gibbs_discrete(B, Jm, iters=self.samp_iters)
-            return infer_sampling(B, Jm, iters=self.samp_iters)
+                return infer_gibbs_discrete(B, Jm, iters=self.iters, n_samples=N_SAMPLES)
+            return infer_sampling(B, Jm, iters=self.iters, n_samples=N_SAMPLES)
         return infer_fbp(B, Jm, alpha=self.alpha, iters=self.iters)
+
+    def marginals(self, x, sampler=None):
+        """Deep inference stack: evidence -> [inference -> linear remix] x L.
+        The inference (algorithm X, over coupling J) is the only nonlinearity, so
+        it is load-bearing by construction; b_scale bounds evidence so J matters
+        at every layer. sampler only affects the 'sampling' variant at eval."""
+        Jm = self.Jmat()
+        B = self._bound(self.encoder(x))
+        m = self._infer(B, Jm, sampler)
+        for l in range(self.n_layers - 1):
+            B = self._bound(self.mix[l](m))
+            m = self._infer(B, Jm, sampler)
+        return m
 
     def forward(self, x, sampler=None):
         return self.readout(self.marginals(x, sampler=sampler))
