@@ -33,6 +33,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
 
 SAVE_ROOT = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis"
 DATA_DIR = SAVE_ROOT               # MNIST lives here (torchvision makes DATA_DIR/MNIST)
@@ -43,6 +44,13 @@ VARIANTS = {'gibbs10': ('sampling', 10), 'gibbs20': ('sampling', 20),
             'fbp1.5': ('fbp', 1.5), 'fbp2.0': ('fbp', 2.0)}
 TYPES = {'typeA_imposed': False, 'typeB_learned': True}   # learn_J flag
 
+# ---- defaults for a plain run (Spyder F5, no CLI args) ----
+LEAN = True
+EPOCHS = 10
+N_SEEDS = 10
+RUN_VARIANTS = ['gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']  # gibbs20 only from the gibbs family
+
+torch.set_num_threads(16)
 
 # --------------------------------------------------------------- graph ------
 def grid_adjacency(g):
@@ -69,9 +77,9 @@ class Encoder(nn.Module):
         self.lean = lean
         if lean:
             self.net = nn.Sequential(
-                nn.Conv2d(in_ch, 8, 3, padding=1), nn.ReLU(),
-                nn.Conv2d(8, 8, 3, padding=1), nn.ReLU(),
-                nn.Conv2d(8, 1, 3, padding=1),
+                nn.Conv2d(in_ch, 16, 3, padding=1), nn.ReLU(),
+                nn.Conv2d(16, 16, 3, padding=1), nn.ReLU(),
+                nn.Conv2d(16, 1, 3, padding=1),
                 nn.AdaptiveAvgPool2d(g), nn.Flatten())     # -> g*g evidence
         else:
             self.net = nn.Sequential(
@@ -105,7 +113,7 @@ def infer_fbp(B, Jmat, alpha=1.0, iters=10, damping=0.5):
     return torch.tanh(B + (M * mask).sum(1))
 
 
-def infer_sampling(B, Jmat, iters=12, n_samples=8, noise=0.6):
+def infer_sampling(B, Jmat, iters=12, n_samples=20, noise=0.6):
     bsz, n = B.shape
     x = torch.zeros(bsz, n_samples, n)
     for _ in range(iters):
@@ -214,71 +222,94 @@ def test_acc(model, Xte, Yte, bs=500):
     return correct / len(Xte)
 
 
-def train_model(model, data, target=0.85, max_epochs=30, lr=1e-3, bs=128):
+def train_model(model, data, epochs=30, lr=1e-3, bs=128):
+    """Train for a FIXED number of epochs. Returns (final acc, best acc, history)
+    where history logs per-step training loss and per-epoch train loss + test acc."""
     Xtr, Ytr, Xte, Yte = data
     opt = torch.optim.Adam(model.parameters(), lr=lr)
-    best = 0.0
-    for ep in range(max_epochs):
+    best = acc = 0.0
+    hist = {'step_loss': [], 'epoch_loss': [], 'epoch_acc': []}
+    ebar = tqdm(range(epochs), desc='  epochs', leave=False)
+    for ep in ebar:
         model.train()
         perm = torch.randperm(len(Xtr))
+        elosses = []
         for i in range(0, len(Xtr), bs):
             idx = perm[i:i+bs]
             opt.zero_grad()
-            F.cross_entropy(model(Xtr[idx]), Ytr[idx]).backward()
-            opt.step()
+            loss = F.cross_entropy(model(Xtr[idx]), Ytr[idx])
+            loss.backward(); opt.step()
+            hist['step_loss'].append(float(loss)); elosses.append(float(loss))
         acc = test_acc(model, Xte, Yte)
         best = max(best, acc)
-        if acc >= target:
-            return acc, ep + 1
-    return best, max_epochs
+        hist['epoch_loss'].append(float(np.mean(elosses)))
+        hist['epoch_acc'].append(acc)
+        ebar.set_postfix(loss=f"{hist['epoch_loss'][-1]:.3f}", acc=f'{acc:.3f}')
+        tqdm.write(f"    epoch {ep+1}/{epochs}: loss={hist['epoch_loss'][-1]:.4f}  test_acc={acc:.4f}")
+    return acc, best, hist
 
 
 # --------------------------------------------------------------- orchestrate
-def _paths(type_, variant, seed):
-    d = os.path.join(SAVE_ROOT, type_, variant, f'seed{seed}')
+def _paths(type_, variant, seed, lean=False):
+    tag = 'lean' if lean else 'full'
+    d = os.path.join(SAVE_ROOT, type_, variant, f'seed{seed}_{tag}')
     return d, os.path.join(d, 'model.pt'), os.path.join(d, 'meta.json')
 
 
-def train_all(seeds, variants, types, data, target=0.85, max_epochs=30, g=7, lean=False):
+def train_all(seeds, variants, types, data, epochs=30, g=7, lean=False):
     for type_ in types:
         for variant in variants:
             for s in seeds:
-                d, mp, meta = _paths(type_, variant, s)
+                d, mp, meta = _paths(type_, variant, s, lean)
                 if os.path.exists(meta):
                     print(f"skip {type_}/{variant}/seed{s} (done)"); continue
                 os.makedirs(d, exist_ok=True)
                 torch.manual_seed(s); np.random.seed(s)
                 model = MRFClassifier(variant, g=g, learn_J=TYPES[type_], seed=s, lean=lean)
-                acc, ep = train_model(model, data, target=target, max_epochs=max_epochs)
+                print(f"training {type_}/{variant}/seed{s} ...")
+                acc, best, hist = train_model(model, data, epochs=epochs)
                 torch.save(model.state_dict(), mp)
                 json.dump({'type': type_, 'variant': variant, 'seed': s,
-                           'test_acc': acc, 'epochs': ep, 'reached_target': acc >= target},
+                           'test_acc': acc, 'best_acc': best, 'epochs': epochs,
+                           'epoch_acc': hist['epoch_acc'], 'epoch_loss': hist['epoch_loss']},
                           open(meta, 'w'), indent=2)
-                print(f"{type_}/{variant}/seed{s}: acc={acc:.3f} ({ep} ep)")
+                json.dump(hist, open(os.path.join(d, 'history.json'), 'w'))  # full curves incl per-step loss
+                print(f"{type_}/{variant}/seed{s}: acc={acc:.3f} (best {best:.3f}, {epochs} ep)")
 
 
-def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False,
+def attack_all(seeds, variants, types, data, g=7, n_imgs=50, lean=False, steps=20,
                eps_linf=(0, 0.05, 0.1, 0.15, 0.2, 0.3),
                eps_l2=(0, 0.5, 1.0, 1.5, 2.0, 3.0)):
+    """PGD robustness, resumable PER NETWORK: each net's curves are saved to its
+    own folder as robustness.json and skipped if already present; all per-net
+    files are then aggregated into results/robustness.pkl for plotting."""
     _, _, Xte, Yte = data
     X, Y = Xte[:n_imgs], Yte[:n_imgs]
     results = {'linf': {}, 'l2': {}, 'eps': {'linf': eps_linf, 'l2': eps_l2}}
     for type_ in types:
         for variant in variants:
             for s in seeds:
-                d, mp, meta = _paths(type_, variant, s)
+                d, mp, meta = _paths(type_, variant, s, lean)
                 if not os.path.exists(mp):
                     continue
-                model = MRFClassifier(variant, g=g, learn_J=TYPES[type_], seed=s, lean=lean)
-                model.load_state_dict(torch.load(mp)); model.eval()
-                for norm, epslist in (('linf', eps_linf), ('l2', eps_l2)):
-                    curve = []
-                    for e in epslist:
-                        xa = ATTACKS[norm](model, X, Y, e) if e else X
-                        with torch.no_grad():
-                            curve.append((model(xa).argmax(1) == Y).float().mean().item())
-                    results[norm].setdefault((type_, variant), []).append(curve)
-                print(f"attacked {type_}/{variant}/seed{s}")
+                rp = os.path.join(d, 'robustness.json')
+                if os.path.exists(rp):                       # resume: reuse
+                    rec = json.load(open(rp))
+                else:
+                    model = MRFClassifier(variant, g=g, learn_J=TYPES[type_], seed=s, lean=lean)
+                    model.load_state_dict(torch.load(mp)); model.eval()
+                    rec = {}
+                    for norm, epslist in (('linf', eps_linf), ('l2', eps_l2)):
+                        curve = []
+                        for e in tqdm(epslist, desc=f'atk {variant} s{s} {norm}', leave=False):
+                            xa = ATTACKS[norm](model, X, Y, e, steps=steps) if e else X
+                            with torch.no_grad():
+                                curve.append((model(xa).argmax(1) == Y).float().mean().item())
+                        rec[norm] = {'eps': list(epslist), 'acc': curve}
+                    json.dump(rec, open(rp, 'w'), indent=2)
+                    print(f"attacked {type_}/{variant}/seed{s}")
+                for norm in ('linf', 'l2'):
+                    results[norm].setdefault((type_, variant), []).append(rec[norm]['acc'])
     os.makedirs(os.path.join(SAVE_ROOT, 'results'), exist_ok=True)
     pickle.dump(results, open(os.path.join(SAVE_ROOT, 'results', 'robustness.pkl'), 'wb'))
     return results
@@ -316,24 +347,27 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--mode', choices=['train', 'attack', 'plot', 'all'], default='all')
     ap.add_argument('--fast', action='store_true')
-    ap.add_argument('--n_seeds', type=int, default=20)
-    ap.add_argument('--target', type=float, default=0.85)
-    ap.add_argument('--max_epochs', type=int, default=30)
-    ap.add_argument('--variants', nargs='*', default=list(VARIANTS))
+    ap.add_argument('--n_seeds', type=int, default=N_SEEDS)
+    ap.add_argument('--epochs', type=int, default=EPOCHS, help='fixed epochs for every net')
+    ap.add_argument('--variants', nargs='*', default=list(RUN_VARIANTS))
     ap.add_argument('--types', nargs='*', default=list(TYPES))
-    ap.add_argument('--lean', action='store_true', help='lean encoder: MRF carries the representation')
-    args = ap.parse_args()
+    ap.add_argument('--lean', dest='lean', action='store_true', default=LEAN,
+                    help='lean encoder: MRF carries the representation')
+    ap.add_argument('--no-lean', dest='lean', action='store_false')
+    args, _ = ap.parse_known_args()          # robust to Spyder's injected argv
 
     if args.fast:
-        args.n_seeds, args.target, args.max_epochs = 1, 0.5, 1
-        args.variants, args.types = ['mf', 'lbp', 'gibbs10'], ['typeA_imposed']
+        args.n_seeds, args.epochs = 1, 1
+        args.variants, args.types = ['mf', 'lbp', 'gibbs20'], ['typeA_imposed']
     data = get_data(fake=args.fast, n_train=20000)
     seeds = list(range(args.n_seeds))
     if args.mode in ('train', 'all'):
-        train_all(seeds, args.variants, args.types, data, args.target,
-                  args.max_epochs, lean=args.lean)
+        train_all(seeds, args.variants, args.types, data, epochs=args.epochs,
+                  lean=args.lean)
     if args.mode in ('attack', 'all'):
         attack_all(seeds, args.variants, args.types, data,
                    n_imgs=(8 if args.fast else 50), lean=args.lean)
+    if args.mode in ('plot', 'all'):
+        plot_results()
     if args.mode in ('plot', 'all'):
         plot_results()
