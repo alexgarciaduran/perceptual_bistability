@@ -6,6 +6,15 @@ import matplotlib.pyplot as plt
 import scipy.optimize
 import posterior_computation_comparison as pc
 
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['font.size'] = 16
+plt.rcParams['legend.title_fontsize'] = 14
+plt.rcParams['legend.fontsize'] = 14
+plt.rcParams['xtick.labelsize'] = 14
+plt.rcParams['ytick.labelsize'] = 14
+plt.rcParams["axes.grid"] = False
+
 THETA = pc.THETA_NECKER
 N = THETA.shape[0]
 _G = nx.from_numpy_array(THETA)
@@ -299,7 +308,8 @@ def plot_signatures(save=True):
         a.spines['top'].set_visible(False); a.spines['right'].set_visible(False)
     fig.tight_layout()
     if save:
-        fig.savefig(pc.DATA_FOLDER + 'signatures.png', dpi=180, bbox_inches='tight')
+        fig.savefig(pc.DATA_FOLDER + 'signatures.png', dpi=300, bbox_inches='tight')
+        fig.savefig(pc.DATA_FOLDER + 'signatures.svg', dpi=200, bbox_inches='tight')
     return fig
 
 

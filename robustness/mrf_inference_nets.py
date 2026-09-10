@@ -35,6 +35,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['font.size'] = 16
+plt.rcParams['legend.title_fontsize'] = 14
+plt.rcParams['legend.fontsize'] = 14
+plt.rcParams['xtick.labelsize'] = 14
+plt.rcParams['ytick.labelsize'] = 14
+plt.rcParams["axes.grid"] = False
+
+
 SAVE_ROOT = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis"
 DATA_DIR = SAVE_ROOT               # MNIST lives here (torchvision makes DATA_DIR/MNIST)
 # variant -> (inference algo, param): param = sampling iters for gibbs, alpha for fbp
@@ -520,7 +530,6 @@ def plot_results(results=None, transfer_summary='max'):
     """transfer_summary: 'max' (strongest eps), 'auc' (mean over eps), or an int
     eps index -- controls only the single summary transfer heatmap; the per-eps
     grid always shows the full epsilon dependence."""
-    import matplotlib.pyplot as plt
     if results is None:
         results = pickle.load(open(os.path.join(SAVE_ROOT, 'results', 'robustness.pkl'), 'rb'))
 

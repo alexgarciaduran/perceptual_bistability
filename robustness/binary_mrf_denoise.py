@@ -45,6 +45,15 @@ from mrf_inference_nets import (grid_adjacency, infer_mf, infer_fbp,
                                 _acc, _corrupt_curve, _color, _style,
                                 _eval_modes, _mode_tag)
 
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['font.size'] = 16
+plt.rcParams['legend.title_fontsize'] = 14
+plt.rcParams['legend.fontsize'] = 14
+plt.rcParams['xtick.labelsize'] = 14
+plt.rcParams['ytick.labelsize'] = 14
+plt.rcParams["axes.grid"] = False
+
 SAVE_ROOT = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis\binary_denoise"
 DATA_DIR = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis"
 
@@ -69,7 +78,7 @@ RUN_VARIANTS = ['linear', 'gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']
 FLIP_PROBS = (0.0, 0.1, 0.2, 0.3, 0.4)   # flip-noise sweep (diagnostic report)
 TRAIN_FLIP = 0.2            # flip noise applied during (denoising) training
 
-TYPES = {'typeA_ferro': False, 'typeB_learned': True}     # learn_J flag
+TYPES = {'typeA_ferro': False}  # , 'typeB_learned': True}     # learn_J flag
 EPS_LINF = (0, 0.05, 0.1, 0.15, 0.2, 0.3)
 EPS_L2 = (0, 0.5, 1.0, 1.5, 2.0, 3.0)
 NAT_STR = (0, 0.2, 0.4, 0.6, 0.8, 1.0)

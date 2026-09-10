@@ -1459,8 +1459,11 @@ if __name__ == "__main__":
     #                             load_data=True, metric='kl')
     
     
-    plot_cycle_by_method_and_type(n=9, levels=(0, 1, 3, 6, 11), n_graphs=5,
-                                  J_list=(0.2, 0.4, 0.6, 0.8),
-                                  B_list=np.repeat(np.round(np.linspace(-0.5, 0.5, 7), 3), 2),
-                                  methods=None, gibbs_steps=8000,
-                                  load_data=True, data_path=None, save=True)
+    # plot_cycle_by_method_and_type(n=9, levels=(0, 1, 3, 6, 11), n_graphs=5,
+    #                               J_list=(0.2, 0.4, 0.6, 0.8),
+    #                               B_list=np.repeat(np.round(np.linspace(-0.5, 0.5, 7), 3), 2),
+    #                               methods=None, gibbs_steps=8000,
+    #                               load_data=True, data_path=None, save=True)
+    plot_input_susceptibility(J_list=(0.15, 0.30), B=0.0, alphas=(0.5, 1.0, 1.5),
+                              gibbs_steps=300000, gibbs_burn=20000,
+                              theta=THETA_NECKER, save=True)
