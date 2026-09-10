@@ -51,15 +51,23 @@ DATA_DIR = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analy
 G = 28                      # GxG lattice
 N = G * G                   # nodes
 BETA = 1.0                  # evidence strength (bounded field); kept FIXED
-ITERS = 15                  # inference sweeps (matched across variants)
+BINARIZE = False            # False = original grayscale MNIST (preferred);
+                            # True = threshold to {0,1}. Evidence B=beta*(2x-1)
+                            # is valid for continuous x in [0,1] either way -- the
+                            # LATENTS stay binary spins, only the field is real.
+ITERS = 30                  # inference sweeps (matched across variants)
 N_SAMPLES = 20              # chains for sampling variants (matched)
-J_SIGMA = 0.4               # coupling scale (|.| for ferro Type A; signed Type B)
-EPOCHS = 20
-N_SEEDS_B = 20              # learned-J networks (Type B, primary)
-N_SEEDS_A = 10              # fixed ferromagnetic-J control networks (Type A)
-RUN_VARIANTS = ['gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']
+J_SIGMA = 0.3               # coupling scale (|.| for ferro Type A; signed Type B)
+                            # 0.3: all variants converge within ITERS (MF incl.,
+                            # undamped); 0.6 makes synchronous MF/low-alpha FBP
+                            # oscillate -- see convergence.png.
+EPOCHS = 5
+N_SEEDS_B = 5              # learned-J networks (Type B, primary)
+N_SEEDS_A = 5               # fixed ferromagnetic-J control networks (Type A)
+LINEAR = 'linear'          # no-inference control: linear readout on scaled input
+RUN_VARIANTS = ['linear', 'gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']
 FLIP_PROBS = (0.0, 0.1, 0.2, 0.3, 0.4)   # flip-noise sweep (diagnostic report)
-TRAIN_FLIP = 0.25          # flip noise applied during (denoising) training
+TRAIN_FLIP = 0.2            # flip noise applied during (denoising) training
 
 TYPES = {'typeA_ferro': False, 'typeB_learned': True}     # learn_J flag
 EPS_LINF = (0, 0.05, 0.1, 0.15, 0.2, 0.3)
@@ -77,20 +85,21 @@ def flip(x, p, gen=None):
     return torch.where(m, 1.0 - x, x)
 
 
-def get_binary_data(fake=False, noisy=False, flip_p=TRAIN_FLIP, seed=0,
-                    n_train=20000, n_test=2000):
-    """MNIST -> resize GxG (area) -> binarize {0,1}, as float [N,1,G,G].
+def get_binary_data(fake=False, binarize=BINARIZE, noisy=False, flip_p=TRAIN_FLIP,
+                    seed=0, n_train=20000, n_test=2000):
+    """MNIST as float [N,1,G,G] in [0,1]. Grayscale by default (binarize=False,
+    the original images); binarize=True thresholds to {0,1}. Downsamples to GxG
+    (area) only when G != 28.
 
     noisy=True bakes a fixed flip(flip_p) into BOTH splits (a ready-made noisy
     dataset for quick experiments / eval); training still applies fresh on-the-
-    fly flips each epoch for denoising. noisy=False returns the clean binary
-    images."""
+    fly flips each epoch for denoising."""
     if fake:
         gen = torch.Generator().manual_seed(seed)
-        Xtr = (torch.rand(512, 1, G, G, generator=gen) > 0.5).float()
-        Ytr = torch.randint(0, 10, (512,), generator=gen)
-        Xte = (torch.rand(256, 1, G, G, generator=gen) > 0.5).float()
-        Yte = torch.randint(0, 10, (256,), generator=gen)
+        Xtr = torch.rand(512, 1, G, G, generator=gen); Ytr = torch.randint(0, 10, (512,), generator=gen)
+        Xte = torch.rand(256, 1, G, G, generator=gen); Yte = torch.randint(0, 10, (256,), generator=gen)
+        if binarize:
+            Xtr, Xte = (Xtr > 0.5).float(), (Xte > 0.5).float()
     else:
         from torchvision import datasets, transforms
         tf = transforms.ToTensor()
@@ -100,8 +109,9 @@ def get_binary_data(fake=False, noisy=False, flip_p=TRAIN_FLIP, seed=0,
         def pack(ds, n):
             X = torch.stack([ds[i][0] for i in range(min(n, len(ds)))])
             Y = torch.tensor([ds[i][1] for i in range(min(n, len(ds)))])
-            # X = F.interpolate(X, size=(G, G), mode='area')
-            return (X > 0.5).float(), Y
+            if G != 28:
+                X = F.interpolate(X, size=(G, G), mode='area')
+            return ((X > 0.5).float() if binarize else X), Y
         Xtr, Ytr = pack(tr, n_train)
         Xte, Yte = pack(te, n_test)
     if noisy:
@@ -116,6 +126,14 @@ def corrupt_flip(x, s, gen):                 # pixel-flip as a corruption family
 
 
 CORR = {**CORRUPTIONS, 'flip': corrupt_flip}
+
+
+def _is_sampling(v):
+    return v in VARIANTS and VARIANTS[v][0] == 'sampling'
+
+
+def _eval_modes(v):                          # shadow import; 'linear' has no VARIANTS entry
+    return ['relaxed_sampling', 'gibbs_sampling'] if _is_sampling(v) else ['det']
 
 
 # ----------------------------------------------------- sparse fractional BP -
@@ -149,7 +167,10 @@ class BinaryMRF(nn.Module):
     def __init__(self, variant, learn_J=True, seed=0, beta=BETA, iters=ITERS):
         super().__init__()
         self.variant = variant
-        self.algo, param = VARIANTS[variant]
+        if variant == LINEAR:
+            self.algo, param = 'linear', None    # no-inference control
+        else:
+            self.algo, param = VARIANTS[variant]
         self.alpha = float(param) if self.algo == 'fbp' else 1.0
         self.beta, self.iters = beta, iters
         A = grid_adjacency(G)                       # 4-neighbour LOCAL lattice
@@ -169,6 +190,8 @@ class BinaryMRF(nn.Module):
         return (J + J.t()) / 2
 
     def _infer(self, B, Jm, sampler):
+        if self.algo == 'linear':
+            return B                             # NO inference: identity on scaled input
         if self.algo == 'mf':
             return infer_mf(B, Jm, self.iters)
         if self.algo == 'sampling':
@@ -240,6 +263,8 @@ def _seeds(type_, fast):
 def train_all(variants, types, data, epochs=EPOCHS, fast=False):
     for type_ in types:
         for variant in variants:
+            if variant == LINEAR and type_ != 'typeA_ferro':
+                continue                         # no-inference control: Type A only
             for s in _seeds(type_, fast):
                 d, mp, meta = _paths(type_, variant, s)
                 if os.path.exists(meta):
@@ -253,7 +278,7 @@ def train_all(variants, types, data, epochs=EPOCHS, fast=False):
                         'test_acc': acc, 'best_acc': best, 'epochs': epochs,
                         'epoch_acc': hist['epoch_acc'], 'epoch_loss': hist['epoch_loss']}
                 gmsg = ''
-                if VARIANTS[variant][0] == 'sampling':
+                if _is_sampling(variant):
                     acc_g = acc_at_flip(model, data[2], data[3], TRAIN_FLIP, sampler='gibbs')
                     info['test_acc_relaxed'] = acc; info['test_acc_gibbs'] = acc_g
                     gmsg = f"  [relaxed={acc:.3f} gibbs={acc_g:.3f}]"
@@ -322,12 +347,19 @@ def attack_all(variants, types, data, n_imgs=50, steps=20, fast=False,
                     json.dump(rec, open(rp, 'w'), indent=2)
                     print(f"  {type_}/{v}/seed{s}: clean={rec['acc_clean']:.3f} "
                           f"J0={rec['acc_J0']:.3f} |J|={rec['J_norm']:.1f}")
-                    try:
-                        from torchvision.utils import save_image
+                    try:                          # white-box adversarials of THIS net,
+                        from torchvision.utils import save_image   # per norm / per eps,
+                        ndir = {'l2': 'PGD_L2', 'linf': 'PGD_Linf'}  # each image png + pt
                         for nm, epl in NORMS:
-                            xa = adv[v][nm][epl[-1]]
-                            torch.save(xa, os.path.join(d, f'adv_{nm}.pt'))
-                            save_image(xa, os.path.join(d, f'adv_{nm}.png'), nrow=10)
+                            for e in epl:
+                                if e == 0:
+                                    continue                  # eps=0 is the clean image
+                                ed = os.path.join(d, ndir[nm], f'eps_{e}')
+                                os.makedirs(ed, exist_ok=True)
+                                xa = adv[v][nm][e]            # [n_imgs,1,G,G]
+                                for k in range(xa.shape[0]):
+                                    save_image(xa[k], os.path.join(ed, f'img_{k:02d}.png'))
+                                    torch.save(xa[k].clone(), os.path.join(ed, f'img_{k:02d}.pt'))
                     except Exception as ex:
                         print('adv image save skipped:', ex)
                 for mode in rec['modes']:
@@ -345,15 +377,22 @@ def attack_all(variants, types, data, n_imgs=50, steps=20, fast=False,
     return results
 
 
-def plot_results(results=None, transfer_summary='max'):
+def plot_results(results=None, transfer_summary='max', normalize=False):
     """PGD-L2/Linf + per-corruption (incl flip) + transfer heatmaps (summary +
     per-epsilon grid), Type A (imposed ferro) vs Type B (learned). Mirrors
-    mrf_inference_nets.plot_results; reuses its _color/_style."""
+    mrf_inference_nets.plot_results; reuses its _color/_style.
+
+    normalize=True divides each net's curve by its OWN clean (strength/eps=0)
+    accuracy before averaging -> relative robustness (fraction of clean retained),
+    which removes the clean-accuracy advantage and compares degradation shape.
+    Saves an extra set of *_norm.png figures."""
     import matplotlib.pyplot as plt
     if results is None:
         results = pickle.load(open(os.path.join(SAVE_ROOT, 'results', 'robustness.pkl'), 'rb'))
     resdir = os.path.join(SAVE_ROOT, 'results'); os.makedirs(resdir, exist_ok=True)
     types = list(TYPES)
+    sfx = '_norm' if normalize else ''
+    ylab = 'accuracy / clean' if normalize else 'accuracy'
 
     def curves(store, xs, key3=None):
         fig, axes = plt.subplots(1, len(types), figsize=(6*len(types), 4.6), sharey=True)
@@ -361,27 +400,30 @@ def plot_results(results=None, transfer_summary='max'):
             labs = sorted({k[1] for k in store if k[0] == t and (key3 is None or k[-1] == key3)})
             for lab in labs:
                 k = (t, lab) if key3 is None else (t, lab, key3)
-                arr = np.array(store[k]); mu, sd = arr.mean(0), arr.std(0)
+                arr = np.array(store[k])
+                if normalize:                       # each seed relative to its own clean
+                    arr = arr / np.clip(arr[:, :1], 1e-6, None)
+                mu, sd = arr.mean(0), arr.std(0)
                 ax.plot(xs, mu, _style(lab), marker='o', ms=3, color=_color(lab), label=lab)
                 ax.fill_between(xs, mu - sd, mu + sd, color=_color(lab), alpha=0.12)
             ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
             ax.set_title(t.replace('_', ' '))
-        axes[0].set_ylabel('accuracy'); axes[0].legend(frameon=False, fontsize=8)
+        axes[0].set_ylabel(ylab); axes[0].legend(frameon=False, fontsize=8)
         return fig, axes
 
     for nm in ('linf', 'l2'):
         fig, axes = curves(results[nm], results['eps'][nm])
         for ax in axes:
             ax.set_xlabel(f'PGD {nm} eps')
-        fig.suptitle(f'PGD-{nm}: imposed(ferro) vs learned J'); fig.tight_layout()
-        fig.savefig(os.path.join(resdir, f'robustness_{nm}.png'), dpi=180, bbox_inches='tight')
+        fig.suptitle(f'PGD-{nm} ({ylab}): imposed(ferro) vs learned J'); fig.tight_layout()
+        fig.savefig(os.path.join(resdir, f'robustness_{nm}{sfx}.png'), dpi=180, bbox_inches='tight')
 
     for name in sorted({k[2] for k in results['nat']}):
         fig, axes = curves(results['nat'], NAT_STR, key3=name)
         for ax in axes:
             ax.set_xlabel(f'{name} strength')
-        fig.suptitle(f'Corruption {name}: imposed(ferro) vs learned J'); fig.tight_layout()
-        fig.savefig(os.path.join(resdir, f'corruption_{name}.png'), dpi=180, bbox_inches='tight')
+        fig.suptitle(f'Corruption {name} ({ylab}): imposed(ferro) vs learned J'); fig.tight_layout()
+        fig.savefig(os.path.join(resdir, f'corruption_{name}{sfx}.png'), dpi=180, bbox_inches='tight')
 
     tr = results.get('transfer', {})
 
@@ -444,6 +486,8 @@ def diagnose(n_eval=1000, seeds_max=3, sampler='relaxed', save=True):
     ps = list(FLIP_PROBS); out = {}
     for type_ in TYPES:
         for v in RUN_VARIANTS:
+            if v == LINEAR and type_ != 'typeA_ferro':
+                continue                         # no-inference control: Type A only
             accs, acc0s, nseed = np.zeros(len(ps)), np.zeros(len(ps)), 0
             for s in range(seeds_max):
                 mp = _paths(type_, v, s)[1]
@@ -451,7 +495,7 @@ def diagnose(n_eval=1000, seeds_max=3, sampler='relaxed', save=True):
                     continue
                 model = make_model(v, type_, s)
                 model.load_state_dict(torch.load(mp)); model.eval()
-                smp = sampler if VARIANTS[v][0] == 'sampling' else None
+                smp = sampler if _is_sampling(v) else None
                 a = [acc_at_flip(model, Xte, Yte, p, sampler=smp) for p in ps]
                 Jsave = model.Jraw.detach().clone()
                 with torch.no_grad(): model.Jraw.zero_()
@@ -500,7 +544,7 @@ if __name__ == '__main__':
     ap.add_argument('--types', nargs='*', default=list(TYPES))
     args, _ = ap.parse_known_args()             # robust to Spyder's injected argv
 
-    variants = ['mf', 'lbp', 'gibbs20'] if args.fast else args.variants
+    variants = ['linear', 'mf', 'lbp', 'gibbs20'] if args.fast else args.variants
     types = args.types
     data = get_binary_data(fake=args.fast, n_train=(512 if args.fast else 20000))
     if args.mode == 'diag':
@@ -510,6 +554,8 @@ if __name__ == '__main__':
             train_all(variants, types, data, epochs=args.epochs, fast=args.fast)
         if args.mode in ('attack', 'all'):
             attack_all(variants, types, data,
-                       n_imgs=(8 if args.fast else 50), fast=args.fast)
+                       n_imgs=(8 if args.fast else 50), fast=args.fast,
+                       re_compute=True)
         if args.mode in ('plot', 'all'):
-            plot_results()
+            res = plot_results(normalize=False)      # raw accuracy figures
+            plot_results(res, normalize=True)        # + accuracy/clean figures
