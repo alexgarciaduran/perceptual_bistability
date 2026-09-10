@@ -42,7 +42,7 @@ import matplotlib as mpl
 mpl.rcParams['font.size'] = 15
 plt.rcParams["axes.grid"] = False
 
-pc = 'CRM'
+pc = 'Alex'
 if pc == 'Alex':
     SAVE_ROOT = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis\depth_denoise"
 if pc == 'CRM':
@@ -422,15 +422,20 @@ def plot_denoise_examples(js=(0.15, 0.35, 0.7), ps=(0.1, 0.2, 0.3),
     return paths
 
 
+def _mse_key(betas, j_sigmas, p, n_seeds, field_seed):
+    import hashlib
+    s = repr((tuple(map(float, betas)), tuple(map(float, j_sigmas)),
+              float(p), int(n_seeds), int(field_seed)))
+    return hashlib.md5(s.encode()).hexdigest()[:8]
+
+
 @torch.no_grad()
-def mse_matrix(betas=(0.25, 0.5, 1.0, 2.0), j_sigmas=J_SWEEP, p=BASE_P, n_seeds=50,
-               variants=RUN_VARIANTS, field_seed=2024, save=True):
-    """Per algorithm, a (beta x J_sigma) heatmap of denoising MSE, averaged over
-    `n_seeds` clean-field images (one shared noisy observation per cell). MSE is
-    between the output P(pixel=1)=(m+1)/2 and the clean field s. Sampling uses
-    true Gibbs. Saves results/mse_matrix.png and returns {variant: matrix}."""
-    S = make_fields(n_seeds, seed=field_seed)                 # [n,1,G,G] clean fields
-    O = flip(S, p, torch.Generator().manual_seed(777))        # one noisy observation set
+def compute_mse_matrix(betas, j_sigmas, p, n_seeds, variants, field_seed):
+    """Compute the (beta x J_sigma) denoising-MSE matrix for each variant. MSE is
+    between the output P(pixel=1)=(m+1)/2 and the clean field, averaged over
+    n_seeds images (one shared noisy observation per cell). Sampling uses Gibbs."""
+    S = make_fields(n_seeds, seed=field_seed)
+    O = flip(S, p, torch.Generator().manual_seed(777))
     St = S.view(n_seeds, N)
     mats = {v: np.full((len(betas), len(j_sigmas)), np.nan) for v in variants}
     for v in tqdm(variants, desc='mse_matrix'):
@@ -438,9 +443,14 @@ def mse_matrix(betas=(0.25, 0.5, 1.0, 2.0), j_sigmas=J_SWEEP, p=BASE_P, n_seeds=
         for bi, beta in enumerate(betas):
             for ji, js in enumerate(j_sigmas):
                 model = BinaryMRF(v, js, seed=0, beta=beta); model.eval()
-                ppred = ((model(O, sampler=smp) + 1) / 2).clamp(0, 1)   # [n,N] P(pixel=1)
+                ppred = ((model(O, sampler=smp) + 1) / 2).clamp(0, 1)
                 mats[v][bi, ji] = ((ppred - St) ** 2).mean().item()
-    vmax = max(np.nanmax(m) for m in mats.values())
+    return mats
+
+
+def _plot_mse_matrix(mats, betas, j_sigmas, p, n_seeds, resdir, save):
+    variants = [v for v in RUN_VARIANTS if v in mats]
+    vmax = max(np.nanmax(mats[v]) for v in variants)
     fig, axes = plt.subplots(1, len(variants), figsize=(2.6*len(variants), 3.2), squeeze=False)
     for ax, v in zip(axes[0], variants):
         M = mats[v]
@@ -450,37 +460,57 @@ def mse_matrix(betas=(0.25, 0.5, 1.0, 2.0), j_sigmas=J_SWEEP, p=BASE_P, n_seeds=
         ax.set_title(v, fontsize=10); ax.set_xlabel('J_sigma', fontsize=9)
         for bi in range(len(betas)):
             for ji in range(len(j_sigmas)):
-                ax.text(ji, bi, f'{M[bi,ji]:.3e}', ha='center', va='center',
+                ax.text(ji, bi, f'{M[bi,ji]:.3f}', ha='center', va='center',
                         color='w' if M[bi, ji] > 0.5*vmax else 'k', fontsize=6)
     axes[0][0].set_ylabel('beta', fontsize=9)
     fig.colorbar(im, ax=axes[0], fraction=0.02, label='denoising MSE')
     fig.suptitle(f'Denoising MSE (beta x J_sigma), mean over {n_seeds} images, p={p}', y=1.02)
     if save:
-        resdir = os.path.join(SAVE_ROOT, 'results'); os.makedirs(resdir, exist_ok=True)
         out = os.path.join(resdir, 'mse_matrix.png')
         fig.savefig(out, dpi=160, bbox_inches='tight'); print('saved', out)
-        pickle.dump({'mats': mats, 'betas': betas, 'j_sigmas': j_sigmas, 'p': p},
-                    open(os.path.join(resdir, 'mse_matrix.pkl'), 'wb'))
+    return fig
+
+
+def mse_matrix(betas=(0.25, 0.5, 1.0, 2.0), j_sigmas=J_SWEEP, p=BASE_P, n_seeds=50,
+               variants=RUN_VARIANTS, field_seed=2024, recompute=False, save=True):
+    """(beta x J_sigma) denoising-MSE heatmaps per algorithm. Results are CACHED
+    to results/mse_matrix_<confighash>.pkl (and each algorithm's matrix separately
+    to results/mse_mats/<variant>_<hash>.npy): a matching cache is loaded instead
+    of recomputing. Pass recompute=True to force. Returns {variant: matrix}."""
+    resdir = os.path.join(SAVE_ROOT, 'results'); os.makedirs(resdir, exist_ok=True)
+    key = _mse_key(betas, j_sigmas, p, n_seeds, field_seed)
+    cache = os.path.join(resdir, f'mse_matrix_{key}.pkl')
+    if os.path.exists(cache) and not recompute:
+        d = pickle.load(open(cache, 'rb'))
+        mats, betas, j_sigmas, p, n_seeds = d['mats'], d['betas'], d['j_sigmas'], d['p'], d['n_seeds']
+        print('loaded cached matrices:', cache)
+    else:
+        mats = compute_mse_matrix(betas, j_sigmas, p, n_seeds, variants, field_seed)
+        if save:
+            pickle.dump({'mats': mats, 'betas': betas, 'j_sigmas': j_sigmas,
+                         'p': p, 'n_seeds': n_seeds, 'field_seed': field_seed}, open(cache, 'wb'))
+            mdir = os.path.join(resdir, 'mse_mats'); os.makedirs(mdir, exist_ok=True)
+            for v, M in mats.items():
+                np.save(os.path.join(mdir, f'{v}_{key}.npy'), M)
+            print('saved matrices:', cache, '(+ per-variant .npy in mse_mats/)')
+    _plot_mse_matrix(mats, betas, j_sigmas, p, n_seeds, resdir, save)
     return mats
 
 
 if __name__ == '__main__':
-    # ap = argparse.ArgumentParser()
-    # ap.add_argument('--fast', action='store_true')
-    # ap.add_argument('--plot', action='store_true', help='re-plot from saved results')
-    # ap.add_argument('--examples', action='store_true', help='qualitative denoise panels')
-    # ap.add_argument('--mse', action='store_true', help='beta x J_sigma MSE heatmaps')
-    # ap.add_argument('--recompute', action='store_true')
-    # args, _ = ap.parse_known_args()
-    # if args.examples:
-    #     plot_denoise_examples()
-    # elif args.mse:
-    #     mse_matrix()
-    # elif args.plot:
-    #     plot()
-    # else:
-    #     res = run(fast=args.fast, re_compute=args.recompute)
-    #     plot(res)
-    mse_matrix(betas=np.arange(0, 1, 1e-1), j_sigmas=np.arange(0, 2, 2e-1),
-               p=BASE_P, n_seeds=50,
-               variants=RUN_VARIANTS, field_seed=2024, save=True)
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--fast', action='store_true')
+    ap.add_argument('--plot', action='store_true', help='re-plot from saved results')
+    ap.add_argument('--examples', action='store_true', help='qualitative denoise panels')
+    ap.add_argument('--mse', action='store_true', help='beta x J_sigma MSE heatmaps')
+    ap.add_argument('--recompute', action='store_true')
+    args, _ = ap.parse_known_args()
+    if args.examples:
+        plot_denoise_examples()
+    elif args.mse:
+        mse_matrix(recompute=args.recompute)
+    elif args.plot:
+        plot()
+    else:
+        res = run(fast=args.fast, re_compute=args.recompute)
+        plot(res)
