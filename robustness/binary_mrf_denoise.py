@@ -58,15 +58,18 @@ BASE_P = 0.2                # base observation flip-noise (the nominal denoising
 N_TEST = 40                 # images the whole robustness eval runs on (one batch)
 
 # ---- the coupling sweep: constraint (2) ----
-J_SWEEP = (0.15, 0.25, 0.35, 0.5, 0.7)   # 5 coupling scales
+J_SWEEP = (0.3, 0.5, 0.7, 0.9, 1.2)   # 5 coupling scales (run high-J first, see run())
 N_SEEDS = 10                              # networks (random ferro-J draws) per J
 
 LINEAR = 'linear'          # no-inference control: threshold the raw observation
 RUN_VARIANTS = ['linear', 'gibbs20', 'mf', 'fbp0.5', 'lbp', 'fbp1.5', 'fbp2.0']
-EPS_LINF = (0, 0.05, 0.1, 0.15, 0.2, 0.3)
-EPS_L2 = (0, 0.5, 1.0, 1.5, 2.0, 3.0)
+EPS_L0 = (0, 0.02, 0.05, 0.1, 0.15)       # PRIMARY attack: fraction of pixels adversarially
+                                          # flipped (L0/targeted-flip -- the natural worst
+                                          # case for a BINARY observation; continuous PGD
+                                          # can't cross the per-pixel 0.5 threshold).
+EPS_L2 = (0, 0.5, 1.0, 1.5, 2.0, 3.0)     # continuous PGD, kept as a (mostly-inert) reference
 NAT_STR = (0, 0.1, 0.2, 0.3, 0.4)         # EXTRA corruption on top of the base obs
-NORMS = (('linf', EPS_LINF), ('l2', EPS_L2))
+NORMS = (('l0', EPS_L0), ('l2', EPS_L2))
 
 
 def _is_sampling(v):
@@ -189,10 +192,37 @@ def _bce(model, o, s):
     return F.binary_cross_entropy(p, s.view(m.shape))
 
 
-def pgd_px(model, o, s, eps, norm='linf', steps=20):
-    """Per-pixel white-box PGD on the observation (maximise the denoiser's BCE)."""
+def l0_flip(model, o, s, k, steps=8):
+    """Targeted L0 adversary for BINARY observations: greedily FLIP the k pixels
+    that most increase the denoiser's BCE, over `steps` gradient re-evaluations
+    (flipping k/steps per round). Differentiable model (relaxed for sampling)."""
+    if k <= 0:
+        return o
+    o0 = o.detach(); b = o.shape[0]; n = o0[0].numel()
+    oa = o0.clone(); flipped = torch.zeros(b, n, dtype=torch.bool)
+    per = max(1, k // steps); done = 0
+    while done < k:
+        m = min(per, k - done)
+        oa.requires_grad_(True)
+        g, = torch.autograd.grad(_bce(model, oa, s), oa)
+        of = oa.detach().view(b, -1); gf = g.view(b, -1)
+        score = (gf * (1 - 2 * of)).masked_fill(flipped, -1e9)   # loss gain if flipped
+        idx = score.topk(m, dim=1).indices
+        nf = torch.zeros_like(flipped); nf.scatter_(1, idx, True)
+        flipped |= nf
+        of = torch.where(nf, 1 - of, of)
+        oa = of.view_as(o0).detach()
+        done += m
+    return oa
+
+
+def pgd_px(model, o, s, eps, norm='l0', steps=20):
+    """Adversary on the observation. norm='l0' -> targeted pixel-flip (primary);
+    'linf'/'l2' -> continuous white-box PGD (maximise the denoiser's BCE)."""
     if eps == 0:
         return o
+    if norm == 'l0':
+        return l0_flip(model, o, s, int(round(eps * o[0].numel())), steps=min(steps, 8))
     a = 2.5 * eps / steps
     b = o.shape[0]
     if norm == 'linf':
@@ -233,13 +263,15 @@ def _paths(j_sigma, variant, seed):
 def run(fast=False, steps=20, re_compute=False):
     """J-sweep x seeds x variants, per-pixel robustness, resumable per network.
     No training (imposed prior). Aggregates to results/robustness.pkl."""
-    js = [0.35] if fast else list(J_SWEEP)
+    js = [0.35] if fast else sorted(J_SWEEP, reverse=True)   # informative high-J first
     variants = ['linear', 'mf', 'lbp', 'gibbs20'] if fast else RUN_VARIANTS
     nseed = 1 if fast else N_SEEDS
     S = make_fields(8 if fast else N_TEST, seed=12345)          # fixed test fields
-    results = {'linf': {}, 'l2': {}, 'nat': {}, 'transfer': {}, 'clean': {},
-               'eps': {'linf': EPS_LINF, 'l2': EPS_L2}, 'nat_strengths': NAT_STR,
-               'J_sweep': js}
+    results = {'nat': {}, 'transfer': {}, 'clean': {},
+               'eps': {nm: epl for nm, epl in NORMS}, 'nat_strengths': NAT_STR,
+               'J_sweep': sorted(js)}
+    for nm, _ in NORMS:
+        results[nm] = {}
     for j_sigma in js:
         for seed in range(nseed):
             print(f'J = {j_sigma}, seed = {seed}')
@@ -283,14 +315,16 @@ def run(fast=False, steps=20, re_compute=False):
                     lab = v if mode == 'det' else f'{v}::{mode}'
                     key = (j_sigma, lab)
                     results['clean'].setdefault(key, []).append(rec[mode]['clean'])
-                    results['linf'].setdefault(key, []).append(rec[mode]['linf']['acc'])
-                    results['l2'].setdefault(key, []).append(rec[mode]['l2']['acc'])
+                    for nm, _ in NORMS:
+                        if nm in rec[mode]:
+                            results[nm].setdefault(key, []).append(rec[mode][nm]['acc'])
                     for name in CORR:
                         results['nat'].setdefault((j_sigma, lab, name), []).append(rec[mode]['nat'][name]['acc'])
                     for nm, _ in NORMS:
-                        for src in rec[mode]['transfer']:
-                            results['transfer'].setdefault((j_sigma, nm, lab, src), []).append(
-                                rec[mode]['transfer'][src][nm]['acc'])
+                        for src in rec[mode].get('transfer', {}):
+                            if nm in rec[mode]['transfer'][src]:
+                                results['transfer'].setdefault((j_sigma, nm, lab, src), []).append(
+                                    rec[mode]['transfer'][src][nm]['acc'])
     os.makedirs(os.path.join(SAVE_ROOT, 'results'), exist_ok=True)
     pickle.dump(results, open(os.path.join(SAVE_ROOT, 'results', 'robustness.pkl'), 'wb'))
     return results
@@ -314,11 +348,12 @@ def plot(results=None, normalize=True):
     if results is None:
         results = pickle.load(open(os.path.join(SAVE_ROOT, 'results', 'robustness.pkl'), 'rb'))
     resdir = os.path.join(SAVE_ROOT, 'results'); os.makedirs(resdir, exist_ok=True)
-    js = results['J_sweep']
-    labs = sorted({k[1] for k in results['linf']})
+    js = sorted(results['J_sweep'])
+    norms = list(results['eps'])
+    labs = sorted({k[1] for k in results[norms[0]]})
 
     # (A) robustness curves: one panel per J, per norm (raw + normalized)
-    for nm in ('linf', 'l2'):
+    for nm in norms:
         eps = results['eps'][nm]
         for norm_flag, sfx, ylab in [(False, '', 'per-pixel acc'), (True, '_norm', 'acc / clean')]:
             fig, axes = plt.subplots(1, len(js), figsize=(3.6*len(js), 3.8), sharey=True, squeeze=False)
@@ -332,14 +367,15 @@ def plot(results=None, normalize=True):
                     mu, sd = arr.mean(0), arr.std(0)
                     ax.plot(eps, mu, _style(lab), color=_color(lab), marker='o', ms=3, label=lab)
                     ax.fill_between(eps, mu-sd, mu+sd, color=_color(lab), alpha=0.1)
-                ax.set(title=f'J={j}', xlabel=f'PGD {nm} eps')
+                xl = 'frac pixels flipped (L0)' if nm == 'l0' else f'PGD {nm} eps'
+                ax.set(title=f'J={j}', xlabel=xl)
                 ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
             axes[0][0].set_ylabel(ylab); axes[0][-1].legend(frameon=False, fontsize=7)
-            fig.suptitle(f'PGD-{nm} vs coupling J  ({ylab})'); fig.tight_layout()
+            fig.suptitle(f'{nm} attack vs coupling J  ({ylab})'); fig.tight_layout()
             fig.savefig(os.path.join(resdir, f'robustness_{nm}{sfx}.png'), dpi=160, bbox_inches='tight')
 
     # (B) clean-accuracy-matching: robustness (eps50) vs clean acc, one point per J
-    for nm in ('linf', 'l2'):
+    for nm in norms:
         eps = results['eps'][nm]
         fig, ax = plt.subplots(figsize=(6.4, 5))
         for lab in labs:
@@ -507,8 +543,6 @@ if __name__ == '__main__':
     args, _ = ap.parse_known_args()
     if args.examples:
         plot_denoise_examples()
-    elif args.mse:
-        mse_matrix(recompute=args.recompute)
     elif args.plot:
         plot()
     else:
