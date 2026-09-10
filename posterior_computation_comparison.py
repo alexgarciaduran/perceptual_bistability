@@ -1633,6 +1633,12 @@ if __name__ == "__main__":
     #                               B_list=np.repeat(np.round(np.linspace(-0.5, 0.5, 7), 3), 2),
     #                               methods=None, gibbs_steps=8000,
     #                               load_data=True, data_path=None, save=True)
-    plot_input_susceptibility(J_list=(0.15, 0.30), B=0.0, alphas=(0.5, 1.0, 1.5),
-                              gibbs_steps=300000, gibbs_burn=20000,
-                              theta=THETA_NECKER, save=True)
+    plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                       J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3), include_gibbs=True,
+                       gibbs=(200000, 10000), theta=THETA_NECKER, save=False)
+    plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                          q_grid=np.round(np.linspace(0.55, 0.9, 8), 3),
+                          J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
+                          J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3),
+                          theta=THETA_NECKER, save=False)
+    

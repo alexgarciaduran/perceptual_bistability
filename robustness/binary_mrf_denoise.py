@@ -42,7 +42,11 @@ import matplotlib as mpl
 mpl.rcParams['font.size'] = 15
 plt.rcParams["axes.grid"] = False
 
-SAVE_ROOT = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis\depth_denoise"
+pc = 'CRM'
+if pc == 'Alex':
+    SAVE_ROOT = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis\depth_denoise"
+if pc == 'CRM':
+    DATA_FOLDER = r"C:\Users\agarcia\Desktop\phd\necker\data_folder"
 
 G = 28                      # GxG lattice
 N = G * G                   # nodes
@@ -446,7 +450,7 @@ def mse_matrix(betas=(0.25, 0.5, 1.0, 2.0), j_sigmas=J_SWEEP, p=BASE_P, n_seeds=
         ax.set_title(v, fontsize=10); ax.set_xlabel('J_sigma', fontsize=9)
         for bi in range(len(betas)):
             for ji in range(len(j_sigmas)):
-                ax.text(ji, bi, f'{M[bi,ji]:.3f}', ha='center', va='center',
+                ax.text(ji, bi, f'{M[bi,ji]:.3e}', ha='center', va='center',
                         color='w' if M[bi, ji] > 0.5*vmax else 'k', fontsize=6)
     axes[0][0].set_ylabel('beta', fontsize=9)
     fig.colorbar(im, ax=axes[0], fraction=0.02, label='denoising MSE')
@@ -461,19 +465,22 @@ def mse_matrix(betas=(0.25, 0.5, 1.0, 2.0), j_sigmas=J_SWEEP, p=BASE_P, n_seeds=
 
 
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--fast', action='store_true')
-    ap.add_argument('--plot', action='store_true', help='re-plot from saved results')
-    ap.add_argument('--examples', action='store_true', help='qualitative denoise panels')
-    ap.add_argument('--mse', action='store_true', help='beta x J_sigma MSE heatmaps')
-    ap.add_argument('--recompute', action='store_true')
-    args, _ = ap.parse_known_args()
-    if args.examples:
-        plot_denoise_examples()
-    elif args.mse:
-        mse_matrix()
-    elif args.plot:
-        plot()
-    else:
-        res = run(fast=args.fast, re_compute=args.recompute)
-        plot(res)
+    # ap = argparse.ArgumentParser()
+    # ap.add_argument('--fast', action='store_true')
+    # ap.add_argument('--plot', action='store_true', help='re-plot from saved results')
+    # ap.add_argument('--examples', action='store_true', help='qualitative denoise panels')
+    # ap.add_argument('--mse', action='store_true', help='beta x J_sigma MSE heatmaps')
+    # ap.add_argument('--recompute', action='store_true')
+    # args, _ = ap.parse_known_args()
+    # if args.examples:
+    #     plot_denoise_examples()
+    # elif args.mse:
+    #     mse_matrix()
+    # elif args.plot:
+    #     plot()
+    # else:
+    #     res = run(fast=args.fast, re_compute=args.recompute)
+    #     plot(res)
+    mse_matrix(betas=np.arange(0, 1, 1e-1), j_sigmas=np.arange(0, 2, 2e-1),
+               p=BASE_P, n_seeds=50,
+               variants=RUN_VARIANTS, field_seed=2024, save=True)
