@@ -434,7 +434,7 @@ def mse_matrix(betas=(0.25, 0.5, 1.0, 2.0), j_sigmas=J_SWEEP, p=BASE_P, n_seeds=
         for bi, beta in enumerate(betas):
             for ji, js in enumerate(j_sigmas):
                 model = BinaryMRF(v, js, seed=0, beta=beta); model.eval()
-                ppred = (model(O, sampler=smp) + 1) / 2           # [n,N] in [0,1]
+                ppred = ((model(O, sampler=smp) + 1) / 2).clamp(0, 1)   # [n,N] P(pixel=1)
                 mats[v][bi, ji] = ((ppred - St) ** 2).mean().item()
     vmax = max(np.nanmax(m) for m in mats.values())
     fig, axes = plt.subplots(1, len(variants), figsize=(2.6*len(variants), 3.2), squeeze=False)
