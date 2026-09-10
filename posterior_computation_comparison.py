@@ -1420,6 +1420,175 @@ def plot_input_susceptibility(J_list=(0.15, 0.30), B=0.0, alphas=(0.5, 1.0, 1.5)
     return fig
 
 
+# ----------------------------------------------------------------------------
+# Susceptibility analyses: matched-q (fit J), ratios, and J-sweeps, per algorithm
+# ----------------------------------------------------------------------------
+def _susc_methods(alphas):
+    """Ordered list of algorithms for the susceptibility plots. 'exact' doubles
+    as sampling (they coincide); 'gibbs' is the finite-sample estimate."""
+    ms = [dict(kind='exact', lab='exact/sampling', c='k', ls='-', alpha=1.0),
+          dict(kind='mf', lab='MF', c='r', ls='--', alpha=1.0)]
+    ac = plt.cm.viridis(np.linspace(0.15, 0.85, len(alphas)))
+    for a, c in zip(alphas, ac):
+        ms.append(dict(kind='fbp', c=c, ls='-', alpha=a,
+                       lab=('LBP' if abs(a - 1.0) < 1e-9 else rf'FBP $\alpha$={a}')))
+    return ms
+
+
+def _dist_matrix(theta):
+    Gr = nx.from_numpy_array(theta)
+    D = dict(nx.all_pairs_shortest_path_length(Gr))
+    n = theta.shape[0]
+    return np.array([[D[i][j] for j in range(n)] for i in range(n)])
+
+
+def _marg_q(kind, J, B, alpha, theta):
+    """Mean perceived confidence q = P(x_i=1) at uniform (J, B)."""
+    n = theta.shape[0]; Jm = J * theta; Bv = np.full(n, float(B))
+    if kind in ('exact', 'gibbs'):
+        m = 2 * exact_marginals(Jm, Bv) - 1
+    elif kind == 'mf':
+        m = _mf_magnetization(Jm, Bv, np.zeros(n))
+    else:
+        m = 2 * fractional_bp(Jm, Bv, alpha=alpha) - 1
+    return float((m.mean() + 1) / 2)
+
+
+def _fit_J_for_q(kind, q_target, B, alpha, theta, J_grid):
+    """Coupling J at which algorithm `kind` reaches confidence q_target (field B)."""
+    qs = np.array([_marg_q(kind, J, B, alpha, theta) for J in J_grid])
+    return float(np.interp(q_target, qs, J_grid))
+
+
+def _chi(kind, J, B, alpha, theta, gibbs=(300000, 20000)):
+    """Susceptibility matrix chi_ij = d<x_i>/dB_j for one algorithm."""
+    if kind == 'gibbs':
+        return gibbs_susceptibility(J, B, theta, *gibbs)
+    if kind == 'fbp':
+        return linear_response_cov('lbp', J, B, theta=theta, alpha=alpha)[0]
+    return linear_response_cov(kind, J, B, theta=theta)[0]
+
+
+def _rd(C, dist, dvals):
+    return np.array([C[dist == d].mean() for d in dvals])
+
+
+def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                   q_grid=np.round(np.linspace(0.55, 0.9, 8), 3),
+                   J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3),
+                   theta=THETA_NECKER, save=True):
+    """(1) Susceptibility r_d vs perceived confidence q, with J FIT per algorithm
+    to reach each q (matched operating point). One panel per graph distance d;
+    lines = algorithms. r_0 = self-susceptibility, r_1.. = response at distance d."""
+    dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
+    methods = _susc_methods(alphas)
+    fig, axes = plt.subplots(1, len(dvals), figsize=(3.6 * len(dvals), 3.6), squeeze=False)
+    for md in methods:
+        R = np.full((len(q_grid), len(dvals)), np.nan)
+        for iq, q in enumerate(q_grid):
+            J = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, J_grid)
+            R[iq] = _rd(_chi(md['kind'], J, B, md['alpha'], theta), dist, dvals)
+        for d in dvals:
+            axes[0][d].plot(q_grid, R[:, d], md['ls'], color=md['c'], marker='o',
+                            ms=3, label=md['lab'])
+    for d in dvals:
+        axes[0][d].set(title=f'distance d={d}', xlabel='perceived confidence q',
+                       ylabel=(r'$r_d=\partial\langle x_i\rangle/\partial B_j$' if d == 0 else ''))
+        axes[0][d].spines['top'].set_visible(False); axes[0][d].spines['right'].set_visible(False)
+    axes[0][-1].legend(frameon=False, fontsize=8)
+    fig.suptitle(f'Susceptibility vs confidence (J fit per q, B={B})'); fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + 'susc_vs_q.png', dpi=180, bbox_inches='tight')
+    return fig
+
+
+def plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                     J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3), include_gibbs=True,
+                     gibbs=(400000, 30000), theta=THETA_NECKER, save=True):
+    """(2) Response ratios r_0/r_d vs distance d at matched confidence q_star.
+    r_0/r_d = how much stronger the self-response is than the response at distance
+    d (a gauge-free number). Steeper => cue stays local; flatter => spreads."""
+    dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
+    methods = list(_susc_methods(alphas))
+    if include_gibbs:
+        methods.append(dict(kind='gibbs', lab='Gibbs', c='0.5', ls=':', alpha=1.0))
+    fig, ax = plt.subplots(figsize=(6.4, 4.8))
+    for md in methods:
+        k_fit = 'exact' if md['kind'] == 'gibbs' else md['kind']   # gibbs shares exact's J(q)
+        J = _fit_J_for_q(k_fit, q_star, B, md['alpha'], theta, J_grid)
+        r = _rd(_chi(md['kind'], J, B, md['alpha'], theta, gibbs), dist, dvals)
+        ax.plot(dvals, r / r[0], md['ls'], color=md['c'], marker='o', ms=6, label=md['lab'])
+    ax.set(xlabel='graph distance d', ylabel=r'$r_d / r_0$',
+           title=f'Normalised response vs distance at matched q={q_star} (B={B})')
+    ax.set_xticks(dvals); ax.legend(frameon=False, fontsize=9)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + f'susc_ratios_q{q_star}.png', dpi=180, bbox_inches='tight')
+    return fig
+
+
+def plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                   J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3), include_gibbs=False,
+                   gibbs=(150000, 10000), theta=THETA_NECKER, save=True):
+    """(3) Average susceptibility at a GIVEN distance d vs coupling J, all
+    algorithms on one panel. Shows how the response at separation d grows (and,
+    for MF, diverges near its spurious critical point) with coupling."""
+    dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
+    methods = list(_susc_methods(alphas))
+    if include_gibbs:
+        methods.append(dict(kind='gibbs', lab='Gibbs', c='0.5', ls=':', alpha=1.0))
+    fig, ax = plt.subplots(figsize=(6.8, 5))
+    for md in methods:
+        rd = [ _rd(_chi(md['kind'], J, B, md['alpha'], theta, gibbs), dist, dvals)[d]
+               for J in J_grid ]
+        ax.plot(J_grid, rd, md['ls'], color=md['c'], marker='.', ms=5, label=md['lab'])
+    ax.set(xlabel='coupling J', ylabel=rf'$r_{{{d}}}$  (mean $\chi$ at distance {d})',
+           title=f'Susceptibility at distance d={d} vs coupling (B={B})')
+    ax.legend(frameon=False, fontsize=9)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + f'susc_vs_J_d{d}.png', dpi=180, bbox_inches='tight')
+    return fig
+
+
+def plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                       q_grid=np.round(np.linspace(0.55, 0.9, 8), 3),
+                       J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
+                       J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3),
+                       theta=THETA_NECKER, save=True):
+    """(4) Combined susceptibility summary: (a) spread rho=r_1/r_0 vs confidence q
+    (J fit per q) -- the S1 signature; (b) self r_0 and neighbour r_1 vs coupling
+    J -- the raw scale/decay. Gives the vs-q and vs-J views side by side."""
+    dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
+    methods = _susc_methods(alphas)
+    fig, (axq, axj) = plt.subplots(1, 2, figsize=(12, 4.8))
+    for md in methods:
+        rho = []
+        for q in q_grid:
+            J = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, J_grid_q)
+            r = _rd(_chi(md['kind'], J, B, md['alpha'], theta), dist, dvals)
+            rho.append(r[1] / r[0])
+        axq.plot(q_grid, rho, md['ls'], color=md['c'], marker='o', ms=3, label=md['lab'])
+        r0 = []; r1 = []
+        for J in J_grid:
+            r = _rd(_chi(md['kind'], J, B, md['alpha'], theta), dist, dvals)
+            r0.append(r[0]); r1.append(r[1])
+        axj.plot(J_grid, r1, md['ls'], color=md['c'], marker='.', ms=4, label=md['lab'])
+    axq.set(xlabel='perceived confidence q', ylabel=r'spread $\rho=r_1/r_0$',
+            title='(a) cue spread vs confidence (J fit per q)')
+    axj.set(xlabel='coupling J', ylabel=r'neighbour response $r_1$',
+            title='(b) neighbour susceptibility vs coupling')
+    for ax in (axq, axj):
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    axq.legend(frameon=False, fontsize=8)
+    fig.suptitle(f'Susceptibility overview (Necker, B={B})'); fig.tight_layout()
+    if save:
+        fig.savefig(DATA_FOLDER + 'susc_overview.png', dpi=180, bbox_inches='tight')
+    return fig
+
+
 if __name__ == "__main__":
     p_list = np.round(np.arange(0.2, 1.01, 0.1), 2)
     d_list = list(range(2, 7))   # degrees 2-6
