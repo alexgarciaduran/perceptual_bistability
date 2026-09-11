@@ -64,12 +64,23 @@ def col(kind, alpha):
 
 # --------------------------------------------------------------- graph/prior -
 def grid_adjacency_k(g, k):
+    """k = number of neighbours per interior pixel:
+       4  = von Neumann  (N,S,E,W)
+       8  = Moore r1     (+ 4 diagonals)
+       12 = Manhattan<=2 (8 + the 4 straight-2 offsets)
+       24 = Chebyshev r2 (full 5x5 block minus centre)."""
+    d = {(dx, dy): max(abs(dx), abs(dy)) for dx in range(-2, 3) for dy in range(-2, 3)}
+    man = {(dx, dy): abs(dx) + abs(dy) for dx in range(-2, 3) for dy in range(-2, 3)}
     if k == 4:
-        offs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        offs = [o for o in d if man[o] == 1]
     elif k == 8:
-        offs = [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)]
-    else:                                   # 24 = Chebyshev radius 2
-        offs = [(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3) if (dx, dy) != (0, 0)]
+        offs = [o for o in d if d[o] == 1]
+    elif k == 12:
+        offs = [o for o in d if 1 <= man[o] <= 2]
+    elif k == 24:
+        offs = [o for o in d if d[o] in (1, 2)]
+    else:
+        raise ValueError(f'k must be 4, 8, 12 or 24 (got {k})')
     A = torch.zeros(g * g, g * g)
     for r in range(g):
         for c in range(g):
