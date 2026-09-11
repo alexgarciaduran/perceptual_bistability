@@ -1436,11 +1436,28 @@ def _susc_methods(alphas):
     return ms
 
 
+# optimal-alpha (KL-optimal FBP) line, shared across the susceptibility plots.
+# alpha is a placeholder (unused: alpha_hat is computed per (J,B) inside _chi/_marg_q).
+_OPT_FIT_J = np.round(np.arange(0.0, 3.0, 0.05), 3)      # coarse grid for the alpha-fit
+
+
+def _opt_method():
+    return dict(kind='fbp_opt', lab=r'FBP $\hat\alpha$ (optimal)', c='#2ca02c', ls='-.', alpha=1.0)
+
+
 def _dist_matrix(theta):
     Gr = nx.from_numpy_array(theta)
     D = dict(nx.all_pairs_shortest_path_length(Gr))
     n = theta.shape[0]
     return np.array([[D[i][j] for j in range(n)] for i in range(n)])
+
+
+def _alpha_hat(J, B, theta):
+    """KL-optimal FBP alpha at (J, B) for this graph's degree, using the exact
+    Necker marginal as the target p. Floored to a small positive value."""
+    n_deg = int(round(theta.sum(1).mean()))
+    p_true = _marg_q('exact', J, B, 1.0, theta)
+    return max(float(optimal_alpha(J, B, p_true, n_deg)), 1e-2)
 
 
 def _marg_q(kind, J, B, alpha, theta):
@@ -1450,6 +1467,8 @@ def _marg_q(kind, J, B, alpha, theta):
         m = 2 * exact_marginals(Jm, Bv) - 1
     elif kind == 'mf':
         m = _mf_magnetization(Jm, Bv, np.zeros(n))
+    elif kind == 'fbp_opt':
+        m = 2 * fractional_bp(Jm, Bv, alpha=_alpha_hat(J, B, theta)) - 1
     else:
         m = 2 * fractional_bp(Jm, Bv, alpha=alpha) - 1
     return float((m.mean() + 1) / 2)
@@ -1466,6 +1485,8 @@ def _chi(kind, J, B, alpha, theta, gibbs=(300000, 20000)):
     """Susceptibility matrix chi_ij = d<x_i>/dB_j for one algorithm."""
     if kind == 'gibbs':
         return gibbs_susceptibility(J, B, theta, *gibbs)
+    if kind == 'fbp_opt':
+        return linear_response_cov('lbp', J, B, theta=theta, alpha=_alpha_hat(J, B, theta))[0]
     if kind == 'fbp':
         return linear_response_cov('lbp', J, B, theta=theta, alpha=alpha)[0]
     return linear_response_cov(kind, J, B, theta=theta)[0]
@@ -1485,12 +1506,15 @@ def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     lines = algorithms. r_0 = self-susceptibility, r_1.. = response at distance d.
     q values an algorithm cannot reach at this B are left blank (not clamped)."""
     dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
-    methods = _susc_methods(alphas)
+    methods = list(_susc_methods(alphas)) + [_opt_method()]
     fig, axes = plt.subplots(1, len(dvals), figsize=(3.6 * len(dvals), 3.6), squeeze=False)
     for md in methods:
+        # optimal-alpha J(q) is smooth and expensive (alpha fit per J): use a
+        # coarser grid for it; fixed-alpha lines keep the fine grid.
+        Jg = np.round(np.arange(0.0, 3.0, 0.05), 3) if md['kind'] == 'fbp_opt' else J_grid
         R = np.full((len(q_grid), len(dvals)), np.nan)
         for iq, q in enumerate(q_grid):
-            J = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, J_grid)
+            J = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, Jg)
             if np.isnan(J):
                 continue                                   # q unreachable -> blank
             R[iq] = _rd(_chi(md['kind'], J, B, md['alpha'], theta), dist, dvals)
@@ -1498,7 +1522,7 @@ def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
             axes[0][d].plot(q_grid, R[:, d], md['ls'], color=md['c'], marker='o',
                             ms=3, label=md['lab'])
     for d in dvals:
-        axes[0][d].set(title=f'distance d={d}', xlabel='Posterior q',
+        axes[0][d].set(title=f'distance d={d}', xlabel=r'Posterior probability',
                        ylabel=(r'$r_d=\partial\langle x_i\rangle/\partial B_j$' if d == 0 else ''))
         axes[0][d].spines['top'].set_visible(False); axes[0][d].spines['right'].set_visible(False)
         if normalize_y:
@@ -1511,6 +1535,36 @@ def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     return fig
 
 
+def plot_optimal_alpha_vs_J(B_list=(0.05, 0.1, 0.2, 0.3),
+                            J_grid=np.round(np.arange(0.05, 1.5, 0.02), 3),
+                            theta=THETA_NECKER, save=True):
+    """Companion to plot_susc_vs_q: the KL-optimal FBP exponent alpha-hat as a
+    function of coupling J, one curve per sensory evidence B. Reference lines mark
+    LBP (alpha=1) and the bistability-suppression boundary (alpha=N/2). alpha-hat
+    is degenerate at B=0 (the symmetric marginal is 0.5 for every alpha), so only
+    B>0 is shown. This explains where the green 'FBP alpha-hat' susceptibility line
+    sits relative to LBP/FBP: alpha-hat grows with J (loops discounted more as
+    coupling strengthens)."""
+    n_deg = int(round(theta.sum(1).mean()))
+    fig, ax = plt.subplots(figsize=(6.6, 4.8))
+    cols = plt.cm.viridis(np.linspace(0.1, 0.85, len(B_list)))
+    for B, c in zip(B_list, cols):
+        ah = [_alpha_hat(J, B, theta) for J in J_grid]
+        ax.plot(J_grid, ah, '-', color=c, lw=2, label=f'B={B}')
+    ax.axhline(1.0, color='0.5', ls='--', lw=1, label='LBP ($\\alpha=1$)')
+    ax.axhline(n_deg / 2, color='0.5', ls=':', lw=1,
+               label=rf'bistability off ($\alpha=N/2={n_deg/2:g}$)')
+    ax.set(xlabel='coupling J', ylabel=r'optimal $\hat\alpha$',
+           title=r'KL-optimal $\hat\alpha$ vs coupling (per sensory evidence $B$)')
+    ax.legend(frameon=False, fontsize=9)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'optimal_alpha_vs_J.{ext}', dpi=180, bbox_inches='tight')
+    return fig
+
+
 def plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
                      J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3), include_gibbs=True,
                      gibbs=(400000, 30000), theta=THETA_NECKER, save=True):
@@ -1518,13 +1572,14 @@ def plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     r_0/r_d = how much stronger the self-response is than the response at distance
     d (a gauge-free number). Steeper => cue stays local; flatter => spreads."""
     dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
-    methods = list(_susc_methods(alphas))
+    methods = list(_susc_methods(alphas)) + [_opt_method()]
     if include_gibbs:
         methods.append(dict(kind='gibbs', lab='Gibbs', c='0.5', ls=':', alpha=1.0))
     fig, ax = plt.subplots(figsize=(6.4, 4.8))
     for md in methods:
         k_fit = 'exact' if md['kind'] == 'gibbs' else md['kind']   # gibbs shares exact's J(q)
-        J = _fit_J_for_q(k_fit, q_star, B, md['alpha'], theta, J_grid)
+        Jg = _OPT_FIT_J if md['kind'] == 'fbp_opt' else J_grid
+        J = _fit_J_for_q(k_fit, q_star, B, md['alpha'], theta, Jg)
         if np.isnan(J):
             print(f"  {md['lab']}: q={q_star} unreachable (q ceiling < target) -- skipped")
             continue
@@ -1548,7 +1603,7 @@ def plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     algorithms on one panel. Shows how the response at separation d grows (and,
     for MF, diverges near its spurious critical point) with coupling."""
     dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
-    methods = list(_susc_methods(alphas))
+    methods = list(_susc_methods(alphas)) + [_opt_method()]
     if include_gibbs:
         methods.append(dict(kind='gibbs', lab='Gibbs', c='0.5', ls=':', alpha=1.0))
     fig, ax = plt.subplots(figsize=(6.8, 5))
@@ -1576,12 +1631,13 @@ def plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     (J fit per q) -- the S1 signature; (b) self r_0 and neighbour r_1 vs coupling
     J -- the raw scale/decay. Gives the vs-q and vs-J views side by side."""
     dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
-    methods = _susc_methods(alphas)
+    methods = list(_susc_methods(alphas)) + [_opt_method()]
     fig, (axq, axj) = plt.subplots(1, 2, figsize=(12, 4.8))
     for md in methods:
         rho = []
+        Jgq = _OPT_FIT_J if md['kind'] == 'fbp_opt' else J_grid_q
         for q in q_grid:
-            J = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, J_grid_q)
+            J = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, Jgq)
             if np.isnan(J):
                 rho.append(np.nan); continue                # q unreachable -> blank
             r = _rd(_chi(md['kind'], J, B, md['alpha'], theta), dist, dvals)
@@ -1769,7 +1825,7 @@ if __name__ == "__main__":
     #                               methods=None, gibbs_steps=8000,
     #                               load_data=True, data_path=None, save=True)
     plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2),
-                    q_grid=np.round(np.linspace(0.55, 0.95, 15), 3),
+                    q_grid=np.round(np.linspace(0.55, 0.95, 20), 3),
                     J_grid=np.round(np.arange(0.0, 3.0, 0.01), 3),
                     theta=THETA_NECKER, save=True,
                     normalize_y=False)
