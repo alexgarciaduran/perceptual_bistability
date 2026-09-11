@@ -27,19 +27,26 @@ import argparse, os, pickle, hashlib, itertools
 import numpy as np, torch, matplotlib.pyplot as plt
 from binary_mrf_denoise import (make_fields, flip, infer_mf, infer_fbp_sparse,
                                 infer_sampling, infer_gibbs_discrete, l0_flip,
-                                G, N, BETA, ITERS, N_SAMPLES, SAVE_ROOT)
+                                G, N, BETA, ITERS, N_SAMPLES)
 from mrf_inference_nets import CORRUPTIONS
 
+
+pc = 'CRM'
+if pc == 'Alex':
+    SAVE_ROOT = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis\depth_denoise"
+if pc == 'CRM':
+    SAVE_ROOT = r"C:\Users\agarcia\Desktop\phd\necker\data_folder"
+
 # ------------------------------------------------------------------ config ---
-CONN = (4, 8, 24)                        # complexity levels (neighbours)
+CONN = (4, 8, 12)                        # complexity levels (neighbours)
 J_SWEEP = (0.3, 0.6, 0.9, 1.2)           # coupling scales
-N_SEEDS = 5                              # imposed-prior draws per cell (graphs)
-N_TEST = 16                              # clean fields per seed
+N_SEEDS = 10                             # imposed-prior draws per cell (graphs)
+N_TEST = 20                              # clean fields per seed
 BASE_P = 0.15                            # base observation flip noise
 FLIP_STR = (0.0, 0.1, 0.2, 0.3, 0.4)     # black-box flip sweep
 NAT_NAMES = ('gaussian', 'impulse')      # other black-box corruptions to sweep
 NAT_STR = (0.0, 0.2, 0.4, 0.6, 0.8)
-EPS_L0 = (0.0, 0.02, 0.05, 0.1, 0.15)    # white-box L0 budget (fraction pixels)
+EPS_L0 = (0.0, 0.02, 0.05, 0.1, 0.15, 0.2)    # white-box L0 budget (fraction pixels)
 EXACT_MAX = 20                           # exact only if N <= this (2^N enumeration)
 ALGOS = [('mf', None, 'MF'), ('fbp', 0.5, 'FBP0.5'), ('fbp', 1.0, 'LBP'),
          ('fbp', 1.5, 'FBP1.5'), ('fbp', 2.0, 'FBP2.0'), ('gibbs', None, 'Gibbs')]

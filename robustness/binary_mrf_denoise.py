@@ -42,11 +42,11 @@ import matplotlib as mpl
 mpl.rcParams['font.size'] = 15
 plt.rcParams["axes.grid"] = False
 
-pc = 'Alex'
+pc = 'CRM'
 if pc == 'Alex':
     SAVE_ROOT = r"C:\Users\alexg\OneDrive\Escritorio\phd\folder_save\robustness_analysis\depth_denoise"
 if pc == 'CRM':
-    DATA_FOLDER = r"C:\Users\agarcia\Desktop\phd\necker\data_folder"
+    SAVE_ROOT = r"C:\Users\agarcia\Desktop\phd\necker\data_folder"
 
 G = 28                      # GxG lattice
 N = G * G                   # nodes
