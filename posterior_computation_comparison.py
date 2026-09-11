@@ -18,11 +18,11 @@ from numba import njit
 from tqdm import tqdm
 
 
-mpl.rcParams['font.size'] = 18
-plt.rcParams['legend.title_fontsize'] = 16
+mpl.rcParams['font.size'] = 15
+plt.rcParams['legend.title_fontsize'] = 15
 plt.rcParams['legend.fontsize'] = 14
-plt.rcParams['xtick.labelsize']= 16
-plt.rcParams['ytick.labelsize']= 16
+plt.rcParams['xtick.labelsize']= 15
+plt.rcParams['ytick.labelsize']= 15
 
 
 
@@ -1417,6 +1417,7 @@ def plot_input_susceptibility(J_list=(0.15, 0.30), B=0.0, alphas=(0.5, 1.0, 1.5)
     if save:
         fig.savefig(DATA_FOLDER + 'input_susceptibility.png', dpi=200,
                     bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'input_susceptibility.svg', bbox_inches='tight')
     return fig
 
 
@@ -1428,7 +1429,7 @@ def _susc_methods(alphas):
     as sampling (they coincide); 'gibbs' is the finite-sample estimate."""
     ms = [dict(kind='exact', lab='exact/sampling', c='k', ls='-', alpha=1.0),
           dict(kind='mf', lab='MF', c='r', ls='--', alpha=1.0)]
-    ac = plt.cm.viridis(np.linspace(0.15, 0.85, len(alphas)))
+    ac = plt.cm.Blues(np.linspace(0.15, 0.85, len(alphas)))
     for a, c in zip(alphas, ac):
         ms.append(dict(kind='fbp', c=c, ls='-', alpha=a,
                        lab=('LBP' if abs(a - 1.0) < 1e-9 else rf'FBP $\alpha$={a}')))
@@ -1443,7 +1444,7 @@ def _dist_matrix(theta):
 
 
 def _marg_q(kind, J, B, alpha, theta):
-    """Mean perceived confidence q = P(x_i=1) at uniform (J, B)."""
+    """Mean posterior q = P(x_i=1) at uniform (J, B)."""
     n = theta.shape[0]; Jm = J * theta; Bv = np.full(n, float(B))
     if kind in ('exact', 'gibbs'):
         m = 2 * exact_marginals(Jm, Bv) - 1
@@ -1455,8 +1456,9 @@ def _marg_q(kind, J, B, alpha, theta):
 
 
 def _fit_J_for_q(kind, q_target, B, alpha, theta, J_grid):
-    """Coupling J at which algorithm `kind` reaches confidence q_target (field B)."""
     qs = np.array([_marg_q(kind, J, B, alpha, theta) for J in J_grid])
+    if q_target > qs.max() + 1e-6 or q_target < qs.min() - 1e-6:
+        return np.nan                      # unreachable q -> don't clamp
     return float(np.interp(q_target, qs, J_grid))
 
 
@@ -1474,12 +1476,14 @@ def _rd(C, dist, dvals):
 
 
 def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                   q_grid=np.round(np.linspace(0.55, 0.9, 8), 3),
-                   J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3),
-                   theta=THETA_NECKER, save=True):
+                   q_grid=np.round(np.linspace(0.55, 0.99, 12), 3),
+                   J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
+                   theta=THETA_NECKER, save=True,
+                   normalize_y=False):
     """(1) Susceptibility r_d vs perceived confidence q, with J FIT per algorithm
     to reach each q (matched operating point). One panel per graph distance d;
-    lines = algorithms. r_0 = self-susceptibility, r_1.. = response at distance d."""
+    lines = algorithms. r_0 = self-susceptibility, r_1.. = response at distance d.
+    q values an algorithm cannot reach at this B are left blank (not clamped)."""
     dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
     methods = _susc_methods(alphas)
     fig, axes = plt.subplots(1, len(dvals), figsize=(3.6 * len(dvals), 3.6), squeeze=False)
@@ -1487,23 +1491,28 @@ def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
         R = np.full((len(q_grid), len(dvals)), np.nan)
         for iq, q in enumerate(q_grid):
             J = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, J_grid)
+            if np.isnan(J):
+                continue                                   # q unreachable -> blank
             R[iq] = _rd(_chi(md['kind'], J, B, md['alpha'], theta), dist, dvals)
         for d in dvals:
             axes[0][d].plot(q_grid, R[:, d], md['ls'], color=md['c'], marker='o',
                             ms=3, label=md['lab'])
     for d in dvals:
-        axes[0][d].set(title=f'distance d={d}', xlabel='perceived confidence q',
+        axes[0][d].set(title=f'distance d={d}', xlabel='Posterior q',
                        ylabel=(r'$r_d=\partial\langle x_i\rangle/\partial B_j$' if d == 0 else ''))
         axes[0][d].spines['top'].set_visible(False); axes[0][d].spines['right'].set_visible(False)
+        if normalize_y:
+            axes[0][d].set_ylim(-0.05, 1.25)
     axes[0][-1].legend(frameon=False, fontsize=8)
-    fig.suptitle(f'Susceptibility vs confidence (J fit per q, B={B})'); fig.tight_layout()
+    fig.tight_layout()
     if save:
         fig.savefig(DATA_FOLDER + 'susc_vs_q.png', dpi=180, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'susc_vs_q.svg', bbox_inches='tight')
     return fig
 
 
 def plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                     J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3), include_gibbs=True,
+                     J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3), include_gibbs=True,
                      gibbs=(400000, 30000), theta=THETA_NECKER, save=True):
     """(2) Response ratios r_0/r_d vs distance d at matched confidence q_star.
     r_0/r_d = how much stronger the self-response is than the response at distance
@@ -1516,6 +1525,9 @@ def plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     for md in methods:
         k_fit = 'exact' if md['kind'] == 'gibbs' else md['kind']   # gibbs shares exact's J(q)
         J = _fit_J_for_q(k_fit, q_star, B, md['alpha'], theta, J_grid)
+        if np.isnan(J):
+            print(f"  {md['lab']}: q={q_star} unreachable (q ceiling < target) -- skipped")
+            continue
         r = _rd(_chi(md['kind'], J, B, md['alpha'], theta, gibbs), dist, dvals)
         ax.plot(dvals, r / r[0], md['ls'], color=md['c'], marker='o', ms=6, label=md['lab'])
     ax.set(xlabel='graph distance d', ylabel=r'$r_d / r_0$',
@@ -1525,6 +1537,7 @@ def plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     fig.tight_layout()
     if save:
         fig.savefig(DATA_FOLDER + f'susc_ratios_q{q_star}.png', dpi=180, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + f'susc_ratios_q{q_star}.svg', bbox_inches='tight')
     return fig
 
 
@@ -1550,13 +1563,14 @@ def plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     fig.tight_layout()
     if save:
         fig.savefig(DATA_FOLDER + f'susc_vs_J_d{d}.png', dpi=180, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + f'susc_vs_J_d{d}.svg', bbox_inches='tight')
     return fig
 
 
 def plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                       q_grid=np.round(np.linspace(0.55, 0.9, 8), 3),
-                       J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
-                       J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3),
+                       q_grid=np.round(np.linspace(0.55, 0.99, 12), 3),
+                       J_grid_q=np.round(np.arange(0.0, 6.0, 0.02), 3),
+                       J_grid=np.round(np.arange(0.05, 1.5, 0.05), 3),
                        theta=THETA_NECKER, save=True):
     """(4) Combined susceptibility summary: (a) spread rho=r_1/r_0 vs confidence q
     (J fit per q) -- the S1 signature; (b) self r_0 and neighbour r_1 vs coupling
@@ -1568,24 +1582,145 @@ def plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
         rho = []
         for q in q_grid:
             J = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, J_grid_q)
+            if np.isnan(J):
+                rho.append(np.nan); continue                # q unreachable -> blank
             r = _rd(_chi(md['kind'], J, B, md['alpha'], theta), dist, dvals)
             rho.append(r[1] / r[0])
-        axq.plot(q_grid, rho, md['ls'], color=md['c'], marker='o', ms=3, label=md['lab'])
+        axq.plot(q_grid, rho, md['ls'], color=md['c'], marker='o', ms=6, label=md['lab'])
         r0 = []; r1 = []
         for J in J_grid:
             r = _rd(_chi(md['kind'], J, B, md['alpha'], theta), dist, dvals)
             r0.append(r[0]); r1.append(r[1])
-        axj.plot(J_grid, r1, md['ls'], color=md['c'], marker='.', ms=4, label=md['lab'])
-    axq.set(xlabel='perceived confidence q', ylabel=r'spread $\rho=r_1/r_0$',
+        axj.plot(J_grid, r1, md['ls'], color=md['c'], marker='.', ms=6, label=md['lab'])
+    axq.set(xlabel='Posterior q', ylabel=r'spread $\rho=r_1/r_0$',
             title='(a) cue spread vs confidence (J fit per q)')
     axj.set(xlabel='coupling J', ylabel=r'neighbour response $r_1$',
             title='(b) neighbour susceptibility vs coupling')
     for ax in (axq, axj):
         ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
     axq.legend(frameon=False, fontsize=8)
-    fig.suptitle(f'Susceptibility overview (Necker, B={B})'); fig.tight_layout()
     if save:
         fig.savefig(DATA_FOLDER + 'susc_overview.png', dpi=180, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'susc_overview.svg', bbox_inches='tight')
+    return fig
+
+
+def plot_evidence_interaction_vs_J(J_grid=np.round(np.arange(0.1, 0.85, 0.05), 3),
+                                   h=0.4, B0=0.0, t=0, alphas=(0.5, 1.0, 1.5),
+                                   normalize=True, theta=THETA_NECKER, save=True):
+    """Evidence-source OVER-COUNTING vs coupling J (parameter-reduced).
+
+    Target node t gets a SENSORY field h on itself; the REST of the figure
+    (context) gets the same field h (reaching t only through the graph/loops).
+    Read the target's perceived log-odds L_t = logit(q_t) and form the two-source
+    interaction
+        I = L_t(h,h) - L_t(h,0) - L_t(0,h) + L_t(0,0).
+    I ~ 0  additive (Bayes-optimal, exact);  I < 0 sub-additive (MF under-combines,
+    ignores loop correlations);  I > 0 super-additive (circular-inference OVER-
+    counting, alpha>1). Swept over J. normalize=True divides by the single-source
+    responses (|R1|+|R2|) -> dimensionless, removes the evidence-magnitude scale
+    and MF's near-onset blow-up, so the sub/additive/super ORDERING is what shows."""
+    n = theta.shape[0]; ctx = [i for i in range(n) if i != t]
+
+    def Lt(hs, hc, J, kind, alpha):
+        Bv = np.full(n, float(B0)); Bv[t] += hs
+        for i in ctx:
+            Bv[i] += hc
+        Jm = J * theta
+        if kind == 'exact':
+            q = exact_marginals(Jm, Bv)[t]
+        elif kind == 'mf':
+            q = (_mf_magnetization(Jm, Bv, np.zeros(n))[t] + 1) / 2
+        else:
+            q = fractional_bp(Jm, Bv, alpha=alpha)[t]
+        q = min(max(float(q), 1e-9), 1 - 1e-9)
+        return np.log(q / (1 - q))
+
+    methods = _susc_methods(alphas)                     # exact, MF, FBP(alpha)...
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for md in methods:
+        k, a = md['kind'], md['alpha']; ys = []
+        for J in J_grid:
+            L00 = Lt(0, 0, J, k, a)
+            R1 = Lt(h, 0, J, k, a) - L00
+            R2 = Lt(0, h, J, k, a) - L00
+            I = Lt(h, h, J, k, a) - Lt(h, 0, J, k, a) - Lt(0, h, J, k, a) + L00
+            ys.append(I / (abs(R1) + abs(R2) + 1e-9) if normalize else I)
+        ax.plot(J_grid, ys, md['ls'], color=md['c'], marker='o', ms=3, label=md['lab'])
+    ax.axhline(0, color='0.7', lw=1)
+    ax.set_xlabel('coupling J')
+    ax.set_ylabel('interaction / single-source' if normalize else r'interaction $I$')
+    ax.set_title('Evidence over-counting vs J  (>0 super-additive, <0 sub-additive)')
+    ax.legend(frameon=False, fontsize=9)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'evidence_interaction_vs_J.{ext}', dpi=180, bbox_inches='tight')
+    return fig
+
+
+def plot_evidence_interaction_grid(J_grid=np.round(np.arange(0.1, 0.85, 0.05), 3),
+                                   h_grid=np.round(np.linspace(0.0, 0.6, 13), 3),
+                                   B0=0.0, t=0, alphas=(0.5, 1.0, 1.5),
+                                   clip=0.1, white_eps=1e-2, resp_min=0.5,
+                                   theta=THETA_NECKER, save=True):
+    """RAW evidence-source interaction I over a (J x evidence h) grid, one heatmap
+    per algorithm, SHARED diverging colormap (bwr). Source A = field h on the
+    readout node t; source B = field h on the other nodes (reaches t only through
+    the graph/loops). I = L_t(h,h)-L_t(h,0)-L_t(0,h)+L_t(0,0), L_t=logit(q_t).
+    Colour is CLIPPED at +-clip (|I|>clip saturates to full blue/red) and a tiny
+    white deadzone |I|<white_eps marks additive. blue<0 = sub-additive (under-count,
+    MF); white = additive (Bayes/exact); red>0 = super-additive (over-count)."""
+    n = theta.shape[0]; ctx = [i for i in range(n) if i != t]
+
+    def Lt(hs, hc, J, kind, alpha):
+        Bv = np.full(n, float(B0)); Bv[t] += hs
+        for i in ctx:
+            Bv[i] += hc
+        Jm = J * theta
+        if kind == 'exact':
+            q = exact_marginals(Jm, Bv)[t]
+        elif kind == 'mf':
+            q = (_mf_magnetization(Jm, Bv, np.zeros(n))[t] + 1) / 2
+        else:
+            q = fractional_bp(Jm, Bv, alpha=alpha)[t]
+        q = min(max(float(q), 1e-9), 1 - 1e-9)
+        return np.log(q / (1 - q))
+
+    methods = _susc_methods(alphas)                     # exact, MF, FBP(alpha)...
+    mats = {}
+    for md in methods:
+        k, a = md['kind'], md['alpha']
+        M = np.zeros((len(J_grid), len(h_grid))); RC = np.zeros_like(M)
+        for ij, J in enumerate(J_grid):
+            for ih, h in enumerate(h_grid):
+                L00 = Lt(0, 0, J, k, a)
+                R1 = Lt(h, 0, J, k, a) - L00
+                R2 = Lt(0, h, J, k, a) - L00                 # CONTEXT response
+                I = Lt(h, h, J, k, a) - Lt(h, 0, J, k, a) - Lt(0, h, J, k, a) + L00
+                M[ij, ih] = I; RC[ij, ih] = abs(R2)          # I and context-response mag
+        mats[md['lab']] = (M, RC)
+    ext = [h_grid[0], h_grid[-1], J_grid[0], J_grid[-1]]
+    import matplotlib.colors as mcolors
+    norm = mcolors.Normalize(-clip, clip); cmap = plt.cm.bwr
+    fig, axes = plt.subplots(1, len(methods), figsize=(2.8 * len(methods), 3.4),
+                             squeeze=False, sharey=True)
+    for ax, md in zip(axes[0], methods):
+        M, RC = mats[md['lab']]
+        rgba = cmap(norm(np.clip(M, -clip, clip)))           # bwr by sign/magnitude
+        rgba[np.abs(M) < white_eps] = [1, 1, 1, 1]           # additive -> white
+        rgba[RC < resp_min] = [0.8, 0.8, 0.8, 1]             # UNRESPONSIVE -> gray (overrides)
+        ax.imshow(rgba, origin='lower', aspect='auto', extent=ext)
+        ax.set_title(md['lab'], fontsize=10); ax.set_xlabel('evidence h', fontsize=9)
+    axes[0][0].set_ylabel('coupling J', fontsize=9)
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
+    fig.colorbar(sm, ax=axes[0], fraction=0.02, extend='both',
+                 label=f'interaction I (clip +-{clip}; red=over-count)')
+    fig.suptitle(f'Evidence interaction over (J x evidence)  [gray = context response |R2|<{resp_min}: unresponsive, not additive]', fontsize=9)
+    if save:
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'evidence_interaction_grid.{ext_}', dpi=170, bbox_inches='tight')
     return fig
 
 
@@ -1633,12 +1768,19 @@ if __name__ == "__main__":
     #                               B_list=np.repeat(np.round(np.linspace(-0.5, 0.5, 7), 3), 2),
     #                               methods=None, gibbs_steps=8000,
     #                               load_data=True, data_path=None, save=True)
+    plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2),
+                    q_grid=np.round(np.linspace(0.55, 0.95, 15), 3),
+                    J_grid=np.round(np.arange(0.0, 3.0, 0.01), 3),
+                    theta=THETA_NECKER, save=True,
+                    normalize_y=False)
+    plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                    J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3), include_gibbs=True,
+                    gibbs=(400000, 30000), theta=THETA_NECKER, save=True)
     plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                       J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3), include_gibbs=True,
-                       gibbs=(200000, 10000), theta=THETA_NECKER, save=False)
+                        J_grid=np.round(np.arange(0.05, 1.0, 0.01), 3), include_gibbs=True,
+                        gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
     plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                          q_grid=np.round(np.linspace(0.55, 0.9, 8), 3),
+                          q_grid=np.round(np.linspace(0.55, 0.9, 25), 3),
                           J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
-                          J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3),
-                          theta=THETA_NECKER, save=False)
-    
+                          J_grid=np.round(np.arange(0.05, 2.0, 0.025), 3),
+                          theta=THETA_NECKER, save=True)
