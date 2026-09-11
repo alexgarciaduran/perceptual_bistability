@@ -25,6 +25,7 @@ Usage:
 """
 import argparse, os, pickle, hashlib, itertools
 import numpy as np, torch, matplotlib.pyplot as plt
+from tqdm import tqdm
 from binary_mrf_denoise import (make_fields, flip, infer_mf, infer_fbp_sparse,
                                 infer_sampling, infer_gibbs_discrete, l0_flip,
                                 G, N, BETA, ITERS, N_SAMPLES)
@@ -143,10 +144,12 @@ def evaluate(analysis, n_seeds=N_SEEDS, metric='acc', recompute=False):
           else NAT_STR)
     S = make_fields(N_TEST, seed=123)
     curves = {}
+    pbar = tqdm(total=len(CONN) * len(J_SWEEP) * n_seeds, desc=analysis)
     for k in CONN:
         A = grid_adjacency_k(G, k)
         for J in J_SWEEP:
             for seed in range(n_seeds):
+                pbar.set_postfix(conn=k, J=J, seed=seed); pbar.update(1)
                 Jm = ferro_J(A, seed) * J
                 o0 = flip(S, BASE_P, torch.Generator().manual_seed(700 + seed))
                 for kind, alpha, lab in ALGOS:
@@ -172,6 +175,7 @@ def evaluate(analysis, n_seeds=N_SEEDS, metric='acc', recompute=False):
                         else:
                             row.append(score(m, S, metric))
                     curves.setdefault((k, J, lab), []).append(row)
+    pbar.close()
     curves = {kk: np.array(v) for kk, v in curves.items()}
     curves['_xs'] = np.array(xs); curves['_metric'] = metric
     pickle.dump(curves, open(cp, 'wb')); print('cached', cp)
