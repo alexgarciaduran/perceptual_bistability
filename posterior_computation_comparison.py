@@ -1607,13 +1607,14 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100):
     if kind == 'gibbs':
         return float(gibbs_sampling(Jm, Bv, gibbs[0], gibbs[1])[node])
     if kind == 'mf':
-        m = np.random.randn(n) * 0.1                 # small random start (breaks symmetry)
+        m = np.random.uniform(-1.0, 1.0, n)           # q0 ~ U(0,1)  (m0 = 2q0-1)
         for _ in range(int(steps)):
             m = np.tanh(Bv + Jm @ m)
         return float((m[node] + 1) / 2)
     a = _alpha_hat(J, B, theta) if kind == 'fbp_opt' else alpha
-    q = fractional_bp(Jm, Bv, alpha=a, max_iter=max(int(steps), 100),
-                      seed=int(np.random.randint(1 << 30)))   # random message init
+    u = np.random.uniform(1e-6, 1.0 - 1e-6, (n, n))   # message beliefs ~ U(0,1)
+    M0 = (Jm != 0.0) * 0.5 * np.log(u / (1.0 - u))    # log-ratio M = 0.5*logit(u)
+    q = fractional_bp(Jm, Bv, alpha=a, M_init=M0, max_iter=max(int(steps), 100))
     return float(q[node])
 
 
