@@ -196,7 +196,7 @@ def fractional_bp(J, B, alpha=1.0, max_iter=300, tol=1e-8, damping=0.5, seed=0,
     n = len(B)
     if M_init is None:
         rng = np.random.default_rng(seed)
-        M = (np.asarray(J) != 0.0).astype(np.float64) * 0.01 * rng.standard_normal((n, n))
+        M = (np.asarray(J) != 0.0).astype(np.float64) * 0.3 * rng.standard_normal((n, n))
     else:
         M = np.array(M_init, dtype=float)
     q, M = _fbp_kernel(np.asarray(J, float), np.asarray(B, float),
@@ -1607,8 +1607,8 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100):
     if kind == 'gibbs':
         return float(gibbs_sampling(Jm, Bv, gibbs[0], gibbs[1])[node])
     if kind == 'mf':
-        m = np.random.uniform(-1.0, 1.0, n)          # random start
-        for _ in range(steps):
+        m = np.random.randn(n) * 0.1                 # small random start (breaks symmetry)
+        for _ in range(int(steps)):
             m = np.tanh(Bv + Jm @ m)
         return float((m[node] + 1) / 2)
     a = _alpha_hat(J, B, theta) if kind == 'fbp_opt' else alpha
@@ -1729,7 +1729,8 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
     saddle-node for MF/FBP, and J*_Gibbs(T)=(ln T + 8|B|)/c for the sampler
     (c=gibbs_c, the Necker barrier slope). Grids are cached to disk."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
-    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, recompute)) for md in methods]
+    looper = tqdm(methods)
+    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, recompute)) for md in looper]
     Mtrue = next(M for md, M in mats if md['kind'] == 'exact')
 
     ncols = min(4, len(mats)); nrows = int(np.ceil(len(mats) / ncols))
@@ -2056,7 +2057,7 @@ if __name__ == "__main__":
     #                       theta=THETA_NECKER, save=True)
     plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
                             b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
-                            alphas=(0.5, 1.0, 1.5, 2.0),
+                            alphas=(0.5, 1.0, 1.5, 2.0), include_opt=True,
                             gibbs=(1000, 10000, 100000), node=0, show_jstar=True,
                             theta=THETA_NECKER, save=True)
     
@@ -2064,5 +2065,5 @@ if __name__ == "__main__":
                                  b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
                                  alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=False,
                                  gibbs=(1000, 10000, 100000), node=0, theta=THETA_NECKER,
-                                 recompute=False, save=True)
+                                 recompute=False, save=True, include_opt=True)
 
