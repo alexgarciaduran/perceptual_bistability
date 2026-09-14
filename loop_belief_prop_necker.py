@@ -364,7 +364,7 @@ def plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.0
     ax.spines['right'].set_visible(False)
     ax.plot(j_list, conf_lbp, color='k', label='LBP', linewidth=3)
     ax.plot(j_list, conf_mf, color='r', label='MF', linewidth=3)
-    colormap = pl.cm.Blues(np.linspace(0.2, 1, 3))
+    colormap = pl.cm.Greens(np.linspace(0.2, 1, 3))
     wsize = 5
     ax.plot(j_list[:-wsize], np.convolve(conf_g1e2, np.ones(wsize)/wsize, 'same')[:-wsize], color=colormap[0], label='Gibbs, T=1e2', linewidth=3)
     ax.plot(j_list[:-wsize], np.convolve(conf_g1e3, np.ones(wsize)/wsize, 'same')[:-wsize], color=colormap[1], label='Gibbs, T=1e3', linewidth=3)
