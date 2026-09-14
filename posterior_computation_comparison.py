@@ -1597,30 +1597,36 @@ def _cmp_methods(alphas, gibbs_T=(), burn=1000, include_opt=False):
     return ms
 
 
-def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000)):
-    """P(x_node = 1) for one algorithm at uniform (J, B)."""
+def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100):
+    """P(x_node = 1) for one algorithm at uniform (J, B). MF and FBP start from a
+    RANDOM state and iterate `steps` (like the sampler's random init), so above J*
+    they commit to a well instead of sitting on the symmetric branch."""
     n = theta.shape[0]; Jm = J * theta; Bv = np.full(n, float(B))
     if kind == 'exact':
         return float(exact_marginals(Jm, Bv)[node])
     if kind == 'gibbs':
         return float(gibbs_sampling(Jm, Bv, gibbs[0], gibbs[1])[node])
     if kind == 'mf':
-        return float((_mf_magnetization(Jm, Bv, np.zeros(n))[node] + 1) / 2)
-    if kind == 'fbp_opt':
-        return float(fractional_bp(Jm, Bv, alpha=_alpha_hat(J, B, theta))[node])
-    return float(fractional_bp(Jm, Bv, alpha=alpha)[node])
+        m = np.random.uniform(-1.0, 1.0, n)          # random start
+        for _ in range(steps):
+            m = np.tanh(Bv + Jm @ m)
+        return float((m[node] + 1) / 2)
+    a = _alpha_hat(J, B, theta) if kind == 'fbp_opt' else alpha
+    q = fractional_bp(Jm, Bv, alpha=a, max_iter=max(int(steps), 100),
+                      seed=int(np.random.randint(1 << 30)))   # random message init
+    return float(q[node])
 
 
-def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, recompute=False):
+def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, recompute=False):
     """Posterior grid Q[j, b] = P(x_node=1) for one algorithm, cached to disk under
     DATA_FOLDER/matrix_cache so repeated plots don't recompute. The sampler's chain
-    length is carried in md['gibbs']=(steps, burn). Key = hash of (kind, alpha, node,
-    j_list, b_list, theta[, gibbs for the sampler])."""
+    length is in md['gibbs']=(steps, burn); MF/FBP use `steps` random-init iterations.
+    Key = hash of (kind, alpha, node, steps, j_list, b_list, theta[, gibbs])."""
     import hashlib
     g = md.get('gibbs', (20000, 2000))
     cache_dir = os.path.join(DATA_FOLDER, 'matrix_cache'); os.makedirs(cache_dir, exist_ok=True)
     a = round(float(md['alpha']), 6)
-    key = repr((md['kind'], a, int(node), np.asarray(j_list, float).tobytes(),
+    key = repr((md['kind'], a, int(node), int(steps), np.asarray(j_list, float).tobytes(),
                 np.asarray(b_list, float).tobytes(), np.asarray(theta, float).tobytes(),
                 tuple(g) if md['kind'] == 'gibbs' else None))
     h = hashlib.md5(key.encode()).hexdigest()[:12]
@@ -1631,32 +1637,49 @@ def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, recompute=False):
     M = np.empty((len(j_list), len(b_list)))
     for ij, j in enumerate(j_list):
         for ib, b in enumerate(b_list):
-            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g)
+            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g, steps)
     np.save(fn, M)
     return M
 
 
-def _mf_jstar_b(b, lmax, J_scan):
-    """MF saddle-node onset J*(b): smallest J at which the 1D map q=sigmoid(2*lmax*J
-    *(2q-1)+2b) acquires 3 fixed points (bistable). nan if none on J_scan."""
-    qs = np.linspace(0.0, 1.0, 4001)
-    for J in J_scan:
-        f = 1.0 / (1.0 + np.exp(-(2 * lmax * J * (2 * qs - 1) + 2 * b))) - qs
-        if np.count_nonzero(np.diff(np.sign(f)) != 0) >= 3:
-            return float(J)
-    return np.nan
+def _mf_nfp(J, b, lmax, ngrid=2001):
+    """Number of fixed points of the 1D MF map q=sigmoid(2*lmax*J*(2q-1)+2b)."""
+    qs = np.linspace(0.0, 1.0, ngrid)
+    f = 1.0 / (1.0 + np.exp(-(2 * lmax * J * (2 * qs - 1) + 2 * b))) - qs
+    return int(np.count_nonzero(np.diff(np.sign(f)) != 0))
 
 
-def _jstar_curve(md, b_list, theta, J_scan=np.arange(0.0, 1.5001, 0.005), gibbs_c=10.0):
-    """Numeric onset J*(B) over b_list for one scheme (the black curve): MF via
-    fixed-point counting, FBP/LBP via bistability_onset_J, Gibbs via
-    (ln T + 8|B|)/c. nan array for exact / optimal-alpha (no single-scheme onset)."""
+def _onset_bisect(is_bi, J_hi=2.0, coarse=0.03, tol=1e-5, iters=40):
+    """Precise onset J*: coarse-bracket the mono->bistable transition of the
+    predicate is_bi(J), then bisect to tolerance tol. nan if never bistable."""
+    lo, hi, J = 0.0, None, coarse
+    while J <= J_hi + 1e-9:
+        if is_bi(J):
+            hi = J; break
+        lo = J; J += coarse
+    if hi is None:
+        return np.nan
+    for _ in range(iters):
+        if hi - lo < tol:
+            break
+        mid = 0.5 * (lo + hi)
+        (hi, lo) = (mid, lo) if is_bi(mid) else (hi, mid)
+    return 0.5 * (lo + hi)
+
+
+def _jstar_curve(md, b_list, theta, gibbs_c=10.0):
+    """Precise onset J*(B) over b_list for one scheme (the black curve), by
+    bisection: MF via fixed-point counting, FBP/LBP via find_solution_bp root count,
+    Gibbs via (ln T + 8|B|)/c. nan array for exact / optimal-alpha."""
     b_arr = np.asarray(b_list, float)
     lmax = float(np.max(np.linalg.eigvalsh(theta))); n = int(round(lmax))
     if md['kind'] == 'mf':
-        return np.array([_mf_jstar_b(b, lmax, J_scan) for b in b_arr])
+        return np.array([_onset_bisect(lambda J, b=b: _mf_nfp(J, b, lmax) >= 3) for b in b_arr])
     if md['kind'] == 'fbp':
-        return np.array([bistability_onset_J(md['alpha'], abs(b), n, J_scan) for b in b_arr])
+        a = md['alpha']
+        return np.array([_onset_bisect(
+            lambda J, b=b: len(find_solution_bp(J, abs(b), n_neigh=n, alpha=a, w_size=0.02)) > 1)
+            for b in b_arr])
     if md['kind'] == 'gibbs':
         T = md['gibbs'][0] - md['gibbs'][1]
         return (np.log(T) + 8 * np.abs(b_arr)) / gibbs_c
@@ -1666,7 +1689,7 @@ def _jstar_curve(md, b_list, theta, J_scan=np.arange(0.0, 1.5001, 0.005), gibbs_
 def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
                              b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
                              alphas=(0.5, 1.0, 1.5, 2.0), gibbs=(100, 1000, 10000),
-                             include_opt=False, node=0, theta=THETA_NECKER,
+                             include_opt=False, node=0, steps=100, theta=THETA_NECKER,
                              recompute=False, save=True):
     """Over-confidence vs coupling J for every scheme (colours as plot_susc_vs_J).
     Over-confidence at fixed J is the L1 gap to the exact marginal integrated over
@@ -1676,10 +1699,10 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
     alpha line. Posterior grids are cached to disk (shared with plot_posterior_matrices
     when the grids match)."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
-    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, recompute)
+    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, recompute)
     fig, ax = plt.subplots(figsize=(6.6, 4.6))
     for md in methods:
-        Q = _q_matrix(md, j_list, b_list, node, theta, recompute)
+        Q = _q_matrix(md, j_list, b_list, node, theta, steps, recompute)
         oc = [float(np.trapz(np.abs(Q[ij] - Qtrue[ij]), Qtrue[ij])) for ij in range(len(j_list))]
         ax.plot(j_list, oc, md['ls'], color=md['c'], lw=2.2, label=md['lab'])
     ax.set(xlabel='Coupling J', ylabel='Over-confidence',
@@ -1697,7 +1720,7 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
                             b_list=np.round(np.arange(-0.5, 0.5001, 0.01), 4),
                             alphas=(0.5, 1.0, 1.5, 2.0),
                             gibbs=(100, 1000, 10000), include_opt=False, node=0,
-                            show_jstar=True, gibbs_c=10.0, theta=THETA_NECKER,
+                            steps=100, show_jstar=True, gibbs_c=10.0, theta=THETA_NECKER,
                             recompute=False, save=True):
     """Posterior q(x=1) over the (J, B) plane, one coolwarm heatmap per algorithm
     (exact, MF, FBP family, optional FBP-optimal, and one Gibbs panel per chain length
@@ -1706,7 +1729,7 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
     saddle-node for MF/FBP, and J*_Gibbs(T)=(ln T + 8|B|)/c for the sampler
     (c=gibbs_c, the Necker barrier slope). Grids are cached to disk."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
-    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, recompute)) for md in methods]
+    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, recompute)) for md in methods]
     Mtrue = next(M for md, M in mats if md['kind'] == 'exact')
 
     ncols = min(4, len(mats)); nrows = int(np.ceil(len(mats) / ncols))
