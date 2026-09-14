@@ -208,7 +208,7 @@ def plot_eigs_vs_J(J_sweep=np.linspace(-10, 6, 400), B=0.0, save=True):
     return fig
 
 
-def plot_density(J_list=(-6.0, -2.0, 3.0), B=0.0, D=0.01, T=20000.0, save=True):
+def plot_density(J_list=(-6.0, -2.0, 3.0), B=0.0, D=0.05, T=50000.0, save=True):
     """Stationary density (2D histogram + x-marginal) from long Langevin runs,
     with fixed points overlaid."""
     fig, axes = plt.subplots(2, len(J_list), figsize=(4.0 * len(J_list), 7),
@@ -285,7 +285,7 @@ def pitchfork_J(B=0.0, J_hi=12.0):
 
 
 if __name__ == '__main__':
-    B = -3
+    B = -2
     print(f"\npitchfork onset J* = {pitchfork_J(B):.4f}  (B={B})")
     report_pointwise(J_list=(0., 0.5, 1, 3, 5, 6), B=B)
     scan_multiplicity(J_sweep=np.linspace(0, 12, 121), B=B)
