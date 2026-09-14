@@ -1597,7 +1597,19 @@ def _cmp_methods(alphas, gibbs_T=(), burn=1000, include_opt=False):
     return ms
 
 
-def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, init='uniform'):
+def _alpha_hat_grid(j_list, b_list, theta, coarse=41):
+    """KL-optimal alpha-hat on a coarse (J,B) subgrid, bilinearly interpolated to the
+    full grid. alpha-hat is smooth in (J,B), so this matches the per-cell result at a
+    fraction of the cost (the expensive optimal_alpha runs only on the coarse grid)."""
+    j_list = np.asarray(j_list, float); b_list = np.asarray(b_list, float)
+    Jc = np.linspace(j_list[0], j_list[-1], min(int(coarse), len(j_list)))
+    Bc = np.linspace(b_list[0], b_list[-1], min(int(coarse), len(b_list)))
+    AHc = np.array([[_alpha_hat(J, B, theta) for B in Bc] for J in Jc])   # [Jc, Bc]
+    tmp = np.vstack([np.interp(b_list, Bc, AHc[i]) for i in range(len(Jc))])          # [Jc, b]
+    return np.column_stack([np.interp(j_list, Jc, tmp[:, k]) for k in range(len(b_list))])  # [j, b]
+
+
+def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, init='uniform', ahat=None):
     """P(x_node = 1) for one algorithm at uniform (J, B). MF and FBP start from a
     random state and iterate `steps`. init='uniform' -> q0~U(0,1) / messages~U(0,1)
     (full random: each cell picks a well -> wide speckle above J*, for the matrices).
@@ -1618,7 +1630,7 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, in
         for _ in range(int(steps)):
             m = np.tanh(Bv + Jm @ m)
         return float((m[node] + 1) / 2)
-    a = _alpha_hat(J, B, theta) if kind == 'fbp_opt' else alpha
+    a = ((ahat if ahat is not None else _alpha_hat(J, B, theta)) if kind == 'fbp_opt' else alpha)
     mask = (Jm != 0.0)
     if init == 'uniform':
         u = np.random.uniform(1e-6, 1.0 - 1e-6, (n, n))    # message beliefs ~ U(0,1)
@@ -1631,17 +1643,21 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, in
     return float(q[node])
 
 
-def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, init='uniform', recompute=False):
+def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, init='uniform',
+              opt_coarse=41, recompute=False):
     """Posterior grid Q[j, b] = P(x_node=1) for one algorithm, cached to disk under
     DATA_FOLDER/matrix_cache so repeated plots don't recompute. The sampler's chain
     length is in md['gibbs']=(steps, burn); MF/FBP use `steps` random-init iterations.
-    Key = hash of (kind, alpha, node, steps, j_list, b_list, theta[, gibbs])."""
+    For fbp_opt, alpha-hat is computed on a coarse `opt_coarse` grid and interpolated
+    (much faster). Key = hash of (kind, alpha, node, steps, init, j_list, b_list,
+    theta[, gibbs][, opt_coarse])."""
     import hashlib
     g = md.get('gibbs', (20000, 2000))
     cache_dir = os.path.join(DATA_FOLDER, 'matrix_cache'); os.makedirs(cache_dir, exist_ok=True)
     a = round(float(md['alpha']), 6)
     ini = init if md['kind'] not in ('exact', 'gibbs') else '-'   # init irrelevant for exact/gibbs
-    key = repr((md['kind'], a, int(node), int(steps), ini, np.asarray(j_list, float).tobytes(),
+    oc = int(opt_coarse) if md['kind'] == 'fbp_opt' else None
+    key = repr((md['kind'], a, int(node), int(steps), ini, oc, np.asarray(j_list, float).tobytes(),
                 np.asarray(b_list, float).tobytes(), np.asarray(theta, float).tobytes(),
                 tuple(g) if md['kind'] == 'gibbs' else None))
     h = hashlib.md5(key.encode()).hexdigest()[:12]
@@ -1649,10 +1665,12 @@ def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, init='u
     fn = os.path.join(cache_dir, f"qmat_{md['kind']}_{tag}_{h}.npy")
     if not recompute and os.path.exists(fn):
         return np.load(fn)
+    AH = _alpha_hat_grid(j_list, b_list, theta, opt_coarse) if md['kind'] == 'fbp_opt' else None
     M = np.empty((len(j_list), len(b_list)))
     for ij, j in enumerate(j_list):
         for ib, b in enumerate(b_list):
-            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g, steps, init)
+            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g, steps, init,
+                                ahat=(AH[ij, ib] if AH is not None else None))
     np.save(fn, M)
     return M
 
@@ -1705,7 +1723,7 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
                              b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
                              alphas=(0.5, 1.0, 1.5, 2.0), gibbs=(100, 1000, 10000),
                              include_opt=False, node=0, steps=100, init='det',
-                             theta=THETA_NECKER, recompute=False, save=True):
+                             opt_coarse=41, theta=THETA_NECKER, recompute=False, save=True):
     """Over-confidence vs coupling J for every scheme (colours as plot_susc_vs_J).
     Over-confidence at fixed J is the L1 gap to the exact marginal integrated over
     the sensory sweep, OC(J) = int |q_algo(B) - q_true(B)| dq_true(B). Exact is 0
