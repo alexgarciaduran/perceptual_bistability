@@ -1583,12 +1583,17 @@ def plot_optimal_alpha_vs_J(B_list=(0.05, 0.1, 0.2, 0.3),
 # loop_belief_prop_necker.plot_over_conf_mf_bp_gibbs / all_comparison_together),
 # self-contained and extended with the FBP-alpha family + optimal-alpha line.
 # ----------------------------------------------------------------------------
-def _cmp_methods(alphas, include_gibbs=True):
-    """Same algorithm set + colours as plot_susc_vs_J: exact/sampling (black),
-    MF (red), FBP family (Blues by alpha), FBP-optimal (green), Gibbs (grey)."""
+def _cmp_methods(alphas, gibbs_T=(), burn=1000):
+    """Algorithm set + colours as plot_susc_vs_J: exact/sampling (black), MF (red),
+    FBP family (Blues by alpha), FBP-optimal (green). gibbs_T is a tuple of Gibbs
+    chain lengths (number of post-burn samples); each becomes its own grey line/
+    panel labelled by T, with (steps, burn_in)=(burn+T, burn)."""
     ms = list(_susc_methods(alphas)) + [_opt_method()]
-    if include_gibbs:
-        ms.append(dict(kind='gibbs', lab='Gibbs', c='0.5', ls=':', alpha=1.0))
+    gts = list(gibbs_T or [])
+    greys = plt.cm.Greys(np.linspace(0.45, 0.88, max(len(gts), 1)))
+    for T, c in zip(gts, greys):
+        ms.append(dict(kind='gibbs', lab=f'Gibbs T={T:g}', c=c, ls=':', alpha=1.0,
+                       gibbs=(int(burn + T), int(burn))))
     return ms
 
 
@@ -1606,44 +1611,47 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000)):
     return float(fractional_bp(Jm, Bv, alpha=alpha)[node])
 
 
-def _q_matrix(md, j_list, b_list, node=0, gibbs=(20000, 2000), theta=THETA_NECKER,
-              recompute=False):
+def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, recompute=False):
     """Posterior grid Q[j, b] = P(x_node=1) for one algorithm, cached to disk under
-    DATA_FOLDER/matrix_cache so repeated plots don't recompute. Key = hash of
-    (kind, alpha, node, j_list, b_list, theta[, gibbs steps for the sampler])."""
+    DATA_FOLDER/matrix_cache so repeated plots don't recompute. The sampler's chain
+    length is carried in md['gibbs']=(steps, burn). Key = hash of (kind, alpha, node,
+    j_list, b_list, theta[, gibbs for the sampler])."""
     import hashlib
+    g = md.get('gibbs', (20000, 2000))
     cache_dir = os.path.join(DATA_FOLDER, 'matrix_cache'); os.makedirs(cache_dir, exist_ok=True)
     a = round(float(md['alpha']), 6)
     key = repr((md['kind'], a, int(node), np.asarray(j_list, float).tobytes(),
                 np.asarray(b_list, float).tobytes(), np.asarray(theta, float).tobytes(),
-                tuple(gibbs) if md['kind'] == 'gibbs' else None))
+                tuple(g) if md['kind'] == 'gibbs' else None))
     h = hashlib.md5(key.encode()).hexdigest()[:12]
-    fn = os.path.join(cache_dir, f"qmat_{md['kind']}_a{round(a, 3)}_{h}.npy")
+    tag = f"T{g[0]-g[1]}" if md['kind'] == 'gibbs' else f"a{round(a, 3)}"
+    fn = os.path.join(cache_dir, f"qmat_{md['kind']}_{tag}_{h}.npy")
     if not recompute and os.path.exists(fn):
         return np.load(fn)
     M = np.empty((len(j_list), len(b_list)))
     for ij, j in enumerate(j_list):
         for ib, b in enumerate(b_list):
-            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, gibbs)
+            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g)
     np.save(fn, M)
     return M
 
 
 def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
                              b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
-                             alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=False,
-                             gibbs=(20000, 2000), node=0, theta=THETA_NECKER,
+                             alphas=(0.5, 1.0, 1.5, 2.0), gibbs=(),
+                             node=0, theta=THETA_NECKER,
                              recompute=False, save=True):
     """Over-confidence vs coupling J for every scheme (colours as plot_susc_vs_J).
     Over-confidence at fixed J is the L1 gap to the exact marginal integrated over
     the sensory sweep, OC(J) = int |q_algo(B) - q_true(B)| dq_true(B). Exact is 0
-    by construction; MF is largest, LBP/FBP ordered by alpha. Gibbs (optional, slow)
-    is a single line at the given chain length. Posterior grids are cached to disk."""
-    methods = _cmp_methods(alphas, include_gibbs)
-    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, gibbs, theta, recompute)
+    by construction; MF is largest, LBP/FBP ordered by alpha. `gibbs` is a tuple of
+    Gibbs chain lengths T (each a grey line; empty = none, since it is slow).
+    Posterior grids are cached to disk."""
+    methods = _cmp_methods(alphas, gibbs_T=gibbs)
+    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, recompute)
     fig, ax = plt.subplots(figsize=(6.6, 4.6))
     for md in methods:
-        Q = _q_matrix(md, j_list, b_list, node, gibbs, theta, recompute)
+        Q = _q_matrix(md, j_list, b_list, node, theta, recompute)
         oc = [float(np.trapz(np.abs(Q[ij] - Qtrue[ij]), Qtrue[ij])) for ij in range(len(j_list))]
         ax.plot(j_list, oc, md['ls'], color=md['c'], lw=2.2, label=md['lab'])
     ax.set(xlabel='Coupling J', ylabel='Over-confidence',
@@ -1659,23 +1667,16 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
 
 def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.025), 4),
                             b_list=np.round(np.arange(-0.5, 0.5001, 0.025), 4),
-                            alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=True,
+                            alphas=(0.5, 1.0, 1.5, 2.0),
                             gibbs=(1000, 10000, 100000), node=0, show_jstar=True,
-                            theta=THETA_NECKER, save=True):
+                            gibbs_c=10.0, theta=THETA_NECKER, recompute=False, save=True):
     """Posterior q(x=1) over the (J, B) plane, one coolwarm heatmap per algorithm
-    (exact, MF, FBP family, FBP-optimal, Gibbs). MSE vs the exact posterior is
-    annotated per panel; the closed-form critical coupling J* (B=0) is overlaid as
-    a dashed line where it exists."""
-    methods = _cmp_methods(alphas, include_gibbs)
-
-    def mat_of(md):
-        M = np.empty((len(j_list), len(b_list)))
-        for ij, j in enumerate(j_list):
-            for ib, b in enumerate(b_list):
-                M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, gibbs)
-        return M
-
-    mats = [(md, mat_of(md)) for md in methods]
+    (exact, MF, FBP family, FBP-optimal, and one Gibbs panel per chain length in
+    `gibbs`). MSE vs the exact posterior is annotated per panel. Overlays the onset
+    J*: the closed-form B=0 value for MF/FBP, and J*_Gibbs(T)=(ln T + 8|B|)/c for the
+    sampler (c=gibbs_c, the Necker barrier slope). Grids are cached to disk."""
+    methods = _cmp_methods(alphas, gibbs_T=gibbs)
+    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, recompute)) for md in methods]
     Mtrue = next(M for md, M in mats if md['kind'] == 'exact')
 
     ncols = min(4, len(mats)); nrows = int(np.ceil(len(mats) / ncols))
@@ -1691,9 +1692,15 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.025), 4),
         ttl = md['lab'] if md['kind'] == 'exact' else f"{md['lab']}\nMSE={mse:.3f}"
         a.set_title(ttl, fontsize=10)
         if show_jstar:
-            Js = _jstar(md['kind'], md['alpha'], theta)
-            if np.isfinite(Js) and j_list[0] <= Js <= j_list[-1]:
-                a.axhline(Js, color='k', ls='--', lw=1)
+            if md['kind'] == 'gibbs':
+                T = md['gibbs'][0] - md['gibbs'][1]          # samples = steps - burn
+                bb = np.asarray(b_list, float)
+                a.plot(bb, (np.log(T) + 8 * np.abs(bb)) / gibbs_c, color='k', ls='--', lw=1)
+                a.set_ylim(j_list[0], j_list[-1])
+            else:
+                Js = _jstar(md['kind'], md['alpha'], theta)
+                if np.isfinite(Js) and j_list[0] <= Js <= j_list[-1]:
+                    a.axhline(Js, color='k', ls='--', lw=1)
         a.set_xticks([-0.5, 0, 0.5])
     for a in axes[len(mats):]:
         a.set_visible(False)
@@ -1998,9 +2005,15 @@ if __name__ == "__main__":
     #                       J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
     #                       J_grid=np.round(np.arange(0.05, 2.0, 0.025), 3),
     #                       theta=THETA_NECKER, save=True)
-    plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.025), 4),
-                            b_list=np.round(np.arange(-0.5, 0.5001, 0.025), 4),
+    plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+                            b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
                             alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=True,
                             gibbs=(1000, 10000, 100000), node=0, show_jstar=True,
                             theta=THETA_NECKER, save=True)
+    
+    plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
+                                 b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
+                                 alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=False,
+                                 gibbs=(20000, 2000), node=0, theta=THETA_NECKER,
+                                 recompute=False, save=True)
 
