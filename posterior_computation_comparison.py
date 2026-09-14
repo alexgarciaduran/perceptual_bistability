@@ -2079,20 +2079,21 @@ if __name__ == "__main__":
     
     plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
                                  b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
-                                 alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=False,
-                                 gibbs=(1000, 10000, 100000), node=0, theta=THETA_NECKER,
+                                 alphas=(0.5, 1.0, 1.5, 2.0), gibbs=(1000, 10000, 100000),
+                                 node=0, theta=THETA_NECKER,
                                  recompute=False, save=True, include_opt=True)
 
-    # main figure
+    # main figure: exact - MF - LBP - FBP(alpha-hat) - Gibbs 1e3/1e4/1e5
     plot_posterior_matrices(
         j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
         b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
         alphas=(1.0,), include_opt=True, gibbs=(1000, 10000, 100000),
-        theta=THETA_NECKER, save=True)
-    
-    # supp FBP figure
+        theta=THETA_NECKER, save=True, fname='posterior_matrices_main')
+
+    # supp figure: full FBP alpha sweep
     plot_posterior_matrices(
         j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
         b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
         alphas=(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0),
-        include_opt=True, gibbs=(), theta=THETA_NECKER, save=True)
+        include_opt=True, gibbs=(), theta=THETA_NECKER, save=True,
+        fname='posterior_matrices_supp_alpha')
