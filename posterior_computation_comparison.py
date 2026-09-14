@@ -1597,19 +1597,7 @@ def _cmp_methods(alphas, gibbs_T=(), burn=1000, include_opt=False):
     return ms
 
 
-def _alpha_hat_grid(j_list, b_list, theta, coarse=41):
-    """KL-optimal alpha-hat on a coarse (J,B) subgrid, bilinearly interpolated to the
-    full grid. alpha-hat is smooth in (J,B), so this matches the per-cell result at a
-    fraction of the cost (the expensive optimal_alpha runs only on the coarse grid)."""
-    j_list = np.asarray(j_list, float); b_list = np.asarray(b_list, float)
-    Jc = np.linspace(j_list[0], j_list[-1], min(int(coarse), len(j_list)))
-    Bc = np.linspace(b_list[0], b_list[-1], min(int(coarse), len(b_list)))
-    AHc = np.array([[_alpha_hat(J, B, theta) for B in Bc] for J in Jc])   # [Jc, Bc]
-    tmp = np.vstack([np.interp(b_list, Bc, AHc[i]) for i in range(len(Jc))])          # [Jc, b]
-    return np.column_stack([np.interp(j_list, Jc, tmp[:, k]) for k in range(len(b_list))])  # [j, b]
-
-
-def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, init='uniform', ahat=None):
+def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, init='uniform'):
     """P(x_node = 1) for one algorithm at uniform (J, B). MF and FBP start from a
     random state and iterate `steps`. init='uniform' -> q0~U(0,1) / messages~U(0,1)
     (full random: each cell picks a well -> wide speckle above J*, for the matrices).
@@ -1630,7 +1618,7 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, in
         for _ in range(int(steps)):
             m = np.tanh(Bv + Jm @ m)
         return float((m[node] + 1) / 2)
-    a = ((ahat if ahat is not None else _alpha_hat(J, B, theta)) if kind == 'fbp_opt' else alpha)
+    a = _alpha_hat(J, B, theta) if kind == 'fbp_opt' else alpha
     mask = (Jm != 0.0)
     if init == 'uniform':
         u = np.random.uniform(1e-6, 1.0 - 1e-6, (n, n))    # message beliefs ~ U(0,1)
@@ -1644,20 +1632,17 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, in
 
 
 def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, init='uniform',
-              opt_coarse=41, recompute=False):
+              recompute=False):
     """Posterior grid Q[j, b] = P(x_node=1) for one algorithm, cached to disk under
     DATA_FOLDER/matrix_cache so repeated plots don't recompute. The sampler's chain
     length is in md['gibbs']=(steps, burn); MF/FBP use `steps` random-init iterations.
-    For fbp_opt, alpha-hat is computed on a coarse `opt_coarse` grid and interpolated
-    (much faster). Key = hash of (kind, alpha, node, steps, init, j_list, b_list,
-    theta[, gibbs][, opt_coarse])."""
+    Key = hash of (kind, alpha, node, steps, init, j_list, b_list, theta[, gibbs])."""
     import hashlib
     g = md.get('gibbs', (20000, 2000))
     cache_dir = os.path.join(DATA_FOLDER, 'matrix_cache'); os.makedirs(cache_dir, exist_ok=True)
     a = round(float(md['alpha']), 6)
     ini = init if md['kind'] not in ('exact', 'gibbs') else '-'   # init irrelevant for exact/gibbs
-    oc = int(opt_coarse) if md['kind'] == 'fbp_opt' else None
-    key = repr((md['kind'], a, int(node), int(steps), ini, oc, np.asarray(j_list, float).tobytes(),
+    key = repr((md['kind'], a, int(node), int(steps), ini, np.asarray(j_list, float).tobytes(),
                 np.asarray(b_list, float).tobytes(), np.asarray(theta, float).tobytes(),
                 tuple(g) if md['kind'] == 'gibbs' else None))
     h = hashlib.md5(key.encode()).hexdigest()[:12]
@@ -1665,12 +1650,10 @@ def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, init='u
     fn = os.path.join(cache_dir, f"qmat_{md['kind']}_{tag}_{h}.npy")
     if not recompute and os.path.exists(fn):
         return np.load(fn)
-    AH = _alpha_hat_grid(j_list, b_list, theta, opt_coarse) if md['kind'] == 'fbp_opt' else None
     M = np.empty((len(j_list), len(b_list)))
     for ij, j in enumerate(j_list):
         for ib, b in enumerate(b_list):
-            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g, steps, init,
-                                ahat=(AH[ij, ib] if AH is not None else None))
+            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g, steps, init)
     np.save(fn, M)
     return M
 
@@ -1723,7 +1706,7 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
                              b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
                              alphas=(0.5, 1.0, 1.5, 2.0), gibbs=(100, 1000, 10000),
                              include_opt=False, node=0, steps=100, init='det',
-                             opt_coarse=41, theta=THETA_NECKER, recompute=False, save=True):
+                             theta=THETA_NECKER, recompute=False, save=True):
     """Over-confidence vs coupling J for every scheme (colours as plot_susc_vs_J).
     Over-confidence at fixed J is the L1 gap to the exact marginal integrated over
     the sensory sweep, OC(J) = int |q_algo(B) - q_true(B)| dq_true(B). Exact is 0
@@ -1732,15 +1715,14 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
     alpha line. Posterior grids are cached to disk (shared with plot_posterior_matrices
     when the grids match)."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
-    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, init, opt_coarse, recompute)
-    fig, ax = plt.subplots(figsize=(6.6, 4.6))
-    for md in methods:
-        Q = _q_matrix(md, j_list, b_list, node, theta, steps, init, opt_coarse, recompute)
+    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, init, recompute)
+    fig, ax = plt.subplots(figsize=(4.6, 3.2))
+    for md in tqdm(methods):
+        Q = _q_matrix(md, j_list, b_list, node, theta, steps, init, recompute)
         oc = [float(np.trapz(np.abs(Q[ij] - Qtrue[ij]), Qtrue[ij])) for ij in range(len(j_list))]
         ax.plot(j_list, oc, md['ls'], color=md['c'], lw=2.2, label=md['lab'])
-    ax.set(xlabel='Coupling J', ylabel='Over-confidence',
-           title='Over-confidence vs coupling (integrated |q - q_exact|)')
-    ax.legend(frameon=False, fontsize=9)
+    ax.set(xlabel='Coupling J', ylabel='Over-confidence')
+    ax.legend(frameon=False)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
     fig.tight_layout()
     if save:
@@ -1753,7 +1735,7 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
                             b_list=np.round(np.arange(-0.5, 0.5001, 0.01), 4),
                             alphas=(0.5, 1.0, 1.5, 2.0),
                             gibbs=(100, 1000, 10000), include_opt=False, node=0,
-                            steps=100, init='uniform', opt_coarse=41, show_jstar=True,
+                            steps=100, init='uniform', show_jstar=True,
                             gibbs_c=10.0, theta=THETA_NECKER, recompute=False, save=True,
                             fname='posterior_matrices'):
     """Posterior q(x=1) over the (J, B) plane, one coolwarm heatmap per algorithm
@@ -1764,12 +1746,12 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
     (c=gibbs_c, the Necker barrier slope). Grids are cached to disk."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
     looper = tqdm(methods)
-    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, init, opt_coarse, recompute)) for md in looper]
+    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, init, recompute)) for md in looper]
     Mtrue = next(M for md, M in mats if md['kind'] == 'exact')
 
     ncols = min(4, len(mats)); nrows = int(np.ceil(len(mats) / ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(3.0 * ncols, 3.0 * nrows),
-                             squeeze=False)
+                             squeeze=False, sharex=True, sharey=True)
     axes = axes.flatten()
     ext = [b_list[0], b_list[-1], j_list[0], j_list[-1]]
     im = None
@@ -1789,15 +1771,130 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
         a.set_visible(False)
     for i, a in enumerate(axes[:len(mats)]):
         if i % ncols == 0:
-            a.set_ylabel('Coupling J', fontsize=9)
+            a.set_ylabel('Coupling J')
         if i // ncols == nrows - 1:
-            a.set_xlabel('Sensory evidence B', fontsize=9)
+            a.set_xlabel('Sensory evidence B')
     fig.subplots_adjust(hspace=0.5, wspace=0.28)
     if im is not None:
         fig.colorbar(im, ax=axes[:len(mats)], fraction=0.02, label='Posterior q(x=1)')
     if save:
         for ext_ in ('png', 'svg'):
             fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=180, bbox_inches='tight')
+    return fig
+
+
+def plot_paper_figure(j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+                      b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
+                      gibbs=(1000, 10000, 100000),
+                      susc_alphas=(0.5, 1.0, 1.5, 2.0), susc_B=0.1,
+                      susc_q_grid=np.round(np.linspace(0.55, 0.99, 12), 3),
+                      susc_J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
+                      rdJ_d=1, rdJ_J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3),
+                      oc_j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
+                      oc_b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
+                      oc_include_opt=True,
+                      steps=100, node=0, gibbs_c=10.0,
+                      theta=THETA_NECKER, recompute=False, save=True, fname='paper_figure'):
+    """Composite main-paper figure (4x4 GridSpec), all text at the current rcParams
+    font size (nothing is hard-coded here):
+      rows 0-1 : the 7 posterior matrices (exact, MF, LBP, FBP-alpha_hat, Gibbs T)
+                 with J*(B) overlay and MSE, plus a colour bar;
+      row 2    : susceptibility r_d vs confidence q, one panel per graph distance d;
+      row 3    : over-confidence vs J (left) and r_d vs J at d=rdJ_d (right).
+    Matrices/over-confidence reuse the disk cache (uniform init for the matrices,
+    deterministic evidence-following init for over-confidence)."""
+    import matplotlib.gridspec as gridspec
+    ts = mpl.rcParams['font.size'] * 0.9            # titles a bit smaller than body
+    dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
+    fig = plt.figure(figsize=(14, 13), constrained_layout=True)
+    gs = gridspec.GridSpec(4, 4, figure=fig)
+
+    # (1) posterior matrices: exact, MF, LBP, FBP-alpha_hat, Gibbs T=... (7 panels)
+    mmeth = _cmp_methods(alphas=(1.0,), gibbs_T=gibbs, include_opt=True)
+    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, 'uniform', recompute)) for md in mmeth]
+    Mtrue = next(M for md, M in mats if md['kind'] == 'exact')
+    ext = [b_list[0], b_list[-1], j_list[0], j_list[-1]]
+    pos = [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1), (1, 2)]
+    bycol = {}
+    for (r, c) in pos:
+        bycol[c] = max(bycol.get(c, -1), r)
+    bottom = {(bycol[c], c) for c in bycol}         # lowest panel in each column
+    ax0 = None; im = None
+    for (r, c), (md, M) in zip(pos, mats):
+        ax = fig.add_subplot(gs[r, c], sharex=ax0, sharey=ax0)   # shared x/y
+        if ax0 is None:
+            ax0 = ax
+        im = ax.imshow(np.flipud(M), aspect='auto', extent=ext, cmap='coolwarm_r',
+                       vmin=0, vmax=1, interpolation='none')
+        ax.set_title('True Posterior' if md['kind'] == 'exact'
+                     else f"{md['lab']}\nMSE={np.mean((M - Mtrue) ** 2):.3f}", fontsize=ts)
+        jc = _jstar_curve(md, b_list, theta, gibbs_c=gibbs_c)
+        if np.isfinite(jc).any():
+            ax.plot(b_list, jc, 'k', lw=1)
+        ax.set_xlim(b_list[0], b_list[-1]); ax.set_ylim(j_list[0], j_list[-1]); ax.set_xticks([-0.5, 0, 0.5])
+        if (r, c) in bottom:
+            ax.set_xlabel('Sensory evidence B')
+        else:
+            ax.tick_params(labelbottom=False)
+        if c == 0:
+            ax.set_ylabel('Coupling J')
+        else:
+            ax.tick_params(labelleft=False)
+    # thin colour bar + shared legend share the free top-right cell
+    legcell = fig.add_subplot(gs[1, 3]); legcell.axis('off')
+    cbax = legcell.inset_axes([0.02, 0.08, 0.10, 0.84])
+    fig.colorbar(im, cax=cbax, label='Posterior q(x=1)')
+
+    # (2) susceptibility r_d vs q, one panel per distance d
+    smeth = list(_susc_methods(susc_alphas)) + [_opt_method()]
+    sax = [fig.add_subplot(gs[2, di]) for di in range(len(dvals))]
+    for md in smeth:
+        R = np.full((len(susc_q_grid), len(dvals)), np.nan)
+        Jg = _OPT_FIT_J if md['kind'] == 'fbp_opt' else susc_J_grid
+        for iq, q in enumerate(susc_q_grid):
+            Jf = _fit_J_for_q(md['kind'], q, susc_B, md['alpha'], theta, Jg)
+            if not np.isnan(Jf):
+                R[iq] = _rd(_chi(md['kind'], Jf, susc_B, md['alpha'], theta), dist, dvals)
+        for di in range(len(dvals)):
+            sax[di].plot(susc_q_grid, R[:, di], md['ls'], color=md['c'], marker='o', ms=3, label=md['lab'])
+    for di, ax in enumerate(sax):
+        ax.set_title(f'Distance d={dvals[di]}', fontsize=ts); ax.set_xlabel('Posterior q')
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    sax[0].set_ylabel(r'$r_d=\partial\langle x_i\rangle/\partial B_j$')
+
+    # (3a) over-confidence vs J (deterministic init; OWN grid so it reuses the
+    # plot_overconfidence_vs_J cache -- match oc_j_list/oc_b_list/oc_include_opt/gibbs
+    # to how you ran that function)
+    axoc = fig.add_subplot(gs[3, 0:2])
+    ocm = _cmp_methods(susc_alphas, gibbs_T=gibbs, include_opt=oc_include_opt)
+    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), oc_j_list, oc_b_list, node, theta, steps, 'det', recompute)
+    for md in tqdm(ocm):
+        Q = _q_matrix(md, oc_j_list, oc_b_list, node, theta, steps, 'det', recompute)
+        oc = [float(np.trapz(np.abs(Q[ij] - Qtrue[ij]), Qtrue[ij])) for ij in range(len(oc_j_list))]
+        axoc.plot(oc_j_list, oc, md['ls'], color=md['c'], label=md['lab'])
+    axoc.set_xlabel('Coupling J'); axoc.set_ylabel('Over-confidence'); axoc.set_title('Over-confidence', fontsize=ts)
+    axoc.spines['top'].set_visible(False); axoc.spines['right'].set_visible(False)
+
+    # (3b) r_d vs J at fixed distance, with J* stars
+    axr = fig.add_subplot(gs[3, 2:4])
+    for md in smeth:
+        rd = [_rd(_chi(md['kind'], J, susc_B, md['alpha'], theta), dist, dvals)[rdJ_d] for J in rdJ_J_grid]
+        axr.plot(rdJ_J_grid, rd, md['ls'], color=md['c'], marker='.', label=md['lab'])
+        Js = _jstar(md['kind'], md['alpha'], theta)
+        if np.isfinite(Js) and rdJ_J_grid.min() <= Js <= rdJ_J_grid.max():
+            rstar = _rd(_chi(md['kind'], Js, susc_B, md['alpha'], theta), dist, dvals)[rdJ_d]
+            axr.plot(Js, rstar, marker='*', color=md['c'], ms=12, mec='k', mew=0.5, ls='none')
+    axr.set_xlabel('Coupling J'); axr.set_ylabel(rf'$r_{{{rdJ_d}}}$')
+    axr.set_title(f'Susceptibility at d={rdJ_d} vs J', fontsize=ts)
+    axr.spines['top'].set_visible(False); axr.spines['right'].set_visible(False)
+
+    # single shared legend for all line plots, in the free top-right cell
+    handles, labels = axoc.get_legend_handles_labels()
+    legcell.legend(handles, labels, loc='center left', bbox_to_anchor=(0.42, 0.5), frameon=False)
+
+    if save:
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=300, bbox_inches='tight')
     return fig
 
 
@@ -2089,29 +2186,39 @@ if __name__ == "__main__":
     #                       J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
     #                       J_grid=np.round(np.arange(0.05, 2.0, 0.025), 3),
     #                       theta=THETA_NECKER, save=True)
-    plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
-                            b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
-                            alphas=(0.5, 1.0, 1.5, 2.0), include_opt=True,
-                            gibbs=(1000, 10000, 100000), node=0, show_jstar=True,
-                            theta=THETA_NECKER, save=True)
+    # plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+    #                         b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
+    #                         alphas=(0.5, 1.0, 1.5, 2.0), include_opt=True,
+    #                         gibbs=(1000, 10000, 100000), node=0, show_jstar=True,
+    #                         theta=THETA_NECKER, save=True, recompute=False)
     
-    plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
-                                 b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
-                                 alphas=(0.5, 1.0, 1.5, 2.0), gibbs=(1000, 10000, 100000),
-                                 node=0, theta=THETA_NECKER,
-                                 recompute=False, save=True, include_opt=True)
+    # plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
+    #                               b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
+    #                               alphas=(0.5, 1.0, 1.5, 2.0), gibbs=(1000, 10000, 100000),
+    #                               node=0, theta=THETA_NECKER,
+    #                               recompute=False, save=True, include_opt=True)
 
     # main figure: exact - MF - LBP - FBP(alpha-hat) - Gibbs 1e3/1e4/1e5
-    plot_posterior_matrices(
-        j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
-        b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
-        alphas=(1.0,), include_opt=True, gibbs=(1000, 10000, 100000),
-        theta=THETA_NECKER, save=True, fname='posterior_matrices_main')
+    # plot_posterior_matrices(
+    #     j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+    #     b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
+    #     alphas=(1.0,), include_opt=True, gibbs=(1000, 10000, 100000),
+    #     theta=THETA_NECKER, save=True, fname='posterior_matrices_main')
 
     # supp figure: full FBP alpha sweep
-    plot_posterior_matrices(
-        j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
-        b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
-        alphas=(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0),
-        include_opt=True, gibbs=(), theta=THETA_NECKER, save=True,
-        fname='posterior_matrices_supp_alpha')
+    # plot_posterior_matrices(
+    #     j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+    #     b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
+    #     alphas=(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0),
+    #     include_opt=True, gibbs=(), theta=THETA_NECKER, save=True,
+    #     fname='posterior_matrices_supp_alpha')
+
+    plot_paper_figure(j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+                          b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
+                          gibbs=(1000, 10000, 100000),
+                          susc_alphas=(0.5, 1.0, 1.5, 2.0), susc_B=0.1,
+                          susc_q_grid=np.round(np.linspace(0.55, 0.99, 12), 3),
+                          susc_J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
+                          rdJ_d=1, rdJ_J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3),
+                          steps=100, node=0, gibbs_c=10.0, theta=THETA_NECKER,
+                          recompute=False, save=True, fname='paper_figure')
