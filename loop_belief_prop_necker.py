@@ -2510,16 +2510,19 @@ def plot_crit_j_alpha(n=3, alpha_list=np.arange(0, 1.5, 1e-3)):
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
     vals = 0.5*np.log(n/(n-2*alpha_list))/alpha_list
-    ax.plot(alpha_list, vals, color='k', linewidth=3)
-    ax.plot(0, 1/n, color='r', marker='o', label=r'MF, $\alpha \to 0$', markersize=10,
+    ax.plot(alpha_list, vals, color='k', linewidth=4)
+    ax.plot(0, 1/n, color='r', marker='o', label=r'MF, $\alpha \to 0$', markersize=12,
             linestyle='')
     ax.plot(1, np.log(n/(n-2))/2, color='orange', marker='o', label=r'LBP, $\alpha = 1$', 
-            markersize=10, linestyle='')
-    ax.legend()
+            markersize=12, linestyle='')
+    ax.legend(frameon=False)
     ax.set_xlabel(r'$\alpha$')
     ax.set_ylabel(r'Critical coupling, $J^{\ast}$')
     ax.set_ylim(0, np.nanmax(vals)+1e-1)
     fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'critical_coupling_FBP_family.png', dpi=400)
+    fig.savefig(DATA_FOLDER + 'critical_coupling_FBP_family.svg', dpi=400)
+    
 
 
 def crit_j_frac(n_list=np.arange(3, 10, 1e-3), alpha_list=np.arange(0.1, 1.5, 0.15)):
@@ -3889,8 +3892,8 @@ if __name__ == '__main__':
     # plot_sols_FLBP(alphalist=[1.],
     #                 j_list=np.arange(0, 20, .1), theta=THETA,
     #                 num_iter=1000, stim=0.)
-    plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
-                                b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
+    # plot_over_conf_mf_bp_gibbs(data_folder=DATA_FOLDER, j_list=np.arange(0., 1.005, 0.005),
+    #                             b_list_orig=np.arange(-.5, .5005, 0.005), theta=THETA)
     # all_comparison_together(j_list=np.arange(0., 1.005, 0.005),
     #                         b_list=np.arange(-.5, .5005, 0.005),
     #                         data_folder=DATA_FOLDER,
@@ -3962,3 +3965,4 @@ if __name__ == '__main__':
     # plot_m1_m2_vector_field(j=.65, b=0., n=3)
     # plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
     #                  thr=1e-15, stim=0.0, j=0.5*np.log(3))
+    plot_crit_j_alpha(n=3, alpha_list=np.arange(0, 1.5, 1e-3))
