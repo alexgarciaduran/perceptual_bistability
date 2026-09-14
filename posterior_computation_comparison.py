@@ -1597,28 +1597,33 @@ def _cmp_methods(alphas, gibbs_T=(), burn=1000, include_opt=False):
     return ms
 
 
-def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100):
+def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, init='uniform'):
     """P(x_node = 1) for one algorithm at uniform (J, B). MF and FBP start from a
-    RANDOM state and iterate `steps` (like the sampler's random init), so above J*
-    they commit to a well instead of sitting on the symmetric branch."""
+    random state and iterate `steps`. init='uniform' -> q0~U(0,1) / messages~U(0,1)
+    (full random: each cell picks a well -> wide speckle above J*, for the matrices).
+    init='small' -> tiny random near symmetric (follows the evidence-consistent well
+    -> smooth over-confidence)."""
     n = theta.shape[0]; Jm = J * theta; Bv = np.full(n, float(B))
     if kind == 'exact':
         return float(exact_marginals(Jm, Bv)[node])
     if kind == 'gibbs':
         return float(gibbs_sampling(Jm, Bv, gibbs[0], gibbs[1])[node])
     if kind == 'mf':
-        m = np.random.uniform(-1.0, 1.0, n)           # q0 ~ U(0,1)  (m0 = 2q0-1)
+        m = np.random.uniform(-1.0, 1.0, n) if init == 'uniform' else np.random.randn(n) * 0.01
         for _ in range(int(steps)):
             m = np.tanh(Bv + Jm @ m)
         return float((m[node] + 1) / 2)
     a = _alpha_hat(J, B, theta) if kind == 'fbp_opt' else alpha
-    u = np.random.uniform(1e-6, 1.0 - 1e-6, (n, n))   # message beliefs ~ U(0,1)
-    M0 = (Jm != 0.0) * 0.5 * np.log(u / (1.0 - u))    # log-ratio M = 0.5*logit(u)
+    if init == 'uniform':
+        u = np.random.uniform(1e-6, 1.0 - 1e-6, (n, n))    # message beliefs ~ U(0,1)
+        M0 = (Jm != 0.0) * 0.5 * np.log(u / (1.0 - u))     # log-ratio M = 0.5*logit(u)
+    else:
+        M0 = (Jm != 0.0) * np.random.randn(n, n) * 0.01    # tiny random messages
     q = fractional_bp(Jm, Bv, alpha=a, M_init=M0, max_iter=max(int(steps), 100))
     return float(q[node])
 
 
-def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, recompute=False):
+def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, init='uniform', recompute=False):
     """Posterior grid Q[j, b] = P(x_node=1) for one algorithm, cached to disk under
     DATA_FOLDER/matrix_cache so repeated plots don't recompute. The sampler's chain
     length is in md['gibbs']=(steps, burn); MF/FBP use `steps` random-init iterations.
