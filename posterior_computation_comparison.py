@@ -1736,7 +1736,8 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
                             alphas=(0.5, 1.0, 1.5, 2.0),
                             gibbs=(100, 1000, 10000), include_opt=False, node=0,
                             steps=100, init='uniform', show_jstar=True, gibbs_c=10.0,
-                            theta=THETA_NECKER, recompute=False, save=True):
+                            theta=THETA_NECKER, recompute=False, save=True,
+                            fname='posterior_matrices'):
     """Posterior q(x=1) over the (J, B) plane, one coolwarm heatmap per algorithm
     (exact, MF, FBP family, optional FBP-optimal, and one Gibbs panel per chain length
     in `gibbs`; each Gibbs cell is a single random-start chain). MSE vs the exact
@@ -1778,7 +1779,7 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
         fig.colorbar(im, ax=axes[:len(mats)], fraction=0.02, label='Posterior q(x=1)')
     if save:
         for ext_ in ('png', 'svg'):
-            fig.savefig(DATA_FOLDER + f'posterior_matrices.{ext_}', dpi=180, bbox_inches='tight')
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=180, bbox_inches='tight')
     return fig
 
 
@@ -2082,3 +2083,16 @@ if __name__ == "__main__":
                                  gibbs=(1000, 10000, 100000), node=0, theta=THETA_NECKER,
                                  recompute=False, save=True, include_opt=True)
 
+    # main figure
+    plot_posterior_matrices(
+        j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+        b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
+        alphas=(1.0,), include_opt=True, gibbs=(1000, 10000, 100000),
+        theta=THETA_NECKER, save=True)
+    
+    # supp FBP figure
+    plot_posterior_matrices(
+        j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+        b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
+        alphas=(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0),
+        include_opt=True, gibbs=(), theta=THETA_NECKER, save=True)
