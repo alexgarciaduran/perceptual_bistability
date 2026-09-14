@@ -1606,26 +1606,45 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000)):
     return float(fractional_bp(Jm, Bv, alpha=alpha)[node])
 
 
+def _q_matrix(md, j_list, b_list, node=0, gibbs=(20000, 2000), theta=THETA_NECKER,
+              recompute=False):
+    """Posterior grid Q[j, b] = P(x_node=1) for one algorithm, cached to disk under
+    DATA_FOLDER/matrix_cache so repeated plots don't recompute. Key = hash of
+    (kind, alpha, node, j_list, b_list, theta[, gibbs steps for the sampler])."""
+    import hashlib
+    cache_dir = os.path.join(DATA_FOLDER, 'matrix_cache'); os.makedirs(cache_dir, exist_ok=True)
+    a = round(float(md['alpha']), 6)
+    key = repr((md['kind'], a, int(node), np.asarray(j_list, float).tobytes(),
+                np.asarray(b_list, float).tobytes(), np.asarray(theta, float).tobytes(),
+                tuple(gibbs) if md['kind'] == 'gibbs' else None))
+    h = hashlib.md5(key.encode()).hexdigest()[:12]
+    fn = os.path.join(cache_dir, f"qmat_{md['kind']}_a{round(a, 3)}_{h}.npy")
+    if not recompute and os.path.exists(fn):
+        return np.load(fn)
+    M = np.empty((len(j_list), len(b_list)))
+    for ij, j in enumerate(j_list):
+        for ib, b in enumerate(b_list):
+            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, gibbs)
+    np.save(fn, M)
+    return M
+
+
 def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
                              b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
                              alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=False,
-                             gibbs=(20000, 2000), node=0, theta=THETA_NECKER, save=True):
+                             gibbs=(20000, 2000), node=0, theta=THETA_NECKER,
+                             recompute=False, save=True):
     """Over-confidence vs coupling J for every scheme (colours as plot_susc_vs_J).
     Over-confidence at fixed J is the L1 gap to the exact marginal integrated over
     the sensory sweep, OC(J) = int |q_algo(B) - q_true(B)| dq_true(B). Exact is 0
     by construction; MF is largest, LBP/FBP ordered by alpha. Gibbs (optional, slow)
-    is a single line at the given chain length."""
+    is a single line at the given chain length. Posterior grids are cached to disk."""
     methods = _cmp_methods(alphas, include_gibbs)
-    true_curves = [np.array([_q_node('exact', j, b, 1.0, theta, node) for b in b_list])
-                   for j in j_list]
+    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, gibbs, theta, recompute)
     fig, ax = plt.subplots(figsize=(6.6, 4.6))
     for md in methods:
-        oc = []
-        for ij, j in enumerate(j_list):
-            qt = true_curves[ij]
-            qa = np.array([_q_node(md['kind'], j, b, md['alpha'], theta, node, gibbs)
-                           for b in b_list])
-            oc.append(float(np.trapz(np.abs(qa - qt), qt)))
+        Q = _q_matrix(md, j_list, b_list, node, gibbs, theta, recompute)
+        oc = [float(np.trapz(np.abs(Q[ij] - Qtrue[ij]), Qtrue[ij])) for ij in range(len(j_list))]
         ax.plot(j_list, oc, md['ls'], color=md['c'], lw=2.2, label=md['lab'])
     ax.set(xlabel='Coupling J', ylabel='Over-confidence',
            title='Over-confidence vs coupling (integrated |q - q_exact|)')
@@ -1641,7 +1660,7 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
 def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.025), 4),
                             b_list=np.round(np.arange(-0.5, 0.5001, 0.025), 4),
                             alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=True,
-                            gibbs=(10000, 1000), node=0, show_jstar=True,
+                            gibbs=(1000, 10000, 100000), node=0, show_jstar=True,
                             theta=THETA_NECKER, save=True):
     """Posterior q(x=1) over the (J, B) plane, one coolwarm heatmap per algorithm
     (exact, MF, FBP family, FBP-optimal, Gibbs). MSE vs the exact posterior is
@@ -1965,17 +1984,23 @@ if __name__ == "__main__":
     # plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     #                 J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3), include_gibbs=True,
     #                 gibbs=(400000, 30000), theta=THETA_NECKER, save=True)
-    plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                    J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
-                    gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
-    plot_susc_vs_J(d=2, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                    J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
-                    gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
-    plot_susc_vs_J(d=3, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                    J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
-                    gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
+    # plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                 J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
+    #                 gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
+    # plot_susc_vs_J(d=2, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                 J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
+    #                 gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
+    # plot_susc_vs_J(d=3, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                 J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
+    #                 gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
     # plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     #                       q_grid=np.round(np.linspace(0.55, 0.9, 25), 3),
     #                       J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
     #                       J_grid=np.round(np.arange(0.05, 2.0, 0.025), 3),
     #                       theta=THETA_NECKER, save=True)
+    plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.025), 4),
+                            b_list=np.round(np.arange(-0.5, 0.5001, 0.025), 4),
+                            alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=True,
+                            gibbs=(1000, 10000, 100000), node=0, show_jstar=True,
+                            theta=THETA_NECKER, save=True)
+
