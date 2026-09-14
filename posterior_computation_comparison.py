@@ -1578,6 +1578,119 @@ def plot_optimal_alpha_vs_J(B_list=(0.05, 0.1, 0.2, 0.3),
     return fig
 
 
+# ----------------------------------------------------------------------------
+# Over-confidence and posterior-matrix comparisons (ported from
+# loop_belief_prop_necker.plot_over_conf_mf_bp_gibbs / all_comparison_together),
+# self-contained and extended with the FBP-alpha family + optimal-alpha line.
+# ----------------------------------------------------------------------------
+def _cmp_methods(alphas, include_gibbs=True):
+    """Same algorithm set + colours as plot_susc_vs_J: exact/sampling (black),
+    MF (red), FBP family (Blues by alpha), FBP-optimal (green), Gibbs (grey)."""
+    ms = list(_susc_methods(alphas)) + [_opt_method()]
+    if include_gibbs:
+        ms.append(dict(kind='gibbs', lab='Gibbs', c='0.5', ls=':', alpha=1.0))
+    return ms
+
+
+def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000)):
+    """P(x_node = 1) for one algorithm at uniform (J, B)."""
+    n = theta.shape[0]; Jm = J * theta; Bv = np.full(n, float(B))
+    if kind == 'exact':
+        return float(exact_marginals(Jm, Bv)[node])
+    if kind == 'gibbs':
+        return float(gibbs_sampling(Jm, Bv, gibbs[0], gibbs[1])[node])
+    if kind == 'mf':
+        return float((_mf_magnetization(Jm, Bv, np.zeros(n))[node] + 1) / 2)
+    if kind == 'fbp_opt':
+        return float(fractional_bp(Jm, Bv, alpha=_alpha_hat(J, B, theta))[node])
+    return float(fractional_bp(Jm, Bv, alpha=alpha)[node])
+
+
+def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
+                             b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
+                             alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=False,
+                             gibbs=(20000, 2000), node=0, theta=THETA_NECKER, save=True):
+    """Over-confidence vs coupling J for every scheme (colours as plot_susc_vs_J).
+    Over-confidence at fixed J is the L1 gap to the exact marginal integrated over
+    the sensory sweep, OC(J) = int |q_algo(B) - q_true(B)| dq_true(B). Exact is 0
+    by construction; MF is largest, LBP/FBP ordered by alpha. Gibbs (optional, slow)
+    is a single line at the given chain length."""
+    methods = _cmp_methods(alphas, include_gibbs)
+    true_curves = [np.array([_q_node('exact', j, b, 1.0, theta, node) for b in b_list])
+                   for j in j_list]
+    fig, ax = plt.subplots(figsize=(6.6, 4.6))
+    for md in methods:
+        oc = []
+        for ij, j in enumerate(j_list):
+            qt = true_curves[ij]
+            qa = np.array([_q_node(md['kind'], j, b, md['alpha'], theta, node, gibbs)
+                           for b in b_list])
+            oc.append(float(np.trapz(np.abs(qa - qt), qt)))
+        ax.plot(j_list, oc, md['ls'], color=md['c'], lw=2.2, label=md['lab'])
+    ax.set(xlabel='Coupling J', ylabel='Over-confidence',
+           title='Over-confidence vs coupling (integrated |q - q_exact|)')
+    ax.legend(frameon=False, fontsize=9)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'overconfidence_vs_J.{ext}', dpi=180, bbox_inches='tight')
+    return fig
+
+
+def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.025), 4),
+                            b_list=np.round(np.arange(-0.5, 0.5001, 0.025), 4),
+                            alphas=(0.5, 1.0, 1.5, 2.0), include_gibbs=True,
+                            gibbs=(10000, 1000), node=0, show_jstar=True,
+                            theta=THETA_NECKER, save=True):
+    """Posterior q(x=1) over the (J, B) plane, one coolwarm heatmap per algorithm
+    (exact, MF, FBP family, FBP-optimal, Gibbs). MSE vs the exact posterior is
+    annotated per panel; the closed-form critical coupling J* (B=0) is overlaid as
+    a dashed line where it exists."""
+    methods = _cmp_methods(alphas, include_gibbs)
+
+    def mat_of(md):
+        M = np.empty((len(j_list), len(b_list)))
+        for ij, j in enumerate(j_list):
+            for ib, b in enumerate(b_list):
+                M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, gibbs)
+        return M
+
+    mats = [(md, mat_of(md)) for md in methods]
+    Mtrue = next(M for md, M in mats if md['kind'] == 'exact')
+
+    ncols = min(4, len(mats)); nrows = int(np.ceil(len(mats) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.0 * ncols, 3.0 * nrows),
+                             squeeze=False)
+    axes = axes.flatten()
+    ext = [b_list[0], b_list[-1], j_list[0], j_list[-1]]
+    im = None
+    for a, (md, M) in zip(axes, mats):
+        im = a.imshow(np.flipud(M), aspect='auto', extent=ext, cmap='coolwarm_r',
+                      vmin=0, vmax=1, interpolation='none')
+        mse = float(np.mean((M - Mtrue) ** 2))
+        ttl = md['lab'] if md['kind'] == 'exact' else f"{md['lab']}\nMSE={mse:.3f}"
+        a.set_title(ttl, fontsize=10)
+        if show_jstar:
+            Js = _jstar(md['kind'], md['alpha'], theta)
+            if np.isfinite(Js) and j_list[0] <= Js <= j_list[-1]:
+                a.axhline(Js, color='k', ls='--', lw=1)
+        a.set_xticks([-0.5, 0, 0.5])
+    for a in axes[len(mats):]:
+        a.set_visible(False)
+    for i, a in enumerate(axes[:len(mats)]):
+        if i % ncols == 0:
+            a.set_ylabel('Coupling J', fontsize=9)
+        if i // ncols == nrows - 1:
+            a.set_xlabel('Sensory evidence B', fontsize=9)
+    if im is not None:
+        fig.colorbar(im, ax=axes[:len(mats)], fraction=0.02, label='Posterior q(x=1)')
+    if save:
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'posterior_matrices.{ext_}', dpi=180, bbox_inches='tight')
+    return fig
+
+
 def plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
                      J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3), include_gibbs=True,
                      gibbs=(400000, 30000), theta=THETA_NECKER, save=True):
@@ -1619,7 +1732,7 @@ def plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     methods = list(_susc_methods(alphas)) + [_opt_method()]
     if include_gibbs:
         methods.append(dict(kind='gibbs', lab='Gibbs', c='0.5', ls=':', alpha=1.0))
-    fig, ax = plt.subplots(figsize=(6.8, 5))
+    fig, ax = plt.subplots(figsize=(5, 3.5))
     for md in methods:
         rd = [ _rd(_chi(md['kind'], J, B, md['alpha'], theta, gibbs), dist, dvals)[d]
                for J in J_grid ]
@@ -1631,9 +1744,9 @@ def plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
                     ls='none', zorder=6)
     ax.plot([], [], marker='*', color='0.4', mec='k', mew=0.6, ls='none', ms=13,
             label=r'$J^*$ (onset, $B=0$)')
-    ax.set(xlabel='Coupling J', ylabel=rf'$r_{{{d}}}$',
-           title=f'Susceptibility at distance d={d} vs coupling (B={B})')
-    ax.legend(frameon=False, fontsize=9)
+    ax.set(xlabel='Coupling J', ylabel=rf'$r_{{{d}}}$')
+    # title=f'Susceptibility at distance d={d} vs coupling (B={B})')
+    ax.legend(frameon=False, fontsize=12, ncol=2)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
     fig.tight_layout()
     if save:
