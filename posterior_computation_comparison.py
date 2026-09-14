@@ -1609,16 +1609,24 @@ def _q_node(kind, J, B, alpha, theta, node=0, gibbs=(20000, 2000), steps=100, in
     if kind == 'gibbs':
         return float(gibbs_sampling(Jm, Bv, gibbs[0], gibbs[1])[node])
     if kind == 'mf':
-        m = np.random.uniform(-1.0, 1.0, n) if init == 'uniform' else np.random.randn(n) * 0.01
+        if init == 'uniform':
+            m = np.random.uniform(-1.0, 1.0, n)            # q0 ~ U(0,1): full random -> speckle
+        elif init == 'det':
+            m = np.full(n, np.sign(B) * 0.9)               # evidence-aligned -> evidence well
+        else:
+            m = np.random.randn(n) * 0.01                  # tiny random near symmetric
         for _ in range(int(steps)):
             m = np.tanh(Bv + Jm @ m)
         return float((m[node] + 1) / 2)
     a = _alpha_hat(J, B, theta) if kind == 'fbp_opt' else alpha
+    mask = (Jm != 0.0)
     if init == 'uniform':
         u = np.random.uniform(1e-6, 1.0 - 1e-6, (n, n))    # message beliefs ~ U(0,1)
-        M0 = (Jm != 0.0) * 0.5 * np.log(u / (1.0 - u))     # log-ratio M = 0.5*logit(u)
+        M0 = mask * 0.5 * np.log(u / (1.0 - u))            # log-ratio M = 0.5*logit(u)
+    elif init == 'det':
+        M0 = mask * (np.sign(B) * 0.5)                     # evidence-aligned messages
     else:
-        M0 = (Jm != 0.0) * np.random.randn(n, n) * 0.01    # tiny random messages
+        M0 = mask * np.random.randn(n, n) * 0.01           # tiny random messages
     q = fractional_bp(Jm, Bv, alpha=a, M_init=M0, max_iter=max(int(steps), 100))
     return float(q[node])
 
@@ -1632,18 +1640,19 @@ def _q_matrix(md, j_list, b_list, node=0, theta=THETA_NECKER, steps=100, init='u
     g = md.get('gibbs', (20000, 2000))
     cache_dir = os.path.join(DATA_FOLDER, 'matrix_cache'); os.makedirs(cache_dir, exist_ok=True)
     a = round(float(md['alpha']), 6)
-    key = repr((md['kind'], a, int(node), int(steps), np.asarray(j_list, float).tobytes(),
+    ini = init if md['kind'] not in ('exact', 'gibbs') else '-'   # init irrelevant for exact/gibbs
+    key = repr((md['kind'], a, int(node), int(steps), ini, np.asarray(j_list, float).tobytes(),
                 np.asarray(b_list, float).tobytes(), np.asarray(theta, float).tobytes(),
                 tuple(g) if md['kind'] == 'gibbs' else None))
     h = hashlib.md5(key.encode()).hexdigest()[:12]
-    tag = f"T{g[0]-g[1]}" if md['kind'] == 'gibbs' else f"a{round(a, 3)}"
+    tag = f"T{g[0]-g[1]}" if md['kind'] == 'gibbs' else f"a{round(a, 3)}_{ini}"
     fn = os.path.join(cache_dir, f"qmat_{md['kind']}_{tag}_{h}.npy")
     if not recompute and os.path.exists(fn):
         return np.load(fn)
     M = np.empty((len(j_list), len(b_list)))
     for ij, j in enumerate(j_list):
         for ib, b in enumerate(b_list):
-            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g, steps)
+            M[ij, ib] = _q_node(md['kind'], j, b, md['alpha'], theta, node, g, steps, init)
     np.save(fn, M)
     return M
 
@@ -1695,8 +1704,8 @@ def _jstar_curve(md, b_list, theta, gibbs_c=10.0):
 def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
                              b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
                              alphas=(0.5, 1.0, 1.5, 2.0), gibbs=(100, 1000, 10000),
-                             include_opt=False, node=0, steps=100, theta=THETA_NECKER,
-                             recompute=False, save=True):
+                             include_opt=False, node=0, steps=100, init='det',
+                             theta=THETA_NECKER, recompute=False, save=True):
     """Over-confidence vs coupling J for every scheme (colours as plot_susc_vs_J).
     Over-confidence at fixed J is the L1 gap to the exact marginal integrated over
     the sensory sweep, OC(J) = int |q_algo(B) - q_true(B)| dq_true(B). Exact is 0
@@ -1705,10 +1714,10 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
     alpha line. Posterior grids are cached to disk (shared with plot_posterior_matrices
     when the grids match)."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
-    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, recompute)
+    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, init, recompute)
     fig, ax = plt.subplots(figsize=(6.6, 4.6))
     for md in methods:
-        Q = _q_matrix(md, j_list, b_list, node, theta, steps, recompute)
+        Q = _q_matrix(md, j_list, b_list, node, theta, steps, init, recompute)
         oc = [float(np.trapz(np.abs(Q[ij] - Qtrue[ij]), Qtrue[ij])) for ij in range(len(j_list))]
         ax.plot(j_list, oc, md['ls'], color=md['c'], lw=2.2, label=md['lab'])
     ax.set(xlabel='Coupling J', ylabel='Over-confidence',
@@ -1726,8 +1735,8 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
                             b_list=np.round(np.arange(-0.5, 0.5001, 0.01), 4),
                             alphas=(0.5, 1.0, 1.5, 2.0),
                             gibbs=(100, 1000, 10000), include_opt=False, node=0,
-                            steps=100, show_jstar=True, gibbs_c=10.0, theta=THETA_NECKER,
-                            recompute=False, save=True):
+                            steps=100, init='uniform', show_jstar=True, gibbs_c=10.0,
+                            theta=THETA_NECKER, recompute=False, save=True):
     """Posterior q(x=1) over the (J, B) plane, one coolwarm heatmap per algorithm
     (exact, MF, FBP family, optional FBP-optimal, and one Gibbs panel per chain length
     in `gibbs`; each Gibbs cell is a single random-start chain). MSE vs the exact
@@ -1736,7 +1745,7 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
     (c=gibbs_c, the Necker barrier slope). Grids are cached to disk."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
     looper = tqdm(methods)
-    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, recompute)) for md in looper]
+    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, init, recompute)) for md in looper]
     Mtrue = next(M for md, M in mats if md['kind'] == 'exact')
 
     ncols = min(4, len(mats)); nrows = int(np.ceil(len(mats) / ncols))
