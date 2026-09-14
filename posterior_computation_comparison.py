@@ -1732,10 +1732,10 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
     alpha line. Posterior grids are cached to disk (shared with plot_posterior_matrices
     when the grids match)."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
-    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, init, recompute)
+    Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, init, opt_coarse, recompute)
     fig, ax = plt.subplots(figsize=(6.6, 4.6))
     for md in methods:
-        Q = _q_matrix(md, j_list, b_list, node, theta, steps, init, recompute)
+        Q = _q_matrix(md, j_list, b_list, node, theta, steps, init, opt_coarse, recompute)
         oc = [float(np.trapz(np.abs(Q[ij] - Qtrue[ij]), Qtrue[ij])) for ij in range(len(j_list))]
         ax.plot(j_list, oc, md['ls'], color=md['c'], lw=2.2, label=md['lab'])
     ax.set(xlabel='Coupling J', ylabel='Over-confidence',
@@ -1753,8 +1753,8 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
                             b_list=np.round(np.arange(-0.5, 0.5001, 0.01), 4),
                             alphas=(0.5, 1.0, 1.5, 2.0),
                             gibbs=(100, 1000, 10000), include_opt=False, node=0,
-                            steps=100, init='uniform', show_jstar=True, gibbs_c=10.0,
-                            theta=THETA_NECKER, recompute=False, save=True,
+                            steps=100, init='uniform', opt_coarse=41, show_jstar=True,
+                            gibbs_c=10.0, theta=THETA_NECKER, recompute=False, save=True,
                             fname='posterior_matrices'):
     """Posterior q(x=1) over the (J, B) plane, one coolwarm heatmap per algorithm
     (exact, MF, FBP family, optional FBP-optimal, and one Gibbs panel per chain length
@@ -1764,7 +1764,7 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
     (c=gibbs_c, the Necker barrier slope). Grids are cached to disk."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
     looper = tqdm(methods)
-    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, init, recompute)) for md in looper]
+    mats = [(md, _q_matrix(md, j_list, b_list, node, theta, steps, init, opt_coarse, recompute)) for md in looper]
     Mtrue = next(M for md, M in mats if md['kind'] == 'exact')
 
     ncols = min(4, len(mats)); nrows = int(np.ceil(len(mats) / ncols))
