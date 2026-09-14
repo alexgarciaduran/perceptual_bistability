@@ -1445,6 +1445,19 @@ def _opt_method():
     return dict(kind='fbp_opt', lab=r'FBP $\hat\alpha$ (optimal)', c='#2ca02c', ls='-.', alpha=1.0)
 
 
+def _jstar(kind, alpha, theta):
+    """Closed-form critical coupling J* (bistability onset at B=0), generalised to
+    any graph via the largest adjacency eigenvalue lambda_max: MF (alpha->0) gives
+    1/lambda_max, FBP/LBP give (1/2a)log(l/(l-2a)). Returns nan when no bifurcation
+    exists (alpha>=lambda_max/2) or for schemes without one (exact/gibbs/fbp_opt)."""
+    lmax = float(np.max(np.linalg.eigvalsh(theta)))
+    if kind == 'mf':
+        return 1.0 / lmax
+    if kind == 'fbp':
+        return (1.0 / (2 * alpha)) * np.log(lmax / (lmax - 2 * alpha)) if lmax - 2 * alpha > 1e-6 else np.nan
+    return np.nan            # exact, gibbs, fbp_opt: no closed-form onset
+
+
 def _dist_matrix(theta):
     Gr = nx.from_numpy_array(theta)
     D = dict(nx.all_pairs_shortest_path_length(Gr))
@@ -1507,7 +1520,7 @@ def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     q values an algorithm cannot reach at this B are left blank (not clamped)."""
     dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
     methods = list(_susc_methods(alphas)) + [_opt_method()]
-    fig, axes = plt.subplots(1, len(dvals), figsize=(3.6 * len(dvals), 3.6), squeeze=False)
+    fig, axes = plt.subplots(1, len(dvals), figsize=(3.3 * len(dvals), 3.2), squeeze=False)
     for md in methods:
         # optimal-alpha J(q) is smooth and expensive (alpha fit per J): use a
         # coarser grid for it; fixed-alpha lines keep the fine grid.
@@ -1611,7 +1624,14 @@ def plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
         rd = [ _rd(_chi(md['kind'], J, B, md['alpha'], theta, gibbs), dist, dvals)[d]
                for J in J_grid ]
         ax.plot(J_grid, rd, md['ls'], color=md['c'], marker='.', ms=5, label=md['lab'])
-    ax.set(xlabel='coupling J', ylabel=rf'$r_{{{d}}}$  (mean $\chi$ at distance {d})',
+        Js = _jstar(md['kind'], md['alpha'], theta)          # star at critical coupling
+        if np.isfinite(Js) and J_grid.min() <= Js <= J_grid.max():
+            rstar = _rd(_chi(md['kind'], Js, B, md['alpha'], theta, gibbs), dist, dvals)[d]
+            ax.plot(Js, rstar, marker='*', color=md['c'], ms=16, mec='k', mew=0.6,
+                    ls='none', zorder=6)
+    ax.plot([], [], marker='*', color='0.4', mec='k', mew=0.6, ls='none', ms=13,
+            label=r'$J^*$ (onset, $B=0$)')
+    ax.set(xlabel='Coupling J', ylabel=rf'$r_{{{d}}}$',
            title=f'Susceptibility at distance d={d} vs coupling (B={B})')
     ax.legend(frameon=False, fontsize=9)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
@@ -1824,19 +1844,25 @@ if __name__ == "__main__":
     #                               B_list=np.repeat(np.round(np.linspace(-0.5, 0.5, 7), 3), 2),
     #                               methods=None, gibbs_steps=8000,
     #                               load_data=True, data_path=None, save=True)
-    plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2),
-                    q_grid=np.round(np.linspace(0.55, 0.95, 20), 3),
-                    J_grid=np.round(np.arange(0.0, 3.0, 0.01), 3),
-                    theta=THETA_NECKER, save=True,
-                    normalize_y=False)
-    plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                    J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3), include_gibbs=True,
-                    gibbs=(400000, 30000), theta=THETA_NECKER, save=True)
+    # plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2),
+    #                 q_grid=np.round(np.linspace(0.55, 0.95, 20), 3),
+    #                 J_grid=np.round(np.arange(0.0, 3.0, 0.01), 3),
+    #                 theta=THETA_NECKER, save=True,
+    #                 normalize_y=True)
+    # plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                 J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3), include_gibbs=True,
+    #                 gibbs=(400000, 30000), theta=THETA_NECKER, save=True)
     plot_susc_vs_J(d=1, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                        J_grid=np.round(np.arange(0.05, 1.0, 0.01), 3), include_gibbs=True,
-                        gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
-    plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                          q_grid=np.round(np.linspace(0.55, 0.9, 25), 3),
-                          J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
-                          J_grid=np.round(np.arange(0.05, 2.0, 0.025), 3),
-                          theta=THETA_NECKER, save=True)
+                    J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
+                    gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
+    plot_susc_vs_J(d=2, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                    J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
+                    gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
+    plot_susc_vs_J(d=3, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                    J_grid=np.round(np.arange(0.05, 1.0, 0.02), 3), include_gibbs=True,
+                    gibbs=(200000, 10000), theta=THETA_NECKER, save=True)
+    # plot_susc_overview(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                       q_grid=np.round(np.linspace(0.55, 0.9, 25), 3),
+    #                       J_grid_q=np.round(np.arange(0.0, 2.0, 0.01), 3),
+    #                       J_grid=np.round(np.arange(0.05, 2.0, 0.025), 3),
+    #                       theta=THETA_NECKER, save=True)
