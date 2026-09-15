@@ -2549,19 +2549,19 @@ def _global_percept(cfg):
     return 1 if s >= 0 else -1
 
 
-def _calibration_trials(J, n_trials, b_lo=0.001, b_hi=0.49, alpha_fbp=0.5,
+def _calibration_trials(J, n_trials, b_lo=0.001, b_hi=0.49,
+                        alphas=(0.5, 1.0, 1.5, 2.0),
                         theta=THETA_NECKER, seed=0):
-    """Simulated-observer trials on the cube at coupling J, scored per node (each vertex is a
-    2AFC: is it front or back?). Each trial draws a favoured side u and evidence magnitude b,
-    sets a uniform field B_i = u*b, and samples the TRUE configuration from the exact joint
-    p(x|B) -- so the exact marginal q_i = P(x_i=1|B) is calibrated by construction. For each
-    scheme and node: confidence = max(q_i, 1-q_i), decision = sign(q_i-0.5), correct = decision
-    matches the sampled truth x_i. Returns {scheme: (conf[], correct[])} pooled over nodes and
-    trials."""
+    """Simulated-observer trials on the cube at coupling J, scored per node.
+
+    The same sampled trials are used for every inference scheme and every FBP alpha,
+    so differences in calibration are due to the inference method rather than trial
+    sampling. Returns keys ``exact``, ``mf`` and ``fbp_<alpha>``.
+    """
     n = theta.shape[0]
-    states = np.array(list(itertools.product([-1.0, 1.0], repeat=n)))   # 256 x 8
+    states = np.array(list(itertools.product([-1.0, 1.0], repeat=n)))
     rng = np.random.default_rng(seed)
-    schemes = ('exact', 'mf', 'lbp', 'fbp')
+    schemes = ['exact', 'mf'] + [f'fbp_{a:g}' for a in alphas]
     conf = {k: [] for k in schemes}; corr = {k: [] for k in schemes}
     for tr in range(n_trials):
         u = 1.0 if rng.random() < 0.5 else -1.0
@@ -2569,13 +2569,15 @@ def _calibration_trials(J, n_trials, b_lo=0.001, b_hi=0.49, alpha_fbp=0.5,
         Bv = np.full(n, u * b); Jm = J * theta
         E = 0.5 * np.einsum('si,ij,sj->s', states, Jm, states) + states @ Bv
         w = np.exp(E - E.max()); w /= w.sum()
-        marg_ex = (states == 1).T @ w                    # P(x_i=1) exact, per node
-        truth = states[rng.choice(len(states), p=w)]     # sampled true config, per node
-        qs = {'exact': marg_ex, 'mf': mean_field(Jm, Bv),
-              'lbp': loopy_bp(Jm, Bv), 'fbp': fractional_bp(Jm, Bv, alpha=alpha_fbp)}
+        marg_ex = (states == 1).T @ w
+        truth = states[rng.choice(len(states), p=w)]
+        qs = {'exact': marg_ex, 'mf': mean_field(Jm, Bv)}
+        qs.update({f'fbp_{a:g}': fractional_bp(Jm, Bv, alpha=a)
+                   for a in alphas})
         for k, q in qs.items():
             dec = np.where(q >= 0.5, 1.0, -1.0)
-            conf[k].append(np.maximum(q, 1 - q)); corr[k].append((dec == truth).astype(float))
+            conf[k].append(np.maximum(q, 1 - q))
+            corr[k].append((dec == truth).astype(float))
     return ({k: np.concatenate(conf[k]) for k in schemes},
             {k: np.concatenate(corr[k]) for k in schemes})
 
@@ -2591,29 +2593,32 @@ def _ece(conf, correct, n_bins=10):
 
 
 def plot_confidence_calibration(J_list=(0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8),
-                                J_show=0.1, n_trials=1500, alpha_fbp=0.5,
+                                J_show=0.1, n_trials=1500,
+                                alphas=(0.5, 1.0, 1.5, 2.0),
                                 theta=THETA_NECKER, seed=0, save=True,
                                 fname='confidence_calibration'):
-    """Testable prediction #1: the approximations are over-confident even BELOW the
-    bifurcation. Simulated-observer calibration on the Necker cube.
-      (a) calibration curves (confidence vs empirical accuracy) at a sub-critical J_show;
-          the exact posterior lies on the diagonal, MF sits above it (over-confident).
-      (b) expected calibration error (ECE) vs J, per scheme.
-      (c) signed over-confidence (mean confidence - mean accuracy) vs J; MF departs from 0
-          already for J < J*_MF = 1/N, with no alternations anywhere in the data.
-    Error bars are bootstrap SEM over trials. Exact posterior is calibrated by construction
-    (verified: its ECE ~ 0)."""
-    cols = {'exact': '0.4', 'mf': 'r', 'lbp': 'C0', 'fbp': 'C1'}
-    labs = {'exact': 'Exact', 'mf': 'MF', 'lbp': 'LBP', 'fbp': rf'FBP $\alpha$={alpha_fbp}'}
-    deg = int(round(theta.sum(1)[0]))                # node degree (N=3 for the cube)
-    JstarMF = 1.0 / deg; JstarLBP = 0.5 * np.log(deg / (deg - 2))
+    """Testable prediction #1: confidence calibration across inference schemes.
 
-    # sweep J: ECE and over-confidence (+ bootstrap SEM) per scheme
-    ece = {k: [] for k in cols}; over = {k: [] for k in cols}; over_se = {k: [] for k in cols}
+    Uses the common plotting/computation convention of the susceptibility analyses:
+    exact = black solid, MF = red dashed, and the FBP family = blue shades with
+    alpha increasing from light to dark. Alpha=1 is labelled LBP.
+    """
+    methods = _susc_methods(alphas)
+    method_keys = [('exact', md) if md['kind'] == 'exact' else
+                   ('mf', md) if md['kind'] == 'mf' else
+                   (f"fbp_{md['alpha']:g}", md) for md in methods]
+    JstarMF = 1.0 / int(round(theta.sum(1)[0]))
+    deg = int(round(theta.sum(1)[0]))
+    JstarLBP = 0.5 * np.log(deg / (deg - 2))
+
+    ece = {k: [] for k, _ in method_keys}
+    over = {k: [] for k, _ in method_keys}
+    over_se = {k: [] for k, _ in method_keys}
     calib_show = None
     for J in tqdm(J_list, desc='calibration vs J'):
-        conf, corr = _calibration_trials(J, n_trials, alpha_fbp=alpha_fbp, theta=theta, seed=seed)
-        for k in cols:
+        conf, corr = _calibration_trials(J, n_trials, alphas=alphas,
+                                         theta=theta, seed=seed)
+        for k, _ in method_keys:
             e, o = _ece(conf[k], corr[k]); ece[k].append(e); over[k].append(o)
             rng = np.random.default_rng(seed + 1); m = len(conf[k])
             bs = [np.mean(conf[k][ix]) - np.mean(corr[k][ix])
@@ -2622,37 +2627,44 @@ def plot_confidence_calibration(J_list=(0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8),
         if abs(J - J_show) < 1e-9:
             calib_show = (conf, corr)
 
-    fig, ax = plt.subplots(1, 3, figsize=(14, 4.2))
-    # (a) calibration curves at J_show
+    fig, ax = plt.subplots(1, 3, figsize=(15, 4.8))
     if calib_show is None:
-        conf, corr = _calibration_trials(J_show, n_trials, alpha_fbp=alpha_fbp, theta=theta, seed=seed)
+        conf, corr = _calibration_trials(J_show, n_trials, alphas=alphas,
+                                         theta=theta, seed=seed)
     else:
         conf, corr = calib_show
+
     edges = np.linspace(0.5, 1.0, 9); ctr = 0.5 * (edges[:-1] + edges[1:])
-    for k in cols:
+    for k, md in method_keys:
         acc = [corr[k][(conf[k] >= edges[i]) & (conf[k] <= edges[i + 1])].mean()
                if ((conf[k] >= edges[i]) & (conf[k] <= edges[i + 1])).any() else np.nan
                for i in range(len(edges) - 1)]
-        ax[0].plot(ctr, acc, 'o-', color=cols[k], ms=4, label=labs[k])
+        ax[0].plot(ctr, acc, md['ls'], color=md['c'], marker='o', ms=6,
+                   lw=2.2, label=md['lab'])
     ax[0].plot([0.5, 1], [0.5, 1], 'k:', lw=1)
     ax[0].set(xlabel='confidence', ylabel='empirical accuracy',
               title=f'(a) calibration at J={J_show} (< $J^*_{{MF}}$)')
-    ax[0].legend(frameon=False, fontsize=10)
-    # (b) ECE vs J
-    for k in cols:
-        ax[1].plot(J_list, ece[k], 'o-', color=cols[k], label=labs[k])
-    ax[1].axvline(JstarMF, color='r', ls=':', lw=1); ax[1].axvline(JstarLBP, color='C0', ls=':', lw=1)
+    ax[0].legend(frameon=False, fontsize=8)
+
+    for k, md in method_keys:
+        ax[1].plot(J_list, ece[k], md['ls'], color=md['c'], marker='o', ms=6,
+                   lw=2.2, label=md['lab'])
+    ax[1].axvline(JstarMF, color='r', ls=':', lw=1)
+    ax[1].axvline(JstarLBP, color=plt.cm.Blues(0.5), ls=':', lw=1)
     ax[1].set(xlabel='coupling J', ylabel='ECE', title='(b) calibration error vs J')
-    ax[1].legend(frameon=False, fontsize=9)
-    # (c) signed over-confidence vs J
-    for k in cols:
-        ax[2].errorbar(J_list, over[k], yerr=over_se[k], fmt='o-', color=cols[k], capsize=2, label=labs[k])
+    ax[1].legend(frameon=False, fontsize=8)
+
+    for k, md in method_keys:
+        ax[2].errorbar(J_list, over[k], yerr=over_se[k], fmt=md['ls'],
+                       color=md['c'], marker='o', ms=6, lw=2.2, capsize=2,
+                       label=md['lab'])
     ax[2].axhline(0, color='0.6', lw=0.8)
     ax[2].axvline(JstarMF, color='r', ls=':', lw=1, label=r'$J^*_{MF}$')
-    ax[2].axvline(JstarLBP, color='C0', ls=':', lw=1, label=r'$J^*_{LBP}$')
+    ax[2].axvline(JstarLBP, color=plt.cm.Blues(0.5), ls=':', lw=1, label=r'$J^*_{LBP}$')
     ax[2].set(xlabel='coupling J', ylabel='mean confidence - mean accuracy',
-              title='(c) over-confidence (sub-critical too)')
+              title='(c) over-confidence')
     ax[2].legend(frameon=False, fontsize=8)
+
     for a in ax:
         a.spines['top'].set_visible(False); a.spines['right'].set_visible(False)
     fig.suptitle('Prediction 1: confidence miscalibration, present below the bifurcation')
@@ -2806,93 +2818,100 @@ def plot_duration_threshold(J_grid=np.round(np.linspace(0.30, 1.30, 18), 3),
 # Section 6 figure: experimentally identifiable differences, one figure
 #   (a) fluctuation-dissipation ratio, (b) confidence calibration, (c) r_d vs q
 # ----------------------------------------------------------------------------
-def plot_testable_differences(B=0.1, alphas=(0.5, 1.0),
+def plot_testable_differences(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
                               q_grid=np.round(np.linspace(0.55, 0.93, 9), 3),
                               J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
                               cal_J=(0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8), cal_trials=1200,
                               gibbs=(120000, 12000), gibbs_q=None,
                               theta=THETA_NECKER, seed=0, save=True,
                               fname='testable_differences'):
-    """Single figure for the identifiable, coupling-free tests, in the order of the text:
-      (a) fluctuation-dissipation ratio rho = chi_ij / Cov(x_i,x_j) at matched confidence q.
-          Exact inference and (T->inf) sampling sit at rho=1 (FDT); MF/BP depart from 1. Both the
-          response chi and the reference covariance are taken at the algorithm's own coupling, so no
-          estimate of J is needed and an overall readout gain cancels.
-      (b) confidence calibration: signed over-confidence (mean confidence - mean accuracy) vs J for a
-          simulated observer; exact ~ 0, MF over-confident already below J*_MF.
-      (c) susceptibility r_d vs matched confidence q: neighbour (d=1, solid) and next-neighbour
-          (d=2, dashed) response. At matched q, exact/sampling spread evidence farthest, MF least.
-    Reuses the susceptibility machinery (_fit_J_for_q, _chi, _rd) and the calibration helpers."""
+    """Single figure for experimentally identifiable differences.
+
+    Uses the same algorithm ordering, colours, line styles, markers and sizes as
+    the susceptibility plots: exact (black solid), MF (red dashed), and the full
+    FBP family (blue shades; alpha=1 is LBP).
+    """
     dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
     deg = int(round(theta.sum(1).mean()))
     JMF = 1.0 / deg; JLBP = 0.5 * np.log(deg / (deg - 2))
     if gibbs_q is None:
         gibbs_q = q_grid
-    COL = {'exact': 'k', 'gibbs': '0.5', 'mf': 'r', 'lbp': 'C0', 'fbp': 'C1'}
-    LAB = {'exact': 'exact/sampling', 'gibbs': 'Gibbs', 'mf': 'MF', 'lbp': 'LBP',
-           'fbp': rf'FBP $\alpha$={alphas[0]}'}
-    afbp = alphas[0]
-    # variational schemes shown as lines (kind, alpha, key)
-    var = [('mf', 1.0, 'mf'), ('fbp', 1.0, 'lbp'), ('fbp', afbp, 'fbp')]
 
-    fig, ax = plt.subplots(1, 3, figsize=(15, 4.4))
+    methods = _susc_methods(alphas)
+    method_keys = [('exact', md) if md['kind'] == 'exact' else
+                   ('mf', md) if md['kind'] == 'mf' else
+                   (f"fbp_{md['alpha']:g}", md) for md in methods]
 
-    # ---- (a) FDT ratio vs matched q ------------------------------------------------
+    fig, ax = plt.subplots(1, 3, figsize=(15, 4.8))
+
+    # ---- (a) FDT ratio vs matched q --------------------------------------------
     def _r1(C):
-        return _rd(C, dist, dvals)[1]                       # mean neighbour response
-    for kind, a, key in var:
+        return _rd(C, dist, dvals)[1]
+    for k, md in method_keys:
         rho = []
         for q in q_grid:
+            kind = md['kind']; a = md['alpha']
             Jm = _fit_J_for_q(kind, q, B, a, theta, J_grid)
             if not np.isfinite(Jm):
                 rho.append(np.nan); continue
             Cex = linear_response_cov('exact', Jm, B, theta=theta)[0]
             C = _chi(kind, Jm, B, a, theta)
             rho.append(_r1(C) / _r1(Cex))
-        ax[0].plot(q_grid, rho, 'o-', color=COL[key], ms=4, label=LAB[key])
-    # Gibbs points (sampling) -- should sit at 1
+        ax[0].plot(q_grid, rho, md['ls'], color=md['c'], marker='o', ms=6,
+                   lw=2.2, label=md['lab'])
+
+    # Gibbs sampling estimate, shown in the same grey family as other comparison plots.
     gx, gy = [], []
     for q in gibbs_q:
-        Jm = _fit_J_for_q('exact', q, B, 1.0, theta, J_grid)  # gibbs marg = exact marg
+        Jm = _fit_J_for_q('exact', q, B, 1.0, theta, J_grid)
         if not np.isfinite(Jm):
             continue
         Cex = linear_response_cov('exact', Jm, B, theta=theta)[0]
         Cg = gibbs_susceptibility(Jm, B, theta, *gibbs)
         gx.append(q); gy.append(_r1(Cg) / _r1(Cex))
-    ax[0].plot(gx, gy, 'D', color=COL['gibbs'], ms=6, label=LAB['gibbs'])
-    ax[0].axhline(1.0, color='k', lw=1.2, ls=':')
+    ax[0].plot(gx, gy, ':', color='0.6', marker='o', ms=6, lw=2.2, label='Gibbs')
+    ax[0].axhline(1.0, color='k', lw=1.0, ls=':')
     ax[0].set(xlabel='matched confidence q', ylabel=r'$\rho=\chi_{ij}/\mathrm{Cov}(x_i,x_j)$',
               title='(a) fluctuation--dissipation ratio')
-    ax[0].legend(frameon=False)
+    ax[0].legend(frameon=False, fontsize=8)
 
-    # ---- (b) confidence calibration ------------------------------------------------
-    ckeys = ('exact', 'mf', 'lbp', 'fbp')
-    over = {k: [] for k in ckeys}
+    # ---- (b) confidence calibration -------------------------------------------
+    over = {k: [] for k, _ in method_keys}
     for J in tqdm(cal_J, desc='calibration'):
-        conf, corr = _calibration_trials(J, cal_trials, alpha_fbp=afbp, theta=theta, seed=seed)
-        for k in ckeys:
+        conf, corr = _calibration_trials(J, cal_trials, alphas=alphas,
+                                         theta=theta, seed=seed)
+        for k, _ in method_keys:
             over[k].append(float(conf[k].mean() - corr[k].mean()))
-    for k in ckeys:
-        ax[1].plot(cal_J, over[k], 'o-', color=COL[k], ms=4, label=LAB[k])
+    for k, md in method_keys:
+        ax[1].plot(cal_J, over[k], md['ls'], color=md['c'], marker='o', ms=6,
+                   lw=2.2, label=md['lab'])
     ax[1].axhline(0, color='0.6', lw=0.8)
-    ax[1].axvline(JMF, color='r', ls=':', lw=1); ax[1].axvline(JLBP, color='C0', ls=':', lw=1)
-    ax[1].set(xlabel='coupling J', ylabel='mean confidence $-$ mean accuracy',
+    ax[1].axvline(JMF, color='r', ls=':', lw=1)
+    ax[1].axvline(JLBP, color=plt.cm.Blues(0.5), ls=':', lw=1)
+    ax[1].set(xlabel='coupling J', ylabel='mean confidence - mean accuracy',
               title='(b) confidence calibration')
-    ax[1].legend(frameon=False)
+    ax[1].legend(frameon=False, fontsize=8)
 
-    # ---- (c) susceptibility r_d vs matched q ---------------------------------------
-    for kind, a, key in [('exact', 1.0, 'exact')] + var:
+    # ---- (c) susceptibility r_d vs matched q ----------------------------------
+    for k, md in method_keys:
         r1, r2 = [], []
         for q in q_grid:
-            Jm = _fit_J_for_q(kind, q, B, a, theta, J_grid)
+            Jm = _fit_J_for_q(md['kind'], q, B, md['alpha'], theta, J_grid)
             if not np.isfinite(Jm):
                 r1.append(np.nan); r2.append(np.nan); continue
-            rd = _rd(_chi(kind, Jm, B, a, theta), dist, dvals)
+            rd = _rd(_chi(md['kind'], Jm, B, md['alpha'], theta), dist, dvals)
             r1.append(rd[1]); r2.append(rd[2] if len(rd) > 2 else np.nan)
-        ax[2].plot(q_grid, r1, '-', color=COL[key], label=LAB[key])
-        ax[2].plot(q_grid, r2, '--', color=COL[key], alpha=0.7)
+        ax[2].plot(q_grid, r1, md['ls'], color=md['c'], marker='o', ms=6,
+                   lw=2.2, label=md['lab'])
+        ax[2].plot(q_grid, r2, md['ls'], color=md['c'], marker='o', ms=6,
+                   lw=2.2, alpha=0.55)
     ax[2].set(xlabel='matched confidence q', ylabel=r'response $r_d$',
               title='(c) evidence spread (solid $d{=}1$, dashed $d{=}2$)')
+    # Keep distance encoded by line style, as in the existing susceptibility plots.
+    # Replot d=2 with dashed lines without changing the algorithm colour.
+    for line in ax[2].lines[-len(method_keys)*2:]:
+        if line.get_alpha() == 0.55:
+            line.set_linestyle('--')
     ax[2].legend(frameon=False, fontsize=8)
 
     for a_ in ax:
@@ -3029,10 +3048,10 @@ if __name__ == "__main__":
     #         n_seeds=10, c=10.0, tilt=6.0, burn=1000, node_mean=True,
     #         theta=THETA_NECKER, save=True, fname='gibbs_jstar_overconfidence')
     plot_confidence_calibration(J_list=np.arange(0, 0.85, 0.05),
-                                J_show=0.4, n_trials=1500, alpha_fbp=0.5,
+                                J_show=0.4, n_trials=1500, alphas=(0.5, 1.0, 1.5, 2.0),
                                 theta=THETA_NECKER, seed=0, save=True,
                                 fname='confidence_calibration')
-    plot_testable_differences(B=0.2, alphas=(0.5, 1.0, 1.5),
+    plot_testable_differences(B=0.2, alphas=(0.5, 1.0, 1.5, 2.0),
                               q_grid=np.round(np.linspace(0.55, 0.93, 15), 3),
                               J_grid=np.round(np.arange(0.0, 8.0, 0.01), 3),
                               cal_J=np.arange(0, 0.85, 0.05), cal_trials=1200,
