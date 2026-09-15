@@ -2506,7 +2506,7 @@ def plot_crit_j_alpha(n=3, alpha_list=np.arange(0, 1.5, 1e-3)):
     """
     Plots J^* vs alpha, highlighting MF (alpha \to 0) and LBP (\alpha = 1)
     """
-    fig, ax = plt.subplots(1, figsize=(4.3, 3.4))
+    fig, ax = plt.subplots(1, figsize=(3.3, 2.9))
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
     vals = 0.5*np.log(n/(n-2*alpha_list))/alpha_list
