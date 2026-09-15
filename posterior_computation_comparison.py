@@ -1242,7 +1242,8 @@ def run_cycle_family_grid(fam, J_list=(0.2, 0.4, 0.6, 0.8),
 def plot_cycle_by_method_and_type(n=9, levels=(0, 1, 3, 6, 11), n_graphs=5,
                                   J_list=(0.2, 0.4, 0.6, 0.8),
                                   B_list=np.round(np.linspace(-0.5, 0.5, 7), 3),
-                                  methods=None, gibbs_steps=8000,
+                                  methods=None, gibbs_steps=8000, symmetrize=True,
+                                  inset_graphs=True,
                                   load_data=True, data_path=None, save=True):
     """Grid like plot_grid_by_method_and_p: rows = inference method, columns =
     graph type (loopiness L). Each cell scatters approximate q vs exact q over
@@ -1278,6 +1279,9 @@ def plot_cycle_by_method_and_type(n=9, levels=(0, 1, 3, 6, 11), n_graphs=5,
             x = np.concatenate([e['exact'] for e in data[L]])
             y = np.concatenate([e[meth] for e in data[L]])
             cvals = np.concatenate([np.full(len(e['exact']), e['J']) for e in data[L]])
+            if symmetrize:                       # q <-> 1-q symmetry: mirror the cloud
+                x = np.concatenate([x, 1 - x]); y = np.concatenate([y, 1 - y])
+                cvals = np.concatenate([cvals, cvals])
             ax.scatter(x, y, c=cvals, cmap=cmap, norm=norm, s=8, alpha=0.5, zorder=20)
             ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
             ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
@@ -1290,8 +1294,240 @@ def plot_cycle_by_method_and_type(n=9, levels=(0, 1, 3, 6, 11), n_graphs=5,
     fig.tight_layout()
     sm = cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
     fig.colorbar(sm, ax=axes, fraction=0.02, pad=0.01, label='coupling J')
+    if inset_graphs:                             # small black graph cartoon per L (top row)
+        fam_g = make_cycle_family(n, levels, n_graphs)   # deterministic (same seed) -> matches data
+        for j, L in enumerate(levels):
+            A = fam_g[L][0]; G = nx.from_numpy_array(A)
+            iax = axes[0, j].inset_axes([0.02, 0.60, 0.38, 0.38])
+            pg = nx.spring_layout(G, seed=1)
+            nx.draw_networkx_edges(G, pg, ax=iax, edge_color='k', width=0.6)
+            nx.draw_networkx_nodes(G, pg, ax=iax, node_color='k', node_size=10)
+            iax.set_axis_off()
     if save:
-        fig.savefig(DATA_FOLDER + 'cycle_grid.png', dpi=180, bbox_inches='tight')
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        fig.savefig(DATA_FOLDER + 'cycle_grid.png', dpi=180)   # no tight bbox (insets can make it invalid)
+    return fig
+
+
+def _cycle_style(key):
+    """Colour/linestyle/label for a cycle-family method key (plot_susc_vs_J scheme)."""
+    if key == 'mean_field':
+        return dict(c='firebrick', ls='--', lab='MF')
+    if key == 'gibbs':
+        return dict(c='0.5', ls=':', lab='Gibbs')
+    if key == 'lbp':
+        return dict(c=plt.cm.Blues(0.60), ls='-', lab='LBP')
+    if key.startswith('fbp_'):
+        a = float(key.split('_')[1])
+        shade = {0.5: 0.42, 1.0: 0.60, 1.5: 0.78, 2.0: 0.97}.get(a, 0.6)
+        return dict(c=plt.cm.Blues(shade), ls='-', lab=rf'FBP $\alpha$={a:g}')
+    return dict(c='k', ls='-', lab=key)
+
+
+def _clearest_graph(adjs):
+    """Among candidate adjacency matrices, pick the (graph, layout) whose nodes are
+    most separated (largest minimum pairwise distance) so edges/loops are countable."""
+    best = None
+    for A in adjs:
+        G = nx.from_numpy_array(A)
+        try:
+            pos = nx.kamada_kawai_layout(G)
+        except Exception:
+            pos = nx.spring_layout(G, k=1.5, iterations=300, seed=1)
+        P = np.array(list(pos.values()))
+        dmin = min(np.linalg.norm(P[i] - P[j])
+                   for i in range(len(P)) for j in range(i + 1, len(P)))
+        if best is None or dmin > best[2]:
+            best = (G, pos, dmin)
+    return best[0], best[1]
+
+
+def plot_error_vs_complexity(n=9, levels=tuple(range(0, 12)), n_graphs=5,
+                             cartoon_levels=(0, 1, 3, 5, 11),
+                             J_list=(0.2, 0.4, 0.6, 0.8),
+                             B_list=np.round(np.linspace(-0.5, 0.5, 7), 3),
+                             metric='kl', xaxis='L', methods=None, gibbs_steps=10000,
+                             signed=False, load_data=True, data_path=None, save=True):
+    """Summary of algorithm behaviour vs graph complexity, with a top strip of graph
+    cartoons per level. Panel (a): error to exact (metric='mse' or 'kl') averaged over
+    nodes/graphs/J/B, one line per algorithm. Panel (b): signed over-confidence
+    mean(|q-0.5| - |p_exact-0.5|) (>0 over-confident e.g. MF; <0 under-confident e.g.
+    FBP alpha>1). xaxis='L' (independent cycles) or 'lambda' (mean largest adjacency
+    eigenvalue). Reuses the cycle_grid_data.pkl cache."""
+    if data_path is None:
+        data_path = DATA_FOLDER + 'cycle_grid_data.pkl'
+    if load_data and os.path.exists(data_path):
+        with open(data_path, 'rb') as f:
+            res = pickle.load(f)
+        levels = res['levels']; data = res['data']
+    else:
+        data = run_cycle_family_grid(make_cycle_family(n, levels, n_graphs),
+                                     J_list, B_list, gibbs_steps=gibbs_steps)
+        with open(data_path, 'wb') as f:
+            pickle.dump({'data': data, 'levels': levels, 'J_list': J_list}, f)
+
+    if methods is None:                              # all inference keys present in the data
+        skip = ('exact', 'J', 'B')
+        keys = [k for k in data[levels[0]][0] if k not in skip]
+        methods = [k for k in ('gibbs', 'mean_field', 'lbp') if k in keys] + \
+                  sorted([k for k in keys if k.startswith('fbp_')], key=lambda s: float(s.split('_')[1]))
+
+    fam = make_cycle_family(n, levels, n_graphs)      # deterministic -> matches data; for x + cartoons
+    if xaxis == 'lambda':
+        lams = [[float(np.max(np.linalg.eigvalsh(A))) for A in fam[L]] for L in levels]
+        xvals = [float(np.mean(v)) for v in lams]
+        xerr = [float(np.std(v) / np.sqrt(len(v))) for v in lams]   # SEM of lambda_max across graphs
+        xlabel = r'$\lambda_{\max}$'
+    else:
+        xvals = [float(L) for L in levels]; xerr = None
+        xlabel = 'Loopiness  L (independent cycles)'
+
+    def err(p, q):
+        if metric == 'mse':
+            return (q - p) ** 2
+        e = 1e-9; p = np.clip(p, e, 1 - e); q = np.clip(q, e, 1 - e)
+        return p * np.log(p / q) + (1 - p) * np.log((1 - p) / (1 - q))
+    ylab_err = 'MSE to exact' if metric == 'mse' else r'KL(exact$\parallel$approx)'
+
+    fig = plt.figure(figsize=(11, 5.8))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.25, 4], hspace=0.4, wspace=0.25)
+    cl = [L for L in cartoon_levels if L in levels]   # cartoons only for a subset of levels
+    gtop = gs[0, :].subgridspec(1, len(cl), wspace=0.25)
+    for j, L in enumerate(cl):                        # top strip: clearest graph cartoon per shown level
+        cax = fig.add_subplot(gtop[0, j])
+        G, pg = _clearest_graph(fam[L])               # most-separated example, so loops are countable
+        nx.draw_networkx_edges(G, pg, ax=cax, edge_color='k', width=0.8)
+        nx.draw_networkx_nodes(G, pg, ax=cax, node_color='k', node_size=14)
+        cax.set_axis_off(); cax.margins(0.18)
+        lam = float(np.mean([np.max(np.linalg.eigvalsh(A)) for A in fam[L]]))
+        cax.set_title(rf'$\lambda$={lam:.1f}' if xaxis == 'lambda' else f'L={L}',
+                      fontsize=mpl.rcParams['font.size'] * 0.8)
+
+    axE = fig.add_subplot(gs[1, 0]); axO = fig.add_subplot(gs[1, 1])
+    for meth in methods:
+        st = _cycle_style(meth)
+        E, Ee, OC, OCe = [], [], [], []
+        for L in levels:
+            ents = data[L]
+            # group entries by graph (graph-major order) for a per-graph SEM; else pool
+            bs = len(ents) // n_graphs if n_graphs and len(ents) % n_graphs == 0 else 0
+            blocks = [ents[g * bs:(g + 1) * bs] for g in range(n_graphs)] if bs else [[e] for e in ents]
+            ev, ov = [], []
+            for blk in blocks:
+                p = np.concatenate([e['exact'] for e in blk])
+                q = np.concatenate([e[meth] for e in blk])
+                ev.append(float(err(p, q).mean()))
+                # over-confidence = area between psychometric q(B) and exact, integrated over the
+                # true posterior (as in plot_gibbs_jstar_overconfidence), per J, averaged over J
+                byJ = {}
+                for e in blk:
+                    byJ.setdefault(e['J'], []).append(e)
+                aJ = []
+                for es in byJ.values():
+                    es = sorted(es, key=lambda e: e['B'])
+                    qexB = np.array([np.mean(e['exact']) for e in es])
+                    qapB = np.array([np.mean(e[meth]) for e in es])
+                    dd = (qapB - qexB) if signed else np.abs(qapB - qexB)
+                    aJ.append(float(np.trapz(dd, qexB)))
+                ov.append(float(np.mean(aJ)))
+            ev, ov = np.array(ev), np.array(ov); s = np.sqrt(len(ev))
+            E.append(ev.mean());  Ee.append(ev.std() / s)      # SEM across graphs
+            OC.append(ov.mean()); OCe.append(ov.std() / s)
+        axE.errorbar(xvals, E, yerr=Ee, xerr=xerr, fmt='o', ls=st['ls'], color=st['c'], ms=4,
+                     capsize=2, label=st['lab'])
+        axO.errorbar(xvals, OC, yerr=OCe, xerr=xerr, fmt='o', ls=st['ls'], color=st['c'], ms=4,
+                     capsize=2, label=st['lab'])
+    axE.set_xlabel(xlabel); axE.set_ylabel(ylab_err); # axE.set_title('(a) Error vs complexity')
+    if signed:
+        axO.axhline(0, color='k', lw=0.8)
+    axO.set_xlabel(xlabel); axO.set_ylabel('Over-confidence (area vs exact)')  # int|q-q_exact| dq_exact
+    for a_ in (axE, axO):
+        a_.spines['top'].set_visible(False); a_.spines['right'].set_visible(False)
+    axO.legend(frameon=False)
+    if save:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        fig.savefig(DATA_FOLDER + f'error_vs_complexity_{metric}_{xaxis}.png', dpi=400)
+        fig.savefig(DATA_FOLDER + f'error_vs_complexity_{metric}_{xaxis}.svg', dpi=180)
+    return fig
+
+
+def plot_gibbs_jstar_overconfidence(
+        T_grid=np.round(np.logspace(2, 6, 9)).astype(int),
+        J_list=(0.5, 0.7, 0.9, 1.1),
+        B_grid=np.round(np.linspace(0.0, 0.5, 11), 3),   # favored side (B>=0); B<0 is the mirror
+        Bstar_list=(0.0, 0.1, 0.2, 0.3),
+        n_seeds=10, c=10.0, tilt=6.0, burn=1000, node_mean=True, signed=False,
+        theta=THETA_NECKER, recompute=False, save=True, fname='gibbs_jstar_overconfidence'):
+    """Two panels for Gibbs sampling vs chain length T.
+    LEFT: critical coupling J*_Gibbs(T,B)=(ln T + tilt*|B|)/c, one analytic line per B.
+    RIGHT: over-confidence vs T, conditioned on coupling J. Over-confidence at (J,T) is
+    the SIGNED area between the Gibbs and exact psychometric curves q(B), integrated
+    against the true posterior, int (q_gibbs - q_exact) dq_exact (as in the MF/BP
+    over-confidence), averaged over n_seeds chains (+/- SEM). It decays toward 0 as
+    T->inf; at fixed T it grows with J (mixing slows ~ e^{cJ})."""
+    import hashlib
+    n = theta.shape[0]
+    qfun = (lambda a: float(np.mean(a))) if node_mean else (lambda a: float(a[0]))
+
+    # exact psychometric per J (deterministic, cheap)
+    qexact = {J: np.array([qfun(exact_marginals(J * theta, np.full(n, B))) for B in B_grid])
+              for J in J_list}
+
+    # cache the (expensive, stochastic) Gibbs marginals QG[(J,T)] = array[n_seeds, len(B_grid)];
+    # keyed by the sweep params only, so replots / signed toggles reload instead of resampling.
+    key = repr((tuple(float(j) for j in J_list), tuple(int(t) for t in T_grid),
+                tuple(float(b) for b in B_grid), int(n_seeds), int(burn), bool(node_mean),
+                np.asarray(theta, float).tobytes()))
+    cache_fn = os.path.join(DATA_FOLDER, 'gibbs_oc_qg_%s.pkl' % hashlib.md5(key.encode()).hexdigest()[:12])
+    if not recompute and os.path.exists(cache_fn):
+        with open(cache_fn, 'rb') as f:
+            QG = pickle.load(f)
+    else:
+        QG = {}
+        for J in J_list:
+            Jm = J * theta
+            for T in tqdm(T_grid, desc=f'Gibbs J={J}', leave=False):
+                arr = np.empty((n_seeds, len(B_grid)))
+                for s in range(n_seeds):
+                    arr[s] = [qfun(gibbs_sampling(Jm, np.full(n, B), int(burn + T), int(burn)))
+                              for B in B_grid]
+                QG[(float(J), int(T))] = arr
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        with open(cache_fn, 'wb') as f:
+            pickle.dump(QG, f)
+
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(8, 3.4))
+
+    # LEFT: J*(T) per B
+    colsB = plt.cm.Greens(np.linspace(0.2, 0.85, len(Bstar_list)))
+    for B, col in zip(Bstar_list, colsB):
+        axL.plot(T_grid, (np.log(T_grid) + tilt * abs(B)) / c, '-o', color=col, ms=3, label=B)
+    axL.set_xscale('log'); axL.set_xlabel('Chain length T'); axL.set_ylabel(r'$J^\ast_{\mathrm{Gibbs}}(T)$')
+    axL.legend(frameon=False, title='Evidence, B')
+    axL.spines['top'].set_visible(False); axL.spines['right'].set_visible(False)
+
+    # RIGHT: over-confidence (area between psychometrics) vs T, per J
+    colsJ = plt.cm.plasma(np.linspace(0.1, 0.82, len(J_list)))
+    for J, col in zip(J_list, colsJ):
+        qex = qexact[J]
+        means, sems = [], []
+        for T in T_grid:
+            qg = QG[(float(J), int(T))]                          # [n_seeds, len(B_grid)]
+            d = (qg - qex) if signed else np.abs(qg - qex)       # signed (MF/BP-style) or absolute
+            areas = np.trapz(d, qex, axis=1)                     # per-seed area over the true posterior
+            means.append(areas.mean()); sems.append(areas.std() / np.sqrt(n_seeds))
+        axR.errorbar(T_grid, means, yerr=sems, fmt='o-', color=col, ms=3, capsize=2, label=J)
+    axR.set_xscale('log'); axR.set_xlabel('Chain length, T')
+    axR.set_ylabel('Over-confidence')
+    # axR.set_title('(b) Over-confidence vs T');
+    axR.legend(frameon=False, title='Coupling, J')
+    axR.spines['top'].set_visible(False); axR.spines['right'].set_visible(False)
+
+    fig.tight_layout()
+    if save:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=300)
     return fig
 
 
@@ -1543,9 +1779,148 @@ def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     axes[0][-1].legend(frameon=False, fontsize=8)
     fig.tight_layout()
     if save:
-        fig.savefig(DATA_FOLDER + 'susc_vs_q.png', dpi=180, bbox_inches='tight')
-        fig.savefig(DATA_FOLDER + 'susc_vs_q.svg', bbox_inches='tight')
+        label_y = 'norm' if normalize_y else ''
+        fig.savefig(DATA_FOLDER + f'susc_vs_q_{label_y}_{B}.png', dpi=180)
+        fig.savefig(DATA_FOLDER + f'susc_vs_q_{label_y}_{B}.svg', bbox_inches='tight')
     return fig
+
+
+def plot_susc_Bq_grid(B_grid=np.round(np.linspace(0, 1, 15), 3),
+                      q_grid=np.round(np.linspace(0.55, 0.95, 15), 3),
+                      alphas=(0.5, 1.0, 1.5, 2.0),
+                      J_grid=np.round(np.arange(0, 6, 0.02), 3),
+                      theta=THETA_NECKER, save=True, recompute=False):
+
+    dist = _dist_matrix(theta)
+    dvals = np.arange(int(dist.max()) + 1)
+    methods = list(_susc_methods(alphas)) + [_opt_method()]
+    B_grid, q_grid = np.asarray(B_grid), np.asarray(q_grid)
+
+    fname = DATA_FOLDER + f'susc_Bq_all_{len(B_grid)}x{len(q_grid)}.npz'
+
+    if not recompute and os.path.exists(fname):
+        data = np.load(fname, allow_pickle=True)
+        matrices, mse = data['matrices'].item(), data['mse'].item()
+    else:
+        def get_R(md, d):
+            R = np.full((len(B_grid), len(q_grid)), np.nan)
+            Jg = np.round(np.arange(0, 3, 0.05), 3) \
+                if md['kind'] == 'fbp_opt' else J_grid
+
+            for i, B in enumerate(B_grid):
+                for j, q in enumerate(q_grid):
+                    J = _fit_J_for_q(md['kind'], q, B, md['alpha'],
+                                     theta, Jg)
+                    if np.isnan(J):
+                        continue
+                    chi = _chi(md['kind'], J, B, md['alpha'], theta)
+                    R[i, j] = _rd(chi, dist, np.array([d]))[0]
+            return R
+
+        matrices = {md['lab']: {} for md in methods}
+        matrices['Exact'] = {}
+
+        for d in tqdm(dvals):
+            for md in methods:
+                print(f"{md['lab']}, d={d}")
+                matrices[md['lab']][d] = get_R(md, d)
+
+            print(f"Exact, d={d}")
+            matrices['Exact'][d] = get_R(
+                {'kind': 'exact', 'alpha': None}, d
+            )
+
+        mse = {md['lab']: {} for md in methods}
+
+        for md in methods:
+            label = md['lab']
+            for d in dvals:
+                R, E = matrices[label][d], matrices['Exact'][d]
+                valid = np.isfinite(R) & np.isfinite(E)
+                mse[label][d] = np.mean((R[valid] - E[valid]) ** 2)
+
+        np.savez(fname, matrices=matrices, mse=mse)
+
+    vals = np.concatenate([
+        R[np.isfinite(R)].ravel()
+        for Rdict in matrices.values()
+        for R in Rdict.values()
+    ])
+    vmin, vmax = vals.min(), 1.5
+
+    nrows = len(methods) + 2
+    fig, axes = plt.subplots(
+        nrows, len(dvals),
+        figsize=(3.2 * len(dvals), 3.0 * nrows),
+        squeeze=False
+    )
+
+    # Susceptibility heatmaps
+    for i, md in enumerate(methods):
+        label = md['lab']
+        for j, d in enumerate(dvals):
+            ax = axes[i, j]
+            im = ax.imshow(
+                matrices[label][d],
+                origin='lower', aspect='auto',
+                extent=[q_grid.min(), q_grid.max(),
+                        B_grid.min(), B_grid.max()],
+                cmap='viridis', vmin=vmin, vmax=vmax
+            )
+            if j == 0:
+                ax.set_ylabel(label)
+            if i == 0:
+                ax.set_title(f'd={d}')
+            if i == len(methods) - 1:
+                ax.set_xlabel('q')
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+    # Exact heatmap row
+    i = len(methods)
+    for j, d in enumerate(dvals):
+        ax = axes[i, j]
+        ax.imshow(
+            matrices['Exact'][d],
+            origin='lower', aspect='auto',
+            extent=[q_grid.min(), q_grid.max(),
+                    B_grid.min(), B_grid.max()],
+            cmap='viridis', vmin=vmin, vmax=vmax
+        )
+        if j == 0:
+            ax.set_ylabel('Exact')
+        ax.set_xlabel('q')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    # MSE row
+    i = len(methods) + 1
+    for j, d in enumerate(dvals):
+        ax = axes[i, j]
+        x = np.arange(len(methods))
+        y = [mse[md['lab']][d] for md in methods]
+
+        ax.bar(x, y)
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            [md['lab'] for md in methods],
+            rotation=45, ha='right'
+        )
+        ax.set_title(f'd={d}')
+        ax.set_ylabel('MSE' if j == 0 else '')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    fig.colorbar(im, ax=axes[:-1], shrink=.8, label=r'$r_d$')
+    fig.tight_layout()
+
+    if save:
+        fig.savefig(DATA_FOLDER + 'susc_Bq_grid.png',
+                    dpi=180, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'susc_Bq_grid.svg',
+                    bbox_inches='tight')
+
+    return matrices, mse, fig
 
 
 def plot_optimal_alpha_vs_J(B_list=(0.05, 0.1, 0.2, 0.3),
@@ -1780,6 +2155,51 @@ def plot_posterior_matrices(j_list=np.round(np.arange(0.0, 1.0001, 0.01), 4),
     if save:
         for ext_ in ('png', 'svg'):
             fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=180, bbox_inches='tight')
+    return fig
+
+
+def plot_mse_vs_alpha(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
+                      b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
+                      alpha_grid=np.round(np.arange(0.1, 2.501, 0.1), 2),
+                      J_show=(0.3, 0.6, 0.9, 1.2), init='det', steps=100, node=0,
+                      theta=THETA_NECKER, recompute=False, save=True, fname='mse_vs_alpha'):
+    """Supplementary: MSE of the FBP posterior vs exact over the (J,B) plane as a
+    function of alpha. Left: grid-mean MSE(alpha) with the minimiser alpha-hat and
+    the LBP (alpha=1) / MF (alpha->0) references. Right: MSE(alpha) at fixed coupling
+    J (mean over B), showing the optimum shifting right with J. Deterministic init
+    for a smooth curve; matrices are cached to disk."""
+    Qexact = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, init, recompute)
+    jidx = {J: int(np.argmin(np.abs(np.asarray(j_list) - J))) for J in J_show}
+    mse_all, mse_J = [], {J: [] for J in J_show}
+    for a in tqdm(alpha_grid, desc='MSE vs alpha'):
+        Qa = _q_matrix(dict(kind='fbp', alpha=float(a)), j_list, b_list, node, theta, steps, init, recompute)
+        se = (Qa - Qexact) ** 2
+        mse_all.append(float(se.mean()))
+        for J in J_show:
+            mse_J[J].append(float(se[jidx[J]].mean()))
+    fig, ax = plt.subplots(1, 2, figsize=(8, 3.4))
+    ax[0].plot(alpha_grid, mse_all, color='k', ms=3, linewidth=3)
+    a_min = float(alpha_grid[int(np.argmin(mse_all))])
+    ax[0].axvline(a_min, color='#2ca02c', ls='--', label=rf'$\hat\alpha={a_min:g}$')
+    ax[0].axvline(1.0, color='0.6', ls=':', label='LBP')
+    ax[0].set_xlabel(r'$\alpha$'); ax[0].set_ylabel('MSE (grid mean)'); ax[0].set_title(r'MSE vs $\alpha$')
+    ax[0].legend(frameon=False)
+    cols = plt.cm.viridis(np.linspace(0.1, 0.85, len(J_show)))
+    for J, c in zip(J_show, cols):
+        ax[1].plot(alpha_grid, mse_J[J], ms=3, color=c, label=f'J={J:g}',
+                   linewidth=3)
+        am = alpha_grid[int(np.argmin(mse_J[J]))]
+        ax[1].plot(am, min(mse_J[J]), '*', color=c, ms=13, mec='k', mew=0.5,
+                   linewidth=3)
+    ax[1].set_xlabel(r'$\alpha$'); ax[1].set_ylabel('MSE (mean over B)')
+    ax[1].set_title(r'MSE vs $\alpha$ per coupling J'); ax[1].legend(frameon=False)
+    for a_ in ax:
+        a_.spines['top'].set_visible(False); a_.spines['right'].set_visible(False)
+        a_.set_yscale('log')
+    fig.tight_layout()
+    if save:
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=300, bbox_inches='tight')
     return fig
 
 
@@ -2162,13 +2582,20 @@ if __name__ == "__main__":
     # plot_cycle_by_method_and_type(n=9, levels=(0, 1, 3, 6, 11), n_graphs=5,
     #                               J_list=(0.2, 0.4, 0.6, 0.8),
     #                               B_list=np.repeat(np.round(np.linspace(-0.5, 0.5, 7), 3), 2),
-    #                               methods=None, gibbs_steps=8000,
+    #                               methods=None, gibbs_steps=100000,
     #                               load_data=True, data_path=None, save=True)
-    # plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2),
-    #                 q_grid=np.round(np.linspace(0.55, 0.95, 20), 3),
-    #                 J_grid=np.round(np.arange(0.0, 3.0, 0.01), 3),
-    #                 theta=THETA_NECKER, save=True,
-    #                 normalize_y=True)
+    # plot_error_vs_complexity(n=9, levels=tuple(range(0, 12)), n_graphs=50,
+    #                           J_list=(0.2, 0.4, 0.6, 0.8),
+    #                           B_list=np.round(np.linspace(-0.5, 0.5, 7), 3),
+    #                           metric='kl', xaxis='L', methods=None, gibbs_steps=100000,
+    #                           load_data=True, data_path=None, save=True)
+    
+    plot_susc_Bq_grid(B_grid=np.round(np.linspace(0, 0.5, 20), 3),
+                      q_grid=np.round(np.linspace(0.55, 0.95, 20), 3),
+                      alphas=(0.5, 1.0, 1.5, 2.0),
+                      J_grid=np.round(np.arange(0, 6, 0.02), 3),
+                      theta=THETA_NECKER, save=True, recompute=False)
+
     # plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     #                 J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3), include_gibbs=True,
     #                 gibbs=(400000, 30000), theta=THETA_NECKER, save=True)
@@ -2212,13 +2639,26 @@ if __name__ == "__main__":
     #     alphas=(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0),
     #     include_opt=True, gibbs=(), theta=THETA_NECKER, save=True,
     #     fname='posterior_matrices_supp_alpha')
+    
+    # plot_mse_vs_alpha(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
+    #                   b_list=np.round(np.arange(-0.5, 0.5001, 0.02), 3),
+    #                   alpha_grid=np.round(np.arange(0.025, 2.501, 0.025), 2),
+    #                   J_show=(0.1, 0.25, 0.5, 0.75, 1), init='det', steps=100, node=0,
+    #                   theta=THETA_NECKER, recompute=False, save=True, fname='mse_vs_alpha')
 
-    plot_paper_figure(j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
-                          b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
-                          gibbs=(1000, 10000, 100000),
-                          susc_alphas=(0.5, 1.0, 1.5, 2.0), susc_B=0.1,
-                          susc_q_grid=np.round(np.linspace(0.55, 0.99, 12), 3),
-                          susc_J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
-                          rdJ_d=1, rdJ_J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3),
-                          steps=100, node=0, gibbs_c=10.0, theta=THETA_NECKER,
-                          recompute=False, save=True, fname='paper_figure')
+    # plot_paper_figure(j_list=np.round(np.arange(0.0, 1.0001, 0.005), 4),
+    #                       b_list=np.round(np.arange(-0.5, 0.5001, 0.005), 4),
+    #                       gibbs=(1000, 10000, 100000),
+    #                       susc_alphas=(0.5, 1.0, 1.5, 2.0), susc_B=0.1,
+    #                       susc_q_grid=np.round(np.linspace(0.55, 0.99, 12), 3),
+    #                       susc_J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
+    #                       rdJ_d=1, rdJ_J_grid=np.round(np.arange(0.05, 1.0, 0.05), 3),
+    #                       steps=100, node=0, gibbs_c=10.0, theta=THETA_NECKER,
+    #                       recompute=False, save=True, fname='paper_figure')
+    # plot_gibbs_jstar_overconfidence(
+    #         T_grid=np.round(np.logspace(2, 6, 9)).astype(int),
+    #         J_list=(0.5, 0.7, 0.9, 1.1),
+    #         B_grid=np.round(np.linspace(-0.5, 0.5, 21), 3),
+    #         Bstar_list=(0.0, 0.2, 0.4),
+    #         n_seeds=10, c=10.0, tilt=6.0, burn=1000, node_mean=True,
+    #         theta=THETA_NECKER, save=True, fname='gibbs_jstar_overconfidence')
