@@ -2540,6 +2540,372 @@ def plot_evidence_interaction_grid(J_grid=np.round(np.arange(0.1, 0.85, 0.05), 3
     return fig
 
 
+# ----------------------------------------------------------------------------
+# Testable prediction #1 : confidence calibration (over-confidence below J*)
+# ----------------------------------------------------------------------------
+def _global_percept(cfg):
+    """Global interpretation of a spin configuration: sign of the net magnetisation."""
+    s = float(np.sum(cfg))
+    return 1 if s >= 0 else -1
+
+
+def _calibration_trials(J, n_trials, b_lo=0.001, b_hi=0.49, alpha_fbp=0.5,
+                        theta=THETA_NECKER, seed=0):
+    """Simulated-observer trials on the cube at coupling J, scored per node (each vertex is a
+    2AFC: is it front or back?). Each trial draws a favoured side u and evidence magnitude b,
+    sets a uniform field B_i = u*b, and samples the TRUE configuration from the exact joint
+    p(x|B) -- so the exact marginal q_i = P(x_i=1|B) is calibrated by construction. For each
+    scheme and node: confidence = max(q_i, 1-q_i), decision = sign(q_i-0.5), correct = decision
+    matches the sampled truth x_i. Returns {scheme: (conf[], correct[])} pooled over nodes and
+    trials."""
+    n = theta.shape[0]
+    states = np.array(list(itertools.product([-1.0, 1.0], repeat=n)))   # 256 x 8
+    rng = np.random.default_rng(seed)
+    schemes = ('exact', 'mf', 'lbp', 'fbp')
+    conf = {k: [] for k in schemes}; corr = {k: [] for k in schemes}
+    for tr in range(n_trials):
+        u = 1.0 if rng.random() < 0.5 else -1.0
+        b = rng.uniform(b_lo, b_hi)
+        Bv = np.full(n, u * b); Jm = J * theta
+        E = 0.5 * np.einsum('si,ij,sj->s', states, Jm, states) + states @ Bv
+        w = np.exp(E - E.max()); w /= w.sum()
+        marg_ex = (states == 1).T @ w                    # P(x_i=1) exact, per node
+        truth = states[rng.choice(len(states), p=w)]     # sampled true config, per node
+        qs = {'exact': marg_ex, 'mf': mean_field(Jm, Bv),
+              'lbp': loopy_bp(Jm, Bv), 'fbp': fractional_bp(Jm, Bv, alpha=alpha_fbp)}
+        for k, q in qs.items():
+            dec = np.where(q >= 0.5, 1.0, -1.0)
+            conf[k].append(np.maximum(q, 1 - q)); corr[k].append((dec == truth).astype(float))
+    return ({k: np.concatenate(conf[k]) for k in schemes},
+            {k: np.concatenate(corr[k]) for k in schemes})
+
+
+def _ece(conf, correct, n_bins=10):
+    """Expected calibration error and signed over-confidence (mean conf - mean acc)."""
+    edges = np.linspace(0.5, 1.0, n_bins + 1); ece = 0.0
+    for k in range(n_bins):
+        m = (conf >= edges[k]) & (conf <= edges[k + 1] if k == n_bins - 1 else conf < edges[k + 1])
+        if m.any():
+            ece += m.mean() * abs(conf[m].mean() - correct[m].mean())
+    return ece, float(conf.mean() - correct.mean())
+
+
+def plot_confidence_calibration(J_list=(0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8),
+                                J_show=0.1, n_trials=1500, alpha_fbp=0.5,
+                                theta=THETA_NECKER, seed=0, save=True,
+                                fname='confidence_calibration'):
+    """Testable prediction #1: the approximations are over-confident even BELOW the
+    bifurcation. Simulated-observer calibration on the Necker cube.
+      (a) calibration curves (confidence vs empirical accuracy) at a sub-critical J_show;
+          the exact posterior lies on the diagonal, MF sits above it (over-confident).
+      (b) expected calibration error (ECE) vs J, per scheme.
+      (c) signed over-confidence (mean confidence - mean accuracy) vs J; MF departs from 0
+          already for J < J*_MF = 1/N, with no alternations anywhere in the data.
+    Error bars are bootstrap SEM over trials. Exact posterior is calibrated by construction
+    (verified: its ECE ~ 0)."""
+    cols = {'exact': '0.4', 'mf': 'r', 'lbp': 'C0', 'fbp': 'C1'}
+    labs = {'exact': 'Exact', 'mf': 'MF', 'lbp': 'LBP', 'fbp': rf'FBP $\alpha$={alpha_fbp}'}
+    deg = int(round(theta.sum(1)[0]))                # node degree (N=3 for the cube)
+    JstarMF = 1.0 / deg; JstarLBP = 0.5 * np.log(deg / (deg - 2))
+
+    # sweep J: ECE and over-confidence (+ bootstrap SEM) per scheme
+    ece = {k: [] for k in cols}; over = {k: [] for k in cols}; over_se = {k: [] for k in cols}
+    calib_show = None
+    for J in tqdm(J_list, desc='calibration vs J'):
+        conf, corr = _calibration_trials(J, n_trials, alpha_fbp=alpha_fbp, theta=theta, seed=seed)
+        for k in cols:
+            e, o = _ece(conf[k], corr[k]); ece[k].append(e); over[k].append(o)
+            rng = np.random.default_rng(seed + 1); m = len(conf[k])
+            bs = [np.mean(conf[k][ix]) - np.mean(corr[k][ix])
+                  for ix in (rng.integers(0, m, m) for _ in range(200))]
+            over_se[k].append(np.std(bs))
+        if abs(J - J_show) < 1e-9:
+            calib_show = (conf, corr)
+
+    fig, ax = plt.subplots(1, 3, figsize=(14, 4.2))
+    # (a) calibration curves at J_show
+    if calib_show is None:
+        conf, corr = _calibration_trials(J_show, n_trials, alpha_fbp=alpha_fbp, theta=theta, seed=seed)
+    else:
+        conf, corr = calib_show
+    edges = np.linspace(0.5, 1.0, 9); ctr = 0.5 * (edges[:-1] + edges[1:])
+    for k in cols:
+        acc = [corr[k][(conf[k] >= edges[i]) & (conf[k] <= edges[i + 1])].mean()
+               if ((conf[k] >= edges[i]) & (conf[k] <= edges[i + 1])).any() else np.nan
+               for i in range(len(edges) - 1)]
+        ax[0].plot(ctr, acc, 'o-', color=cols[k], ms=4, label=labs[k])
+    ax[0].plot([0.5, 1], [0.5, 1], 'k:', lw=1)
+    ax[0].set(xlabel='confidence', ylabel='empirical accuracy',
+              title=f'(a) calibration at J={J_show} (< $J^*_{{MF}}$)')
+    ax[0].legend(frameon=False, fontsize=10)
+    # (b) ECE vs J
+    for k in cols:
+        ax[1].plot(J_list, ece[k], 'o-', color=cols[k], label=labs[k])
+    ax[1].axvline(JstarMF, color='r', ls=':', lw=1); ax[1].axvline(JstarLBP, color='C0', ls=':', lw=1)
+    ax[1].set(xlabel='coupling J', ylabel='ECE', title='(b) calibration error vs J')
+    ax[1].legend(frameon=False, fontsize=9)
+    # (c) signed over-confidence vs J
+    for k in cols:
+        ax[2].errorbar(J_list, over[k], yerr=over_se[k], fmt='o-', color=cols[k], capsize=2, label=labs[k])
+    ax[2].axhline(0, color='0.6', lw=0.8)
+    ax[2].axvline(JstarMF, color='r', ls=':', lw=1, label=r'$J^*_{MF}$')
+    ax[2].axvline(JstarLBP, color='C0', ls=':', lw=1, label=r'$J^*_{LBP}$')
+    ax[2].set(xlabel='coupling J', ylabel='mean confidence - mean accuracy',
+              title='(c) over-confidence (sub-critical too)')
+    ax[2].legend(frameon=False, fontsize=8)
+    for a in ax:
+        a.spines['top'].set_visible(False); a.spines['right'].set_visible(False)
+    fig.suptitle('Prediction 1: confidence miscalibration, present below the bifurcation')
+    fig.tight_layout()
+    if save:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=200, bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# Testable prediction #3 : duration-dependence of the apparent threshold
+# ----------------------------------------------------------------------------
+def _bimod_coeff(x):
+    """Sarle's bimodality coefficient; > 5/9 indicates a bimodal (two-percept) distribution."""
+    x = np.asarray(x, float); n = len(x)
+    if n < 4 or np.std(x) < 1e-9:
+        return 0.0
+    z = (x - x.mean()) / x.std()
+    g1 = np.mean(z ** 3); g2 = np.mean(z ** 4) - 3.0
+    den = g2 + 3.0 * (n - 1) ** 2 / ((n - 2) * (n - 3))
+    return float((g1 ** 2 + 1.0) / den) if den > 0 else 0.0
+
+
+def _threshold_cross(J_grid, bc, crit=5.0 / 9.0):
+    """First J where the (cumulative-max) bimodality coefficient crosses crit; linear interp."""
+    bc = np.maximum.accumulate(np.asarray(bc, float))
+    hit = np.flatnonzero(bc >= crit)
+    if len(hit) == 0:
+        return np.nan
+    k = hit[0]
+    if k == 0:
+        return float(J_grid[0])
+    x0, x1, y0, y1 = J_grid[k - 1], J_grid[k], bc[k - 1], bc[k]
+    return float(x0 + (x1 - x0) * (crit - y0) / (y1 - y0)) if y1 != y0 else float(x1)
+
+
+def _gibbs_reports(Jm, Bv, T_checks, n_trials, burn=1000):
+    """Per-trial time-averaged magnetisation of Gibbs chains, evaluated at each T in
+    T_checks (one chain per trial run to max(T_checks), read at every checkpoint)."""
+    Tmax = int(T_checks[-1]); out = np.empty((len(T_checks), n_trials))
+    for tr in range(n_trials):
+        trace = _gibbs_traj(Jm, Bv, int(burn + Tmax), int(burn))    # length Tmax
+        for ti, T in enumerate(T_checks):
+            out[ti, tr] = trace[:int(T)].mean()
+    return out
+
+
+def _var_reports(kind, J, B, alpha, T_checks, n_trials, sigma, N=3, dt=0.05, tau=1.0):
+    """Per-trial time-averaged report q for a variational Langevin scheme, at each duration
+    in T_checks (one trajectory per trial to max duration, read at every checkpoint; the
+    first 10% is discarded as burn-in)."""
+    Tmax = float(T_checks[-1]); out = np.empty((len(T_checks), n_trials))
+    for tr in range(n_trials):
+        q = langevin_1d(kind, J, B, N=N, alpha=alpha, sigma=sigma, dt=dt, T=Tmax, seed=tr)
+        for ti, T in enumerate(T_checks):
+            n_end = int(T / dt); n0 = int(0.1 * n_end)
+            out[ti, tr] = q[n0:n_end].mean()
+    return out
+
+
+def plot_duration_threshold(J_grid=np.round(np.linspace(0.30, 1.30, 18), 3),
+                            T_gibbs=(200, 1000, 5000, 20000, 100000),
+                            T_var=(40, 100, 250, 600, 1500),
+                            B=0.0, n_trials=24, sigma_var=0.05, c=10.0,
+                            theta=THETA_NECKER, seed=0, save=True,
+                            fname='duration_threshold'):
+    """Testable prediction #3: sampling has no true threshold, the variational schemes do.
+    The apparent critical coupling is defined identically for every scheme -- the coupling at
+    which the across-trial distribution of the time-averaged report turns bimodal (Sarle
+    BC>5/9). Sweeping the observation length T:
+      Gibbs J*(T) grows as (ln T)/c (barrier-limited mixing, no bifurcation);
+      MF and LBP J*(T) stay flat at their bifurcation (1/N and 1/2 log[N/(N-2)]).
+    Panels: (a) J*(T) per scheme + analytic Gibbs line and variational bifurcation lines;
+    (b) fitted slope dJ*/d ln T per scheme (0 for variational, 1/c for Gibbs);
+    (c) example Gibbs report distributions at short vs long T (bimodal -> unimodal).
+    Note: the Langevin noise sigma_var is set so crossing times exceed the tested durations,
+    i.e. the variational threshold reflects the bifurcation, not a timescale (sigma-independent
+    position; only the sharpness changes)."""
+    n_nodes = theta.shape[0]; Bv = np.full(n_nodes, float(B))
+    deg = int(round(theta.sum(1)[0]))                # node degree (N=3 for the cube)
+    JstarMF = 1.0 / deg; JstarLBP = 0.5 * np.log(deg / (deg - 2))
+    np.random.seed(seed)
+
+    def _jstar_curve(reports_fn, T_checks):
+        Js = np.full(len(T_checks), np.nan)
+        bc_all = np.zeros((len(T_checks), len(J_grid)))
+        for jj, J in enumerate(tqdm(J_grid, desc='J sweep', leave=False)):
+            R = reports_fn(J, T_checks)                      # (len(T_checks), n_trials)
+            for ti in range(len(T_checks)):
+                bc_all[ti, jj] = _bimod_coeff(R[ti])
+        for ti in range(len(T_checks)):
+            Js[ti] = _threshold_cross(J_grid, bc_all[ti])
+        return Js, bc_all
+
+    gib_fn = lambda J, Tc: _gibbs_reports(J * theta, Bv, Tc, n_trials)
+    mf_fn = lambda J, Tc: _var_reports('mf', J, B, 1.0, Tc, n_trials, sigma_var, N=deg)
+    lbp_fn = lambda J, Tc: _var_reports('fbp', J, B, 1.0, Tc, n_trials, sigma_var, N=deg)
+
+    Jg, bcg = _jstar_curve(gib_fn, np.array(T_gibbs, int))
+    Jmf, _ = _jstar_curve(mf_fn, np.array(T_var, float))
+    Jlbp, _ = _jstar_curve(lbp_fn, np.array(T_var, float))
+
+    def _slope(T, J):
+        ok = np.isfinite(J)
+        return np.polyfit(np.log(np.asarray(T)[ok]), np.asarray(J)[ok], 1)[0] if ok.sum() >= 2 else np.nan
+    slopes = {'Gibbs': _slope(T_gibbs, Jg), 'MF': _slope(T_var, Jmf), 'LBP': _slope(T_var, Jlbp)}
+
+    fig, ax = plt.subplots(1, 3, figsize=(14, 4.2))
+    ax[0].plot(T_gibbs, Jg, 'o-', color='k', label='Gibbs (empirical)')
+    ax[0].plot(T_gibbs, (np.log(T_gibbs)) / c + (Jg[0] - np.log(T_gibbs[0]) / c),
+               'k--', lw=1, label=r'$(\ln T)/c$')
+    ax[0].plot(T_var, Jmf, 's-', color='r', label='MF')
+    ax[0].plot(T_var, Jlbp, '^-', color='C0', label='LBP')
+    ax[0].axhline(JstarMF, color='r', ls=':', lw=1); ax[0].axhline(JstarLBP, color='C0', ls=':', lw=1)
+    ax[0].set_xscale('log')
+    ax[0].set(xlabel='observation length T', ylabel=r'apparent $J^\ast$',
+              title='(a) apparent threshold vs duration')
+    ax[0].legend(frameon=False)
+    # (b) slopes
+    names = list(slopes); xs = np.arange(len(names)); col = {'Gibbs': 'k', 'MF': 'r', 'LBP': 'C0'}
+    ax[1].bar(xs, [slopes[n] for n in names], color=[col[n] for n in names], alpha=0.75)
+    ax[1].axhline(1.0 / c, color='green', ls='--', label=r'$1/c$ (Gibbs pred.)')
+    ax[1].axhline(0, color='0.6', lw=0.8)
+    ax[1].set_xticks(xs); ax[1].set_xticklabels(names)
+    ax[1].set(ylabel=r'slope $dJ^\ast/d\ln T$', title='(b) duration slope')
+    ax[1].legend(frameon=False)
+    # (c) example Gibbs report distributions short vs long T
+    Jc = J_grid[np.argmin(np.abs(J_grid - 0.6))]
+    R = _gibbs_reports(Jc * theta, Bv, np.array([T_gibbs[0], T_gibbs[-1]], int), max(n_trials, 200))
+    ax[2].hist(R[0], bins=25, density=True, histtype='step', color='0.6',
+               label=f'T={T_gibbs[0]} (bimodal)')
+    ax[2].hist(R[1], bins=25, density=True, histtype='step', color='k',
+               label=f'T={T_gibbs[-1]} (unimodal)')
+    ax[2].set(xlabel='time-averaged report', ylabel='density',
+              title=f'(c) Gibbs reports at J={Jc}')
+    ax[2].legend(frameon=False)
+    for a in ax:
+        a.spines['top'].set_visible(False); a.spines['right'].set_visible(False)
+    fig.suptitle('Prediction 3: duration-dependent threshold for sampling, fixed for variational')
+    fig.tight_layout()
+    if save:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=200, bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# Section 6 figure: experimentally identifiable differences, one figure
+#   (a) fluctuation-dissipation ratio, (b) confidence calibration, (c) r_d vs q
+# ----------------------------------------------------------------------------
+def plot_testable_differences(B=0.1, alphas=(0.5, 1.0),
+                              q_grid=np.round(np.linspace(0.55, 0.93, 9), 3),
+                              J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
+                              cal_J=(0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8), cal_trials=1200,
+                              gibbs=(120000, 12000), gibbs_q=None,
+                              theta=THETA_NECKER, seed=0, save=True,
+                              fname='testable_differences'):
+    """Single figure for the identifiable, coupling-free tests, in the order of the text:
+      (a) fluctuation-dissipation ratio rho = chi_ij / Cov(x_i,x_j) at matched confidence q.
+          Exact inference and (T->inf) sampling sit at rho=1 (FDT); MF/BP depart from 1. Both the
+          response chi and the reference covariance are taken at the algorithm's own coupling, so no
+          estimate of J is needed and an overall readout gain cancels.
+      (b) confidence calibration: signed over-confidence (mean confidence - mean accuracy) vs J for a
+          simulated observer; exact ~ 0, MF over-confident already below J*_MF.
+      (c) susceptibility r_d vs matched confidence q: neighbour (d=1, solid) and next-neighbour
+          (d=2, dashed) response. At matched q, exact/sampling spread evidence farthest, MF least.
+    Reuses the susceptibility machinery (_fit_J_for_q, _chi, _rd) and the calibration helpers."""
+    dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
+    deg = int(round(theta.sum(1).mean()))
+    JMF = 1.0 / deg; JLBP = 0.5 * np.log(deg / (deg - 2))
+    if gibbs_q is None:
+        gibbs_q = q_grid
+    COL = {'exact': 'k', 'gibbs': '0.5', 'mf': 'r', 'lbp': 'C0', 'fbp': 'C1'}
+    LAB = {'exact': 'exact/sampling', 'gibbs': 'Gibbs', 'mf': 'MF', 'lbp': 'LBP',
+           'fbp': rf'FBP $\alpha$={alphas[0]}'}
+    afbp = alphas[0]
+    # variational schemes shown as lines (kind, alpha, key)
+    var = [('mf', 1.0, 'mf'), ('fbp', 1.0, 'lbp'), ('fbp', afbp, 'fbp')]
+
+    fig, ax = plt.subplots(1, 3, figsize=(15, 4.4))
+
+    # ---- (a) FDT ratio vs matched q ------------------------------------------------
+    def _r1(C):
+        return _rd(C, dist, dvals)[1]                       # mean neighbour response
+    for kind, a, key in var:
+        rho = []
+        for q in q_grid:
+            Jm = _fit_J_for_q(kind, q, B, a, theta, J_grid)
+            if not np.isfinite(Jm):
+                rho.append(np.nan); continue
+            Cex = linear_response_cov('exact', Jm, B, theta=theta)[0]
+            C = _chi(kind, Jm, B, a, theta)
+            rho.append(_r1(C) / _r1(Cex))
+        ax[0].plot(q_grid, rho, 'o-', color=COL[key], ms=4, label=LAB[key])
+    # Gibbs points (sampling) -- should sit at 1
+    gx, gy = [], []
+    for q in gibbs_q:
+        Jm = _fit_J_for_q('exact', q, B, 1.0, theta, J_grid)  # gibbs marg = exact marg
+        if not np.isfinite(Jm):
+            continue
+        Cex = linear_response_cov('exact', Jm, B, theta=theta)[0]
+        Cg = gibbs_susceptibility(Jm, B, theta, *gibbs)
+        gx.append(q); gy.append(_r1(Cg) / _r1(Cex))
+    ax[0].plot(gx, gy, 'D', color=COL['gibbs'], ms=6, label=LAB['gibbs'])
+    ax[0].axhline(1.0, color='k', lw=1.2, ls=':')
+    ax[0].set(xlabel='matched confidence q', ylabel=r'$\rho=\chi_{ij}/\mathrm{Cov}(x_i,x_j)$',
+              title='(a) fluctuation--dissipation ratio')
+    ax[0].legend(frameon=False)
+
+    # ---- (b) confidence calibration ------------------------------------------------
+    ckeys = ('exact', 'mf', 'lbp', 'fbp')
+    over = {k: [] for k in ckeys}
+    for J in tqdm(cal_J, desc='calibration'):
+        conf, corr = _calibration_trials(J, cal_trials, alpha_fbp=afbp, theta=theta, seed=seed)
+        for k in ckeys:
+            over[k].append(float(conf[k].mean() - corr[k].mean()))
+    for k in ckeys:
+        ax[1].plot(cal_J, over[k], 'o-', color=COL[k], ms=4, label=LAB[k])
+    ax[1].axhline(0, color='0.6', lw=0.8)
+    ax[1].axvline(JMF, color='r', ls=':', lw=1); ax[1].axvline(JLBP, color='C0', ls=':', lw=1)
+    ax[1].set(xlabel='coupling J', ylabel='mean confidence $-$ mean accuracy',
+              title='(b) confidence calibration')
+    ax[1].legend(frameon=False)
+
+    # ---- (c) susceptibility r_d vs matched q ---------------------------------------
+    for kind, a, key in [('exact', 1.0, 'exact')] + var:
+        r1, r2 = [], []
+        for q in q_grid:
+            Jm = _fit_J_for_q(kind, q, B, a, theta, J_grid)
+            if not np.isfinite(Jm):
+                r1.append(np.nan); r2.append(np.nan); continue
+            rd = _rd(_chi(kind, Jm, B, a, theta), dist, dvals)
+            r1.append(rd[1]); r2.append(rd[2] if len(rd) > 2 else np.nan)
+        ax[2].plot(q_grid, r1, '-', color=COL[key], label=LAB[key])
+        ax[2].plot(q_grid, r2, '--', color=COL[key], alpha=0.7)
+    ax[2].set(xlabel='matched confidence q', ylabel=r'response $r_d$',
+              title='(c) evidence spread (solid $d{=}1$, dashed $d{=}2$)')
+    ax[2].legend(frameon=False, fontsize=8)
+
+    for a_ in ax:
+        a_.spines['top'].set_visible(False); a_.spines['right'].set_visible(False)
+    fig.suptitle('Experimentally identifiable differences (coupling matched out)')
+    fig.tight_layout()
+    if save:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=200, bbox_inches='tight')
+    return fig
+
+
 if __name__ == "__main__":
     p_list = np.round(np.arange(0.2, 1.01, 0.1), 2)
     d_list = list(range(2, 7))   # degrees 2-6
@@ -2590,11 +2956,11 @@ if __name__ == "__main__":
     #                           metric='kl', xaxis='L', methods=None, gibbs_steps=100000,
     #                           load_data=True, data_path=None, save=True)
     
-    plot_susc_Bq_grid(B_grid=np.round(np.linspace(0, 0.5, 20), 3),
-                      q_grid=np.round(np.linspace(0.55, 0.95, 20), 3),
-                      alphas=(0.5, 1.0, 1.5, 2.0),
-                      J_grid=np.round(np.arange(0, 6, 0.02), 3),
-                      theta=THETA_NECKER, save=True, recompute=False)
+    # plot_susc_Bq_grid(B_grid=np.round(np.linspace(0, 0.5, 20), 3),
+    #                   q_grid=np.round(np.linspace(0.55, 0.95, 20), 3),
+    #                   alphas=(0.5, 1.0, 1.5, 2.0),
+    #                   J_grid=np.round(np.arange(0, 6, 0.02), 3),
+    #                   theta=THETA_NECKER, save=True, recompute=False)
 
     # plot_susc_ratios(q_star=0.8, B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     #                 J_grid=np.round(np.arange(0.0, 2.0, 0.01), 3), include_gibbs=True,
@@ -2662,3 +3028,14 @@ if __name__ == "__main__":
     #         Bstar_list=(0.0, 0.2, 0.4),
     #         n_seeds=10, c=10.0, tilt=6.0, burn=1000, node_mean=True,
     #         theta=THETA_NECKER, save=True, fname='gibbs_jstar_overconfidence')
+    plot_confidence_calibration(J_list=np.arange(0, 0.85, 0.05),
+                                J_show=0.4, n_trials=1500, alpha_fbp=0.5,
+                                theta=THETA_NECKER, seed=0, save=True,
+                                fname='confidence_calibration')
+    plot_testable_differences(B=0.2, alphas=(0.5, 1.0, 1.5),
+                              q_grid=np.round(np.linspace(0.55, 0.93, 15), 3),
+                              J_grid=np.round(np.arange(0.0, 8.0, 0.01), 3),
+                              cal_J=np.arange(0, 0.85, 0.05), cal_trials=1200,
+                              gibbs=(1000000, 12000), gibbs_q=None,
+                              theta=THETA_NECKER, seed=0, save=True,
+                              fname='testable_differences')
