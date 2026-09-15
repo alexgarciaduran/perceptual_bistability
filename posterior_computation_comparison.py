@@ -2091,11 +2091,11 @@ def plot_overconfidence_vs_J(j_list=np.round(np.arange(0.0, 1.0001, 0.02), 3),
     when the grids match)."""
     methods = _cmp_methods(alphas, gibbs_T=gibbs, include_opt=include_opt)
     Qtrue = _q_matrix(dict(kind='exact', alpha=1.0), j_list, b_list, node, theta, steps, init, recompute)
-    fig, ax = plt.subplots(figsize=(4.6, 3.2))
+    fig, ax = plt.subplots(figsize=(5.3, 3.6))
     for md in tqdm(methods):
         Q = _q_matrix(md, j_list, b_list, node, theta, steps, init, recompute)
         oc = [float(np.trapz(np.abs(Q[ij] - Qtrue[ij]), Qtrue[ij])) for ij in range(len(j_list))]
-        ax.plot(j_list, oc, md['ls'], color=md['c'], lw=2.2, label=md['lab'])
+        ax.plot(j_list, oc, md['ls'], color=md['c'], lw=3.5, label=md['lab'])
     ax.set(xlabel='Coupling J', ylabel='Over-confidence')
     ax.legend(frameon=False)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
@@ -2644,7 +2644,7 @@ def plot_confidence_calibration(J_list=(0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8),
     ax[0].plot([0.5, 1], [0.5, 1], 'k:', lw=1)
     ax[0].set(xlabel='confidence', ylabel='empirical accuracy',
               title=f'(a) calibration at J={J_show} (< $J^*_{{MF}}$)')
-    ax[0].legend(frameon=False, fontsize=8)
+    ax[0].legend(frameon=False)
 
     for k, md in method_keys:
         ax[1].plot(J_list, ece[k], md['ls'], color=md['c'], marker='o', ms=6,
@@ -2652,7 +2652,7 @@ def plot_confidence_calibration(J_list=(0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8),
     ax[1].axvline(JstarMF, color='r', ls=':', lw=1)
     ax[1].axvline(JstarLBP, color=plt.cm.Blues(0.5), ls=':', lw=1)
     ax[1].set(xlabel='coupling J', ylabel='ECE', title='(b) calibration error vs J')
-    ax[1].legend(frameon=False, fontsize=8)
+    ax[1].legend(frameon=False)
 
     for k, md in method_keys:
         ax[2].errorbar(J_list, over[k], yerr=over_se[k], fmt=md['ls'],
@@ -2663,7 +2663,7 @@ def plot_confidence_calibration(J_list=(0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8),
     ax[2].axvline(JstarLBP, color=plt.cm.Blues(0.5), ls=':', lw=1, label=r'$J^*_{LBP}$')
     ax[2].set(xlabel='coupling J', ylabel='mean confidence - mean accuracy',
               title='(c) over-confidence')
-    ax[2].legend(frameon=False, fontsize=8)
+    ax[2].legend(frameon=False)
 
     for a in ax:
         a.spines['top'].set_visible(False); a.spines['right'].set_visible(False)
@@ -2815,6 +2815,48 @@ def plot_duration_threshold(J_grid=np.round(np.linspace(0.30, 1.30, 18), 3),
 
 
 # ----------------------------------------------------------------------------
+# Own-covariance of each scheme (for the true FDT ratio rho = chi / C^own)
+# ----------------------------------------------------------------------------
+def _exact_cov(J, B, theta=THETA_NECKER):
+    """Exact connected covariance C_ij = <x_i x_j> - <x_i><x_j> by enumeration."""
+    n = theta.shape[0]; Jm = J * theta; Bv = np.full(n, float(B))
+    S = np.array(list(itertools.product([-1.0, 1.0], repeat=n)))
+    E = 0.5 * np.einsum('si,ij,sj->s', S, Jm, S) + S @ Bv
+    w = np.exp(E - E.max()); w /= w.sum()
+    m = (S * w[:, None]).sum(0)
+    C = (S.T * w) @ S - np.outer(m, m)
+    return C
+
+
+def _bp_pair_cov(J, B, theta=THETA_NECKER, alpha=1.0):
+    """(Fractional) belief-propagation own covariance on the edges, from the fractional-Bethe
+    pairwise belief
+        b_ij(x_i,x_j) ~ exp( alpha*Jmat_ij x_i x_j + (Q_i - alpha M[j,i]) x_i + (Q_j - alpha M[i,j]) x_j ),
+    the unique belief that marginalises back to the FBP singleton belief q_i (verified in
+    _check_bp_pair_cov). alpha=1 is loopy BP. Returns an n x n matrix with the neighbour
+    covariances on the edges; the diagonal is 1 - <x_i>^2."""
+    n = theta.shape[0]; Jm = J * theta; Bv = np.full(n, float(B))
+    q, M = fractional_bp(Jm, Bv, alpha=alpha, max_iter=4000, return_messages=True)
+    q = np.clip(q, 1e-12, 1 - 1e-12)
+    Q = 0.5 * np.log(q / (1 - q))
+    m = 2 * q - 1
+    C = np.diag(1.0 - m ** 2)
+    xs = np.array([-1.0, 1.0])
+    for i in range(n):
+        for j in range(i + 1, n):
+            if theta[i, j] == 0:
+                continue
+            a_i = Q[i] - alpha * M[j, i]; a_j = Q[j] - alpha * M[i, j]
+            logw = np.array([[alpha * Jm[i, j] * xi * xj + a_i * xi + a_j * xj
+                              for xj in xs] for xi in xs])
+            w = np.exp(logw - logw.max()); w /= w.sum()
+            exx = np.array([[xi * xj for xj in xs] for xi in xs])
+            mi = (xs[:, None] * w).sum(); mj = (xs[None, :] * w).sum()
+            C[i, j] = C[j, i] = float((exx * w).sum() - mi * mj)
+    return C
+
+
+# ----------------------------------------------------------------------------
 # Section 6 figure: experimentally identifiable differences, one figure
 #   (a) fluctuation-dissipation ratio, (b) confidence calibration, (c) r_d vs q
 # ----------------------------------------------------------------------------
@@ -2841,39 +2883,47 @@ def plot_testable_differences(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     method_keys = [('exact', md) if md['kind'] == 'exact' else
                    ('mf', md) if md['kind'] == 'mf' else
                    (f"fbp_{md['alpha']:g}", md) for md in methods]
-
+    # orig figure
     fig, ax = plt.subplots(1, 3, figsize=(15, 4.8))
 
-    # ---- (a) FDT ratio vs matched q --------------------------------------------
+    # ---- (a) FDT ratio vs matched q: rho = chi^alg / C^alg, EACH SCHEME'S OWN covariance ----
+    # exact:  chi = Cov (FDT) -> rho = 1.   LBP: chi (Bethe response) vs Bethe pairwise cov -> !=1.
+    # MF:     off-diagonal Cov is exactly 0 (factorised belief) -> rho -> inf (annotated).
+    # Gibbs:  the sampler's covariance vs the true response (both estimate the posterior) -> rho ~ 1.
     def _r1(C):
         return _rd(C, dist, dvals)[1]
-    for k, md in method_keys:
-        rho = []
-        for q in q_grid:
-            kind = md['kind']; a = md['alpha']
-            Jm = _fit_J_for_q(kind, q, B, a, theta, J_grid)
-            if not np.isfinite(Jm):
-                rho.append(np.nan); continue
-            Cex = linear_response_cov('exact', Jm, B, theta=theta)[0]
-            C = _chi(kind, Jm, B, a, theta)
-            rho.append(_r1(C) / _r1(Cex))
-        ax[0].plot(q_grid, rho, md['ls'], color=md['c'], marker='o', ms=6,
-                   lw=2.2, label=md['lab'])
 
-    # Gibbs sampling estimate, shown in the same grey family as other comparison plots.
+    def _rho_own(kind, a, q):
+        """rho = r_1(chi^alg) / r_1(Cov^alg_own) at matched confidence q, each scheme's OWN Cov."""
+        Jm = _fit_J_for_q(kind, q, B, a, theta, J_grid)
+        if not np.isfinite(Jm):
+            return np.nan
+        if kind == 'exact':
+            return _r1(linear_response_cov('exact', Jm, B, theta=theta)[0]) / _r1(_exact_cov(Jm, B, theta))
+        # FBP / LBP: fractional-Bethe response over fractional-Bethe pairwise covariance
+        chi = linear_response_cov('lbp', Jm, B, theta=theta, alpha=a)[0]
+        return _r1(chi) / _r1(_bp_pair_cov(Jm, B, theta, alpha=a))
+
+    for k, md in method_keys:
+        if md['kind'] == 'mf':
+            continue                                  # rho -> inf (annotated below)
+        rho = [_rho_own(md['kind'], md['alpha'], q) for q in q_grid]
+        ax[0].plot(q_grid, rho, md['ls'], color=md['c'], marker='o', ms=6, lw=2.2, label=md['lab'])
     gx, gy = [], []
     for q in gibbs_q:
         Jm = _fit_J_for_q('exact', q, B, 1.0, theta, J_grid)
         if not np.isfinite(Jm):
             continue
-        Cex = linear_response_cov('exact', Jm, B, theta=theta)[0]
-        Cg = gibbs_susceptibility(Jm, B, theta, *gibbs)
-        gx.append(q); gy.append(_r1(Cg) / _r1(Cex))
-    ax[0].plot(gx, gy, ':', color='0.6', marker='o', ms=6, lw=2.2, label='Gibbs')
+        chi_e = linear_response_cov('exact', Jm, B, theta=theta)[0]
+        gx.append(q); gy.append(_r1(gibbs_susceptibility(Jm, B, theta, *gibbs)) / _r1(chi_e))
+    ax[0].plot(gx, gy, ':', color='0.6', marker='D', ms=6, lw=2.0, label='Gibbs')
     ax[0].axhline(1.0, color='k', lw=1.0, ls=':')
-    ax[0].set(xlabel='matched confidence q', ylabel=r'$\rho=\chi_{ij}/\mathrm{Cov}(x_i,x_j)$',
+    ax[0].text(0.03, 0.06, r'MF: $\mathrm{Cov}_{ij}{=}0\ (i{\neq}j)\Rightarrow\rho\to\infty$',
+               transform=ax[0].transAxes, color='r', fontsize=9)
+    ax[0].set(xlabel='matched confidence q',
+              ylabel=r'$\rho=\chi_{ij}/\mathrm{Cov}^{\,\mathrm{own}}_{ij}$',
               title='(a) fluctuation--dissipation ratio')
-    ax[0].legend(frameon=False, fontsize=8)
+    ax[0].legend(frameon=False)
 
     # ---- (b) confidence calibration -------------------------------------------
     over = {k: [] for k, _ in method_keys}
@@ -2881,7 +2931,7 @@ def plot_testable_differences(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
         conf, corr = _calibration_trials(J, cal_trials, alphas=alphas,
                                          theta=theta, seed=seed)
         for k, _ in method_keys:
-            over[k].append(float(conf[k].mean() - corr[k].mean()))
+            over[k].append(abs(conf[k].mean() - corr[k].mean()))
     for k, md in method_keys:
         ax[1].plot(cal_J, over[k], md['ls'], color=md['c'], marker='o', ms=6,
                    lw=2.2, label=md['lab'])
@@ -2890,7 +2940,7 @@ def plot_testable_differences(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     ax[1].axvline(JLBP, color=plt.cm.Blues(0.5), ls=':', lw=1)
     ax[1].set(xlabel='coupling J', ylabel='mean confidence - mean accuracy',
               title='(b) confidence calibration')
-    ax[1].legend(frameon=False, fontsize=8)
+    ax[1].legend(frameon=False)
 
     # ---- (c) susceptibility r_d vs matched q ----------------------------------
     for k, md in method_keys:
@@ -2912,11 +2962,95 @@ def plot_testable_differences(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     for line in ax[2].lines[-len(method_keys)*2:]:
         if line.get_alpha() == 0.55:
             line.set_linestyle('--')
-    ax[2].legend(frameon=False, fontsize=8)
+    ax[2].legend(frameon=False)
 
     for a_ in ax:
         a_.spines['top'].set_visible(False); a_.spines['right'].set_visible(False)
     fig.suptitle('Experimentally identifiable differences (coupling matched out)')
+    fig.tight_layout()
+    if save:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        for ext_ in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext_}', dpi=200, bbox_inches='tight')
+    return fig
+
+
+def plot_fdt_decomposition(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                           q_grid=np.round(np.linspace(0.55, 0.9, 10), 3),
+                           J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
+                           gibbs=(150000, 15000), gibbs_q=None,
+                           theta=THETA_NECKER, save=True, fname='fdt_decomposition'):
+    """Decompose the fluctuation-dissipation ratio into its parts, for ALL algorithms, at
+    matched confidence q (neighbour, d=1 values):
+      (a) response  chi   = r_1( d<x_i>/dB_j ),
+      (b) own covariance C = r_1( Cov^own(x_i,x_j) ),
+      (c) ratio rho = chi / C.
+    Exact/sampling have chi = C (FDT) so rho = 1; MF has C = 0 off-diagonal (factorised belief)
+    so it sits at 0 in (b) and rho -> inf (annotated) in (c); FBP/LBP use the fractional-Bethe
+    pairwise covariance (_bp_pair_cov). Same colours/styles as the susceptibility plots."""
+    dist = _dist_matrix(theta); dvals = np.arange(0, int(dist.max()) + 1)
+    if gibbs_q is None:
+        gibbs_q = q_grid
+
+    def r1(C):
+        return _rd(C, dist, dvals)[1]
+
+    def chi_C(kind, a, Jm):
+        """Neighbour response and neighbour OWN covariance at coupling Jm."""
+        if kind == 'exact':
+            chi = linear_response_cov('exact', Jm, B, theta=theta)[0]; C = _exact_cov(Jm, B, theta)
+        elif kind == 'mf':
+            n = theta.shape[0]
+            chi = linear_response_cov('mf', Jm, B, theta=theta)[0]
+            m = _mf_magnetization(Jm * theta, np.full(n, B), np.zeros(n))  # Jm*theta = matrix
+            C = np.diag(1.0 - m ** 2)                       # factorised: 0 off-diagonal
+        else:                                              # fbp / lbp / fbp_opt
+            a_eff = _alpha_hat(Jm, B, theta) if kind == 'fbp_opt' else a
+            chi = linear_response_cov('lbp', Jm, B, theta=theta, alpha=a_eff)[0]
+            C = _bp_pair_cov(Jm, B, theta, alpha=a_eff)
+        return r1(chi), r1(C)
+
+    methods = _susc_methods(alphas) + [_opt_method()]
+    fig, ax = plt.subplots(1, 3, figsize=(15, 4.6))
+    for md in tqdm(methods):
+        kind, a = md['kind'], md['alpha']
+        chi_v, C_v, rho_v = [], [], []
+        for q in q_grid:
+            Jm = _fit_J_for_q(kind, q, B, a, theta, J_grid)
+            if not np.isfinite(Jm):
+                chi_v.append(np.nan); C_v.append(np.nan); rho_v.append(np.nan); continue
+            c, cc = chi_C(kind, a, Jm)
+            chi_v.append(c); C_v.append(cc)
+            rho_v.append(c / cc if abs(cc) > 1e-12 else np.nan)   # MF: C=0 -> skip (inf)
+        ax[0].plot(q_grid, chi_v, md['ls'], color=md['c'], marker='o', ms=5, lw=2.0, label=md['lab'])
+        ax[1].plot(q_grid, C_v, md['ls'], color=md['c'], marker='o', ms=5, lw=2.0, label=md['lab'])
+        ax[2].plot(q_grid, rho_v, md['ls'], color=md['c'], marker='o', ms=5, lw=2.0, label=md['lab'])
+
+    # Gibbs (sampling): chi = C = sample covariance -> rho = 1
+    gx, gchi, gC = [], [], []
+    for q in gibbs_q:
+        Jm = _fit_J_for_q('exact', q, B, 1.0, theta, J_grid)
+        if not np.isfinite(Jm):
+            continue
+        Cg = gibbs_susceptibility(Jm, B, theta, *gibbs)
+        gx.append(q); gchi.append(r1(Cg)); gC.append(r1(Cg))
+    ax[0].plot(gx, gchi, ':', color='0.5', marker='D', ms=6, lw=1.8, label='Gibbs')
+    ax[1].plot(gx, gC, ':', color='0.5', marker='D', ms=6, lw=1.8, label='Gibbs')
+    ax[2].plot(gx, np.ones_like(gx), ':', color='0.5', marker='D', ms=6, lw=1.8, label='Gibbs')
+
+    ax[2].axhline(1.0, color='k', lw=1.0, ls=':')
+    ax[2].text(0.03, 0.06, r'MF: $C_{ij}=0\Rightarrow\rho\to\infty$', transform=ax[2].transAxes,
+               color='r', fontsize=9)
+    ax[0].set(xlabel='matched confidence q', ylabel=r'$r_1(\chi_{ij})$',
+              title=r'(a) response $\chi$ (d=1)')
+    ax[1].set(xlabel='matched confidence q', ylabel=r'$r_1(\mathrm{Cov}^{\,\mathrm{own}}_{ij})$',
+              title='(b) own covariance $C$ (d=1)')
+    ax[2].set(xlabel='matched confidence q', ylabel=r'$\rho=\chi/C$',
+              title=r'(c) ratio $\rho$ (d=1)')
+    ax[0].legend(frameon=False, fontsize=8)
+    for a_ in ax:
+        a_.spines['top'].set_visible(False); a_.spines['right'].set_visible(False)
+    fig.suptitle('Fluctuation--dissipation decomposition: response, own covariance, and ratio')
     fig.tight_layout()
     if save:
         os.makedirs(DATA_FOLDER, exist_ok=True)
@@ -3047,14 +3181,31 @@ if __name__ == "__main__":
     #         Bstar_list=(0.0, 0.2, 0.4),
     #         n_seeds=10, c=10.0, tilt=6.0, burn=1000, node_mean=True,
     #         theta=THETA_NECKER, save=True, fname='gibbs_jstar_overconfidence')
-    plot_confidence_calibration(J_list=np.arange(0, 0.85, 0.05),
-                                J_show=0.4, n_trials=1500, alphas=(0.5, 1.0, 1.5, 2.0),
-                                theta=THETA_NECKER, seed=0, save=True,
-                                fname='confidence_calibration')
-    plot_testable_differences(B=0.2, alphas=(0.5, 1.0, 1.5, 2.0),
-                              q_grid=np.round(np.linspace(0.55, 0.93, 15), 3),
-                              J_grid=np.round(np.arange(0.0, 8.0, 0.01), 3),
-                              cal_J=np.arange(0, 0.85, 0.05), cal_trials=1200,
-                              gibbs=(1000000, 12000), gibbs_q=None,
-                              theta=THETA_NECKER, seed=0, save=True,
-                              fname='testable_differences')
+    # plot_confidence_calibration(J_list=np.arange(0, 0.85, 0.05),
+    #                             J_show=0.4, n_trials=1500, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                             theta=THETA_NECKER, seed=0, save=True,
+    #                             fname='confidence_calibration')
+    # plot_testable_differences(B=0.2, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                           q_grid=np.round(np.linspace(0.55, 0.93, 15), 3),
+    #                           J_grid=np.round(np.arange(0.0, 8.0, 0.01), 3),
+    #                           cal_J=np.arange(0, 0.85, 0.05), cal_trials=1200,
+    #                           gibbs=(1000000, 12000), gibbs_q=None,
+    #                           theta=THETA_NECKER, seed=0, save=True,
+    #                           fname='testable_differences_B_02')
+    # plot_testable_differences(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                           q_grid=np.round(np.linspace(0.55, 0.93, 15), 3),
+    #                           J_grid=np.round(np.arange(0.0, 8.0, 0.01), 3),
+    #                           cal_J=np.arange(0, 0.85, 0.05), cal_trials=1200,
+    #                           gibbs=(1000000, 12000), gibbs_q=None,
+    #                           theta=THETA_NECKER, seed=0, save=True,
+    #                           fname='testable_differences_B_01')
+    plot_fdt_decomposition(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
+                               q_grid=np.round(np.linspace(0.55, 0.95, 15), 3),
+                               J_grid=np.round(np.arange(0.0, 6.0, 0.01), 3),
+                               gibbs=(150000, 15000), gibbs_q=None,
+                               theta=THETA_NECKER, save=True, fname='fdt_decomposition_01')
+    plot_fdt_decomposition(B=0.2, alphas=(0.5, 1.0, 1.5, 2.0),
+                               q_grid=np.round(np.linspace(0.55, 0.95, 15), 3),
+                               J_grid=np.round(np.arange(0.0, 6.0, 0.01), 3),
+                               gibbs=(150000, 15000), gibbs_q=None,
+                               theta=THETA_NECKER, save=True, fname='fdt_decomposition_02')
