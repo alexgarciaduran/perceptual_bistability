@@ -65,7 +65,7 @@ def jacobian(x, y, J, Bx=0.0, By=0.0):
 # ----------------------------------------------------------------------------
 # Fixed points
 # ----------------------------------------------------------------------------
-def fixed_points(J, Bx=0.0, By=0.0, grid=13, tol=1e-4):
+def fixed_points(J, Bx=0.0, By=0.0, grid=5, tol=1e-4):
     """All fixed points in [0,1]^2 by multi-start root finding (deduplicated)."""
     sols = []
     for x0 in np.linspace(0.0, 1.0, grid):
@@ -208,13 +208,13 @@ def plot_eigs_vs_J(J_sweep=np.linspace(-10, 6, 400), B=0.0, save=True):
     return fig
 
 
-def plot_density(J_list=(-6.0, -2.0, 3.0), B=0.0, D=0.05, T=50000.0, save=True):
+def plot_density(J_list=(-6.0, -2.0, 3.0), B=0.0, D=0.01, T=20000.0, save=True, seed=0):
     """Stationary density (2D histogram + x-marginal) from long Langevin runs,
     with fixed points overlaid."""
     fig, axes = plt.subplots(2, len(J_list), figsize=(4.0 * len(J_list), 7),
                              squeeze=False)
     for c, J in enumerate(J_list):
-        xs, ys = simulate(J, B, B, D=D, T=T, seed=0)
+        xs, ys = simulate(J, B, B, D=D, T=T, seed=seed)
         H, xe, ye = np.histogram2d(xs, ys, bins=80, range=[[0, 1], [0, 1]], density=True)
         axes[0][c].imshow(H.T, origin='lower', extent=[0, 1, 0, 1], aspect='auto',
                           cmap='magma')
@@ -285,13 +285,15 @@ def pitchfork_J(B=0.0, J_hi=12.0):
 
 
 if __name__ == '__main__':
-    B = -2
+    B = -1
     print(f"\npitchfork onset J* = {pitchfork_J(B):.4f}  (B={B})")
     report_pointwise(J_list=(0., 0.5, 1, 3, 5, 6), B=B)
     scan_multiplicity(J_sweep=np.linspace(0, 12, 121), B=B)
-    plot_bifurcation(J_sweep=np.linspace(0, 12, 241), B=B)
+    plot_bifurcation(J_sweep=np.linspace(0, 12, 541), B=B)
     plot_eigs_vs_J(J_sweep=np.linspace(0, 12, 400), B=B)
-    plot_phase_portrait(4.0, B=B)                            # below onset: single node
+    plot_phase_portrait(0.5, B=B)                            # below onset: single node
+    plot_phase_portrait(3.0, B=B)                            # below onset: single node
+    # plot_phase_portrait(4.0, B=B)                            # below onset: single node
     plot_phase_portrait(8.0, B=B)                            # above onset: two winners + saddle
-    plot_density(J_list=(0.5, 3, 6), B=B)              # unimodal -> bimodal
+    plot_density(J_list=(0.5, 3, 5, 8, 12), B=B, seed=1)              # unimodal -> bimodal
     print('\nfigures saved to', OUT)
