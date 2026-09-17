@@ -23,6 +23,8 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
+from sklearn.metrics import jaccard_score
+from skimage.metrics import structural_similarity as ssim
 
 SEED = 20240915
 
@@ -99,9 +101,15 @@ def independent(h):
     return np.tanh(h)
 
 
-def _acc(recon_m, clean):
+def _acc(recon_m, clean, type_acc='ssim'):
     """Pixel accuracy of sign(recon) against the clean +/-1 image."""
-    return float(np.mean(np.sign(recon_m) == clean))
+    if type_acc == 'sign':
+        return float(np.mean(np.sign(recon_m) == clean))
+    if type_acc == 'jaccard':
+        rec = np.int32((np.sign(recon_m)+1)/2)
+        cl=np.int32((clean+1)/2)
+        return jaccard_score(cl.flatten(), rec.flatten())
+    return ssim(clean, recon_m)
 
 
 # ============================================================ stimuli (clean shapes)
@@ -202,7 +210,7 @@ def make_contour(H=44, W=44, spacing=2, n_noise=150, jitter=0.35, h0=0.2, seed=0
     return pos, ori, on, h
 
 
-def _association(pos, ori, radius=5.0, thr=0.85):
+def _association(pos, ori, radius=3.0, thr=0.5):
     """Sparse association-field weights: only neighbours within radius that are strongly
     co-circular (aligned to the link on both ends). The strict threshold is the prior that lets
     a genuine contour survive while sparse background alignments do not."""
@@ -359,11 +367,11 @@ def main_figure(J_denoise=0.7, J_occl=0.7, J_deblur=0.8, J_contour=0.5):
     sm = plt.cm.ScalarMappable(norm=plt.Normalize(-1, 1), cmap=CMAP)
     for r in range(4):
         cb = fig.colorbar(sm, ax=ax[r, :].tolist(), fraction=0.018, pad=0.01, ticks=[-1, 0, 1])
-        cb.ax.set_yticklabels(['back\n(-1)', '0.5', 'front\n(+1)'], fontsize=7)
+        cb.ax.set_yticklabels(['0, back', '0.5', '1, front'], fontsize=7)
         cb.set_label('posterior  q(x=1)', fontsize=8)
     fig.savefig(os.path.join(FIGS, 'fig_visual_tasks_main.png'), dpi=300, bbox_inches='tight')
     fig.savefig(os.path.join(FIGS, 'fig_visual_tasks_main.svg'), bbox_inches='tight')
-    plt.close(fig)
+    # plt.close(fig)
 
 
 def _plot_elements(ax, pos, ori, val, title=None, truth=False, L=1.6):
@@ -403,14 +411,14 @@ def supp_figure(name, make, J_grid, color, reps_show=5, **kw):
                 (f'J={Jb:.1f} ({_acc(mf_grid(h, Jb), clean):.2f})'))
         ax[r, 4].plot(J_grid, [ _acc(mf_grid(make(clean, rng=np.random.default_rng(SEED+100+r), **kw)[1], J), clean) for J in J_grid],
                       'o-', color=color, ms=3)
-        ax[r, 4].axvline(Jb, color='0.6', ls=':'); ax[r, 4].set_ylim(0.45, 1.02)
+        ax[r, 4].axvline(Jb, color='0.6', ls=':'); ax[r, 4].set_ylim(-0.02, 1.02)
         ax[r, 4].spines['top'].set_visible(False); ax[r, 4].spines['right'].set_visible(False)
         if r == 0:
-            ax[r, 4].set_title('accuracy vs J', fontsize=9)
-    ax[-1, 4].set_xlabel('coupling J', fontsize=8)
+            ax[r, 4].set_title('Accuracy vs J', fontsize=9)
+    ax[-1, 4].set_xlabel('Coupling J', fontsize=8)
     fig.tight_layout()
     fig.savefig(os.path.join(FIGS, f'supp_{name}.png'), dpi=300, bbox_inches='tight')
-    plt.close(fig)
+    # plt.close(fig)
     return mean, sem, Jb
 
 
@@ -433,26 +441,26 @@ def supp_contour(J_grid, reps_show=5):
         _plot_elements(ax[r, 1], pos, ori, (m0 + 1) / 2, f'J=0 (AUC {_auc((m0+1)/2, on):.2f})')
         _plot_elements(ax[r, 2], pos, ori, (mJ + 1) / 2, f'J={Jc:.1f} (AUC {_auc((mJ+1)/2, on):.2f})')
         ax[r, 3].plot(J_grid, aucs, 'o-', color='tab:blue', ms=3)
-        ax[r, 3].axvline(Jc, color='0.6', ls=':'); ax[r, 3].set_ylim(0.45, 1.02)
+        ax[r, 3].axvline(Jc, color='0.6', ls=':'); ax[r, 3].set_ylim(-0.02, 1.02)
         ax[r, 3].spines['top'].set_visible(False); ax[r, 3].spines['right'].set_visible(False)
         if r == 0:
             ax[r, 3].set_title('AUC vs J', fontsize=9)
-    ax[-1, 3].set_xlabel('coupling J', fontsize=8)
+    ax[-1, 3].set_xlabel('Coupling J', fontsize=8)
     fig.tight_layout()
     fig.savefig(os.path.join(FIGS, 'supp_contour.png'), dpi=300, bbox_inches='tight')
-    plt.close(fig)
+    # plt.close(fig)
     return Jc
 
 
 def main():
     J_grid = np.round(np.linspace(0.0, 1.2, 20), 3)
-    Jc_grid = np.round(np.linspace(0.0, 2.0, 20), 3)   # contour needs larger J (weak local evidence)
+    Jc_grid = np.round(np.linspace(0.0, 2, 20), 3)
     print('output ->', FIGS)
-    main_figure()
+    # main_figure()
     print('main figure done')
-    supp_figure('denoise', make_denoise, J_grid, 'firebrick', p=0.22, beta=0.6)
-    supp_figure('occlusion', make_occlusion, J_grid, 'seagreen', beta=0.9)
-    supp_figure('deblur', make_deblur, J_grid, 'darkorange', sigma=2.2)
+    # supp_figure('denoise', make_denoise, J_grid, 'firebrick', p=0.22, beta=0.6)
+    # supp_figure('occlusion', make_occlusion, J_grid, 'seagreen', beta=0.9)
+    # supp_figure('deblur', make_deblur, J_grid, 'darkorange', sigma=2.2)
     supp_contour(Jc_grid)
     print('supplementary figures done')
 
