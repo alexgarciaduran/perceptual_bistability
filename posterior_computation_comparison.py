@@ -800,7 +800,7 @@ def _gibbs_traj(J, B, steps, burn_in):
     return out
 
 
-def langevin_1d(kind, J, B, N=3, alpha=1.0, sigma=0.25, tau=1.0, dt=0.01,
+def langevin_1d(kind, J, B, N=3, alpha=1.0, sigma=0.25, tau=0.1, dt=0.01,
                 T=4000.0, seed=0):
     """1D reduced Langevin for the variational schemes (returns q(t)).
 
@@ -813,12 +813,12 @@ def langevin_1d(kind, J, B, N=3, alpha=1.0, sigma=0.25, tau=1.0, dt=0.01,
     s = np.sqrt(dt / tau) * sigma
     q = np.empty(nstep)
     if kind == 'mf':
-        x = 0.5
+        x = np.random.rand()
         for t in range(nstep):
             x += (1.0/(1.0+np.exp(-(2*N*J*(2*x-1)+2*B))) - x)*dt/tau + s*rng.standard_normal()
             q[t] = x
     elif kind == 'fbp':
-        M = 0.0
+        M = np.random.randn()*0.1
         for t in range(nstep):
             f = (1.0/alpha)*np.arctanh(np.tanh(J*alpha)*np.tanh(M*(N-alpha)+B))
             M += (f - M)*dt/tau + s*rng.standard_normal()
@@ -1663,7 +1663,7 @@ def plot_input_susceptibility(J_list=(0.15, 0.30), B=0.0, alphas=(0.5, 1.0, 1.5)
 def _susc_methods(alphas):
     """Ordered list of algorithms for the susceptibility plots. 'exact' doubles
     as sampling (they coincide); 'gibbs' is the finite-sample estimate."""
-    ms = [dict(kind='exact', lab='exact/sampling', c='k', ls='-', alpha=1.0),
+    ms = [dict(kind='exact', lab='exact', c='k', ls='-', alpha=1.0),
           dict(kind='mf', lab='MF', c='r', ls='--', alpha=1.0)]
     ac = plt.cm.Blues(np.linspace(0.15, 0.85, len(alphas)))
     for a, c in zip(alphas, ac):
@@ -1776,8 +1776,8 @@ def plot_susc_vs_q(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
         axes[0][d].spines['top'].set_visible(False); axes[0][d].spines['right'].set_visible(False)
         if normalize_y:
             axes[0][d].set_ylim(-0.05, 1.25)
-    axes[0][-1].legend(frameon=False, fontsize=8)
     fig.tight_layout()
+    axes[0][-1].legend(frameon=False, ncol=2)
     if save:
         label_y = 'norm' if normalize_y else ''
         fig.savefig(DATA_FOLDER + f'susc_vs_q_{label_y}_{B}.png', dpi=180)
@@ -2722,8 +2722,9 @@ def _var_reports(kind, J, B, alpha, T_checks, n_trials, sigma, N=3, dt=0.05, tau
     for tr in range(n_trials):
         q = langevin_1d(kind, J, B, N=N, alpha=alpha, sigma=sigma, dt=dt, T=Tmax, seed=tr)
         for ti, T in enumerate(T_checks):
-            n_end = int(T / dt); n0 = int(0.1 * n_end)
-            out[ti, tr] = q[n0:n_end].mean()
+            n_end = int(T / dt)
+            out[ti, tr] = q[n_end-1]
+            # out[ti, tr] = q[n0:n_end].mean()
     return out
 
 
@@ -2750,7 +2751,7 @@ def plot_duration_threshold(J_grid=np.round(np.linspace(0.30, 1.30, 18), 3),
     JstarMF = 1.0 / deg; JstarLBP = 0.5 * np.log(deg / (deg - 2))
     np.random.seed(seed)
 
-    def _jstar_curve(reports_fn, T_checks):
+    def _jstar_curve(reports_fn, T_checks, J_grid):
         Js = np.full(len(T_checks), np.nan)
         bc_all = np.zeros((len(T_checks), len(J_grid)))
         for jj, J in enumerate(tqdm(J_grid, desc='J sweep', leave=False)):
@@ -2765,9 +2766,9 @@ def plot_duration_threshold(J_grid=np.round(np.linspace(0.30, 1.30, 18), 3),
     mf_fn = lambda J, Tc: _var_reports('mf', J, B, 1.0, Tc, n_trials, sigma_var, N=deg)
     lbp_fn = lambda J, Tc: _var_reports('fbp', J, B, 1.0, Tc, n_trials, sigma_var, N=deg)
 
-    Jg, bcg = _jstar_curve(gib_fn, np.array(T_gibbs, int))
-    Jmf, _ = _jstar_curve(mf_fn, np.array(T_var, float))
-    Jlbp, _ = _jstar_curve(lbp_fn, np.array(T_var, float))
+    Jg, bcg = _jstar_curve(gib_fn, np.array(T_gibbs, int), J_grid)
+    Jmf, _ = _jstar_curve(mf_fn, np.array(T_var, float), J_grid[J_grid < 0.8])
+    Jlbp, _ = _jstar_curve(lbp_fn, np.array(T_var, float),  J_grid[J_grid < 0.8])
 
     def _slope(T, J):
         ok = np.isfinite(J)
@@ -3011,7 +3012,7 @@ def plot_fdt_decomposition(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
         return r1(chi), r1(C)
 
     methods = _susc_methods(alphas) + [_opt_method()]
-    fig, ax = plt.subplots(1, 3, figsize=(15, 4.6))
+    fig, ax = plt.subplots(1, 3, figsize=(13.2, 3.6))
     for md in tqdm(methods):
         kind, a = md['kind'], md['alpha']
         chi_v, C_v, rho_v = [], [], []
@@ -3040,18 +3041,14 @@ def plot_fdt_decomposition(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
 
     ax[2].axhline(1.0, color='k', lw=1.0, ls=':')
     ax[2].text(0.03, 0.06, r'MF: $C_{ij}=0\Rightarrow\rho\to\infty$', transform=ax[2].transAxes,
-               color='r', fontsize=9)
-    ax[0].set(xlabel='matched confidence q', ylabel=r'$r_1(\chi_{ij})$',
-              title=r'(a) response $\chi$ (d=1)')
-    ax[1].set(xlabel='matched confidence q', ylabel=r'$r_1(\mathrm{Cov}^{\,\mathrm{own}}_{ij})$',
-              title='(b) own covariance $C$ (d=1)')
-    ax[2].set(xlabel='matched confidence q', ylabel=r'$\rho=\chi/C$',
-              title=r'(c) ratio $\rho$ (d=1)')
-    ax[0].legend(frameon=False, fontsize=8)
+               color='r', fontsize=14)
+    ax[0].set(xlabel='Posterior probability', ylabel=r'$\chi_{ij}$')
+    ax[1].set(xlabel='Posterior probability', ylabel=r'$\mathrm{Cov}^{\,\mathrm{own}}_{ij}$')
+    ax[2].set(xlabel='Posterior probability', ylabel=r'$\rho=\chi/C$')
     for a_ in ax:
         a_.spines['top'].set_visible(False); a_.spines['right'].set_visible(False)
-    fig.suptitle('Fluctuation--dissipation decomposition: response, own covariance, and ratio')
     fig.tight_layout()
+    ax[0].legend(frameon=False, ncol=2)
     if save:
         os.makedirs(DATA_FOLDER, exist_ok=True)
         for ext_ in ('png', 'svg'):
@@ -3199,13 +3196,24 @@ if __name__ == "__main__":
     #                           gibbs=(1000000, 12000), gibbs_q=None,
     #                           theta=THETA_NECKER, seed=0, save=True,
     #                           fname='testable_differences_B_01')
-    plot_fdt_decomposition(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
-                               q_grid=np.round(np.linspace(0.55, 0.95, 15), 3),
-                               J_grid=np.round(np.arange(0.0, 6.0, 0.01), 3),
-                               gibbs=(150000, 15000), gibbs_q=None,
-                               theta=THETA_NECKER, save=True, fname='fdt_decomposition_01')
-    plot_fdt_decomposition(B=0.2, alphas=(0.5, 1.0, 1.5, 2.0),
-                               q_grid=np.round(np.linspace(0.55, 0.95, 15), 3),
-                               J_grid=np.round(np.arange(0.0, 6.0, 0.01), 3),
-                               gibbs=(150000, 15000), gibbs_q=None,
-                               theta=THETA_NECKER, save=True, fname='fdt_decomposition_02')
+    # plot_susc_vs_q(B=0.2, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                 q_grid=np.round(np.linspace(0.55, 0.99, 12), 3),
+    #                 J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
+    #                 theta=THETA_NECKER, save=True,
+    #                 normalize_y=False)
+    # plot_susc_vs_q(B=0.2, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                 q_grid=np.round(np.linspace(0.55, 0.99, 12), 3),
+    #                 J_grid=np.round(np.arange(0.0, 6.0, 0.02), 3),
+    #                 theta=THETA_NECKER, save=True,
+    #                 normalize_y=True)
+    # plot_fdt_decomposition(B=0.2, alphas=(0.5, 1.0, 1.5, 2.0),
+    #                        q_grid=np.round(np.linspace(0.55, 0.95, 15), 3),
+    #                        J_grid=np.round(np.arange(0.0, 6.0, 0.01), 3),
+    #                        gibbs=(150000, 15000), gibbs_q=None,
+    #                        theta=THETA_NECKER, save=True, fname='fdt_decomposition_02')
+    plot_duration_threshold(J_grid=np.round(np.linspace(0.20, 3.00, 61), 3),
+                            T_gibbs=np.logspace(1, 5, 5, dtype=int),
+                            T_var=[1, 2, 5, 10, 20, 50, 100],
+                            B=0.0, n_trials=100, sigma_var=0.05, c=10.0,
+                            theta=THETA_NECKER, seed=0, save=True,
+                            fname='duration_threshold')
