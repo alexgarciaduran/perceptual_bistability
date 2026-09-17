@@ -213,6 +213,31 @@ def full_om_instanton(a=1.0, b=0.0, D=0.1, npts=2000):
     return tau, xg, eta
 
 
+def committor_eta(a=1.0, b=0.0, D=0.1, x=None, nquad=800):
+    """EXACT finite-D switch-conditioned mean noise  <chi|x> = 2 D q'/q.
+
+    Conditioning the diffusion on a left->right switch is a Doob h-transform by
+    the committor q(x) = P(reach right well before left).  The reactive process
+    gains drift  2 D q'(x)/q(x), so the mean injected noise at position x is
+
+        <chi|x> = 2 D q'/q = 2 D / INT_{xL}^{x} exp([V(y)-V(x)]/D) dy .
+
+    Weak-noise Laplace limit -> 2 V'(x) = -2 f(x) (the instanton) in the bulk,
+    but it stays elevated near the wells/barrier (the spikes are real).
+    """
+    r = wells_and_barrier(a, b)
+    xL = r[0]
+    if x is None:
+        x = np.linspace(xL + 1e-3, r[1] - 1e-3, 200)
+    x = np.atleast_1d(x)
+    out = np.empty_like(x, dtype=float)
+    for i, xx in enumerate(x):
+        ys = np.linspace(xL, xx, nquad)
+        integ = np.trapz(np.exp((V(ys, a, b) - V(xx, a, b)) / D), ys)
+        out[i] = 2.0 * D / integ
+    return out
+
+
 def ascent_instanton(a=1.0, b=0.0, T=15.0, npts=2000):
     """Analytic ascent pulse (left well -> barrier), zero-energy, eta* = -2f.
 
@@ -503,19 +528,30 @@ def simulate_switch_kernel(a=1.0, b=0.0, D=None, dt=0.01, steps=120_000,
             recs.append((w, j))
         committed[xi > thrR] = 1
 
+    # committor drift map  2D q'/q(x)  precomputed on the ascent, for the
+    # time-kernel overlay  <2D q'/q>(tau)
+    xg_c = np.linspace(xL + 1e-3, xbar - 1e-3, 300)
+    cg = committor_eta(a, b, D, xg_c)
+
+    def cmap(xx):
+        return np.interp(xx, xg_c, cg, left=cg[0], right=0.0)
+
     ker_sum = np.zeros(2 * W)
     ker_sq = np.zeros(2 * W)
     fker_sum = np.zeros(2 * W)
+    cker_sum = np.zeros(2 * W)
     cnt = 0
     xacc, eacc = [], []
     x_react = xL + 0.1 * (xbar - xL)         # near-well threshold for the climb
     for (w, j) in recs:
         if j - W < 0 or j + W >= steps:
             continue
-        seg = E[w, j - W:j + W].astype(np.float64)
-        ker_sum += seg
-        ker_sq += seg ** 2
-        fker_sum += f(X[w, j - W:j + W].astype(np.float64), a, b)
+        segE = E[w, j - W:j + W].astype(np.float64)
+        segX = X[w, j - W:j + W].astype(np.float64)
+        ker_sum += segE
+        ker_sq += segE ** 2
+        fker_sum += f(segX, a, b)
+        cker_sum += cmap(segX)
         cnt += 1
         # <chi|x>: use only the REACTIVE climb (from the last exit near the
         # well up to the crossing), else equilibrium rattling dilutes it.
@@ -531,6 +567,7 @@ def simulate_switch_kernel(a=1.0, b=0.0, D=None, dt=0.01, steps=120_000,
     tau = (np.arange(2 * W) - W) * dt
     ker_mean = ker_sum / max(cnt, 1)
     fker_mean = fker_sum / max(cnt, 1)        # <f(x)>(tau) along reactive paths
+    cker_mean = cker_sum / max(cnt, 1)        # <2D q'/q>(tau) committor map
     ker_sem = np.sqrt(np.maximum(ker_sq / max(cnt, 1) - ker_mean ** 2, 0)
                       / max(cnt, 1))
     xall = np.concatenate(xacc) if xacc else np.array([0.0])
@@ -540,10 +577,15 @@ def simulate_switch_kernel(a=1.0, b=0.0, D=None, dt=0.01, steps=120_000,
     s_e, _ = np.histogram(xall, xbins, weights=eall)
     s_n, _ = np.histogram(xall, xbins)
     chi_of_x = np.divide(s_e, s_n, out=np.full(xc.size, np.nan), where=s_n > 0)
+    # per-bin MEDIAN (robust to the heavy upward tail / kicks)
+    from scipy.stats import binned_statistic
+    chi_med_of_x = binned_statistic(xall, eall, statistic="median",
+                                    bins=xbins)[0]
 
     return dict(a=a, b=b, D=D, xL=xL, xbar=xbar, xR=xR, n_switch=cnt,
                 tau=tau, ker_mean=ker_mean, ker_sem=ker_sem, fker_mean=fker_mean,
-                xc=xc, chi_of_x=chi_of_x)
+                cker_mean=cker_mean, xc=xc, chi_of_x=chi_of_x,
+                chi_med_of_x=chi_med_of_x)
 
 
 def _smooth(y, k=9):
@@ -572,7 +614,8 @@ def _save_cells(cells):
     blob = {}
     for (a, frac), c in cells.items():
         k = f"a{a}_f{frac}"
-        for fld in ("tau", "ker_mean", "ker_sem", "xc", "chi_of_x"):
+        for fld in ("tau", "ker_mean", "ker_sem", "fker_mean", "cker_mean",
+                    "xc", "chi_of_x", "chi_med_of_x"):
             blob[f"{k}__{fld}"] = c[fld]
         blob[f"{k}__meta"] = np.array([a, frac, c["b"], c["D"], c["n_switch"],
                                        c["xL"], c["xbar"], c["xR"]])
@@ -590,14 +633,16 @@ def _load_cells():
             a=float(a), b=float(b), D=float(D), n_switch=int(n),
             xL=float(xL), xbar=float(xbar), xR=float(xR),
             tau=blob[f"{p}__tau"], ker_mean=blob[f"{p}__ker_mean"],
-            ker_sem=blob[f"{p}__ker_sem"], xc=blob[f"{p}__xc"],
-            chi_of_x=blob[f"{p}__chi_of_x"])
+            ker_sem=blob[f"{p}__ker_sem"], fker_mean=blob[f"{p}__fker_mean"],
+            cker_mean=blob[f"{p}__cker_mean"], xc=blob[f"{p}__xc"],
+            chi_of_x=blob[f"{p}__chi_of_x"],
+            chi_med_of_x=blob[f"{p}__chi_med_of_x"])
     return cells
 
 
 def figD_sim_vs_theory(a_list=(0.5, 1.0, 1.5), frac_list=(0.0,), kd=0.15,
                        dt=0.01, steps=200_000, nwalk=1000, seed=0,
-                       recompute=True):
+                       recompute=False):
     """Validate chi(t) = eta(t) against the instanton on an (a,b) grid.
 
     Compares the switch-triggered noise to BOTH analytic instantons:
@@ -641,8 +686,23 @@ def figD_sim_vs_theory(a_list=(0.5, 1.0, 1.5), frac_list=(0.0,), kd=0.15,
         axx.fill_between(c0["tau"], km - 2 * c0["ker_sem"],
                          km + 2 * c0["ker_sem"], color="0.85")
         axx.plot(c0["tau"], km, "k", lw=2.5, label=r"sim $\langle\chi\rangle$")
-        axx.plot(tr, er, "firebrick", lw=2.5, ls="--", label=r"reduced $-2f(x(t))$")
-        axx.plot(tfl, efl, "steelblue", lw=2.5, ls="--", label="full OM")
+        # The absolute launch time of an instanton is arbitrary (set by the
+        # escape rate), so shift each analytic pulse to the sim's pulse peak
+        # (ignoring the tau=0 triggering spike) and compare SHAPES.
+        pre = c0["tau"] < -0.3
+        t_peak = c0["tau"][pre][np.argmax(km[pre])]
+        tr_s = tr - tr[np.argmax(er)] + t_peak
+        tfl_s = tfl - tfl[np.argmax(efl)] + t_peak
+        axx.plot(tr_s, er, "firebrick", lw=2.5, ls="--",
+                 label=r"reduced $-2f$ (peak-aligned)")
+        axx.plot(tfl_s, efl, "steelblue", lw=2.5, ls="--",
+                 label="full OM (peak-aligned)")
+        # reduced law mapped through the actual reactive ensemble (bounded).
+        # (The committor 2Dq'/q is shown in x-space, col 1: mapped to time it
+        #  is dominated by its x->xL divergence and the pre-commit equilibrium,
+        #  so it does not correspond to <chi>(tau).)
+        axx.plot(c0["tau"], -2 * c0["fker_mean"], "darkorange", lw=2,
+                 label=r"$-2\langle f\rangle(\tau)$")
         ytop = 1.35 * max(er.max(), efl.max())
         axx.set(xlim=(-8, 3), ylim=(-0.25 * ytop, ytop))
         axx.set_title(f"a={a}, b=0, D={D:.2f}  (n={c0['n_switch']})")
@@ -651,15 +711,20 @@ def figD_sim_vs_theory(a_list=(0.5, 1.0, 1.5), frac_list=(0.0,), kd=0.15,
         if ia == 0:
             axx.legend(frameon=False, fontsize=10)
 
-        # col 1: conditional field <chi|x> + both analytic instantons
+        # col 1: conditional field <chi|x>: sim vs -2f vs EXACT committor
         axx = ax[ia, 1]
-        xx = np.linspace(c0["xL"], c0["xbar"], 200)
-        axx.plot(xx, -2 * f(xx, a, 0.0), "firebrick", lw=2.5, label=r"reduced $-2f(x)$")
-        axx.plot(xfl, efl, "steelblue", lw=2.5, label="full OM")
-        axx.plot(c0["xc"], c0["chi_of_x"], "ko", ms=5, label=r"sim $\langle\chi|x\rangle$")
+        xx = np.linspace(c0["xL"] + 1e-3, c0["xbar"] - 1e-3, 300)
+        axx.plot(xx, -2 * f(xx, a, 0.0), "firebrick", lw=2.5,
+                 label=r"reduced $-2f(x)$")
+        axx.plot(xx, committor_eta(a, 0.0, D, xx), "seagreen", lw=2.5,
+                 label=r"committor $2Dq'/q$")
+        axx.plot(c0["xc"], c0["chi_of_x"], "ko", ms=5,
+                 label=r"sim mean $\langle\chi|x\rangle$")
+        axx.plot(c0["xc"], c0["chi_med_of_x"], "s", ms=4, mfc="none",
+                 mec="darkorange", label=r"sim median")
         axx.set_title(f"a={a}, b=0  conditional field")
         axx.set_xlabel("x"); axx.set_ylabel(r"$\langle\chi|x\rangle$")
-        axx.set_ylim(-0.3 * efl.max(), 1.4 * efl.max())    # clip residual edge kicks
+        axx.set_ylim(-0.3 * efl.max(), 1.7 * efl.max())    # clip near-well edge
         if ia == 0:
             axx.legend(frameon=False, fontsize=10)
 
