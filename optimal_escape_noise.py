@@ -601,7 +601,8 @@ def _run_cells(a_list, frac_list, kd, dt, steps, nwalk, seed):
     for a in a_list:
         for frac in frac_list:
             b = round(frac * spinodal(a), 4)
-            c = simulate_switch_kernel(a, b, D=kd * a, dt=dt, steps=steps,
+            # D = kd * a
+            c = simulate_switch_kernel(a, b, D=0.05, dt=dt, steps=steps,
                                        nwalk=nwalk,
                                        seed=seed + int(1000 * a + 137 * frac))
             cells[(a, frac)] = c
@@ -641,8 +642,8 @@ def _load_cells():
 
 
 def figD_sim_vs_theory(a_list=(0.5, 1.0, 1.5), frac_list=(0.0,), kd=0.15,
-                       dt=0.01, steps=200_000, nwalk=1000, seed=0,
-                       recompute=False):
+                       dt=0.01, steps=1_000_000, nwalk=2000, seed=0,
+                       recompute=True):
     """Validate chi(t) = eta(t) against the instanton on an (a,b) grid.
 
     Compares the switch-triggered noise to BOTH analytic instantons:
