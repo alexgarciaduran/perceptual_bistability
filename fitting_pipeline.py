@@ -4477,6 +4477,66 @@ def plot_metad_d_prime_results(condition='regime', conf_bins=4):
     plt.show()
 
 
+def plot_confidence_calibration_vs_stim(
+        column='abs_conf', n=4, source='data', model='MF5',
+        method='BADS', by='pShuffle'):
+    """|Confidence-Accuracy|
+    """
+    if source not in ('data', 'original', 'null', 'all'):
+        raise ValueError("source must be 'data', 'original', 'null' or 'all'")
+
+    if source == 'all':
+        sources = ['data', 'original', 'null']
+        fig, axes = plt.subplots(len(sources), 1, figsize=(4.2, 8.5),
+                                 sharex=True, sharey=True)
+        for i, src in enumerate(sources):
+            ax = axes[i]
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            subj = _acc_conf_subject_table(column=column, n=n, source=src,
+                                           model=model, method=method)
+            subj['ece']= subj['confidence']-subj['accuracy']
+            vals = subj.groupby([by, "abs_evidence"]).agg(
+                    ece_mean=("ece", "mean"),
+                    ece_se=("ece", lambda x: x.std(ddof=1) / np.sqrt(len(x))),
+                ).reset_index().sort_values("abs_evidence")
+            sns.lineplot(data=vals, x="abs_evidence", y="ece_mean",
+                         hue="pShuffle", hue_order=_HUE_SHUFFLE, palette=_PALETTE_SHUFFLE,
+                         marker="o", linewidth=3, ax=ax, legend=False)
+            for i, p in enumerate(_HUE_SHUFFLE):
+                d = vals[vals["pShuffle"] == p]
+                ax.errorbar(d["abs_evidence"], d["ece_mean"],
+                            yerr=d["ece_se"],
+                            fmt="none", color=_PALETTE_SHUFFLE[i], alpha=0.4, capsize=3)
+            ax.set_xlabel('Stimulus strength')
+            ax.set_ylabel('Confidence-Accuracy')
+        fig.tight_layout()
+    fig, ax = plt.subplots(1, 1, figsize=(4.2, 3.5))
+    subj = _acc_conf_subject_table(column=column, n=n, source=source,
+                                   model=model, method=method)
+    subj['ece']= np.abs(subj['accuracy']-subj['confidence'])
+    # subj['ece']= subj['confidence']*np.abs(subj['confidence']-subj['accuracy'])
+    vals = subj.groupby([by, "abs_evidence"]).agg(
+            ece_mean=("ece", "mean"),
+            ece_se=("ece", lambda x: x.std(ddof=1) / np.sqrt(len(x))),
+        ).reset_index().sort_values("abs_evidence")
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    sns.lineplot(data=vals, x="abs_evidence", y="ece_mean",
+                 hue="pShuffle", hue_order=_HUE_SHUFFLE, palette=_PALETTE_SHUFFLE,
+                 marker="o", linewidth=3, ax=ax, legend=True)
+    for i, p in enumerate(_HUE_SHUFFLE):
+        d = vals[vals["pShuffle"] == p]
+        ax.errorbar(d["abs_evidence"], d["ece_mean"],
+                    yerr=d["ece_se"],
+                    fmt="none", color=_PALETTE_SHUFFLE[i], alpha=0.4, capsize=3)
+    ax.set_xlabel('Stimulus strength')
+    ax.set_ylabel('Confidence-Accuracy')
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    
+
+
 if __name__ == '__main__':
     opt_algorithm = 'BADS'  # Powell, nelder-mead, BADS, L-BFGS-B
     # plot_confidence_efficiency()
@@ -4506,8 +4566,9 @@ if __name__ == '__main__':
     # plot_all_subjects(xvar='stim_ev_cong')
     # psychometric_curve_all_subjects()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm)
-    plot_acc_vs_conf(column='zscore_abs_confidence', source='all', model='MF5')
-    plot_acc_vs_conf(column='abs_conf', source='all', model='MF5')
+    # plot_acc_vs_conf(column='zscore_abs_confidence', source='all', model='MF5')
+    # plot_acc_vs_conf(column='abs_conf', source='all', model='MF5')
+    # confidence_accuracy_coupling()
     # plot_models_predictions(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                         variable='decision')
     # plot_conf_vs_coupling_3_groups(method=opt_algorithm, model='MF5', extra='', bw=0.7,
@@ -4551,3 +4612,4 @@ if __name__ == '__main__':
     # for model in ['LBP5', 'FBP', 'FBP5']:
     #     fit_subjects(method=opt_algorithm, model=model, data_augmen=False, n_init=1,
     #                   extra='' if '5' in model else 'null')
+    plot_confidence_calibration_vs_stim(source='all', column='zscore_abs_confidence')
