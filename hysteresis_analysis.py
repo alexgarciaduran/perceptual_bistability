@@ -1092,7 +1092,7 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
     xvals = timebins[:-1] + bin_size/2
 
     fig, axes = plt.subplots(ncols=2, figsize=(7.5, 4.))
-    titles = ['Freq = 2', 'Freq = 4']
+    titles = ['One cycle', 'Two cycles']
     for i_ax, ax in enumerate(axes):
         ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
         ax.set_xlabel('Time (s)'); ax.axvline(tFrame/(2+2*i_ax), color='k', alpha=0.4,
@@ -1100,12 +1100,34 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
         ax.axvline(tFrame/(4+4*i_ax), color='k', alpha=0.6, linestyle=':', linewidth=2)
         ax.axvline(3*tFrame/(4+4*i_ax), color='k', alpha=0.6, linestyle=':', linewidth=2)
     colormap = ['midnightblue', 'royalblue', 'lightskyblue'][::-1]
+
+    def _peak_latencies(per_sub_rates, time_axis):
+        """Per-subject latency (s) of the maximum smoothed switch rate.
+
+        The per-subject rate is smoothed with the same window used for the
+        group curves, and the argmax search is restricted to the ascending
+        half (up to the stimulus reversal), where the plotted L->R peak
+        lives, so the secondary re-crossing bump and late-trace noise don't
+        contaminate the estimate.
+        """
+        search = time_axis <= time_axis.max() / 2
+        t_search = time_axis[search]
+        lats = []
+        for rate in per_sub_rates:
+            smoothed = np.nan_to_num(rate, nan=0.0)[search]
+            if np.all(smoothed == 0):
+                lats.append(np.nan)
+            else:
+                lats.append(t_search[np.argmax(smoothed)])
+        return np.array(lats)
+
+    peak_lat_2, peak_lat_4 = [], []
     for i_c, coupling in enumerate(coupling_levels):
     # pick one coupling level (e.g. i_c = 0) and ascending responses
-        bins, mean012, sem01, mean102, sem10, per_sub_rates_01, per_sub_rates_10 =\
+        bins, mean012, sem01, mean102, sem10, per_sub_01_2, per_sub_10_2 =\
             average_switch_rates_dir(responses_2[i_c], fps=fps, bin_size=bin_size, join=True,
                                      only_ascending=only_ascending)
-        bins, mean014, sem01, mean104, sem10, per_sub_rates_01, per_sub_rates_10 =\
+        bins, mean014, sem01, mean104, sem10, per_sub_01_4, per_sub_10_4 =\
             average_switch_rates_dir(responses_4[i_c], fps=fps, bin_size=bin_size/2, join=True,
                                      only_ascending=only_ascending)
         val_2 = mean012 if switch_01 else mean102
@@ -1114,9 +1136,16 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
         convolved_vals4 = np.convolve(val_4, np.ones(window_conv)/window_conv, "same")
         axes[0].plot(xvals , convolved_vals2, color=colormap[i_c], linewidth=3, label=f'{1-coupling}')
         axes[1].plot(xvals/2, convolved_vals4, color=colormap[i_c], linewidth=3)
+        # per-subject peak latency of the plotted (alternation) switch rate
+        per_sub_2 = per_sub_01_2 if switch_01 else per_sub_10_2
+        per_sub_4 = per_sub_01_4 if switch_01 else per_sub_10_4
+        peak_lat_2.append(_peak_latencies(per_sub_2, xvals))
+        peak_lat_4.append(_peak_latencies(per_sub_4, xvals/2))
+    peak_lat_2 = np.array(peak_lat_2)
+    peak_lat_4 = np.array(peak_lat_4)
     label_1 = 'R' if switch_01 else 'L'
     label_2 = 'L' if switch_01 else 'R'
-    axes[0].legend(frameon=True, title='p(shuffle)'); axes[0].set_ylabel(fr'Switch rate {label_1}$\rightarrow${label_2}, (Hz)')
+    axes[0].legend(frameon=False, title='p(shuffle)', loc='upper left'); axes[0].set_ylabel(fr'Switch rate {label_1}$\rightarrow${label_2}, (Hz)')
     fig.tight_layout()
     for ax in axes:
         pos_ax = ax.get_position()
@@ -1137,7 +1166,34 @@ def plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
         a.spines['right'].set_visible(False);  a.spines['top'].set_visible(False);
         a.spines['bottom'].set_visible(False)
         a.set_title(titles[i_a], fontsize=12)
-    ax2.set_ylabel('Stim.(t)')
+    ax2.set_ylabel('c(t)')
+
+    def _add_peak_inset(ax_panel, peaks):
+        """Inset barplot of mean peak latency across subjects per p(shuffle)."""
+        axin = inset_axes(ax_panel, width="45%", height="42%", loc='upper right',
+                          borderpad=0.6)
+        sns.barplot(peaks.T, palette=colormap, ax=axin, errorbar="se")
+        sns.stripplot(peaks.T, color='k', size=2.5, alpha=0.6, ax=axin)
+        heights = np.nanmean(peaks, axis=1)
+        bars = np.arange(len(coupling_levels))
+        axin.set_ylim(0, np.nanmax(heights) * 1.9)
+        # paired t-test stars between p(shuffle) levels
+        if len(coupling_levels) == 3:
+            pv_01 = scipy.stats.ttest_rel(peaks[0], peaks[1], nan_policy='omit').pvalue
+            pv_12 = scipy.stats.ttest_rel(peaks[1], peaks[2], nan_policy='omit').pvalue
+            pv_02 = scipy.stats.ttest_rel(peaks[0], peaks[2], nan_policy='omit').pvalue
+            barplot_annotate_brackets(0, 1, pv_01, bars, heights, dh=.04, barh=.03, fs=8, ax=axin)
+            barplot_annotate_brackets(1, 2, pv_12, bars, heights, dh=.04, barh=.03, fs=8, ax=axin)
+            barplot_annotate_brackets(0, 2, pv_02, bars, heights, dh=.22, barh=.03, fs=8, ax=axin)
+        axin.set_xticks(bars, [round(1 - c, 2) for c in coupling_levels])
+        axin.set_xlabel('p(shuffle)', fontsize=12, labelpad=1)
+        axin.set_ylabel('Peak latency (s)', fontsize=12, labelpad=1)
+        axin.tick_params(labelsize=7)
+        axin.spines['right'].set_visible(False); axin.spines['top'].set_visible(False)
+
+    _add_peak_inset(axes[0], peak_lat_2)
+    _add_peak_inset(axes[1], peak_lat_4)
+
     fig.savefig(SV_FOLDER + 'switch_rate.png', dpi=400, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'switch_rate.svg', dpi=400, bbox_inches='tight')
     inc_switches = []
@@ -14558,9 +14614,9 @@ if __name__ == '__main__':
     #                             sv_folder=SV_FOLDER, simulate=True,
     #                             load_net=False, not_plot_and_return=False,
     #                             pyddmfit=True, transform=False, ini_par=0)
-    # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-    #                   ntraining=8, coupling_levels=[0, 0.3, 1],
-    #                   window_conv=5, bin_size=0.35, switch_01=False)
+    plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+                      ntraining=8, coupling_levels=[0, 0.3, 1],
+                      window_conv=5, bin_size=0.25, switch_01=False)
     # plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8)
     # get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
     #                                   ntraining=8, coupling_levels=[0, 0.3, 1])
@@ -14573,14 +14629,14 @@ if __name__ == '__main__':
     #                           avoid_first=True, window_conv=1,
     #                           zscore_number_switches=False, 
     #                           normalize_variables=True, hysteresis_area=True)
-    plot_cv_vs_J(n=1, n_bins=9, min_durations=2, use_log=False,
-                  n_boot=100, seed=0, jstar=1/4, agg='median',
-                  dur_file='all_dominance_durations.pkl')
-    peak_vs_nbins(n=1, nbins_range=range(4, 19), min_durations=2,
-                  use_log=False, agg='median', n_boot=100, n_seeds=5,
-                  jstar=1/4, dur_file='all_dominance_durations.pkl')
-    plot_noise_variables_vs_fitted_params(n=1, variable='std_dominance',
-                                          fitted_variable='J', full=True)
+    # plot_cv_vs_J(n=1, n_bins=9, min_durations=2, use_log=False,
+    #               n_boot=100, seed=0, jstar=1/4, agg='median',
+    #               dur_file='all_dominance_durations.pkl')
+    # peak_vs_nbins(n=1, nbins_range=range(4, 19), min_durations=2,
+    #               use_log=False, agg='median', n_boot=100, n_seeds=5,
+    #               jstar=1/4, dur_file='all_dominance_durations.pkl')
+    # plot_noise_variables_vs_fitted_params(n=1, variable='std_dominance',
+    #                                       fitted_variable='J', full=True)
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
     # for sims in [1000000]:
     #     parameter_recovery_5_params(n_simuls_network=sims, fps=60, tFrame=26,
