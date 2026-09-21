@@ -6951,6 +6951,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
     internal_noise_values_all_subjects[:] = np.nan
     surprise_value_all_subjects = np.empty((len(subs), steps_back+steps_front))
     surprise_value_all_subjects[:] = np.nan
+    perceptual_clarity_all_subjects = np.empty((len(subs), steps_back+steps_front))
+    perceptual_clarity_all_subjects[:] = np.nan
     median_theta = []
     for i_sub, subject in enumerate(subs):
         df_sub = df.loc[df.subject == subject]
@@ -6963,6 +6965,10 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         internal_noise_vals_aligned_all_trials[:] = np.nan
         surprise_value_aligned_all_trials = np.empty((1, steps_back+steps_front))
         surprise_value_aligned_all_trials[:] = np.nan
+        perceptual_clarity_aligned_all_trials = np.empty((1, steps_back+steps_front))
+        perceptual_clarity_aligned_all_trials[:] = np.nan
+        lower_bound = 0.5-fitted_params_all[i_sub][3]-1e-4
+        upper_bound = 0.5+fitted_params_all[i_sub][3]+1e-4
         for i_trial, trial in enumerate(trial_index):
             if pshuf_only is not None:
                 if pshuffles[i_sub, i_trial] != pshuf_only:
@@ -6976,8 +6982,6 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                     continue
                 if jeff > 1 and bis_mono == 'Monostable':
                     continue
-                lower_bound = 0.5-fitted_params_all[i_sub][3]
-                upper_bound = 0.5+fitted_params_all[i_sub][3]
                 median_theta.append(fitted_params_all[i_sub][3])
             values_x = x_all[i_sub, i_trial]
             chi = noise_signal[i_sub, i_trial]
@@ -7001,6 +7005,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
             internal_noise_vals_aligned[:] = np.nan
             surprise_value_aligned = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
             surprise_value_aligned[:] = np.nan
+            perceptual_clarity_aligned = np.empty((len(idx_1)+len(idx_0), steps_back+steps_front))
+            perceptual_clarity_aligned[:] = np.nan
             parameters_sub = fitted_params_all[i_sub]
             sigma_param = parameters_sub[4]
             k = int(fps*0.25) if k_steps is None else k_steps
@@ -7011,9 +7017,10 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                 internal_noise_vals_aligned[i, :] = internal_noise[idx - steps_back:idx+steps_front]*sigma_param
                 dxdt_full = np.full_like(conf_i, np.nan)
                 min_dist_vals = np.min(np.row_stack([(conf_i-upper_bound)**2, (conf_i-lower_bound)**2]), axis=0)
-                q = (conf_i - lower_bound) / (upper_bound - lower_bound + 1e-4)
+                q = (conf_i - lower_bound) / (upper_bound - lower_bound)
                 dxdt_full[k:] = (q[k:]-q[:-k])/(k/fps)
                 surprise_value_aligned[i, :] = dxdt_full
+                perceptual_clarity_aligned[i, :] = np.abs(conf_i*2-1)
             for i, idx in enumerate(idx_0):
                 conf_i = 1-values_x[idx - steps_back:idx+steps_front]
                 x_vals_aligned[i+len(idx_1), :] = conf_i
@@ -7021,12 +7028,14 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                 internal_noise_vals_aligned[i+len(idx_1), :] = internal_noise[idx - steps_back:idx+steps_front]*-1*sigma_param
                 dxdt_full = np.full_like(conf_i, np.nan)
                 min_dist_vals = np.min(np.row_stack([(conf_i-upper_bound)**2, (conf_i-lower_bound)**2]), axis=0)
-                q = (conf_i - lower_bound) / (upper_bound - lower_bound + 1e-4)
+                q = (conf_i - lower_bound) / (upper_bound - lower_bound)
                 dxdt_full[k:] = (q[k:]-q[:-k])/(k/fps)
                 surprise_value_aligned[i+len(idx_1), :] = dxdt_full
+                perceptual_clarity_aligned[i+len(idx_1), :] = np.abs(conf_i*2-1)
 
             x_vals_aligned_all_trials = np.row_stack((x_vals_aligned_all_trials, x_vals_aligned))
             surprise_value_aligned_all_trials = np.row_stack((surprise_value_aligned_all_trials, surprise_value_aligned))
+            perceptual_clarity_aligned_all_trials = np.row_stack((perceptual_clarity_aligned_all_trials, perceptual_clarity_aligned))
             stim_vals_aligned_all_trials = np.row_stack((stim_vals_aligned_all_trials, stim_vals_aligned))
             internal_noise_vals_aligned_all_trials =\
                 np.row_stack((internal_noise_vals_aligned_all_trials, internal_noise_vals_aligned))
@@ -7039,6 +7048,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         internal_noise_values_all_subjects[i_sub] = np.nanmean(internal_noise_vals_aligned_all_trials, axis=0)
         surprise_value_aligned_all_trials = surprise_value_aligned_all_trials[1:]
         surprise_value_all_subjects[i_sub] = np.nanmean(surprise_value_aligned_all_trials, axis=0)
+        perceptual_clarity_aligned_all_trials  = perceptual_clarity_aligned_all_trials [1:]
+        perceptual_clarity_all_subjects[i_sub] = np.nanmean(perceptual_clarity_aligned_all_trials , axis=0)
     if bis_mono is None:
         theta = [pars[3] for pars in fitted_params_all]
         median_theta = 0.5 + np.nanmedian(theta)*np.array([-1, 1])
@@ -7094,15 +7105,30 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         a.plot(x_plot, y_plot, color=color, linewidth=4)
         a.fill_between(x_plot, y_plot-y_err, y_plot+y_err, color=color, alpha=0.2)
         var += 1
-    max_val_surprise = np.nanmax(surprise_value_all_subjects, axis=1)  # max per subject
+    # per-subject summaries (min/max/mean) of surprise and clarity
+    max_val_surprise = np.nanmax(surprise_value_all_subjects, axis=1)
+    min_val_surprise = np.nanmin(surprise_value_all_subjects, axis=1)
+    mean_val_surprise = np.nanmean(surprise_value_all_subjects, axis=1)
+    max_val_clarity = np.nanmax(perceptual_clarity_all_subjects, axis=1)
+    min_val_clarity = np.nanmin(perceptual_clarity_all_subjects, axis=1)
+    mean_val_clarity = np.nanmean(perceptual_clarity_all_subjects, axis=1)
+    delta_val_clarity = max_val_clarity-min_val_clarity
+    # regime suffix: '' when not conditioning on regime (bis_mono is None)
     if bis_mono == 'Monostable':
-        path_max = SV_FOLDER + 'max_val_surprise_monostable.npy'
-        path_full = SV_FOLDER + 'surprise_monostable.npy'
-    if bis_mono == 'Bistable':
-        path_max = SV_FOLDER + 'max_val_surprise_bistable.npy'
-        path_full = SV_FOLDER + 'surprise_bistable.npy'
-    np.save(path_max, max_val_surprise)
-    np.save(path_full, surprise_value_all_subjects)
+        suffix = '_monostable'
+    elif bis_mono == 'Bistable':
+        suffix = '_bistable'
+    else:
+        suffix = ''
+    np.save(SV_FOLDER + f'max_val_surprise{suffix}.npy', max_val_surprise)
+    np.save(SV_FOLDER + f'min_val_surprise{suffix}.npy', min_val_surprise)
+    np.save(SV_FOLDER + f'mean_val_surprise{suffix}.npy', mean_val_surprise)
+    np.save(SV_FOLDER + f'surprise{suffix}.npy', surprise_value_all_subjects)
+    np.save(SV_FOLDER + f'min_val_clarity{suffix}.npy', min_val_clarity)
+    np.save(SV_FOLDER + f'max_val_clarity{suffix}.npy', max_val_clarity)
+    np.save(SV_FOLDER + f'mean_val_clarity{suffix}.npy', mean_val_clarity)
+    np.save(SV_FOLDER + f'delta_val_clarity{suffix}.npy', delta_val_clarity)
+    np.save(SV_FOLDER + f'clarity{suffix}.npy', perceptual_clarity_all_subjects)
     fig.tight_layout()
     fig.savefig(SV_FOLDER + f'simulated_variables_noise_trials{label}.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + f'simulated_variables_noise_trials{label}.pdf', dpi=200, bbox_inches='tight')
@@ -7144,11 +7170,113 @@ def plot_surprise(steps_back=240,
     f.savefig(SV_FOLDER + 'surprise_aligned_switch.svg', dpi=200, bbox_inches='tight')
     
 
+def bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=False,
+                            min_norm=True):
 
-def max_surprise_vs_min_pupil():
+    labels_minmax = ['Max surprise', 'Min. Clarity', 'Max clarity', r'$\Delta$ clarity']
+    labels_full = ['Perceptual surprise', 'Perceptual clarity']
+    regimes = ['monostable', 'bistable']
+    colors = {'monostable': 'cadetblue', 'bistable': 'peru'}
+
+    fig_minmax, ax_minmax = plt.subplots(ncols=4, nrows=1, figsize=(11, 3.5))
+    fig_full, ax_full = plt.subplots(ncols=2, nrows=1, figsize=(8, 4))
+    x_plot = np.arange(-steps_back, steps_front, 1)/fps
+
+    # ── collect data across regimes ────────────────────────────────────────
+    # minmax_data[metric] = [mono_vals, bis_vals]; full_data[var] = [mono_arr, bis_arr]
+    minmax_data = [[] for _ in labels_minmax]
+    full_data = [[] for _ in labels_full]
+    for bis_mono in regimes:
+        path_max_surprise = SV_FOLDER + f'max_val_surprise_{bis_mono}.npy'
+        path_full_surprise = SV_FOLDER + f'surprise_{bis_mono}.npy'
+        path_min_clarity = SV_FOLDER + f'min_val_clarity_{bis_mono}.npy'
+        path_max_clarity = SV_FOLDER + f'max_val_clarity_{bis_mono}.npy'
+        path_delta_clarity = SV_FOLDER + f'delta_val_clarity_{bis_mono}.npy'
+        path_full_clarity = SV_FOLDER + f'clarity_{bis_mono}.npy'
+        paths_minmax = [path_max_surprise,
+                        path_min_clarity, path_max_clarity, path_delta_clarity]
+        paths_full = [path_full_surprise, path_full_clarity]
+        for i_m, path in enumerate(paths_minmax):
+            vals = np.load(path)
+            if 'surprise' in path:
+                vals = np.log(np.abs(vals)+1e-6)
+            minmax_data[i_m].append(vals[~np.isnan(vals)])
+        for i_f, path in enumerate(paths_full):
+            vals = np.load(path)
+            if 'clarity' in path and min_norm:
+                vals = (vals.T-np.nanmin(vals, axis=1)).T
+            full_data[i_f].append(vals)
+
+    # ── 4 bar panels (1 surprise, 3 clarity), 2 bars each (mono vs bistable) ─
+    for i_m, ax in enumerate(ax_minmax):
+        ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+        data_mono, data_bis = minmax_data[i_m]
+        sns.barplot([data_mono, data_bis],
+                    palette=[colors['monostable'], colors['bistable']], ax=ax)
+        sns.swarmplot([data_mono, data_bis], color='black', edgecolor='white',
+                      linewidth=0.5, size=3, ax=ax, zorder=10)
+        _, pval = scipy.stats.ttest_ind(data_bis, data_mono, equal_var=False)
+        allvals = np.concatenate([data_mono, data_bis])
+        cte = 0.2*(np.nanmax(allvals) - np.nanmin(allvals) + 1e-9)
+        heights = [np.nanmax(data_mono)+cte, np.nanmax(data_bis)+cte]
+        barplot_annotate_brackets(0, 1, pval, [0, 1], heights, yerr=None,
+                                  dh=0.08, barh=0.03, fs=10, maxasterix=3, ax=ax)
+        ax.set_xticks([0, 1], ['Mono', 'Bi'])
+        ax.set_title(labels_minmax[i_m], fontsize=13)
+    fig_minmax.tight_layout()
+    fig_minmax.savefig(SV_FOLDER + 'bars_simulated_variable_minmax.png', dpi=200, bbox_inches='tight')
+    fig_minmax.savefig(SV_FOLDER + 'bars_simulated_variable_minmax.svg', dpi=200, bbox_inches='tight')
+
+    # ── 2 full-trace panels (surprise, clarity), exactly as in plot_surprise ─
+    for i_f, ax in enumerate(ax_full):
+        ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+        ax.axvline(0, color='k', linestyle='--')
+        ax.axhline(0, color='k', linestyle='--')
+        sign = (-1)**negative if labels_full[i_f] == 'Perceptual surprise' else 1
+        for bis_mono, arr in zip(regimes, full_data[i_f]):
+            arr = arr*sign
+            y_plot = np.nanmean(arr, axis=0)
+            y_err = np.nanstd(arr, axis=0)/np.sqrt(arr.shape[0])
+            ax.plot(x_plot, y_plot, color=colors[bis_mono], linewidth=4, label=bis_mono)
+            ax.fill_between(x_plot, y_plot-y_err, y_plot+y_err,
+                            color=colors[bis_mono], alpha=0.2)
+        ax.set_xlim(-4.2, 4.2)
+        ax.set_xticks([-4, -2, 0, 2, 4])
+        ax.set_xlabel('Time from switch (s)')
+        ax.set_ylabel(labels_full[i_f])
+    ax_full[0].legend(frameon=False, loc='lower left' if negative else 'upper left')
+    fig_full.tight_layout()
+    fig_full.savefig(SV_FOLDER + 'bars_simulated_variable_full.png', dpi=200, bbox_inches='tight')
+    fig_full.savefig(SV_FOLDER + 'bars_simulated_variable_full.svg', dpi=200, bbox_inches='tight')
+    
+
+def max_model_vs_min_pupil(label='clarity',
+                           minmax='min', pshuf=np.array([1, 0.7, 0.])):
     
     save_path = os.path.join(DATA_FOLDER, 'aligned_eye_tracker_data','plots', 'min_pupil_across_trials_regime.npy')
     min_pupil = np.load(save_path, allow_pickle=True)
+    # save_path = os.path.join(DATA_FOLDER, 'aligned_eye_tracker_data','plots', 'min_pupil_noisy_trials.npy')
+    # min_pupil = np.load(save_path, allow_pickle=True)
+    # pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    # j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
+    # j0s = np.array([np.load(par)[1] for par in pars])  # /sigmas
+    # jeff = np.array([((1-p)*j1s + j0s)*4 for p in pshuf])
+    # regime = (jeff > 1)
+    # min_pupil_mono = []
+    # min_pupil_bis = []
+    # for i in range(regime.shape[1]):
+        
+    #     min_pupil_mono_sub = min_pupil[:, i][~regime[:, i]]
+    #     if len(min_pupil_mono_sub) > 0:
+    #         min_pupil_mono.append(np.nanmin(min_pupil_mono_sub))
+    #     min_pupil_bis_sub = min_pupil[:, i][regime[:, i]]
+    #     if len(min_pupil_bis_sub) > 0:
+    #         min_pupil_bis.append(np.nanmin(min_pupil_bis_sub))
+    # min_pupil_mono = np.array(min_pupil_mono)
+    # min_pupil_bis = np.array(min_pupil_bis)
+    # min_pupil_mono = min_pupil[~regime]
+    # min_pupil_bis = min_pupil[regime]
+    
     
     min_pupil_bis = np.float32(min_pupil[0][0])
     min_pupil_mono = np.float32(min_pupil[1][0])
@@ -7157,12 +7285,16 @@ def max_surprise_vs_min_pupil():
     # each has max, mean, min (in inidices 0 1 2 respectively)
     # min_pupil_mono = np.array([pup[idx] for pup in pupil_mono])
     # min_pupil_bis = np.array([pup[idx] for pup in pupil_bis])
-    path_max_mono = SV_FOLDER + 'max_val_surprise_monostable.npy'
+    path_max_mono = SV_FOLDER + f'{minmax}_val_{label}_monostable.npy'
     max_surprise_mono = np.load(path_max_mono)
-    max_surprise_mono = np.log(max_surprise_mono[~np.isnan(max_surprise_mono)])
-    path_max_bis = SV_FOLDER + 'max_val_surprise_bistable.npy'
+    max_surprise_mono = max_surprise_mono[~np.isnan(max_surprise_mono)]
+    path_max_bis = SV_FOLDER + f'{minmax}_val_{label}_bistable.npy'
     max_surprise_bis = np.load(path_max_bis)
-    max_surprise_bis = np.log(max_surprise_bis[~np.isnan(max_surprise_bis)])
+    max_surprise_bis = max_surprise_bis[~np.isnan(max_surprise_bis)]
+    
+    if label == 'surprise':
+        max_surprise_bis = np.log(max_surprise_bis)
+        max_surprise_mono = np.log(max_surprise_mono)
     
     
     fig, ax = plt.subplots(ncols=1, figsize=(3.2, 3))
@@ -7191,7 +7323,7 @@ def max_surprise_vs_min_pupil():
                               maxasterix=3, ax=ax)
     ax.set_xlabel('')
     ax.set_xticks([])
-    ax.set_ylabel('Maximum log-surprise\nat switch')
+    ax.set_ylabel(f'{minmax} {label}\nat switch')
     fig.tight_layout()
     fig.savefig(SV_FOLDER + 'max_surprise_switch.png', dpi=200, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'max_surprise_switch.svg', dpi=200, bbox_inches='tight')
@@ -7220,14 +7352,32 @@ def max_surprise_vs_min_pupil():
                pred_y, color='gray', linestyle='--', alpha=0.4, linewidth=3)
     ax[0].set_xlabel('Minimum pupil')
     ax[1].set_xlabel('Minimum pupil')
-    ax[0].set_ylabel('Log(Surprise)')
+    ax[0].set_ylabel(label)
     ax[0].set_title('Monostable', color='cadetblue', fontsize=14)
     ax[1].set_title('Bistable', color='peru', fontsize=14)
     fig.tight_layout()
-    f, a = plt.subplots(1)
+    f, a = plt.subplots(1, figsize=(3.5,3.))
+    a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+    # a.plot(min_pupil_mono, max_surprise_mono, 'o',
+    #        color='cadetblue')
+    # a.plot(min_pupil_bis, max_surprise_bis, 'o',
+    #        color='peru')
     pup_all = np.concatenate((min_pupil_mono, min_pupil_bis))
     surp_all = np.concatenate((max_surprise_mono, max_surprise_bis))
-    a.plot(pup_all, surp_all, 'o', color='k')
+    r, p = pearsonr(pup_all, surp_all)
+    a.plot(pup_all, surp_all, 'o',
+           color='k')
+    a.annotate(f'r = {r:.3f}\np={p:.2e}', xy=(.04, 0.8), xycoords=a.transAxes)
+    linreg = LinearRegression(fit_intercept=True).fit(pup_all.reshape(-1, 1), surp_all.reshape(-1, 1))
+    minmax_array = np.array([np.min(pup_all)-0.1, np.max(pup_all)+0.1]).reshape(-1, 1)
+    pred_y = linreg.predict(minmax_array)
+    a.plot(minmax_array,
+           pred_y, color='gray', linestyle='--', alpha=0.4, linewidth=3)
+    a.set_xlabel('Min. pupil')
+    a.set_ylabel(f'{minmax} perceptual clarity')
+    f.tight_layout()
+    
+    
 
 
 def plot_optimal_eta_b_vs_0(ntrials=10, j=1):
@@ -13500,7 +13650,7 @@ def plot_hyst_dom_correlation(data_folder=DATA_FOLDER):
 
 def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var_eye='pupil',
                                    min_pupil=True,
-                                   magnitude_eye='mean_',
+                                   magnitude_eye='mean_', magnitude_beh='max_',
                                    return_vars=False, align=False, full=False):
     if var_eye == 'blink':
         xlabel = 'Base. blink rate (Hz)' if min_pupil else 'Max. blink rate (Hz)'
@@ -13526,7 +13676,7 @@ def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var
                 pre_label = align_label + 'mean_'
         else:
             pre_label = align_label + 'max_'
-    if var_beh in ['dominance', 'amplitude', 'latency']:
+    if var_beh in ['dominance', 'amplitude', 'latency', 'surprise', 'clarity']:
         save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', pre_label+f'{var_eye}_noisy_trials.npy')
         variable_eye = np.load(save_path)
     if var_beh == 'hyst2':
@@ -13547,8 +13697,18 @@ def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var
     if var_beh == 'hyst4':
         variable = np.load(DATA_FOLDER + 'hysteresis_width_freq_4.npy')
         ylabel = 'Hysteresis, 2-C'
+    if var_beh == 'surprise':
+        # per-subject summary (magnitude_beh in {'max_', 'min_', 'mean_'}), not conditioned on regime
+        variable = np.load(SV_FOLDER + f'{magnitude_beh}val_surprise.npy')
+        ylabel = magnitude_beh.strip('_').capitalize() + ' surprise'
+    if var_beh == 'clarity':
+        # per-subject summary (magnitude_beh in {'max_', 'min_', 'mean_', 'delta_'}), not conditioned on regime
+        variable = np.load(SV_FOLDER + f'{magnitude_beh}val_clarity.npy')
+        ylabel = magnitude_beh.strip('_').capitalize() + ' clarity'
     if return_vars:
         return variable, variable_eye
+    # surprise/clarity are per-subject (1D): no per-condition panels
+    full = full and np.ndim(variable) > 1
     if full:
         fig, ax = plt.subplots(ncols=5, figsize=(14, 3), sharex=True, sharey=True)
     else:
@@ -13577,7 +13737,7 @@ def plot_behavioral_vs_eye_tracker(data_folder=DATA_FOLDER, var_beh='hyst2', var
                        linestyle='')
         if i_a == 4 or not full:
             avg_eye = np.nanmean(variable_eye, axis=0)
-            avg_beh = np.nanmean(variable, axis=0)
+            avg_beh = variable if np.ndim(variable) == 1 else np.nanmean(variable, axis=0)
             X = avg_eye.reshape(-1, 1)
             y = avg_beh.reshape(-1, 1)
             linreg = LinearRegression(fit_intercept=True).fit(X, y)
@@ -14454,22 +14614,28 @@ if __name__ == '__main__':
     # optimal_eta_and_stimuli(J=1.3, sigma=0.2, alpha=1, theta=0., T=2,
     #                         timepoints=1000)
     # for k_steps in [10, 15, 30, 60, 90]:
-    #     plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-    #                                 tFrame=26, fps=60,
-    #                                 steps_back=240, steps_front=240, avoid_first=True,
-    #                                 n=4, load_simulations=True, normalize=False, sigma=None,
-    #                                 pshuf_only=None, bis_mono='Monostable',
-    #                                 k_steps=k_steps, adaptation=True)
-    #     plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-    #                                 tFrame=26, fps=60,
-    #                                 steps_back=240, steps_front=240, avoid_first=True,
-    #                                 n=4, load_simulations=True, normalize=False, sigma=None,
-    #                                 pshuf_only=None, bis_mono='Bistable',
-    #                                 k_steps=k_steps, adaptation=True)
+    # k_steps = 15
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=60,
+    #                             steps_back=240, steps_front=240, avoid_first=True,
+    #                             n=4, load_simulations=True, normalize=False, sigma=None,
+    #                             pshuf_only=None, bis_mono='Monostable',
+    #                             k_steps=k_steps, adaptation=True)
+    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                             tFrame=26, fps=60,
+    #                             steps_back=240, steps_front=240, avoid_first=True,
+    #                             n=4, load_simulations=True, normalize=False, sigma=None,
+    #                             pshuf_only=None, bis_mono='Bistable',
+    #                             k_steps=k_steps, adaptation=True)
+    bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=False, min_norm=False)
+    bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=False, min_norm=True)
     #     plt.close('all')
-    #     plot_surprise(steps_back=240,
-    #                   steps_front=240, fps=60)
-    #     max_surprise_vs_min_pupil()
+    # plot_surprise(steps_back=240,
+    #               steps_front=240, fps=60)
+    # max_model_vs_min_pupil(minmax='max')
+    # max_model_vs_min_pupil(minmax='delta')
+    # max_model_vs_min_pupil(minmax='min')
+    # max_model_vs_min_pupil(minmax='max', label='surprise')
     # compare_likelihoods_models(load=True, loss='AIC')
     # compare_likelihoods_models(load=True, loss='BIC')
     # compare_likelihoods_models(load=True, loss='NLH')
@@ -14614,9 +14780,9 @@ if __name__ == '__main__':
     #                             sv_folder=SV_FOLDER, simulate=True,
     #                             load_net=False, not_plot_and_return=False,
     #                             pyddmfit=True, transform=False, ini_par=0)
-    plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
-                      ntraining=8, coupling_levels=[0, 0.3, 1],
-                      window_conv=5, bin_size=0.25, switch_01=False)
+    # plot_switch_rate(tFrame=26, fps=60, data_folder=DATA_FOLDER,
+    #                   ntraining=8, coupling_levels=[0, 0.3, 1],
+    #                   window_conv=5, bin_size=0.25, switch_01=False)
     # plot_sequential_effects(data_folder=DATA_FOLDER, ntraining=8)
     # get_rt_distro_and_incorrect_resps(data_folder=DATA_FOLDER,
     #                                   ntraining=8, coupling_levels=[0, 0.3, 1])
