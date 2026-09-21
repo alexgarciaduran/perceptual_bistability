@@ -334,13 +334,13 @@ def plot_confidence_distributions(
         bias_scale=bias_scale, n_sims=n_sims, T=T, dt=dt, noise=noise,
         align=align, data_dir=data_dir, fname=fname, recompute=recompute)
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
+    fig, ax = plt.subplots(1, 2, figsize=(7, 3.25), sharex=True, sharey=True)
     mono_pal = sns.light_palette(COL_MONO, n_colors=len(cues) + 1)[1:]
     bi_pal   = sns.light_palette(COL_BI,   n_colors=len(cues) + 1)[1:]
 
     for i, c in enumerate(cues):
         vm, vb = results[c]
-        lw = 1.4 + 1.6 * i / max(1, len(cues) - 1)      # thicker = larger cue
+        lw = 3
         sns.kdeplot(vm, ax=ax[0], color=mono_pal[i], lw=lw,
                     bw_adjust=bw_adjust, clip=(-1.5, 1.5), label=f"{c:g}")
         sns.kdeplot(vb, ax=ax[1], color=bi_pal[i], lw=lw,
@@ -607,12 +607,12 @@ if __name__ == "__main__":
     #   the strong-coupling double well. bias_scale=0.25 keeps a visible -1 lobe.
     #   The sims are cached in OUT/confidence_dist.npz: they are LOADED on reruns
     #   unless recompute=True (or the parameters change).
-    PARS = dict(K=0.3, wqu=1.0, wuq=1.0, tau_q=25.0, tau_u=0.2, noise=0.0)
+    PARS = dict(K=0.6, wqu=1.0, wuq=1.0, tau_q=25.0, tau_u=0.2, noise=0.0)
     plot_confidence_distributions(
         ei, ej, N, PARS, n_sims=200, cues=(0.0, 0.4, 0.8, 1.0),
-        bias_scale=0.25, noise=0.05, T=150.0,
-        data_dir=OUT, fname="confidence_dist.npz", recompute=False,
-        save=os.path.join(OUT, "distributions_vf"))
+        bias_scale=0.15, noise=0.045, T=100.0,
+        data_dir=OUT, fname="confidence_dist_short_t.npz", recompute=False,
+        save=os.path.join(OUT, "distributions_vf"), bw_adjust=1)
 
     # 4&5. stats  --  the two SFM conditions are the SAME bistable stimulus
     #   (same z); they differ ONLY in the interpretation bias B. RDM is the
