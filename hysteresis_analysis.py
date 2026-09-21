@@ -8394,7 +8394,7 @@ def plot_params_distros(ndt=False):
     print(np.sum(np.array(b1s) > 0.74))
 
 
-def plot_coupling_transitions(n=4, plot_regime=False,
+def plot_coupling_transitions(n=4, plot_regime=True,
                               bw_adjust=1):
     pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
     j1s = np.array([np.load(par)[0] for par in pars])  # /sigmas
@@ -8445,7 +8445,8 @@ def plot_coupling_transitions(n=4, plot_regime=False,
         ax.annotate('Bistable', xy=(.6, 0.9), xycoords=ax.transAxes,
                     color='peru')
         ax.annotate('Critical J', xy=(.42, 0.12), xycoords=ax.transAxes,
-                    color='k', rotation=90)
+                    color='white', rotation=90)
+        ax.set_xticks([-0.2, 0, 0.2, 0.4, 0.6])
     else:
         sns.kdeplot(all_coups.T, palette=['lightskyblue', 'royalblue', 'midnightblue'],
                     linewidth=4, ax=ax, bw_adjust=bw_adjust)
@@ -8459,7 +8460,7 @@ def plot_coupling_transitions(n=4, plot_regime=False,
     fig.tight_layout()
     savelab = '' if plot_regime else 'pshuffle_'
     fig.savefig(DATA_FOLDER + f'{savelab}critical_j_bistability.png', dpi=400)
-    fig.savefig(DATA_FOLDER + f'{savelab}critical_j_bistability.pdf', dpi=400)
+    fig.savefig(DATA_FOLDER + f'{savelab}critical_j_bistability.svg', dpi=400)
 
 
 def compare_parameters_two_experiments(ax=None):
