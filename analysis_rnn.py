@@ -17,12 +17,20 @@ import seaborn as sns
 from tqdm import tqdm
 from scipy.stats import zscore, pearsonr
 from sklearn.metrics import roc_auc_score
+import matplotlib as mpl
 
 from graph_ctrnn_directed import (get_graph, directed_channels, simulate, sig)
 
 # colours requested
 COL_BI   = "peru"        # bistable  (z=0)
 COL_MONO = "cadetblue"   # monostable(z=6)
+
+mpl.rcParams['font.size'] = 16
+plt.rcParams['legend.title_fontsize'] = 14
+plt.rcParams['legend.fontsize'] = 14
+plt.rcParams['xtick.labelsize']= 14
+plt.rcParams['ytick.labelsize']= 14
+plt.rcParams["axes.grid"] = False
 
 # =========================================================================== #
 # 3. K-noise: perturb ONLY the fixed q-q coupling, keep the u-pathway intact
@@ -194,27 +202,56 @@ def plot_noisy_dynamics_with_alternations(
 # =========================================================================== #
 # 2. Boltzmann distributions of per-dot activity (bi vs mono)
 # =========================================================================== #
-def plot_confidence_distributions(
+def _confidence_cache_path(data_dir, fname):
+    return os.path.join(data_dir, fname) if data_dir else None
+
+
+def compute_confidence_distributions(
         ei, ej, N, PARS, z_mono=6.0, z_bi=0.0,
-        biases=(0.0, 0.06, 0.1),     # = [0, 0.4, 0.8, 1] * 0.1
-        n_sims=200, T=600.0, dt=0.05, noise=0.5,
-        align=True, save=None):
+        cues=(0.0, 0.4, 0.8, 1.0), bias_scale=0.25,
+        n_sims=200, T=150.0, dt=0.05, noise=0.05,
+        align=True, data_dir=None, fname="confidence_dist.npz",
+        recompute=False):
     """
-    KDE of "confidence aligned with stimulus" (model only), one curve per bias b,
-    in two panels: Monostable (z=z_mono) and Bistable (z=z_bi).
+    Run (or load) the confidence simulations and return
+        results = {c: (vm, vb)}
+    where vm/vb are the pooled per-unit confidences (length n_sims*N) in the
+    Monostable (z=z_mono) and Bistable (z=z_bi) regimes for depth cue c.
 
-    Confidence = 2q - 1  (maps q in [0,1] -> [-1,1]).
-    align=True: flip each trial's sign so the favoured interpretation is positive.
-      - b > 0 : bias points toward q=1, so confidence is used as-is.
-      - b = 0 : no preferred side, so align by the realised population choice sign
-                (keeps the bistable +/-1 lobes instead of cancelling them).
-
-    The bias b enters the q-input (simulate_Knoise), so all conditions use that
-    path. Darker line = larger bias (light_palette gradient like the reference).
+    Save / load
+    -----------
+    If ``data_dir`` is given the pooled arrays are cached to
+    ``data_dir/fname`` (an .npz). On the next call they are LOADED instead of
+    recomputed, unless ``recompute=True`` (or the cached cues / n-units /
+    key parameters no longer match the request, which forces a recompute).
+    Pass ``data_dir=None`` to disable caching entirely.
     """
-    biases = list(biases)
+    cues = list(cues)
+    biases = [c * bias_scale for c in cues]
     Kedge = np.full(len(ei), PARS["K"])
+    cache_path = _confidence_cache_path(data_dir, fname)
 
+    # signature of the parameters the cache must match to be reusable as-is
+    meta = dict(z_mono=z_mono, z_bi=z_bi, cues=cues, bias_scale=bias_scale,
+                n_sims=n_sims, T=T, dt=dt, noise=noise, align=align, N=N,
+                PARS=dict(PARS))
+
+    # ---- try to load ----
+    if cache_path and (not recompute) and os.path.exists(cache_path):
+        d = np.load(cache_path, allow_pickle=True)
+        m = d["meta"].item()
+        same = (list(m.get("cues", [])) == cues and m.get("n_sims") == n_sims
+                and m.get("N") == N and np.isclose(m.get("bias_scale"), bias_scale)
+                and np.isclose(m.get("noise"), noise) and np.isclose(m.get("T"), T)
+                and np.isclose(m.get("z_mono"), z_mono)
+                and np.isclose(m.get("z_bi"), z_bi))
+        if same:
+            mono, bi = d["mono"], d["bi"]
+            print(f"loaded confidence sims from {cache_path}")
+            return {c: (mono[i], bi[i]) for i, c in enumerate(cues)}
+        print(f"cache {cache_path} has different parameters -> recomputing")
+
+    # ---- compute ----
     def collect(z, b):
         out = []
         for s in tqdm(range(n_sims)):
@@ -232,20 +269,82 @@ def plot_confidence_distributions(
             out.append(conf)
         return np.concatenate(out)
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
-    mono_pal = sns.light_palette(COL_MONO, n_colors=len(biases) + 1)[1:]
-    bi_pal   = sns.light_palette(COL_BI,   n_colors=len(biases) + 1)[1:]
-
     results = {}
-    for i, b in enumerate(biases):
-        vm = collect(z_mono, b)
-        vb = collect(z_bi,   b)
-        results[b] = (vm, vb)
-        lw = 1.4 + 1.6 * i / max(1, len(biases) - 1)    # thicker = larger bias
+    for c, b in zip(cues, biases):
+        results[c] = (collect(z_mono, b), collect(z_bi, b))
+
+    # ---- save ----
+    if cache_path:
+        os.makedirs(data_dir, exist_ok=True)
+        mono = np.stack([results[c][0] for c in cues])
+        bi = np.stack([results[c][1] for c in cues])
+        np.savez(cache_path, cues=np.array(cues, float), mono=mono, bi=bi,
+                 meta=np.array(meta, dtype=object))
+        print(f"saved confidence sims to {cache_path}")
+    return results
+
+
+def plot_confidence_distributions(
+        ei, ej, N, PARS, z_mono=6.0, z_bi=0.0,
+        cues=(0.0, 0.4, 0.8, 1.0), bias_scale=0.25,
+        n_sims=200, T=150.0, dt=0.05, noise=0.05,
+        bw_adjust=0.6, align=True,
+        data_dir=None, fname="confidence_dist.npz", recompute=False,
+        save=None):
+    """
+    KDE of "confidence aligned with stimulus" (model only), one curve per depth
+    cue c, in two panels: Monostable (z=z_mono) and Bistable (z=z_bi).
+
+    Each cue c maps to a global interpretation bias  b = c * bias_scale  that
+    enters the q-input (simulate_Knoise). This reproduces the two target shapes:
+      - Monostable (single well): a UNIMODAL distribution whose single mode
+        SHIFTS toward +1 as the cue c grows.
+      - Bistable (double well at +/-1): a BIMODAL distribution whose two lobe
+        HEIGHTS trade off with c (the +1 lobe grows, -1 shrinks).
+
+    Confidence = 2q - 1  (maps q in [0,1] -> [-1,1]).
+    align=True: flip each trial's sign so the favoured interpretation is positive.
+      - c > 0 : bias points toward q=1, so confidence is used as-is.
+      - c = 0 : no preferred side, so flip each trial's sign at random (keeps the
+                bistable +/-1 lobes balanced instead of cancelling them).
+
+    Save / load
+    -----------
+    The simulations are cached via ``compute_confidence_distributions``: pass a
+    ``data_dir`` to save/load ``data_dir/fname`` and re-plot without re-running,
+    and ``recompute=True`` to force a fresh run. ``data_dir=None`` disables it.
+
+    Tuning notes (defaults chosen for the target shape with LOW skew)
+    -----------------------------------------------------------------
+      * K < 2/d (PARS["K"]=0.3 with d=4) makes z_mono=6 a GENUINE single well,
+        so the monostable mode is a symmetric bell (not a wall-skewed near-
+        critical ridge). z_bi=0 is the strong-coupling double well.
+      * With this softer coupling the bistable lobes sit ~+/-0.75 (off the +/-1
+        walls), so each lobe is rounder / less skewed.
+      * bias_scale=0.25 shifts the monostable mode with the cue while keeping a
+        visible -1 lobe in the bistable panel (raise it for a bigger shift, but
+        too high both re-skews the monostable mode and erases the -1 lobe).
+      * noise=0.05 with PARS["tau_q"] sets the lobe/mode width (the noise scheme's
+        stationary variance scales with tau_q, so retune noise if tau_q changes).
+      * T=150 is ~6 tau_q at the default tau_q=25 -> the dynamics have relaxed.
+    """
+    cues = list(cues)
+    results = compute_confidence_distributions(
+        ei, ej, N, PARS, z_mono=z_mono, z_bi=z_bi, cues=cues,
+        bias_scale=bias_scale, n_sims=n_sims, T=T, dt=dt, noise=noise,
+        align=align, data_dir=data_dir, fname=fname, recompute=recompute)
+
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
+    mono_pal = sns.light_palette(COL_MONO, n_colors=len(cues) + 1)[1:]
+    bi_pal   = sns.light_palette(COL_BI,   n_colors=len(cues) + 1)[1:]
+
+    for i, c in enumerate(cues):
+        vm, vb = results[c]
+        lw = 1.4 + 1.6 * i / max(1, len(cues) - 1)      # thicker = larger cue
         sns.kdeplot(vm, ax=ax[0], color=mono_pal[i], lw=lw,
-                    bw_adjust=0.4, label=f"{b:g}")
+                    bw_adjust=bw_adjust, clip=(-1.5, 1.5), label=f"{c:g}")
         sns.kdeplot(vb, ax=ax[1], color=bi_pal[i], lw=lw,
-                    bw_adjust=0.4, label=f"{b:g}")
+                    bw_adjust=bw_adjust, clip=(-1.5, 1.5), label=f"{c:g}")
 
     ax[0].set_title("Monostable", color=COL_MONO, fontsize=13)
     ax[1].set_title("Bistable",   color=COL_BI,   fontsize=13)
@@ -255,7 +354,7 @@ def plot_confidence_distributions(
         a.spines[["top", "right"]].set_visible(False)
     ax[0].set_ylabel("Density of confidence")
     ax[1].set_ylabel("")
-    ax[0].legend(title="Bias, b", frameon=False)
+    ax[0].legend(title="Depth cue, c", frameon=False)
 
     fig.tight_layout()
     if save:
@@ -440,30 +539,30 @@ def reproduce_results_figure(
  
     # --- correlations ---
     x = np.arange(len(corr_labels))
-    ax[0].bar(x - w/2, corr_data, width=w, color=corr_cols, label="Data")
+    ax[0].bar(x - w/2, corr_data, width=w, color=corr_cols, label="Area MT")
     if corr_model is not None:
         ax[0].bar(x + w/2, corr_model, width=w, color=corr_cols,
-                  hatch="///", edgecolor="k", label="Model")
+                  hatch="///", edgecolor="k", label="RNN")
     # legend proxies (color-neutral)
-    ax[0].bar([np.nan], [0], color="#888", label="Data")
+    ax[0].bar([np.nan], [0], color="#888", label="Area MT")
     ax[0].bar([np.nan], [0], facecolor="#888", hatch="///", edgecolor="k",
-              label="Model")
+              label="RNN")
     ax[0].set_xticks(x); ax[0].set_xticklabels(corr_labels)
-    ax[0].set_ylabel("Interneuronal correlation")
+    ax[0].set_ylabel("Interneuronal\ncorrelation")
     ax[0].set_ylim(*corr_ylim)
     handles, labels = ax[0].get_legend_handles_labels()
-    keep = [(h, l) for h, l in zip(handles, labels) if l in ("Data", "Model")][-2:]
+    keep = [(h, l) for h, l in zip(handles, labels) if l in ("Area MT", "RNN")][-2:]
     ax[0].legend([h for h, _ in keep], [l for _, l in keep], frameon=False)
  
     # --- choice probability ---
     x2 = np.arange(len(cp_labels))
-    ax[1].bar(x2 - w/2, cp_data, width=w, color=cp_cols, label="Data")
+    ax[1].bar(x2 - w/2, cp_data, width=w, color=cp_cols, label="Area MT")
     if cp_model is not None:
         ax[1].bar(x2 + w/2, cp_model, width=w, color=cp_cols,
-                  hatch="///", edgecolor="k", label="Model")
+                  hatch="///", edgecolor="k", label="RNN")
     ax[1].axhline(0.5, color="gray", ls=":", lw=1)
     ax[1].set_xticks(x2); ax[1].set_xticklabels(cp_labels)
-    ax[1].set_ylabel("Choice probability")
+    ax[1].set_ylabel("Choice\nprobability")
     ax[1].set_ylim(*cp_ylim)
  
     for a in ax: a.spines[["top", "right"]].set_visible(False)
@@ -501,10 +600,19 @@ if __name__ == "__main__":
     #     save=OUT+"alternations")
 
     # # 2. distributions
-    PARS = dict(K=0.3, wqu=0.8, wuq=0.8, tau_q=10.0, tau_u=0.2, noise=0.0)
+    #   Monostable -> single (low-skew, symmetric) mode that shifts right with
+    #   the depth cue c;  Bistable -> two rounded +/-1 lobes whose heights trade
+    #   off with c. Low-skew regime: K=0.3 < 2/d makes z_mono=6 a GENUINE single
+    #   well (symmetric bell, not a wall-skewed near-critical ridge); z_bi=0 is
+    #   the strong-coupling double well. bias_scale=0.25 keeps a visible -1 lobe.
+    #   The sims are cached in OUT/confidence_dist.npz: they are LOADED on reruns
+    #   unless recompute=True (or the parameters change).
+    PARS = dict(K=0.3, wqu=1.0, wuq=1.0, tau_q=25.0, tau_u=0.2, noise=0.0)
     plot_confidence_distributions(
-        ei, ej, N, PARS, n_sims=NSIM, noise=0.05,
-        save=os.path.join(OUT, "distributions"), T=50)
+        ei, ej, N, PARS, n_sims=200, cues=(0.0, 0.4, 0.8, 1.0),
+        bias_scale=0.25, noise=0.05, T=150.0,
+        data_dir=OUT, fname="confidence_dist.npz", recompute=False,
+        save=os.path.join(OUT, "distributions_vf"))
 
     # 4&5. stats  --  the two SFM conditions are the SAME bistable stimulus
     #   (same z); they differ ONLY in the interpretation bias B. RDM is the
@@ -557,11 +665,11 @@ if __name__ == "__main__":
     # print("CP    RDM=%.3f  SFM(B=0)=%.3f               (data .56/.67)"
     #       % tuple(cp_model))
  
-    # # 6. reproduce figure (data given; model from our sims)
+    # # # 6. reproduce figure (data given; model from our sims)
     # reproduce_results_figure(corr_data=(0.23, 0.28, 0.42),
     #                           cp_data=(0.56, 0.67),
     #                           corr_model=corr_model,
     #                           cp_model=cp_model,
     #                           corr_ylim=(0.0, 0.5), cp_ylim=(0.5, 0.75),
-    #                           save=os.path.join(OUT, "results_figure"))
+    #                           save=os.path.join(OUT, "results_figure_last"))
     # print("Done")
