@@ -2081,6 +2081,141 @@ def linear_mixed_model(data_orig, data_model_orig, data_model_null):
     print(md_model_null.summary())
 
 
+def response_confidence_stats(all_df=None, data_folder=DATA_FOLDER,
+                              categorical=False, verbose=True):
+    """
+    Mixed-effects tests for how the sensory evidence (depth cue) and p(shuffle)
+    modulate the participants' behaviour.
+
+    Two claims reported in the paper are quantified here:
+
+    1. Response side.  The depth cue (``evidence``, 7 signed levels) shifts the
+       *average response side* reported by participants, whereas p(shuffle)
+       (``pShuffle``, 3 levels) does not.  Each factor is tested while
+       controlling for the other.
+    2. Confidence.  Lower shuffling yields higher *absolute* confidence, i.e.
+       p(shuffle) has a negative effect on ``abs_confidence``.
+
+    Because the depth cue has 7 levels and p(shuffle) 3, each predictor can be
+    entered either as
+
+    * a single linear term (``categorical=False``, default): the model returns
+      one slope with a Wald z-test -- this is the effect quoted in the text
+      (e.g. "response side increased with the depth cue, beta=..., p<...");
+    * a categorical factor (``categorical=True``): the whole factor is tested
+      with a likelihood-ratio test (ML fits) against the reduced model, giving
+      an omnibus chi2 statistic for "did this factor matter at all".
+
+    Random effects are subject-specific (intercept, plus a slope for the tested
+    predictor in the linear case).  Returns a dict with the statistics and,
+    when ``verbose``, prints a paste-ready summary.
+
+    Parameters
+    ----------
+    all_df : pandas.DataFrame, optional
+        Trial-level data with columns ``evidence``, ``pShuffle``, ``response``,
+        ``confidence`` and ``subject``.  If None, it is loaded with
+        :func:`load_data` (all participants).
+    data_folder : str
+        Folder passed to :func:`load_data` when ``all_df`` is None.
+    categorical : bool
+        Treat the predictors as categorical factors and use likelihood-ratio
+        omnibus tests instead of linear slopes.
+    verbose : bool
+        Print the fitted summaries and the paste-ready sentences.
+    """
+    from scipy.stats import chi2 as _chi2
+    if all_df is None:
+        all_df = load_data(data_folder, n_participants='all')
+    df = all_df.copy()
+    # keep genuine experimental trials only, if the design column is present
+    if 'type' in df.columns:
+        df = df[df['type'] != 'practice']
+    df = df.dropna(subset=['confidence', 'response', 'evidence', 'pShuffle'])
+    df['depth_cue'] = df['evidence'].astype(float)              # 7 signed levels
+    df['p_shuffle'] = df['pShuffle'].astype(float) / 100.        # 0, 0.7, 1
+    df['resp_side'] = df['response'].astype(float)              # -1 / +1
+    df['abs_confidence'] = np.abs(df['confidence'].astype(float))
+    if 'subject' not in df.columns:
+        df['subject'] = 's_0'
+
+    def _fit(formula, re_formula, reml):
+        """Fit a mixed model, backing off to a random-intercept-only model
+        if the richer random-effects structure fails to converge."""
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            try:
+                md = smf.mixedlm(formula, df, groups=df['subject'],
+                                 re_formula=re_formula)
+                return md.fit(reml=reml, method='lbfgs')
+            except Exception:
+                md = smf.mixedlm(formula, df, groups=df['subject'])
+                return md.fit(reml=reml, method='lbfgs')
+
+    def _wald(dv, tested, others, re_predictor):
+        """Single fit; return the Wald z-test of the `tested` fixed effect."""
+        rhs = ' + '.join([tested] + others)
+        re = '~' + re_predictor if re_predictor else None
+        res = _fit(f'{dv} ~ {rhs}', re, reml=True)
+        return {'model': 'LMM (Wald)', 'term': tested,
+                'beta': res.params[tested], 'se': res.bse[tested],
+                'z': res.tvalues[tested], 'p': res.pvalues[tested],
+                'n': int(res.nobs), 'result': res}
+
+    def _lrt(dv, tested, others, re_predictor):
+        """Likelihood-ratio omnibus test of the `tested` factor (ML fits)."""
+        rhs_full = ' + '.join([tested] + others)
+        rhs_red = ' + '.join(others) if others else '1'
+        re = '~' + re_predictor if re_predictor else None
+        full = _fit(f'{dv} ~ {rhs_full}', re, reml=False)
+        red = _fit(f'{dv} ~ {rhs_red}', re, reml=False)
+        stat = 2 * (full.llf - red.llf)
+        ddf = len(full.fe_params) - len(red.fe_params)
+        return {'model': 'LMM (LRT)', 'term': tested, 'chi2': stat,
+                'df': ddf, 'p': _chi2.sf(stat, ddf), 'n': int(full.nobs),
+                'result': full}
+
+    if categorical:
+        cue, shf = 'C(depth_cue)', 'C(p_shuffle)'
+        depth_on_resp = _lrt('resp_side', cue, [shf], re_predictor=None)
+        shuffle_on_resp = _lrt('resp_side', shf, [cue], re_predictor=None)
+        shuffle_on_conf = _lrt('abs_confidence', shf, [], re_predictor=None)
+    else:
+        depth_on_resp = _wald('resp_side', 'depth_cue', ['p_shuffle'],
+                              re_predictor='depth_cue')
+        shuffle_on_resp = _wald('resp_side', 'p_shuffle', ['depth_cue'],
+                                re_predictor='p_shuffle')
+        shuffle_on_conf = _wald('abs_confidence', 'p_shuffle', [],
+                                re_predictor='p_shuffle')
+
+    results = {'depth_cue_on_response': depth_on_resp,
+               'p_shuffle_on_response': shuffle_on_resp,
+               'p_shuffle_on_confidence': shuffle_on_conf}
+
+    def _fmt(r):
+        if 'chi2' in r:
+            return (f"chi2({r['df']}) = {r['chi2']:.2f}, p = {r['p']:.3g} "
+                    f"(N = {r['n']})")
+        return (f"beta = {r['beta']:.3f} +/- {r['se']:.3f}, "
+                f"z = {r['z']:.2f}, p = {r['p']:.3g} (N = {r['n']})")
+
+    if verbose:
+        for key in ['depth_cue_on_response', 'p_shuffle_on_response',
+                    'p_shuffle_on_confidence']:
+            print('\n' + '=' * 70)
+            print(key)
+            print('=' * 70)
+            print(results[key]['result'].summary())
+        print('\n' + '#' * 70)
+        print('Paste-ready statistics')
+        print('#' * 70)
+        print('Response side ~ depth cue:   ' + _fmt(depth_on_resp))
+        print('Response side ~ p(shuffle):  ' + _fmt(shuffle_on_resp))
+        print('|confidence|  ~ p(shuffle):  ' + _fmt(shuffle_on_conf))
+
+    return results
+
+
 def load_all_data(all_df, model='MF5', method='BADS', sv_folder=SV_FOLDER,
                   data_augment=False):
     subjects = all_df.subject.unique()
@@ -4612,4 +4747,6 @@ if __name__ == '__main__':
     # for model in ['LBP5', 'FBP', 'FBP5']:
     #     fit_subjects(method=opt_algorithm, model=model, data_augmen=False, n_init=1,
     #                   extra='' if '5' in model else 'null')
-    plot_confidence_calibration_vs_stim(source='all', column='zscore_abs_confidence')
+    # plot_confidence_calibration_vs_stim(source='all', column='zscore_abs_confidence')
+    response_confidence_stats(all_df=None, data_folder=DATA_FOLDER,
+                              categorical=False, verbose=True)
