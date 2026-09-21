@@ -22,6 +22,7 @@ import seaborn as sns
 from fokker_planck.simulator import simulator
 import fokker_planck.forceFunctions as ff
 from tqdm import tqdm
+from matplotlib.colors import LinearSegmentedColormap
 
 # from numba import jit, prange
 # from concurrent.futures import ProcessPoolExecutor
@@ -3227,10 +3228,11 @@ def area_slope_PK_vs_coupling(j_list=np.arange(0.1, 1.5, 0.1), alpha=1, b=0,
 def log_ratio_FBP_ddm(drift=2, noise=0.05, j=0.1, 
                       time_end=2, bound=0.2, tau=0.3, dt=1e-3,
                       alpha=1, n=3, ntrials=50000, b=0.05, tau_ddm=1,
-                      time_eff=0.05, only_examples=False, return_all_q=False):
+                      time_eff=0.05, only_examples=False, return_all_q=False,
+                      sensory_ev_values=[0., 0.5, 1]):
     time = np.arange(0, time_end, dt)
     noise_2 = noise
-    sensory_ev = np.repeat((-1, -0.5, -0.25, 0, 0.25, 0.5, 1), int(ntrials/7))
+    sensory_ev = np.repeat(sensory_ev_values, int(ntrials/len(sensory_ev_values)))
     n_iters = sensory_ev.shape[0]
     stim = 0.04*np.random.randn(len(time), len(sensory_ev)) + sensory_ev
     reac_times = []
@@ -3262,7 +3264,8 @@ def log_ratio_FBP_ddm(drift=2, noise=0.05, j=0.1,
                     reac_times.append(np.nan)
                     choice.append(np.nan)
                     confval.append(np.nan)
-    sensory_ev_examples = np.array((-1, 0, 1))
+    np.random.seed(6)
+    sensory_ev_examples = np.array(sensory_ev_values)
     stim_examples = sensory_ev_examples + np.repeat(0.05*np.random.randn(len(time)),
                                                     len(sensory_ev_examples)).reshape((len(time), len(sensory_ev_examples)))
     q_examples = np.zeros((len(time), len(sensory_ev_examples)))
@@ -3298,7 +3301,8 @@ def plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
         choice , confval =\
             log_ratio_FBP_ddm(drift=drift, noise=noise, j=j, 
                               time_end=time_end, bound=bound, tau=tau, dt=dt,
-                              alpha=alpha, n=n, ntrials=ntrials, b=b, tau_ddm=tau_ddm)
+                              alpha=alpha, n=n, ntrials=ntrials, b=b, tau_ddm=tau_ddm,
+                              sensory_ev_values=[0., 0.5, 1])
         jarr = np.repeat(round(j, 3), len(sensory_ev))
         temp_data = pd.DataFrame({'rt': reac_times, 'coh': sensory_ev, 'coupling': jarr})
         dict_data = pd.concat((dict_data, temp_data))
@@ -3315,7 +3319,7 @@ def plot_rt_vs_coupling(drift=.4, noise=0.1, j_list=np.arange(0.1, 2, 0.2),
     #              palette='cmap')
     # Find coupling values closest to 0.1 and 0.6
     j_low = min(j_list, key=lambda x: abs(x - 0.1))
-    j_high = min(j_list, key=lambda x: abs(x - 0.6))
+    j_high = min(j_list, key=lambda x: abs(x - 0.7))
     
     # Keep only those couplings
     plot_data = dict_data[dict_data['coupling'].isin([round(j_low, 3),
@@ -3636,7 +3640,8 @@ def plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
         a.spines['top'].set_visible(False)
         a.spines['right'].set_visible(False)
     # colormap = pl.cm.coolwarm(np.linspace(0., 1, 3))
-    colormap = ['darkgreen', 'gainsboro', 'crimson']
+    colormap_mono = LinearSegmentedColormap.from_list('rg', ['lightblue', 'cornflowerblue'], N=6)
+    colormap_bis = LinearSegmentedColormap.from_list('rg', ['wheat', 'peru'], N=6)
     ax[0].set_xlabel('Time (s)')
     ax[0].set_title(r'Inference: $\dot{Q} = \phi(Q(t), J, B) - Q(t) + \xi_t$', fontsize=14)
     ax[0].set_ylabel('Log-belief ratio')
@@ -3646,25 +3651,28 @@ def plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
     for j in jvals:
         if j < 0.5:
             lst = 'solid'
+            colormap = colormap_mono
         else:
             lst = '--'
+            colormap = colormap_bis
         reac_times, sensory_ev, q_examples, dv_examples, time, sensory_ev_examples, \
             choice, confval =\
             log_ratio_FBP_ddm(drift=drift, noise=noise, j=j, 
                               time_end=time_end, bound=bound, tau=tau, dt=dt,
                               alpha=alpha, n=n, ntrials=ntrials, b=b, tau_ddm=tau_ddm,
-                              only_examples=True)
+                              only_examples=True,
+                              sensory_ev_values=[0., 0.5, 1])
         for sev in range(len(sensory_ev_examples)):
             ax[0].plot(time, q_examples[:, sev], label=sensory_ev_examples[sev],
-                       color=colormap[sev], linewidth=3, linestyle=lst)
+                       color=colormap(sev), linewidth=3, linestyle=lst)
             ax[1].plot(time, dv_examples[:, sev], label=sensory_ev_examples[sev],
-                       color=colormap[sev], linewidth=3, linestyle=lst)
+                       color=colormap(sev), linewidth=3, linestyle=lst)
     ax[0].set_xlim(-0.05, time_end/2+1e-2)
     ax[1].set_xlim(-0.05, time_end/2+1e-2)
     ax[1].set_ylim(-2*bound-1e-2, 2*bound+1e-2)
-    legendelements = [Line2D([0], [0], color=colormap[2], lw=4, label='c=1'),
-                      Line2D([0], [0], color=colormap[1], lw=4, label='c=0'),
-                      Line2D([0], [0], color=colormap[0], lw=4, label='c=-1'),
+    legendelements = [Line2D([0], [0], color=colormap(2), lw=4, label='c=1'),
+                      Line2D([0], [0], color=colormap(1), lw=4, label='c=0.5'),
+                      Line2D([0], [0], color=colormap(0), lw=4, label='c=0'),
                       Line2D([0], [0], color='cadetblue', lw=4, label='Monostable'),
                       Line2D([0], [0], color='peru', lw=4, label='Bistable', linestyle='--')]
     ax[1].set_xlabel('Time (s)')
@@ -3684,10 +3692,318 @@ def plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
                     dpi=200, bbox_inches='tight')
 
 
+def sim_fbp_ddm_fast(drift=.4, noise=0.1, j=0.1,
+                     time_end=2.5, bound=1, tau=0.1, dt=1e-3,
+                     alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
+                     time_eff=0.05, sensory_ev_values=[0., 0.5, 1],
+                     seed_examples=1, seed_dist=None):
+    """Vectorised FBP + DDM simulation.
+
+    Same dynamics as ``log_ratio_FBP_ddm`` but every trial is advanced in
+    parallel (numpy over the trial axis) with per-trial early stopping at the
+    bound, which is ~100x faster than the trial-by-trial Python loop.
+
+    Returns the RT distribution (over ``ntrials`` trials) plus one clean
+    example trajectory per level of stimulus evidence B(s), together with the
+    time index at which each example first reaches the bound (``hit_idx``, -1
+    if it never does).
+
+    ``seed_dist`` seeds the RT-distribution draws (pass an int for a
+    reproducible distribution; None uses the global RNG). The example
+    trajectories are always reproducible from ``seed_examples``.
+    """
+    rng_d = np.random if seed_dist is None else np.random.RandomState(seed_dist)
+    time = np.arange(0, time_end, dt)
+    nt = len(time)
+    nits_teff = int(time_eff / dt)
+    sqrt_q = np.sqrt(dt / tau)
+    sqrt_dv = np.sqrt(dt / tau_ddm)
+    sev_vals = np.array(sensory_ev_values, dtype=float)
+    k = len(sev_vals)
+    per = int(ntrials / k)
+    sensory_ev = np.repeat(sev_vals, per)
+    N = sensory_ev.shape[0]
+
+    def drift_q(q, s):
+        return (n / alpha * np.arctanh(np.tanh(j * alpha) *
+                np.tanh((q * (n - alpha) + b * s * alpha) / n))
+                - (q - b * s) / n) / tau
+
+    # ---- RT distribution (vectorised over trials) ----
+    stim = 0.04 * rng_d.randn(nt, N) + sensory_ev
+    q = rng_d.randn(N) * 0.1
+    dv = np.zeros(N)
+    q_hist = np.empty((nt, N))
+    reac_times = np.full(N, np.nan)
+    choice = np.full(N, np.nan)
+    confval = np.full(N, np.nan)
+    active = np.ones(N, dtype=bool)
+    for i_t in range(nt):
+        t = time[i_t]
+        q_hist[i_t] = q
+        q_upd = q + dt * drift_q(q, stim[i_t]) + rng_d.randn(N) * noise * sqrt_q
+        q = np.where(active, q_upd, q)
+        if t >= time_eff:
+            dv_upd = dv + dt * drift * q_hist[i_t - nits_teff] / tau_ddm + \
+                rng_d.randn(N) * noise * sqrt_dv
+        else:
+            dv_upd = dv + rng_d.randn(N) * noise * sqrt_dv
+        dv = np.where(active, dv_upd, dv)
+        hit = active & (np.abs(dv) >= bound)
+        if hit.any():
+            reac_times[hit] = t
+            choice[hit] = np.sign(dv[hit])
+            confval[hit] = q[hit]
+            active &= ~hit
+        if not active.any():
+            break
+    confval = sigmoid(2 * confval)
+
+    # ---- example trajectories (one per evidence level, truncated at bound) ----
+    rng = np.random.RandomState(seed_examples)
+    stim_ex = sev_vals[None, :] + (0.05 * rng.randn(nt))[:, None]
+    qe = rng.randn(k) * 0.05
+    dve = np.zeros(k)
+    qe_hist = np.empty((nt, k))
+    q_examples = np.empty((nt, k))
+    dv_examples = np.empty((nt, k))
+    hit_idx = np.full(k, -1, dtype=int)
+    for i_t in range(nt):
+        t = time[i_t]
+        qe_hist[i_t] = qe
+        q_examples[i_t] = qe
+        qe = qe + dt * drift_q(qe, stim_ex[i_t]) + rng.randn(k) * noise * sqrt_q
+        if t >= time_eff:
+            dve = dve + dt * drift * qe_hist[i_t - nits_teff] / tau_ddm + \
+                rng.randn(k) * noise * sqrt_dv
+        else:
+            dve = dve + rng.randn(k) * noise * sqrt_dv
+        dv_examples[i_t] = dve
+        newly = (hit_idx < 0) & (np.abs(dve) >= bound)
+        hit_idx[newly] = i_t
+    return (reac_times, sensory_ev, choice, confval, time,
+            q_examples, dv_examples, hit_idx, sev_vals)
+
+
+def _representative_upward_examples(drift, noise, j, time_end, bound, tau, dt,
+                                    alpha, n, b, tau_ddm, time_eff,
+                                    sensory_ev_values, median_rt=None,
+                                    n_ex=400, seed=8):
+    """Pick one *representative upward* example trajectory per level of
+    stimulus evidence B(s).
+
+    A batch of ``n_ex`` trajectories is simulated for each evidence level; among
+    those whose first bound crossing is the *upper* bound, the one whose
+    crossing time is closest to the target (the median RT if given) is returned,
+    so every example rises and reaches +bound. Returns time, q_rep (nt, k),
+    dv_rep (nt, k) and hit_idx (k,) (index of the +bound crossing).
+    """
+    rng = np.random.RandomState(seed)
+    time = np.arange(0, time_end, dt)
+    nt = len(time)
+    nits_teff = int(time_eff / dt)
+    sqrt_q = np.sqrt(dt / tau)
+    sqrt_dv = np.sqrt(dt / tau_ddm)
+    sev_vals = np.array(sensory_ev_values, dtype=float)
+    k = len(sev_vals)
+
+    def drift_q(q, s):
+        return (n / alpha * np.arctanh(np.tanh(j * alpha) *
+                np.tanh((q * (n - alpha) + b * s * alpha) / n))
+                - (q - b * s) / n) / tau
+
+    q_rep = np.full((nt, k), np.nan)
+    dv_rep = np.full((nt, k), np.nan)
+    hit_idx = np.full(k, -1, dtype=int)
+    for i_s, sev in enumerate(sev_vals):
+        stim = 0.04 * rng.randn(nt, n_ex) + sev
+        q = rng.randn(n_ex) * 0.1
+        dv = np.zeros(n_ex)
+        q_hist = np.empty((nt, n_ex))
+        q_all = np.empty((nt, n_ex))
+        dv_all = np.empty((nt, n_ex))
+        fc_idx = np.full(n_ex, -1, dtype=int)   # first bound crossing index
+        fc_sign = np.zeros(n_ex)                 # sign of that first crossing
+        for i_t in range(nt):
+            t = time[i_t]
+            q_hist[i_t] = q
+            q_all[i_t] = q
+            q = q + dt * drift_q(q, stim[i_t]) + rng.randn(n_ex) * noise * sqrt_q
+            if t >= time_eff:
+                dv = dv + dt * drift * q_hist[i_t - nits_teff] / tau_ddm + \
+                    rng.randn(n_ex) * noise * sqrt_dv
+            else:
+                dv = dv + rng.randn(n_ex) * noise * sqrt_dv
+            dv_all[i_t] = dv
+            newc = (fc_idx < 0) & (np.abs(dv) >= bound)
+            fc_idx[newc] = i_t
+            fc_sign[newc] = np.sign(dv[newc])
+        cand = np.where((fc_sign > 0) & (fc_idx >= 0))[0]
+        if len(cand) == 0:
+            continue
+        cross_t = time[fc_idx[cand]]
+        target = (median_rt[i_s] if (median_rt is not None and
+                  np.isfinite(median_rt[i_s])) else np.median(cross_t))
+        pick = cand[np.argmin(np.abs(cross_t - target))]
+        q_rep[:, i_s] = q_all[:, pick]
+        dv_rep[:, i_s] = dv_all[:, pick]
+        hit_idx[i_s] = fc_idx[pick]
+    return time, q_rep, dv_rep, hit_idx
+
+
+def plot_rt_ddm_dists_examples(drift=.4, noise=0.1, jvals=[0.15, 0.6],
+                               time_end=4., bound=1, tau=0.1, dt=1e-3,
+                               alpha=1, n=3, ntrials=2000, b=0.3, tau_ddm=0.1,
+                               time_eff=0.05, sensory_ev_values=[0., 0.5, 1],
+                               seed_examples=8, seed_dist=0,
+                               fig=None, ax=None, savefig=True):
+    """RT distributions, accumulation-to-bound and confidence, in a 3x2 grid,
+    split into monostable (left) and bistable (right) columns.
+
+    Rows (top -> bottom): RT distributions, accumulation to the bound, and
+    confidence traces. Within each panel the three curves are the levels of
+    stimulus evidence B(s), encoded by lightness of the column base colour
+    (cornflowerblue for monostable, peru for bistable; lighter -> weaker
+    evidence). The example accumulations and confidences all rise to the
+    +bound; each stops at the crossing (marked with a circle), the bounds are
+    drawn in the column colour, and an arrow shows how the crossing sets the RT.
+    The distribution row shares its x-axis (so the monostable RTs read as much
+    longer), while the trajectory rows are zoomed per column so the fast
+    bistable crossings stay clear.
+    """
+    def _lighten(base, frac):
+        rgb = np.array(mpl.colors.to_rgb(base))
+        return tuple(1 - (1 - rgb) * frac)
+
+    k = len(sensory_ev_values)
+    fracs = np.linspace(0.4, 1.0, k)          # weak -> strong evidence
+    cols = [
+        {'j': min(jvals), 'title': 'Monostable', 'base': 'cadetblue'},
+        {'j': max(jvals), 'title': 'Bistable', 'base': 'peru'},
+    ]
+    for cfg in cols:
+        cfg['shades'] = [_lighten(cfg['base'], f) for f in fracs]
+
+    # ---- pass 1: simulate both columns (fully seeded -> reproducible) ----
+    for i_c, cfg in enumerate(cols):
+        (rt, sensory_ev, choice, confval, time, _, _, _, sev_vals) = \
+            sim_fbp_ddm_fast(drift=drift, noise=noise, j=cfg['j'],
+                             time_end=time_end, bound=bound, tau=tau, dt=dt,
+                             alpha=alpha, n=n, ntrials=ntrials, b=b,
+                             tau_ddm=tau_ddm, time_eff=time_eff,
+                             sensory_ev_values=sensory_ev_values,
+                             seed_dist=seed_dist + i_c)
+        # Representative example is chosen from its own reproducible batch
+        # (median of that batch's upward crossings), so the traces depend only
+        # on seed_examples -- never on the distribution draws.
+        etime, q_ex, dv_ex, hit_idx = _representative_upward_examples(
+            drift, noise, cfg['j'], time_end, bound, tau, dt, alpha, n, b,
+            tau_ddm, time_eff, sensory_ev_values, median_rt=None,
+            seed=seed_examples + i_c)
+        cfg.update(dict(rt=rt, sensory_ev=sensory_ev, time=etime, q_ex=q_ex,
+                        dv_ex=dv_ex, hit_idx=hit_idx, sev_vals=sev_vals))
+
+    # shared distribution x-limit: cover the slowest column's tail
+    x_dist = min(time_end, 1.05 * max(
+        np.nanpercentile(cfg['rt'], 99) for cfg in cols))
+    x_dist = 2.15
+
+    created = ax is None
+    if created:
+        fig, ax = plt.subplots(nrows=2, ncols=3, figsize=(11, 5.))
+    ax = np.array(ax).reshape(2, 3)
+    for a in ax.flatten():
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+
+    # ---- pass 2: plot (row 0 = monostable, row 1 = bistable) ----
+    for i_r, cfg in enumerate(cols):
+        shades = cfg['shades']
+        base = cfg['base']
+        time, sev_vals = cfg['time'], cfg['sev_vals']
+        hit_idx, dv_ex, q_ex = cfg['hit_idx'], cfg['dv_ex'], cfg['q_ex']
+        ax_conf, ax_acc, ax_dist = ax[i_r, 0], ax[i_r, 1], ax[i_r, 2]
+        # per-row trajectory x-limit: a bit beyond the slowest crossing
+        hit_t = [time[h] for h in hit_idx if h >= 0]
+        x_traj = (max(hit_t) * 1.3) if hit_t else time_end / 2
+
+        # ---- column 0: RT distributions ----
+        for i_s, sev in enumerate(sev_vals):
+            rts = cfg['rt'][(cfg['sensory_ev'] == sev) & ~np.isnan(cfg['rt'])]
+            if len(rts) > 1:
+                sns.kdeplot(x=rts, ax=ax_dist, color=shades[i_s], lw=2.5,
+                            clip=(0, time_end), bw_adjust=1.2)
+        handles = [Line2D([0], [0], color=shades[i_s], lw=3, label=f'{sev:g}')
+                   for i_s, sev in enumerate(sev_vals)]
+        ax_dist.legend(handles=handles, title='Stimulus \nevidence, B(s)',
+                       frameon=False, fontsize=11, title_fontsize=12)
+        # ax_dist.set_title(cfg['title'] + f'  (J = {cfg["j"]:g})',
+        #                   color=base, fontsize=15)
+        ax_dist.set_xlabel('Reaction time (s)')
+        ax_dist.set_ylabel('Density')
+        ax_dist.set_xlim(0, x_dist)
+
+        # ---- column 1: accumulation to bound ----
+        ax_acc.axhline(bound, ls='--', color=base, alpha=0.85, lw=2)
+        ax_acc.axhline(-bound, ls='--', color=base, alpha=0.85, lw=2)
+        ax_acc.axhline(0, ls=':', color='gray', alpha=0.5, lw=1)
+        for i_s in range(len(sev_vals)):
+            hidx = hit_idx[i_s]
+            if hidx >= 0:
+                ax_acc.plot(time[:hidx + 1], dv_ex[:hidx + 1, i_s],
+                            color=shades[i_s], lw=2.5)
+                ax_acc.plot(time[hidx], dv_ex[hidx, i_s], 'o', color=shades[i_s],
+                            ms=9, mec='k', mew=1, zorder=5)
+        ax_acc.set_xlabel('Time (s)')
+        ax_acc.set_ylabel('Decision variable')
+        ax_acc.set_xlim(-0.02, x_traj)
+        ax_acc.set_ylim(-bound * 1.4, bound * 1.4)
+
+        # arrow: reaching the bound sets the RT (use the earliest example)
+        hitting = np.where(hit_idx >= 0)[0]
+        if len(hitting):
+            rep = hitting[np.argmin(hit_idx[hitting])]
+            rt_rep = time[hit_idx[rep]]
+            y0 = -bound * 1.4
+            ax_acc.plot([rt_rep, rt_rep], [bound, y0], ls=':', color='k',
+                        lw=1.2, alpha=0.7, zorder=1)
+            ax_acc.annotate('RT', xy=(rt_rep, y0),
+                            xytext=(rt_rep + x_traj * 0.05, y0 + bound * 0.4),
+                            fontsize=12, ha='left', va='bottom',
+                            arrowprops=dict(arrowstyle='->', color='k', lw=1.3))
+
+        # ---- column 2: confidence traces ----
+        # conf = sigmoid(2*q_ex)                      # posterior of chosen option
+        conf = q_ex                      # posterior of chosen option
+        ax_conf.axhline(0., ls=':', color='gray', alpha=0.6, lw=1)
+        for i_s in range(len(sev_vals)):
+            hidx = hit_idx[i_s]
+            if hidx >= 0:
+                ax_conf.plot(time[:hidx + 1], conf[:hidx + 1, i_s],
+                             color=shades[i_s], lw=2.5)
+                ax_conf.plot(time[hidx], conf[hidx, i_s], 'o', color=shades[i_s],
+                             ms=9, mec='k', mew=1, zorder=5)
+        ax_conf.set_xlabel('Time (s)')
+        ax_conf.set_ylabel('Log-belief ratio')
+        ax_conf.set_xlim(-0.02, x_traj)
+        ax_conf.set_ylim(-0.3, 3)
+    
+    for a in ax.flatten():
+        a.set_xlim(0, x_dist)
+    if created:
+        fig.tight_layout()
+    if savefig and fig is not None:
+        fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_dists_examples.png',
+                    dpi=400, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'rt_ddm_fbp_dists_examples.svg',
+                    dpi=400, bbox_inches='tight')
+    plt.show()
+
+
 def plot_psychophysics_results_together():
     fig, ax = plt.subplots(ncols=4, nrows=2, figsize=(16, 8))
     ax = ax.flatten()
-    plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.6],
+    plot_rt_FBP_ddm_both(drift=.4, noise=0.1, jvals=[0.1, 0.7],
                              time_end=2.5, bound=1, tau=0.1, dt=1e-3,
                              alpha=1, n=3, ntrials=1400, b=0.3, tau_ddm=0.1,
                              fig=fig, ax=ax[:2], savefig=False)
@@ -3965,4 +4281,5 @@ if __name__ == '__main__':
     # plot_m1_m2_vector_field(j=.65, b=0., n=3)
     # plot_FP_vs_alpha(theta=THETA, num_iter=100, a_list=np.arange(0, 2, 0.01),
     #                  thr=1e-15, stim=0.0, j=0.5*np.log(3))
-    plot_crit_j_alpha(n=3, alpha_list=np.arange(0, 1.5, 1e-3))
+    # plot_crit_j_alpha(n=3, alpha_list=np.arange(0, 1.5, 1e-3))
+    plot_rt_ddm_dists_examples(seed_examples=9)
