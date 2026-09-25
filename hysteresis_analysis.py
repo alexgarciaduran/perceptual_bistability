@@ -417,7 +417,7 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
     :param maxasterix: maximum number of asterixes to write (for very small p-values)
     """
 
-    text = f'p={data:.3e}' if raw_p else stars_pval(data)
+    text = f'p={data:.4f}' if raw_p else stars_pval(data)
     # print(data)
 
     lx, ly = center[num1]+2e-2, height[num1]
@@ -3066,7 +3066,7 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     latency_avg = []
     all_dominance_durations = {}
     fignew, axnew = plt.subplots(nrows=2, figsize=(5.5, 7.5))
-    axnew[0].set_xlabel('Time from switch (s)'); axnew[0].set_ylabel('Noise')
+    axnew[0].set_xlabel('Time from switch (s)'); axnew[0].set_ylabel('Average stimulus evidence')
     axnew[0].set_title('Average across trials', fontsize=13)
     all_kernels = []
     for i_sub, subject in enumerate(subs):
@@ -3154,7 +3154,7 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     axnew[1].axvline(np.mean(latency_avg), color='k', linewidth=2, label='Mean')
     axnew[1].axvline(np.median(latency_avg), linestyle='--', color='k', linewidth=2, label='Median')
     axnew[1].legend(frameon=False)
-    axnew[1].set_xlabel('Latency (s)'); axnew[1].set_xlim(axnew[0].get_xlim())
+    axnew[1].set_xlabel('Non-decision time (s)'); axnew[1].set_xlim(axnew[0].get_xlim())
     np.save(DATA_FOLDER + 'kernel_latency_average.npy', np.array(latency_avg))
     if ax is None:
         fig, ax = plt.subplots(1, figsize=(5, 4))
@@ -3308,9 +3308,9 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
                   fontsize=12)
     ax2.set_xticks([0, 1, 2], [1, 0.7, 0])
     ax2.set_xlabel('p(Shuffle)')
-    ax2.set_ylabel('Noise before switch')
+    ax2.set_ylabel('Average stimulus evidence')
     ax.set_xlabel('Time from switch (s)')
-    ax.set_ylabel('Noise')
+    ax.set_ylabel('Average stimulus evidence')
     if legend_axes:
         ax.legend(title='p(shuffle)', frameon=False)
     if not legend_axes:
@@ -3322,7 +3322,7 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     fig3.tight_layout()
     fignew.tight_layout()
     fignew.savefig(SV_FOLDER + 'latency_computation.png', dpi=400, bbox_inches='tight')
-    fignew.savefig(SV_FOLDER + 'latency_computation.pdf', dpi=400, bbox_inches='tight')
+    fignew.savefig(SV_FOLDER + 'latency_computation.svg', dpi=400, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.png', dpi=400, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'noise_before_switch_experiment.svg', dpi=400, bbox_inches='tight')
     figlast, ax = plt.subplots(ncols=1, figsize=(5, 4))
@@ -3335,7 +3335,7 @@ def plot_noise_before_switch(data_folder=DATA_FOLDER, fps=60, tFrame=18,
     err = np.nanstd(all_kernels, axis=0)/np.sqrt(len(subs))
     ax.fill_between(x_plot, y_plot-err, y_plot+err, color='k', alpha=0.2)
     ax.set_xlabel('Time from switch(s)')
-    ax.set_ylabel('Noise')
+    ax.set_ylabel('Average stimulus evidence')
     figlast.tight_layout()
     figlast.savefig(SV_FOLDER + 'average_kernel_across_subjects.png', dpi=400, bbox_inches='tight')
     figlast.savefig(SV_FOLDER + 'average_kernel_across_subjects.svg', dpi=400, bbox_inches='tight')
@@ -4993,6 +4993,53 @@ def lmm_hysteresis_dominance(freq=2, plot_summary=False,
         fig.tight_layout()
     else:
         return intercepts, slopes, result
+
+
+def lmm_var_pshuffle(var, var_name='var', shuffle_vals=(1., 0.7, 0.),
+                     slope_random_effect=False, verbose=True):
+    """Compact mixed-effects test of ``var ~ p(shuffle)`` (subject as group).
+
+    Same model as :func:`lmm_hysteresis_pshuffle` / :func:`lmm_hysteresis_dominance`
+    but generic over the dependent variable.  ``var`` is a
+    ``(n_shuffle, n_subject)`` array (one row per p(shuffle) level, matching
+    ``shuffle_vals``).  Returns the fixed-effect slope of p(shuffle) with its
+    Wald z-test.
+    """
+    var = np.asarray(var, dtype=float)
+    N, M = var.shape
+    df = pd.DataFrame({"x": np.repeat(np.array(shuffle_vals, float), M),
+                       "y": var.flatten(),                 # C-order: row = p(shuffle)
+                       "subject": np.tile(np.arange(M), N),
+                       "condition": np.repeat(np.arange(N), M)}).dropna(subset=["y"])
+    re_formula = "~x" if slope_random_effect else "1"
+    result = smf.mixedlm("y ~ x", df, groups=df["subject"],
+                         re_formula=re_formula).fit()
+    beta, se = result.fe_params["x"], result.bse["x"]
+    z, p = result.tvalues["x"], result.pvalues["x"]
+    if verbose:
+        print(f"{var_name} ~ p(shuffle):  beta={beta:.4g} +/- {se:.4g}, "
+              f"z={z:.2f}, p={p:.3g}  (N={int(result.nobs)})")
+    return {"var": var_name, "beta": beta, "se": se, "z": z, "p": p,
+            "result": result}
+
+
+def lmm_vars_pshuffle(data_folder=DATA_FOLDER, freq=2,
+                      slope_random_effect=False):
+    """Run :func:`lmm_var_pshuffle` for the hysteresis area, dominance and
+    minimum pupil, each vs p(shuffle)."""
+    variables = {
+        f'hysteresis_{freq}_cycles':
+            np.load(data_folder + f'hysteresis_width_freq_{freq}.npy'),
+        'dominance':
+            np.load(data_folder + 'mean_number_switches_per_subject.npy'),
+        'min_pupil':
+            np.load(os.path.join(data_folder, 'aligned_eye_tracker_data', 'plots',
+                                 'min_pupil_across_trials.npy')),
+    }
+        
+    return {name: lmm_var_pshuffle(arr, var_name=name,
+                                   slope_random_effect=slope_random_effect)
+            for name, arr in variables.items()}
 
 
 def plot_dominance_versus_hysteresis():
@@ -6967,8 +7014,8 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
         surprise_value_aligned_all_trials[:] = np.nan
         perceptual_clarity_aligned_all_trials = np.empty((1, steps_back+steps_front))
         perceptual_clarity_aligned_all_trials[:] = np.nan
-        lower_bound = 0.5-fitted_params_all[i_sub][3]-1e-4
-        upper_bound = 0.5+fitted_params_all[i_sub][3]+1e-4
+        lower_bound = 0.5-fitted_params_all[i_sub][3]
+        upper_bound = 0.5+fitted_params_all[i_sub][3]
         for i_trial, trial in enumerate(trial_index):
             if pshuf_only is not None:
                 if pshuffles[i_sub, i_trial] != pshuf_only:
@@ -7017,7 +7064,7 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                 internal_noise_vals_aligned[i, :] = internal_noise[idx - steps_back:idx+steps_front]*sigma_param
                 dxdt_full = np.full_like(conf_i, np.nan)
                 min_dist_vals = np.min(np.row_stack([(conf_i-upper_bound)**2, (conf_i-lower_bound)**2]), axis=0)
-                q = (conf_i - lower_bound) / (upper_bound - lower_bound)
+                q = (conf_i - lower_bound) / (upper_bound - lower_bound + 1e-4)
                 dxdt_full[k:] = (q[k:]-q[:-k])/(k/fps)
                 surprise_value_aligned[i, :] = dxdt_full
                 perceptual_clarity_aligned[i, :] = np.abs(conf_i*2-1)
@@ -7028,7 +7075,7 @@ def plot_average_x_noise_trials(data_folder=DATA_FOLDER,
                 internal_noise_vals_aligned[i+len(idx_1), :] = internal_noise[idx - steps_back:idx+steps_front]*-1*sigma_param
                 dxdt_full = np.full_like(conf_i, np.nan)
                 min_dist_vals = np.min(np.row_stack([(conf_i-upper_bound)**2, (conf_i-lower_bound)**2]), axis=0)
-                q = (conf_i - lower_bound) / (upper_bound - lower_bound)
+                q = (conf_i - lower_bound) / (upper_bound - lower_bound + 1e-4)
                 dxdt_full[k:] = (q[k:]-q[:-k])/(k/fps)
                 surprise_value_aligned[i+len(idx_1), :] = dxdt_full
                 perceptual_clarity_aligned[i+len(idx_1), :] = np.abs(conf_i*2-1)
@@ -7174,13 +7221,17 @@ def bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=Fa
                             min_norm=True):
 
     labels_minmax = ['Max surprise', 'Min. Clarity', 'Max clarity', r'$\Delta$ clarity']
-    labels_full = ['Perceptual surprise', 'Perceptual clarity']
+    labels_full = ['Perceptual change', 'Perceptual clarity']
     regimes = ['monostable', 'bistable']
     colors = {'monostable': 'cadetblue', 'bistable': 'peru'}
 
     fig_minmax, ax_minmax = plt.subplots(ncols=4, nrows=1, figsize=(11, 3.5))
-    fig_full, ax_full = plt.subplots(ncols=2, nrows=1, figsize=(8, 4))
+    fig_surprise, ax_surprise = plt.subplots(ncols=1, nrows=1, figsize=(4.5, 3.5))
+    fig_clarity, ax_clarity = plt.subplots(ncols=1, nrows=1, figsize=(4.5, 3.5))
     x_plot = np.arange(-steps_back, steps_front, 1)/fps
+    
+    ax_full = [ax_surprise, ax_clarity]
+    fig_full = [fig_surprise, fig_clarity]
 
     # ── collect data across regimes ────────────────────────────────────────
     # minmax_data[metric] = [mono_vals, bis_vals]; full_data[var] = [mono_arr, bis_arr]
@@ -7224,15 +7275,15 @@ def bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=Fa
         ax.set_xticks([0, 1], ['Mono', 'Bi'])
         ax.set_title(labels_minmax[i_m], fontsize=13)
     fig_minmax.tight_layout()
-    fig_minmax.savefig(SV_FOLDER + 'bars_simulated_variable_minmax.png', dpi=200, bbox_inches='tight')
-    fig_minmax.savefig(SV_FOLDER + 'bars_simulated_variable_minmax.svg', dpi=200, bbox_inches='tight')
+    fig_minmax.savefig(SV_FOLDER + 'bars_simulated_variable_minmax.png', dpi=400, bbox_inches='tight')
+    fig_minmax.savefig(SV_FOLDER + 'bars_simulated_variable_minmax.svg', dpi=400, bbox_inches='tight')
 
     # ── 2 full-trace panels (surprise, clarity), exactly as in plot_surprise ─
     for i_f, ax in enumerate(ax_full):
         ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
         ax.axvline(0, color='k', linestyle='--')
         ax.axhline(0, color='k', linestyle='--')
-        sign = (-1)**negative if labels_full[i_f] == 'Perceptual surprise' else 1
+        sign = (-1)**negative if labels_full[i_f] == 'Perceptual clarity' else 1
         for bis_mono, arr in zip(regimes, full_data[i_f]):
             arr = arr*sign
             y_plot = np.nanmean(arr, axis=0)
@@ -7245,9 +7296,11 @@ def bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=Fa
         ax.set_xlabel('Time from switch (s)')
         ax.set_ylabel(labels_full[i_f])
     ax_full[0].legend(frameon=False, loc='lower left' if negative else 'upper left')
-    fig_full.tight_layout()
-    fig_full.savefig(SV_FOLDER + 'bars_simulated_variable_full.png', dpi=200, bbox_inches='tight')
-    fig_full.savefig(SV_FOLDER + 'bars_simulated_variable_full.svg', dpi=200, bbox_inches='tight')
+    labs_full = ['surprise', 'clarity']
+    for lab, fig in zip(labs_full, fig_full):
+        fig.tight_layout()
+        fig.savefig(SV_FOLDER + f'{lab}_simulated_variable_full.png', dpi=400, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + f'{lab}_simulated_variable_full.svg', dpi=400, bbox_inches='tight')
     
 
 def max_model_vs_min_pupil(label='clarity',
@@ -7378,6 +7431,118 @@ def max_model_vs_min_pupil(label='clarity',
     f.tight_layout()
     
     
+
+
+def bars_and_corr_eye_min_max_delta(eye_vars=('blink', 'saccade'),
+                                    data_folder=DATA_FOLDER):
+    """
+    Bar plots and clarity-correlation plots of the region min, max and delta of
+    eye rates (blink / saccade), in the style of `bars_simulated_variable`.
+
+    For each eye variable it produces, per variable:
+      * a 3-panel bar figure (Min / Max / Delta = max - min), each panel with the
+        monostable vs bistable bars, swarm points and a significance bracket.
+      * a 3-panel correlation figure. Each panel scatters the eye metric (min /
+        max / delta) against the matching simulated perceptual clarity metric
+        (min / max / delta), pooled across regimes, as black dots with a dashed
+        linear-regression line and an r / p-value annotation.
+
+    Requires the regime-separated files written by `plot_pupil_across_all_trials`
+    (min_<var>_rate_across_trials_regime.npy, max_<var>_rate_across_trials_regime.npy)
+    and the simulated clarity files (<metric>_val_clarity_<regime>.npy).
+    """
+    if isinstance(eye_vars, str):
+        eye_vars = (eye_vars,)
+    plots_folder = os.path.join(data_folder, 'aligned_eye_tracker_data', 'plots')
+    colors = {'monostable': 'cadetblue', 'bistable': 'peru'}
+    colormap = [colors['monostable'], colors['bistable']]
+    metrics = ['min', 'max', 'delta']
+    rate_labels = {'min': 'Min. rate', 'max': 'Max. rate',
+                   'delta': r'$\Delta$ (max$-$min)'}
+    clarity_labels = {'min': 'Min. clarity', 'max': 'Max. clarity',
+                      'delta': r'$\Delta$ clarity'}
+
+    for eye_var in eye_vars:
+        # --- load per-regime min & max ([0][0] = bistable, [1][0] = monostable) ---
+        min_data = np.load(os.path.join(plots_folder, f'min_{eye_var}_rate_across_trials_regime.npy'),
+                           allow_pickle=True)
+        max_data = np.load(os.path.join(plots_folder, f'max_{eye_var}_rate_across_trials_regime.npy'),
+                           allow_pickle=True)
+        eye_vals = {
+            'min': {'bistable': np.float32(min_data[0][0]),
+                    'monostable': np.float32(min_data[1][0])},
+            'max': {'bistable': np.float32(max_data[0][0]),
+                    'monostable': np.float32(max_data[1][0])},
+        }
+        eye_vals['delta'] = {
+            'bistable': eye_vals['max']['bistable'] - eye_vals['min']['bistable'],
+            'monostable': eye_vals['max']['monostable'] - eye_vals['min']['monostable'],
+        }
+
+        # ---------- bar plots (mono vs bistable) ----------
+        fig_bar, ax_bar = plt.subplots(ncols=3, nrows=1, figsize=(9, 3.5))
+        for i_m, metric in enumerate(metrics):
+            ax = ax_bar[i_m]
+            ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+            data_mono = eye_vals[metric]['monostable']
+            data_bis = eye_vals[metric]['bistable']
+            data_mono = data_mono[~np.isnan(data_mono)]
+            data_bis = data_bis[~np.isnan(data_bis)]
+            sns.barplot([data_mono, data_bis], palette=colormap, ax=ax)
+            sns.swarmplot([data_mono, data_bis], color='black', edgecolor='white',
+                          linewidth=0.5, size=3, ax=ax, zorder=10)
+            _, pval = scipy.stats.ttest_ind(data_bis, data_mono, equal_var=False)
+            allvals = np.concatenate([data_mono, data_bis])
+            cte = 0.2*(np.nanmax(allvals) - np.nanmin(allvals) + 1e-9)
+            heights = [np.nanmax(data_mono)+cte, np.nanmax(data_bis)+cte]
+            barplot_annotate_brackets(0, 1, pval, [0, 1], heights, yerr=None,
+                                      dh=0.08, barh=0.03, fs=10, maxasterix=3, ax=ax)
+            ax.set_xticks([])
+            # ax.set_title(rate_labels[metric], fontsize=13)
+            ax.set_ylabel(rate_labels[metric] + f' {eye_var} rate (Hz)')
+        # fig_bar.suptitle(eye_var.capitalize(), fontsize=14)
+        fig_bar.tight_layout(rect=[0, 0, 1, 0.96])
+        for ext in ['.png', '.svg']:
+            fig_bar.savefig(os.path.join(plots_folder, f'bars_{eye_var}_min_max_delta{ext}'),
+                            dpi=400, bbox_inches='tight')
+
+        # ---------- correlation with simulated perceptual clarity ----------
+        fig_corr, ax_corr = plt.subplots(ncols=3, nrows=1, figsize=(9, 3.2))
+        for i_m, metric in enumerate(metrics):
+            ax = ax_corr[i_m]
+            ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+            clar_reg = {
+                'monostable': np.load(SV_FOLDER + f'{metric}_val_clarity_monostable.npy'),
+                'bistable': np.load(SV_FOLDER + f'{metric}_val_clarity_bistable.npy'),
+            }
+            # Pool eye and clarity across regimes. The clarity files are stored
+            # full-length with NaN placeholders for subjects outside the regime,
+            # so NaN-remove clarity per regime to match the (already valid-only)
+            # eye arrays, then joint-mask on any residual NaN before pooling.
+            x_parts, y_parts = [], []
+            for regime in ['monostable', 'bistable']:
+                eye_reg = np.asarray(eye_vals[metric][regime], dtype=float)
+                clar = np.asarray(clar_reg[regime], dtype=float)
+                clar = clar[~np.isnan(clar)]
+                n = min(len(eye_reg), len(clar))
+                eye_reg, clar = eye_reg[:n], clar[:n]
+                m = ~np.isnan(eye_reg) & ~np.isnan(clar)
+                x_parts.append(eye_reg[m]); y_parts.append(clar[m])
+            x = np.concatenate(x_parts); y = np.concatenate(y_parts)
+            r, p = pearsonr(x, y)
+            ax.plot(x, y, 'o', color='k')
+            ax.annotate(f'r = {r:.3f}\np = {p:.2e}', xy=(.04, 0.82), xycoords=ax.transAxes)
+            linreg = LinearRegression(fit_intercept=True).fit(x.reshape(-1, 1), y.reshape(-1, 1))
+            xr = np.array([np.min(x), np.max(x)]).reshape(-1, 1)
+            ax.plot(xr, linreg.predict(xr), color='gray', linestyle='--',
+                    alpha=0.4, linewidth=3)
+            ax.set_xlabel(f'{rate_labels[metric]} ({eye_var})')
+            ax.set_ylabel(clarity_labels[metric])
+        fig_corr.suptitle(eye_var.capitalize(), fontsize=14)
+        fig_corr.tight_layout(rect=[0, 0, 1, 0.96])
+        for ext in ['.png', '.svg']:
+            fig_corr.savefig(os.path.join(plots_folder, f'corr_{eye_var}_min_max_delta_clarity{ext}'),
+                             dpi=400, bbox_inches='tight')
 
 
 def plot_optimal_eta_b_vs_0(ntrials=10, j=1):
@@ -10357,7 +10522,7 @@ def ridgeplot_all_kernels(
     fig, axes = plt.subplots(
         1,
         n_columns,
-        figsize=(3 * n_columns, 0.5 * n_rows),
+        figsize=(3 * n_columns, 0.8 * n_rows),
         sharex=True,
         sharey=True
     )
@@ -11879,6 +12044,9 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
     # --- Dictionary to store per-subject averages ---
     per_sub_avg = {pupil_col: {}}
     per_sub_avg_region = {pupil_col: {}}
+    # extra store for the region min of blink/saccade rates (per_sub_avg_region
+    # already holds the max for these), used to save min/max separated by regime
+    per_sub_min_region = {pupil_col: {}}
 
     # --- Helper functions ---
     def get_switch_indices(responses):
@@ -12042,6 +12210,11 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
             if pupil_col in ['blink', 'saccade', 'raw_blink', 'raw_saccade'] or 'speed' in pupil_col:
                 if align:
                     per_sub_avg_region[pupil_col][cond].append(np.nanmax(pupil_smooth[idx_region]))
+                    # also keep the region min for blink/saccade (max is above)
+                    if pupil_col in ['blink', 'saccade']:
+                        if cond not in per_sub_min_region[pupil_col]:
+                            per_sub_min_region[pupil_col][cond] = []
+                        per_sub_min_region[pupil_col][cond].append(np.nanmin(pupil_smooth[idx_region]))
                 if not align:
                     per_sub_avg_region[pupil_col][cond].append(np.nanmean(pupil_smooth))
             else:
@@ -12255,6 +12428,23 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
         if 'Pupil' in pupil_col and align:
             save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'min_pupil_across_trials_regime.npy')
             np.save(save_path, all_data)
+        if 'blink' in pupil_col and align:
+            save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'min_blinl_across_trials_regime.npy')
+            np.save(save_path, all_data)
+        if 'saccade' in pupil_col and align:
+            save_path = os.path.join(data_folder, 'aligned_eye_tracker_data','plots', 'min_saccade_across_trials_regime.npy')
+            np.save(save_path, all_data)
+        # --- Save region min and max blink/saccade rates separated by regime ---
+        # all_data holds the region max (same regime order as below); the region
+        # min is stored separately in per_sub_min_region.
+        if pupil_col in ['blink', 'saccade'] and align:
+            min_data = [[], []]
+            for i_c, cond in enumerate(reversed(sorted(per_sub_min_region[pupil_col].keys()))):
+                min_data[i_c].append(np.array(per_sub_min_region[pupil_col][cond]))
+            save_path_max = os.path.join(data_folder, 'aligned_eye_tracker_data', 'plots', f'max_{pupil_col}_rate_across_trials_regime.npy')
+            np.save(save_path_max, all_data)
+            save_path_min = os.path.join(data_folder, 'aligned_eye_tracker_data', 'plots', f'min_{pupil_col}_rate_across_trials_regime.npy')
+            np.save(save_path_min, min_data)
         # pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
         # fitted_params_all = [np.load(par) for par in pars]
         # j0s = np.array([n*params[1] for params in fitted_params_all])
@@ -12311,7 +12501,7 @@ def plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
                       ax=ax2,
                       zorder=10             # ensures points are on top
                     )
-        pval = scipy.stats.mannwhitneyu(all_data[1][0], all_data[0][0], equal_var=False).pvalue
+        pval = scipy.stats.ttest_ind(all_data[1][0], all_data[0][0], equal_var=False).pvalue
         c = 0; c1 = 0; c2 = 1
         # plt.figure()
         # sns.kdeplot(all_data[0][0], color='cadetblue')
@@ -14190,7 +14380,7 @@ def plot_pupil_traces():
     pup_cols = ['speed', 'blink', 'saccade', 'fixation_break']
     for pupil_col in pup_cols:
         for align in [True]:
-            for cond in ['regime', 'pShuffle']:
+            for cond in ['regime']:
                 plot_pupil_across_all_trials(data_folder=DATA_FOLDER,
                                              sublist=None,
                                              n_training=8,
@@ -14614,23 +14804,24 @@ if __name__ == '__main__':
     # optimal_b_escape(J=1.3, theta=0., k=1)
     # optimal_eta_and_stimuli(J=1.3, sigma=0.2, alpha=1, theta=0., T=2,
     #                         timepoints=1000)
-    # for k_steps in [10, 15, 30, 60, 90]:
-    # k_steps = 15
-    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-    #                             tFrame=26, fps=60,
-    #                             steps_back=240, steps_front=240, avoid_first=True,
-    #                             n=4, load_simulations=True, normalize=False, sigma=None,
-    #                             pshuf_only=None, bis_mono='Monostable',
-    #                             k_steps=k_steps, adaptation=True)
-    # plot_average_x_noise_trials(data_folder=DATA_FOLDER,
-    #                             tFrame=26, fps=60,
-    #                             steps_back=240, steps_front=240, avoid_first=True,
-    #                             n=4, load_simulations=True, normalize=False, sigma=None,
-    #                             pshuf_only=None, bis_mono='Bistable',
-    #                             k_steps=k_steps, adaptation=True)
-    bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=False, min_norm=False)
-    bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=False, min_norm=True)
-    #     plt.close('all')
+    # for k_steps in [10, 30, 60, 90, 15]:
+    # for k_steps in [15]:
+    #     plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                                 tFrame=26, fps=60,
+    #                                 steps_back=240, steps_front=240, avoid_first=True,
+    #                                 n=4, load_simulations=True, normalize=False, sigma=None,
+    #                                 pshuf_only=None, bis_mono='Monostable',
+    #                                 k_steps=k_steps, adaptation=True)
+    #     plot_average_x_noise_trials(data_folder=DATA_FOLDER,
+    #                                 tFrame=26, fps=60,
+    #                                 steps_back=240, steps_front=240, avoid_first=True,
+    #                                 n=4, load_simulations=True, normalize=False, sigma=None,
+    #                                 pshuf_only=None, bis_mono='Bistable',
+    #                                 k_steps=k_steps, adaptation=True)
+    # bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=False, min_norm=False)
+    # bars_simulated_variable(steps_back=240, steps_front=240, fps=60, negative=False, min_norm=True)
+    # bars_and_corr_eye_min_max_delta(eye_vars=('blink', 'saccade'),
+    #                                 data_folder=DATA_FOLDER)
     # plot_surprise(steps_back=240,
     #               steps_front=240, fps=60)
     # max_model_vs_min_pupil(minmax='max')
@@ -14670,7 +14861,7 @@ if __name__ == '__main__':
     # compare_parameters_two_experiments()
     # experiment_comparison_altogether()
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
-    #                                                     simulated=False)
+    #                                                 simulated=False)
     # plot_dominance_distros_noise_trials_per_subject(data_folder=DATA_FOLDER, fps=60, tFrame=26,
     #                                                     simulated=True)
     # plot_dominance_distros_noise_trials_per_subject_regime(simulated=True)
@@ -14815,3 +15006,6 @@ if __name__ == '__main__':
     #                           slope_random_effect=False, plot_individual=True)
     # lmm_hysteresis_dominance(freq=2, plot_summary=True,
     #                           slope_random_effect=True, plot_individual=True)
+    lmm_vars_pshuffle(data_folder=DATA_FOLDER, freq=2,
+                      slope_random_effect=False)
+    
