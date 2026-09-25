@@ -2436,6 +2436,157 @@ def plot_regression_weights(sv_folder=SV_FOLDER, load=True, model='MF', method='
         fig.savefig(SV_FOLDER + 'linear_regression_analysis.svg', dpi=400, bbox_inches='tight')
 
 
+def linear_mixed_regression(data_orig, data_model_orig, data_model_null,
+                            re_formula='~coupling*stim_ev_cong'):
+    """Random-slope LMM analogue of :func:`linear_regression`.
+    """
+    subjects = data_orig.subject.unique()
+    fe_keys = ['Intercept', 'coupling', 'stim_ev_cong', 'coupling:stim_ev_cong']
+    re_keys = ['Group', 'coupling', 'stim_ev_cong', 'coupling:stim_ev_cong']
+
+    def _weights(df):
+        df = df.dropna(subset=['abs_confidence', 'coupling',
+                               'stim_ev_cong']).reset_index(drop=True).copy()
+        # z-score the DV within subject, mirroring the per-subject OLS
+        df['y'] = df.groupby('subject')['abs_confidence'].transform(
+            lambda v: scipy.stats.zscore(v) if np.nanstd(v) > 0 else v * 0.)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            res = smf.mixedlm('y ~ coupling*stim_ev_cong', df,
+                              groups=df['subject'],
+                              re_formula=re_formula).fit()
+        w = np.zeros((4, len(subjects)))
+        for i_s, sub in enumerate(subjects):
+            re = res.random_effects.get(sub, None)
+            for r, (fk, rk) in enumerate(zip(fe_keys, re_keys)):
+                rv = 0. if re is None else re.get(rk, 0.)
+                w[r, i_s] = res.fe_params[fk] + rv
+        # significance of each weight = Wald test of the fixed effect (beta != 0)
+        pvals = np.array([res.pvalues[fk] for fk in fe_keys])
+        return w, pvals
+
+    weights_o, pvals_o = _weights(data_orig)
+    weights_model_o, pvals_model_o = _weights(data_model_orig)
+    weights_model_null, pvals_model_null = _weights(data_model_null)
+    return (weights_o, weights_model_o, weights_model_null,
+            pvals_o, pvals_model_o, pvals_model_null)
+
+
+def _plot_weight_panels(weights_o, weights_model_o, weights_model_null,
+                        subjects, savename='linear_regression_analysis',
+                        ax=None, fig=None, box_pvals=None):
+    """Draw the 2x2 regression-weight panels (boxplots + per-subject dots +
+    significance brackets) shared by :func:`plot_regression_weights` and
+    :func:`plot_regression_weights_lmm`.
+
+    ``box_pvals`` optionally provides the per-box significance as a tuple
+    ``(pvals_o, pvals_model_o, pvals_model_null)`` of length-4 arrays (e.g. the
+    fixed-effect Wald p-values of the LMM).  When None, each box star falls back
+    to a one-sample t-test of the per-subject weights against zero."""
+    savefig = False
+    if ax is None:
+        fig, ax = plt.subplots(ncols=2, nrows=2, figsize=(9, 8), sharex=True)
+        ax = ax.flatten()
+        savefig = True
+    for a in ax:
+        a.axhline(0, color='k', linestyle='--')
+    colors = ['black', 'gray', 'lightgray']
+    xlabs = ['Subjects', 'Model', 'Null']
+    ylabs = ['Intercept', '1-Shuffling', 'Stimulus congruence\n with choice', 'Interaction']
+    for j in range(4):
+        ax[j].spines['right'].set_visible(False)
+        ax[j].spines['top'].set_visible(False)
+        sns.boxplot([weights_o[j], weights_model_o[j], weights_model_null[j]], ax=ax[j],
+                    palette=colors, flierprops={"marker": ""}, linecolor='firebrick', linewidth=1.5,
+                    zorder=1)
+        ax[j].set_ylabel(ylabs[j])
+        ax[j].set_xticks([0, 1, 2], xlabs, rotation=45)
+    for i_s in range(len(subjects)):
+        jitter = np.random.randn(3)*0.07
+        for t in range(3):
+            for j in range(4):
+                ax[j].plot([t+jitter[t]],
+                           [weights_o[j][i_s], weights_model_o[j][i_s], weights_model_null[j][i_s]][t],
+                           marker='o', color=colors[t], linestyle='',
+                           markersize=6, markeredgewidth=1, markeredgecolor='white',
+                           zorder=10)
+    if savefig:
+        fig.tight_layout()
+    if box_pvals is not None:
+        # significance of each weight from the fixed-effect Wald test
+        bp_o, bp_fm, bp_null = box_pvals
+        pvals_o = [stars_pval(p) for p in bp_o]
+        pvals_fm = [stars_pval(p) for p in bp_fm]
+        pvals_null = [stars_pval(p) for p in bp_null]
+    else:
+        # fallback: one-sample t-test of the per-subject weights against zero
+        pvals_o = []
+        pvals_fm = []
+        pvals_null = []
+        for wo, wfm, wnull in zip(weights_o, weights_model_o, weights_model_null):
+            pvals_o.append(stars_pval(scipy.stats.ttest_1samp(wo, 0).pvalue))
+            pvals_fm.append(stars_pval(scipy.stats.ttest_1samp(wfm, 0).pvalue))
+            pvals_null.append(stars_pval(scipy.stats.ttest_1samp(wnull, 0).pvalue))
+    h_o = np.max(weights_o, axis=1)
+    h_fm = np.max(weights_model_o, axis=1)
+    h_null = np.max(weights_model_null, axis=1)
+    eps = 0.05
+    for a in range(4):
+        ax[a].text(0, h_o[a]+0.1, f"{pvals_o[a]}", ha='center', va='bottom', color='k',
+                   fontsize=12)
+        ax[a].text(1, h_fm[a]+0.1, f"{pvals_fm[a]}", ha='center', va='bottom', color='k',
+                   fontsize=12)
+        ax[a].text(2, h_null[a]+0.1, f"{pvals_null[a]}", ha='center', va='bottom', color='k',
+                   fontsize=12)
+        x1, x2 = [0+eps, 1-eps]
+        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_o[a]).pvalue)
+        y, h, col = max(map(max, np.column_stack((weights_o[a],
+                                                  weights_model_o[a]))))+0.4, 0.05, 'k'
+        ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+        ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
+                   fontsize=12)
+        p = stars_pval(scipy.stats.ttest_rel(weights_o[a],  weights_model_null[a]).pvalue)
+        x1, x2 = [0-eps, 2+eps]
+        y, h, col = max(map(max, np.column_stack((weights_o[a],
+                                                  weights_model_o[a]))))+0.65, 0.05, 'k'
+        ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+        ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
+                   fontsize=12)
+        x1, x2 = [1+eps, 2-eps]
+        p = stars_pval(scipy.stats.ttest_rel(weights_model_o[a],  weights_model_null[a]).pvalue)
+        y, h, col = max(map(max, np.column_stack((weights_o[a],
+                                                  weights_model_o[a]))))+0.4, 0.05, 'k'
+        ax[a].plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+        ax[a].text((x1+x2)*.5, y+h, f"{p}", ha='center', va='bottom', color=col,
+                   fontsize=12)
+    if savefig:
+        fig.savefig(SV_FOLDER + savename + '.png', dpi=400, bbox_inches='tight')
+        fig.savefig(SV_FOLDER + savename + '.svg', dpi=400, bbox_inches='tight')
+
+
+def plot_regression_weights_lmm(sv_folder=SV_FOLDER, model='MF',
+                                method='BADS', ax=None, fig=None):
+    """Same figure as :func:`plot_regression_weights`, but the per-subject
+    weights come from a single random-slope LMM (see
+    :func:`linear_mixed_regression`) instead of independent per-subject OLS
+    fits.  Same style; the values are similar but shrunk towards the group
+    mean.  Saved as ``linear_mixed_regression_analysis.{png,svg}``."""
+    all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
+    subjects = all_df.subject.unique()
+    modeln = 'LBP' if model == 'LBP5' else 'MF'
+    data_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_orig.csv')
+    data_model_orig = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+model+'_orig.csv')
+    data_model_null = pd.read_csv(sv_folder + 'simulated_data' + '/df_simul_'+modeln+'_null_model.csv')
+    weights_o, weights_model_o, weights_model_null,\
+        pvals_o, pvals_model_o, pvals_model_null =\
+        linear_mixed_regression(data_orig, data_model_orig, data_model_null)
+    _plot_weight_panels(weights_o, weights_model_o, weights_model_null, subjects,
+                        savename='linear_mixed_regression_analysis', ax=ax, fig=fig,
+                        box_pvals=(pvals_o, pvals_model_o, pvals_model_null))
+    return (weights_o, weights_model_o, weights_model_null,
+            pvals_o, pvals_model_o, pvals_model_null)
+
+
 def stars_pval(pval):
     s = 'ns'
     if pval < 0.05 and pval >= 0.01:
@@ -4748,5 +4899,7 @@ if __name__ == '__main__':
     #     fit_subjects(method=opt_algorithm, model=model, data_augmen=False, n_init=1,
     #                   extra='' if '5' in model else 'null')
     # plot_confidence_calibration_vs_stim(source='all', column='zscore_abs_confidence')
-    response_confidence_stats(all_df=None, data_folder=DATA_FOLDER,
-                              categorical=False, verbose=True)
+    # response_confidence_stats(all_df=None, data_folder=DATA_FOLDER,
+    #                           categorical=False, verbose=True)
+    plot_regression_weights_lmm(sv_folder=SV_FOLDER, model='MF5',
+                                method='BADS', ax=None, fig=None)
