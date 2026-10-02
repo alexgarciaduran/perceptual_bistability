@@ -250,11 +250,16 @@ def accept_subject(data_folder, i, threshold_switches=3, n_training=8):
         df_ti = df.loc[df.trial_index == ti]
         responses = df_ti.response.values
         respvals, respcounts = np.unique(responses, return_counts=True)
-        avg_resp.append(sum(respcounts[respvals != 0]))
+        avg_resps = sum(respcounts[respvals != 0])
+        if (df_ti.freq == 4).any():
+            avg_resps /= 2
+        if (df_ti.sigma != 0).any():
+            continue
+        avg_resp.append(avg_resps)
     return np.mean(avg_resp) > threshold_switches
 
 
-def preprocess_df_examples(data_folder, threshold_switches=3, n_training=8):
+def preprocess_df_examples(data_folder, threshold_switches=2, n_training=8):
     # excludes participant if less than 1.5 switches in response in average
     df = load_data(data_folder=data_folder, n_participants='all',
                    filter_subjects=False)
@@ -270,11 +275,17 @@ def preprocess_df_examples(data_folder, threshold_switches=3, n_training=8):
             df_ti = df_sub.loc[df_sub.trial_index == ti]
             responses = df_ti.response.values
             respvals, respcounts = np.unique(responses, return_counts=True)
-            avg_resp.append(sum(respcounts[respvals != 0]))
+            avg_resps = sum(respcounts[respvals != 0])
+            if (df_ti.freq == 4).any():
+                avg_resps /= 2
+            if (df_ti.sigma != 0).any():
+                continue
+            avg_resp.append(avg_resps)
         avg_resp_per_subject.append(np.mean(avg_resp))
     plt.figure()
     plt.ylabel('Average number of percepts')
     plt.xlabel('Subject ID')
+    print(np.median(avg_resp_per_subject))
     plt.plot(np.arange(1, len(subjects)+1),
              avg_resp_per_subject)
     plt.axhline(threshold_switches)
@@ -15006,6 +15017,6 @@ if __name__ == '__main__':
     #                           slope_random_effect=False, plot_individual=True)
     # lmm_hysteresis_dominance(freq=2, plot_summary=True,
     #                           slope_random_effect=True, plot_individual=True)
-    lmm_vars_pshuffle(data_folder=DATA_FOLDER, freq=2,
-                      slope_random_effect=False)
+    # lmm_vars_pshuffle(data_folder=DATA_FOLDER, freq=2,
+    #                   slope_random_effect=False)
     
