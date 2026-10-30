@@ -226,7 +226,7 @@ def load_data(data_folder, n_participants='all', filter_subjects=True,
             df['subject'] = 's_' + str(i+1)
             if filter_subjects and \
                 not accept_subject(DATA_FOLDER, i,
-                                   threshold_switches=3, n_training=8):
+                                   threshold_switches=2, n_training=8):
                 continue
             df_0 = pd.concat((df_0, df))
         if preprocess_data:
@@ -238,7 +238,7 @@ def load_data(data_folder, n_participants='all', filter_subjects=True,
             return df_0
 
 
-def accept_subject(data_folder, i, threshold_switches=3, n_training=8):
+def accept_subject(data_folder, i, threshold_switches=2, n_training=8):
     # excludes participant if less than 3 responses per trial in average
     files = glob.glob(data_folder + '*.csv')
     df = pd.read_csv(files[i])
@@ -10087,6 +10087,50 @@ def compute_switch_prob_group(stim, choice, freq, pshuffle, n_bins=50, T_trial=2
     return pd.concat(results, ignore_index=True)
 
 
+def compute_switch_prob_per_subject(stim, choice, freq, pshuffle, n_bins=50,
+                                    T_trial=26, fps=60):
+    """
+    Per-subject L->R switch-rate traces, grouped by (freq, pshuffle).
+
+    Same binning as compute_switch_prob_group but WITHOUT averaging across
+    subjects, so per-subject peak latencies can be computed for the inset.
+
+    Returns
+    -------
+    per_subject : dict {(freq, pshuffle): array (n_subj, n_bins)}
+        Row i is subject i's mean L->R switch rate; subjects with no data in
+        that condition are NaN rows (kept so rows stay aligned across
+        conditions for paired tests).
+    bin_centers : array (n_bins,)
+    """
+    bin_edges = np.linspace(0, 1, n_bins + 1)
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    n_subj, n_trials, n_time = stim.shape
+    t_norm = np.linspace(0, 1, n_time - 1)
+    deltat = T_trial / n_bins
+
+    per_subject = {}
+    for f in np.unique(freq):
+        for ps in np.unique(pshuffle):
+            traces = np.full((n_subj, n_bins), np.nan)
+            for subj in range(n_subj):
+                mask = (freq[subj] == f) & (pshuffle[subj] == ps)
+                choice_sel = choice[subj, mask]
+                if choice_sel.size == 0:
+                    continue
+                p_LR_s = np.zeros(n_bins)
+                count = 0
+                for c in choice_sel:
+                    switch_LR = (c[:-1] == -1) & (c[1:] == 1)
+                    p_LR, _ = np.histogram(t_norm[switch_LR], bins=bin_edges)
+                    p_LR_s += p_LR
+                    count += 1
+                if count > 0:
+                    traces[subj] = p_LR_s / count / deltat
+            per_subject[(f, ps)] = traces
+    return per_subject, bin_centers
+
+
 def get_switch_indices(arr):
     """
     Detect switches in a response array (0/1 with NaN).
@@ -10222,6 +10266,9 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
         freqs_per_sub[i_s] = frequencies
         all_stims[i_s] = stimlist
     df_switches = compute_switch_prob_group(all_stims, choices_all_subject, freqs_per_sub, pshuffles_per_sub, n_bins=n_bins, fps=fps)
+    per_subject, bin_centers = compute_switch_prob_per_subject(
+        all_stims, choices_all_subject, freqs_per_sub, pshuffles_per_sub,
+        n_bins=n_bins, T_trial=tFrame, fps=fps)
     fig, axes = plt.subplots(ncols=2, figsize=(7.5, 4.))
     titles = ['One cycle', 'Two cycles']
     for i_ax, ax in enumerate(axes):
@@ -10248,11 +10295,70 @@ def plot_switch_rate_model(data_folder=DATA_FOLDER, sv_folder=SV_FOLDER,
                 timevals = d['time_bin']*tFrame
             axes[i_f].plot(timevals, switch_rate, label=f"{ps}",
                            color=colormap[ipsh], linewidth=4)
-    axes[0].legend(frameon=False, title='p(shuffle)')
+    axes[0].legend(frameon=False, title='p(shuffle)', loc='upper left')
     axes[1].set_xlim(-0.1, 13.1)
     axes[0].set_xlabel("Time (s)"); axes[1].set_xlabel("Time (s)")
     axes[0].set_ylabel("Switch rate L-->R")
     fig.tight_layout()
+
+    # --- per-panel inset: mean peak latency across subjects per p(shuffle) ---
+    ps_order = sorted(df_switches['pshuffle'].unique())[::-1]
+
+    def _model_peak_latencies(traces, freq):
+        """Per-subject latency (s) of the max L->R switch rate, using the same
+        smoothing / half-cycle folding as the group curves and restricting the
+        argmax to the ascending half (up to the stimulus reversal)."""
+        if freq == 4:
+            time_axis = np.asarray(bin_centers[::2]) * tFrame / 2
+        else:
+            time_axis = np.asarray(bin_centers) * tFrame
+        search = time_axis <= time_axis.max() / 2
+        t_search = time_axis[search]
+        lats = []
+        for sr in traces:
+            if np.all(np.isnan(sr)):
+                lats.append(np.nan)
+                continue
+            s = np.nan_to_num(sr, nan=0.0)
+            if window_conv is not None:
+                s = np.convolve(s, np.ones(window_conv)/window_conv, mode='same')
+            if freq == 4:
+                s = np.nanmean(np.row_stack([s[:n_bins//2], s[n_bins//2:]]), axis=0)
+            s = s[search]
+            if np.all(s == 0):
+                lats.append(np.nan)
+            else:
+                lats.append(t_search[np.argmax(s)])
+        return np.array(lats)
+
+    def _add_peak_inset(ax_panel, peaks):
+        """Inset barplot of mean peak latency across subjects per p(shuffle)."""
+        axin = inset_axes(ax_panel, width="45%", height="42%", loc='upper right',
+                          borderpad=0.6)
+        sns.barplot(peaks.T, palette=colormap, ax=axin, errorbar="se")
+        sns.stripplot(peaks.T, color='k', size=2.5, alpha=0.6, ax=axin)
+        heights = np.nanmean(peaks, axis=1)
+        bars = np.arange(len(ps_order))
+        axin.set_ylim(0, np.nanmax(heights) * 1.9)
+        # paired t-test stars between p(shuffle) levels
+        if len(ps_order) == 3:
+            pv_01 = scipy.stats.ttest_rel(peaks[0], peaks[1], nan_policy='omit').pvalue
+            pv_12 = scipy.stats.ttest_rel(peaks[1], peaks[2], nan_policy='omit').pvalue
+            pv_02 = scipy.stats.ttest_rel(peaks[0], peaks[2], nan_policy='omit').pvalue
+            barplot_annotate_brackets(0, 1, pv_01, bars, heights, dh=.04, barh=.03, fs=8, ax=axin)
+            barplot_annotate_brackets(1, 2, pv_12, bars, heights, dh=.04, barh=.03, fs=8, ax=axin)
+            barplot_annotate_brackets(0, 2, pv_02, bars, heights, dh=.22, barh=.03, fs=8, ax=axin)
+        axin.set_xticks(bars, [round(ps, 2) for ps in ps_order])
+        axin.set_xlabel('p(shuffle)', fontsize=12, labelpad=1)
+        axin.set_ylabel('Peak latency (s)', fontsize=12, labelpad=1)
+        axin.tick_params(labelsize=7)
+        axin.spines['right'].set_visible(False); axin.spines['top'].set_visible(False)
+
+    for i_f, f in enumerate([2, 4]):
+        peaks = np.array([_model_peak_latencies(per_subject[(f, ps)], f)
+                          for ps in ps_order])
+        _add_peak_inset(axes[i_f], peaks)
+
     fig.savefig(SV_FOLDER + 'simulated_hysteresis_switch_rate.png', dpi=400, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'simulated_hysteresis_switch_rate.svg', dpi=400, bbox_inches='tight')
 
@@ -15019,4 +15125,6 @@ if __name__ == '__main__':
     #                           slope_random_effect=True, plot_individual=True)
     # lmm_vars_pshuffle(data_folder=DATA_FOLDER, freq=2,
     #                   slope_random_effect=False)
+    
+    
     
