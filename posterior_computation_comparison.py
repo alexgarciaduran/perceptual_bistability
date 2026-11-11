@@ -3056,6 +3056,1289 @@ def plot_fdt_decomposition(B=0.1, alphas=(0.5, 1.0, 1.5, 2.0),
     return fig
 
 
+# ----------------------------------------------------------------------------
+# Convergence: the classical map against the dynamical system
+# ----------------------------------------------------------------------------
+# Each scheme has two readings that share one update rule f.
+#
+#   map        x^(k+1) = f(x^k)                     -- the textbook algorithm,
+#                                                      counted in iterations k
+#   dynamics   tau x' = f(x) - x                    -- a rate network relaxing
+#                                                      to the same fixed points,
+#                                                      counted in time t/tau
+#
+# The state x is the magnetisation m for MF and the log-message ratios M for
+# FBP; the beliefs are read out from it. We integrate the dynamics by Euler
+# with a neurally realistic step, dt = 0.01 tau (tau ~ 10-100 ms, so dt is well
+# under a millisecond), and everything about the dynamics is reported in t/tau
+# so that it does not depend on dt. Taking dt = 1 in the same integrator
+# reproduces the map exactly, which is how the map is run here, but the two are
+# different objects and are never put on a common step axis.
+#
+# Linearising about a fixed point with multiplier f'(x*) gives
+#       map        |x^k - x*| ~ |f'|^k
+#       dynamics   |x(t) - x*| ~ exp(-t/tau_eff),  tau_eff/tau = 1/(1 - f'(x*))
+# so the relaxation time diverges where f'(x*) = 1 -- exactly the bistability
+# onset J*. Slow convergence and bistability therefore share a cause. The map
+# instead needs |f'| < 1, so it also fails where f' < -1, which the dynamics
+# never does: that is a period-2 orbit of the map, not a property of the
+# inference.
+def ising_params_heterogeneous(theta, J, B, sigma_J=0.0, sigma_B=0.0, seed=0):
+    """Ising parameters on the graph `theta` with disorder: symmetric couplings
+    J_ij = J*(1 + sigma_J*xi_ij) with xi ~ N(0,1), and fields B_i = B +
+    sigma_B*eta_i. Both draws are centred over the edges / nodes, so J and B
+    stay the exact mean coupling and mean field. sigma_J = sigma_B = 0 recovers
+    the homogeneous model. The draw is fixed by `seed`, so sweeping J moves the
+    mean coupling while the disorder pattern stays put."""
+    n, mask = theta.shape[0], theta != 0
+    rng = np.random.default_rng(seed)
+    xi = rng.standard_normal((n, n))
+    xi = (xi + xi.T) / 2
+    xi -= xi[mask].mean()
+    eta = rng.standard_normal(n)
+    return theta * J * (1 + sigma_J * xi), B + sigma_B * (eta - eta.mean())
+
+
+def _map_step(kind, x, Jmat, Bvec, alpha, dt, mask):
+    """One Euler step of tau*x' = f(x) - x on the flat state vector x: the
+    magnetisations (MF, length n) or the log-message ratios on the directed
+    edges (FBP, length = number of nonzeros of Jmat). dt is in units of tau, so
+    dt = 1 reproduces the classical map x <- f(x)."""
+    if kind == 'mf':
+        return x + dt * (np.tanh(Bvec + Jmat @ x) - x)
+    M = np.zeros_like(Jmat)
+    M[mask] = x
+    H = (Bvec + M.sum(0))[:, None] - alpha * M.T   # H[i, j] = cavity field i->j
+    z = np.clip(np.tanh(Jmat * alpha) * np.tanh(H), -1 + 1e-15, 1 - 1e-15)
+    return x + dt * (np.arctanh(z)[mask] / alpha - x)
+
+
+def _beliefs(kind, x, Jmat, Bvec, mask):
+    """q(x_i = 1) per node from a flat state vector -- the quantity both the
+    map and the dynamics represent, and the only one comparable across
+    schemes, since their state spaces differ (nodes for MF, edges for FBP)."""
+    if kind == 'mf':
+        return (x + 1) / 2
+    M = np.zeros_like(Jmat)
+    M[mask] = x
+    return 1 / (1 + np.exp(-2 * (Bvec + M.sum(0))))
+
+
+def iterate_dynamics(kind, Jmat, Bvec, alpha=1.0, n_iter=200000, tol=1e-14,
+                     dt=0.01, seed=0, eps=0.05, init='small', x0=None):
+    """Integrate one scheme and return the trajectory.
+
+    kind: 'mf' or 'fbp' (alpha=1 is LBP). dt is in units of tau: dt=0.01 is the
+    rate-network dynamics, dt=1 is the classical map. init='small' starts eps
+    away from the symmetric state (the linear regime, where the decay rate is
+    the Jacobian's); init='uniform' draws the state uniformly in [-eps, eps],
+    which with eps=1 spreads the starts over both basins; x0 overrides both.
+    The initial state depends only on (seed, init, eps), never on dt, so the
+    same seed gives the map and the dynamics identical initial conditions.
+
+    Returns (x_traj, q_traj): the state trajectory, shape (n_steps+1, n_state),
+    with the fixed point in its last row, and the beliefs along the way. Row n
+    is iteration k=n for the map and time t/tau = n*dt for the dynamics."""
+    n = len(Bvec)
+    mask = Jmat != 0.0
+    rng = np.random.default_rng(seed)
+    size = n if kind == 'mf' else int(mask.sum())
+    if x0 is not None:
+        x = np.array(x0, float)
+    elif init == 'uniform':
+        x = rng.uniform(-eps, eps, size)
+    else:
+        x = eps * rng.standard_normal(size)
+    xs, qs = [x.copy()], [_beliefs(kind, x, Jmat, Bvec, mask)]
+    for _ in range(n_iter):
+        x = _map_step(kind, x, Jmat, Bvec, alpha, dt, mask)
+        xs.append(x.copy())
+        qs.append(_beliefs(kind, x, Jmat, Bvec, mask))
+        if np.max(np.abs(xs[-1] - xs[-2])) < tol:
+            break
+    return np.array(xs), np.array(qs)
+
+
+def map_jacobian_eigs(kind, xstar, Jmat, Bvec, alpha=1.0, h=1e-7):
+    """Eigenvalues of F = df/dx at xstar, by finite differences. These are the
+    map's multipliers, and they carry both readings:
+
+        map stability      max |mu| < 1   (a mu < -1 gives a period-2 orbit)
+        relaxation time    tau_eff/tau = 1 / (1 - max Re mu)
+
+    Neither depends on the integration step."""
+    mask = Jmat != 0.0
+    k = len(xstar)
+    f0 = _map_step(kind, xstar, Jmat, Bvec, alpha, 1.0, mask)
+    F = np.empty((k, k))
+    for i in range(k):
+        xp = np.array(xstar, float)
+        xp[i] += h
+        F[:, i] = (_map_step(kind, xp, Jmat, Bvec, alpha, 1.0, mask) - f0) / h
+    return np.linalg.eigvals(F)
+
+
+def map_multiplier(kind, J, alpha, theta, xstar, B=0.0):
+    """Closed-form multiplier f'(x*) of the uniform mode, with lambda_max of the
+    adjacency in place of N (as in _jstar):
+
+        MF  :  f'(m*) = (1 - m*^2) * J * lmax
+        FBP :  f'(M*) = ((lmax-alpha)/alpha) * t * (1-tanh^2 u)/(1-(t tanh u)^2)
+
+    with t = tanh(J*alpha) and u = M*(lmax-alpha)+B; the FBP form tends to the
+    MF one as alpha -> 0. f' = 1 is J = J*(alpha), where the relaxation time
+    1/(1-f') diverges. Valid for uniform J and B, and the leading mode only
+    while alpha < lmax/2; use map_jacobian_eigs otherwise."""
+    lmax = float(np.max(np.linalg.eigvalsh(theta)))
+    if kind == 'mf':
+        return (1 - xstar ** 2) * J * lmax
+    t, u = np.tanh(J * alpha), xstar * (lmax - alpha) + B
+    return (lmax - alpha) / alpha * t * (1 - np.tanh(u) ** 2) / (1 - (t * np.tanh(u)) ** 2)
+
+
+def _relax_time(x, dt, floor=1e-12, frac=0.25, min_pts=10):
+    """Measured relaxation time tau_eff/tau from a trajectory, fitted on the
+    successive differences |x^(n+1) - x^n|. These decay at the same rate as the
+    error but need no estimate of the fixed point, which would bias the fit
+    near the numerical floor. The fit uses the LAST `frac` of the stretch above
+    the floor, which is the asymptotic regime: just above J* a value-window fit
+    still sits in the slow transient near the fixed point that has just lost
+    stability, and overestimates tau_eff by tens of percent. Returns nan when
+    the clean stretch is too short or is not monotone (a period-2 orbit)."""
+    d = np.max(np.abs(np.diff(x, axis=0)), axis=1)
+    k = np.where(d > floor)[0]
+    if len(k) < min_pts:
+        return np.nan
+    k = k[int(len(k) * (1 - frac)):]
+    if len(k) < min_pts:
+        return np.nan
+    e = d[k]
+    if np.any(e[1:] > e[:-1] * 1.01):
+        return np.nan
+    slope = np.polyfit(k, np.log(e), 1)[0]          # per step
+    return float(-dt / slope) if slope < 0 else np.nan
+
+
+def compute_convergence_vs_steps(graphs, J_grid, alphas=(0.5, 1.0, 1.5, 2.0),
+                                 B=0.0, B_curve=0.1, sigma_J=0.0, sigma_B=0.0,
+                                 J_frac=0.8, n_iter=200000, conv_tol=1e-6,
+                                 dt=0.01, seed=0):
+    """Convergence of the DYNAMICS for every (graph, scheme, J), in units of
+    tau so that nothing depends on dt.
+
+    graphs: {label: adjacency}. Couplings and fields come from
+    ising_params_heterogeneous, so sigma_J/sigma_B > 0 makes them disordered.
+    Per scheme and J it stores the measured relaxation time `tau` (in units of
+    tau), the exact one `tau_num` from the Jacobian, its uniform-mode closed
+    form `tau_th` (meaningful only in the homogeneous case), and the time
+    `t_conv` for |x(t) - x*|_inf to fall below conv_tol.
+
+    Separately, at the single coupling J_show = J_frac/lambda_max (a fixed
+    fraction of the MF threshold) and at mean field B_curve, it stores the two
+    belief error curves |q(t) - q*| and |q(t) - p_exact|. These need a nonzero
+    field to say anything: at B=0 the exact marginal is 0.5 and every
+    subcritical scheme converges to it, so the asymptotic bias vanishes."""
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    out = {'J_grid': np.asarray(J_grid), 'B': B, 'B_curve': B_curve, 'dt': dt,
+           'sigma_J': sigma_J, 'sigma_B': sigma_B, 'conv_tol': conv_tol,
+           'labels': list(graphs), 'theta': dict(graphs), 'J_show': {},
+           'curves': {}, 'tau': {}, 'tau_th': {}, 'tau_num': {}, 't_conv': {}}
+    for lab, theta in graphs.items():
+        lmax = float(np.max(np.linalg.eigvalsh(theta)))
+        out['J_show'][lab] = J_show = J_frac / lmax
+        for m in tqdm(ms, desc=f'convergence {lab}'):
+            key = (lab, m['kind'], m['alpha'])
+            tau, tcv, tau_th, tau_num = [], [], [], []
+            for J in np.asarray(J_grid):
+                Jm, Bv = ising_params_heterogeneous(theta, J, B, sigma_J, sigma_B, seed)
+                x, _ = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                        n_iter=n_iter, dt=dt, seed=seed)
+                err = np.max(np.abs(x - x[-1]), axis=1)
+                tau.append(_relax_time(x, dt))
+                below = np.where(err < conv_tol)[0]
+                tcv.append(below[0] * dt if len(below) else np.nan)
+                mu = map_jacobian_eigs(m['kind'], x[-1], Jm, Bv, alpha=m['alpha'])
+                tau_num.append(1.0 / (1.0 - float(np.max(mu.real))))
+                fp = map_multiplier(m['kind'], J, m['alpha'], theta,
+                                    float(np.mean(np.abs(x[-1]))), B=B)
+                tau_th.append(1.0 / (1.0 - fp))
+            out['tau'][key] = np.array(tau, float)
+            out['tau_th'][key] = np.array(tau_th, float)
+            out['tau_num'][key] = np.array(tau_num, float)
+            out['t_conv'][key] = np.array(tcv, float)
+            Jm, Bc = ising_params_heterogeneous(theta, J_show, B_curve,
+                                                sigma_J, sigma_B, seed)
+            _, q = iterate_dynamics(m['kind'], Jm, Bc, alpha=m['alpha'],
+                                    n_iter=n_iter, dt=dt, seed=seed)
+            p_ex = exact_marginals(Jm, Bc)
+            out['curves'][key] = (np.max(np.abs(q - q[-1]), axis=1),
+                                  np.max(np.abs(q - p_ex), axis=1))
+    return out
+
+
+def plot_convergence_vs_steps(d_list=(2, 3, 4, 5, 6), n=8,
+                              J_grid=np.round(np.arange(0.015, 1.0, 0.015), 4),
+                              alphas=(0.5, 1.0, 1.5, 2.0), B=0.0, B_curve=0.1,
+                              sigma_J=0.0, sigma_B=0.0, J_frac=0.8, dt=0.01,
+                              conv_tol=1e-6, cube_for_d3=True, graph_seed=1,
+                              t_show=None, recompute=False, save=True,
+                              fname='convergence_vs_steps'):
+    """Convergence of the variational DYNAMICS across d-regular graphs, in
+    units of the membrane time constant tau.
+
+    Rows: (1) belief error against time at J = J_frac/d and field B_curve,
+    solid to the scheme's own fixed point and dotted to the exact marginal --
+    the latter plateaus at the asymptotic bias, which no amount of time
+    removes; (2) relaxation time tau_eff/tau, markers measured and lines exact
+    (the closed form map_multiplier where it applies, i.e. uniform J and B with
+    alpha < d/2, otherwise the Jacobian); (3) time to reach
+    |x(t) - x*|_inf < conv_tol. Vertical dashed lines are the analytic
+    J*(alpha), drawn only in the homogeneous case: both times diverge there."""
+    het = bool(sigma_J or sigma_B)
+    if het and fname == 'convergence_vs_steps':
+        fname = f'convergence_vs_steps_sJ{sigma_J:g}_sB{sigma_B:g}'
+    graphs = {}
+    for d in d_list:
+        graphs[f'd = {d}'] = (THETA_NECKER if (d == 3 and cube_for_d3) else
+                              get_regular_graph(d=d, n=n, seed=graph_seed).astype(float))
+    path = DATA_FOLDER + f'{fname}_data.pkl'
+    if not recompute and os.path.exists(path):
+        with open(path, 'rb') as f:
+            c = pickle.load(f)
+        print(f'loaded convergence data from {path}')
+    else:
+        c = compute_convergence_vs_steps(graphs, J_grid, alphas=alphas, B=B,
+                                         B_curve=B_curve, sigma_J=sigma_J,
+                                         sigma_B=sigma_B, J_frac=J_frac,
+                                         conv_tol=conv_tol, dt=dt)
+        with open(path, 'wb') as f:
+            pickle.dump(c, f)
+        print(f'saved convergence data to {path}')
+
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    labels, Jg, dtc = c['labels'], c['J_grid'], c['dt']
+    nc = len(labels)
+    fig, axes = plt.subplots(3, nc, figsize=(3.2 * nc, 8.8), squeeze=False)
+    for ci, lab in enumerate(labels):
+        th = c['theta'][lab]
+        lmax = float(np.max(np.linalg.eigvalsh(th)))
+        a0, a1, a2 = axes[0, ci], axes[1, ci], axes[2, ci]
+        tmax = 0
+        for m in ms:
+            key = (lab, m['kind'], m['alpha'])
+            e_q, e_ex = c['curves'][key]
+            t = np.arange(len(e_q)) * dtc
+            tmax = max(tmax, t[-1])
+            a0.plot(t, e_q, color=m['c'], lw=1.8, label=m['lab'])
+            a0.plot(np.arange(len(e_ex)) * dtc, e_ex, color=m['c'], lw=1.0, ls=':')
+            a1.plot(Jg, c['tau'][key], color=m['c'], lw=0, marker='o', ms=2.6)
+            exact_ok = (not het) and (m['kind'] == 'mf' or m['alpha'] < lmax / 2)
+            a1.plot(Jg, c['tau_th'][key] if exact_ok else c['tau_num'][key],
+                    color=m['c'], lw=1.4)
+            a2.plot(Jg, c['t_conv'][key], color=m['c'], lw=1.8)
+            js = np.nan if het else _jstar(m['kind'], m['alpha'], th)
+            if np.isfinite(js) and js <= Jg[-1]:
+                for ax in (a1, a2):
+                    ax.axvline(js, color=m['c'], lw=1.0, ls='--', alpha=0.7)
+        a0.set_yscale('log')
+        a0.set_ylim(1e-16, 5)
+        a0.set_xlim(0, t_show or min(1.05 * tmax, 60))
+        a0.set_title(f'{lab}\n$J$ = {c["J_show"][lab]:.3f},  $B$ = {c["B_curve"]}',
+                     fontsize=13)
+        a1.set_yscale('log')
+        a2.set_yscale('log')
+        for ax in (a1, a2):
+            ax.set_xlim(Jg[0], Jg[-1])
+            sfx = ' (mean)' if het else ''
+            ax.set_xlabel(f'Coupling $J${sfx},  $B$={c["B"]:g}{sfx}')
+        if ci == 0:
+            a0.set_ylabel(r'belief error  $|q(t) - q^\ast|_\infty$')
+            a0.set_xlabel(r'time $t/\tau$')
+            a1.set_ylabel(r'relaxation time $\tau_{\rm eff}/\tau$')
+            a2.set_ylabel(rf'time to $10^{{{int(np.log10(c["conv_tol"]))}}}$  $(t/\tau)$')
+        else:
+            for ax in (a0, a1, a2):
+                ax.set_yticklabels([])
+    # two legends: colour = scheme, line style = what is drawn in which row
+    from matplotlib.lines import Line2D
+    cols = [Line2D([0], [0], color=m['c'], lw=2.5, label=m['lab']) for m in ms]
+    g = '0.35'
+    styles = [Line2D([0], [0], color=g, lw=1.8,
+                     label=r'row 1: to own fixed point $q^\ast$'),
+              Line2D([0], [0], color=g, lw=1.2, ls=':',
+                     label=r'row 1: to exact posterior $p$'),
+              Line2D([0], [0], color=g, lw=0, marker='o', ms=4,
+                     label=r'row 2: $\tau_{\rm eff}$ measured'),
+              Line2D([0], [0], color=g, lw=1.6,
+                     label=r'row 2: $\tau_{\rm eff}=1/(1-f^\prime)$ predicted'),
+              Line2D([0], [0], color=g, lw=1.6,
+                     label=r'row 3: time to converge'),
+              Line2D([0], [0], color=g, lw=1.2, ls='--',
+                     label=r'rows 2-3: $J^\ast(\alpha)$ (vertical)')]
+    # anchored from their lower edge so they grow upward, clear of the titles
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    l1 = fig.legend(handles=styles, loc='lower center', ncol=3,
+                    bbox_to_anchor=(0.5, 1.005), frameon=False, fontsize=11)
+    fig.add_artist(l1)
+    fig.legend(handles=cols, loc='lower center', ncol=len(cols),
+               bbox_to_anchor=(0.5, 1.085), frameon=False, fontsize=12)
+    if het:
+        fig.suptitle(rf'disorder: $\sigma_J$ = {sigma_J:g},  $\sigma_B$ = {sigma_B:g}',
+                     y=1.16, fontsize=14)
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
+    return fig
+
+
+def plot_convergence_traces(theta=THETA_NECKER, J_list=(0.25, 0.45, 0.80),
+                            alphas=(0.5, 1.0, 1.5, 2.0), B=0.0, sigma_J=0.0,
+                            sigma_B=0.0, n_init=30, t_max=40.0, dt=0.01,
+                            eps=1.0, init='uniform', save=True,
+                            fname='convergence_traces'):
+    """Example percept traces of the DYNAMICS from n_init random initial states.
+
+    Rows: coupling J. Columns: scheme. Each trace is the global percept
+    mean_i q_i against time t/tau, started from a random state spread over both
+    basins. Below J*(alpha) every initialisation funnels into the single fixed
+    point; above it the traces split into the two confident branches, so the
+    final percept depends on where the dynamics started and not only on the
+    stimulus. The dashed grey line is the exact marginal."""
+    het = bool(sigma_J or sigma_B)
+    if het and fname == 'convergence_traces':
+        fname = f'convergence_traces_sJ{sigma_J:g}_sB{sigma_B:g}'
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    n_steps = int(round(t_max / dt))
+    nr, nc = len(J_list), len(ms)
+    fig, axes = plt.subplots(nr, nc, figsize=(2.5 * nc, 2.3 * nr),
+                             sharex=True, sharey=True, squeeze=False)
+    for ri, J in enumerate(J_list):
+        Jm, Bv = ising_params_heterogeneous(theta, J, B, sigma_J, sigma_B)
+        p_ex = float(np.mean(exact_marginals(Jm, Bv)))
+        for ci, m in enumerate(ms):
+            ax = axes[ri, ci]
+            for s in range(n_init):
+                _, q = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                        n_iter=n_steps, tol=0.0, dt=dt, seed=s,
+                                        eps=eps, init=init)
+                ax.plot(np.arange(len(q)) * dt, q.mean(1), color=m['c'],
+                        lw=1.0, alpha=0.7)
+            ax.axhline(p_ex, color='gray', lw=1.2, ls='--')
+            js = np.nan if het else _jstar(m['kind'], m['alpha'], theta)
+            ax.set_ylim(-0.02, 1.02)
+            if ri == 0:
+                ax.set_title(m['lab'] + (rf'  ($J^\ast$={js:.2f})' if np.isfinite(js)
+                                         else ''), fontsize=12)
+            if ri == nr - 1:
+                ax.set_xlabel(r'time $t/\tau$')
+            if ci == 0:
+                ax.set_ylabel(f'$J$ = {J}\n' + r'percept $\langle q_i \rangle$')
+    fig.tight_layout()
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
+    return fig
+
+
+def plot_convergence_vs_loopiness(n=9, levels=(0, 1, 2, 4, 7, 11), n_graphs=5,
+                                  J_list=(0.2, 0.4, 0.6), alphas=(0.5, 1.0, 1.5, 2.0),
+                                  B=0.0, sigma_J=0.0, sigma_B=0.0, conv_tol=1e-6,
+                                  dt=0.01, n_iter=200000, seed=0, save=True,
+                                  fname='convergence_vs_loopiness'):
+    """Relaxation time of the dynamics versus loopiness L (edges added to a
+    spanning tree, L = E-N+1 independent cycles), one panel per coupling,
+    median over n_graphs graphs. L=0 is a tree, where BP is exact; adding loops
+    slows every scheme down, and the ordering follows the bistability onset."""
+    fam = make_cycle_family(n=n, levels=levels, n_graphs=n_graphs, seed=seed)
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    tcv = {}
+    for L, adjs in fam.items():
+        for J in tqdm(J_list, desc=f'loopiness L={L}'):
+            for m in ms:
+                v = []
+                for gi, A in enumerate(adjs):
+                    Jm, Bv = ising_params_heterogeneous(A, J, B, sigma_J, sigma_B, gi)
+                    x, _ = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                            n_iter=n_iter, dt=dt)
+                    err = np.max(np.abs(x - x[-1]), axis=1)
+                    below = np.where(err < conv_tol)[0]
+                    v.append(below[0] * dt if len(below) else np.nan)
+                tcv[(L, J, m['kind'], m['alpha'])] = np.nanmedian(v)
+    Ls = sorted(fam)
+    fig, axes = plt.subplots(1, len(J_list), figsize=(3.6 * len(J_list), 3.4),
+                             sharey=True, squeeze=False)
+    for ci, J in enumerate(J_list):
+        ax = axes[0, ci]
+        for m in ms:
+            ax.plot(Ls, [tcv[(L, J, m['kind'], m['alpha'])] for L in Ls],
+                    color=m['c'], lw=1.8, marker='o', ms=4, label=m['lab'])
+        ax.set_yscale('log')
+        ax.set_xlabel('loopiness $L$')
+        ax.set_title(f'$J$ = {J}')
+    axes[0, 0].set_ylabel(rf'time to $10^{{{int(np.log10(conv_tol))}}}$  $(t/\tau)$')
+    axes[0, 0].legend(frameon=False, fontsize=10)
+    fig.tight_layout()
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# The map against the dynamics
+# ----------------------------------------------------------------------------
+def _nonbipartite_regular(d=3, n=8, tries=20):
+    """A d-regular graph on n nodes that is not bipartite (so lambda_min >
+    -lambda_max), as a control for the bipartite Necker cube."""
+    for s in range(tries):
+        A = get_regular_graph(d=d, n=n, seed=s).astype(float)
+        if not nx.is_bipartite(nx.from_numpy_array(A)):
+            return A
+    raise RuntimeError('no non-bipartite d-regular graph found')
+
+
+def _period2(x, tol, tail=50):
+    """True when a trajectory has settled on a period-2 orbit: it alternates,
+    x^n ~= x^(n-2) while x^n != x^(n-1), AND the amplitude is not decaying over
+    the last `tail` steps. Both conditions are needed -- a damped oscillation
+    (negative multiplier, still converging) alternates too, and would otherwise
+    be mistaken for a limit cycle whenever it happens to sit near tol."""
+    if len(x) < tail + 3:
+        return False
+    d = np.max(np.abs(np.diff(x, axis=0)), axis=1)
+    return bool(d[-1] > tol and np.max(np.abs(x[-1] - x[-3])) < tol
+                and d[-1] > 0.9 * d[-tail])
+
+
+def plot_map_vs_dynamics(configs=None,
+                         J_grid=np.round(np.arange(0.03, 1.21, 0.03), 4),
+                         alphas=(0.5, 1.0, 1.5, 2.0), B=0.0, J_show=0.75,
+                         dt=0.01, n_seeds=12, n_units=400, conv_tol=1e-6,
+                         eps=1.0, init='uniform', recompute=False, save=True,
+                         fname='map_vs_dynamics'):
+    """The classical map against the dynamical system, over graphs and disorder.
+
+    The two are counted in their own units and never share a step axis: the map
+    in iterations k, the dynamics in time t/tau (integrated at dt, reported
+    dt-free). Both are given the same budget of n_units.
+
+    configs: sequence of (label, adjacency, sigma_J, sigma_B); the default
+    crosses the bipartite Necker cube with a non-bipartite 3-regular graph,
+    each homogeneous and disordered. Rows: (1) update size per unit for LBP at
+    J = J_show from n_seeds random initial states, map in colour against k and
+    dynamics in black dashed against t/tau; a converging run decays
+    geometrically, one caught by the map's period-2 orbit goes flat.
+    (2) median units to converge, map solid and dynamics dashed. (3) fraction
+    of initialisations ending on a period-2 orbit."""
+    if configs is None:
+        nb = _nonbipartite_regular(d=3, n=8)
+        configs = (('cube (bipartite)', THETA_NECKER, 0.0, 0.0),
+                   ('cube + disorder', THETA_NECKER, 0.3, 0.2),
+                   ('3-regular (non-bip.)', nb, 0.0, 0.0),
+                   ('non-bip. + disorder', nb, 0.3, 0.2))
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    lbp = [m for m in ms if m['kind'] == 'fbp' and abs(m['alpha'] - 1) < 1e-9][0]
+    # (step in units of tau, steps allowed, how a step count becomes units)
+    runs = (('map', 1.0, int(n_units), '-'),
+            ('dyn', dt, int(round(n_units / dt)), '--'))
+    path = DATA_FOLDER + f'{fname}_data.pkl'
+    if not recompute and os.path.exists(path):
+        with open(path, 'rb') as f:
+            sweep = pickle.load(f)
+        print(f'loaded map-vs-dynamics data from {path}')
+    else:
+        sweep = {}
+        for lab, theta, sJ, sB in configs:
+            for m in tqdm(ms, desc=f'{lab}'):
+                for tag, h, nit, _ in runs:
+                    med, frac = [], []
+                    for J in J_grid:
+                        Jm, Bv = ising_params_heterogeneous(theta, J, B, sJ, sB)
+                        u, cyc = [], []
+                        for s in range(n_seeds):
+                            x, _ = iterate_dynamics(m['kind'], Jm, Bv,
+                                                    alpha=m['alpha'], n_iter=nit,
+                                                    tol=conv_tol * 1e-4, dt=h,
+                                                    seed=s, eps=eps, init=init)
+                            p2 = _period2(x, conv_tol)
+                            cyc.append(p2)
+                            err = np.max(np.abs(x - x[-1]), axis=1)
+                            b = np.where(err < conv_tol)[0]
+                            u.append(b[0] * h if (len(b) and not p2) else np.nan)
+                        u = np.array(u, float)
+                        med.append(np.nanmedian(u) if np.any(np.isfinite(u)) else np.nan)
+                        frac.append(float(np.mean(cyc)))
+                    sweep[(lab, m['kind'], m['alpha'], tag)] = (np.array(med, float),
+                                                                np.array(frac, float))
+        with open(path, 'wb') as f:
+            pickle.dump(sweep, f)
+        print(f'saved map-vs-dynamics data to {path}')
+
+    nc = len(configs)
+    fig, axes = plt.subplots(3, nc, figsize=(3.3 * nc, 8.6), squeeze=False)
+    for ci, (lab, theta, sJ, sB) in enumerate(configs):
+        a0, a1, a2 = axes[0, ci], axes[1, ci], axes[2, ci]
+        Jm, Bv = ising_params_heterogeneous(theta, J_show, B, sJ, sB)
+        for s in range(n_seeds):
+            for tag, h, _, ls in runs:
+                col = lbp['c'] if tag == 'map' else 'k'
+                x, _ = iterate_dynamics(lbp['kind'], Jm, Bv, alpha=lbp['alpha'],
+                                        n_iter=int(round(60 / h)), tol=0.0, dt=h,
+                                        seed=s, eps=eps, init=init)
+                d = np.max(np.abs(np.diff(x, axis=0)), axis=1)
+                a0.plot(np.arange(1, len(d) + 1) * h, np.maximum(d, 1e-17),
+                        color=col, lw=1.0, ls=ls, alpha=0.7)
+        for m in ms:
+            for tag, _, _, ls in runs:
+                med, frac = sweep[(lab, m['kind'], m['alpha'], tag)]
+                a1.plot(J_grid, med, color=m['c'], lw=1.8, ls=ls)
+                a2.plot(J_grid, frac, color=m['c'], lw=1.8, ls=ls)
+        ev = np.linalg.eigvalsh(theta)
+        a0.set_yscale('log')
+        a0.set_ylim(1e-17, 5)
+        a0.set_xlim(0, 60)
+        a0.set_xlabel(r'iterations $k$  /  time $t/\tau$')
+        a0.set_title(f'{lab}\n' + rf'$\lambda_{{\min}}$ = {ev[0]:.2f}', fontsize=13)
+        a0.text(0.96, 0.95, f'LBP, $J$={J_show}', transform=a0.transAxes,
+                ha='right', va='top', fontsize=10)
+        a1.set_yscale('log')
+        a1.axhline(n_units, color='0.5', lw=1.0, ls=':')   # budget: above it is censored
+        a2.set_ylim(-0.04, 1.04)
+        for ax in (a1, a2):
+            ax.set_xlim(J_grid[0], J_grid[-1])
+            ax.set_xlabel('mean coupling $J$')
+        if ci == 0:
+            a0.set_ylabel('update size per unit')
+            a1.set_ylabel(r'median $k$ (map) / $t/\tau$ (dyn.)')
+            a2.set_ylabel('fraction on a 2-cycle')
+        else:
+            for ax in (a0, a1, a2):
+                ax.set_yticklabels([])
+    from matplotlib.lines import Line2D
+    handles = [Line2D([0], [0], color=m['c'], lw=2, label=m['lab']) for m in ms]
+    handles += [Line2D([0], [0], color='gray', lw=2, ls='-', label=r'map (iterations $k$)'),
+                Line2D([0], [0], color='gray', lw=2, ls='--',
+                       label=rf'dynamics ($t/\tau$, $dt$={dt:g})')]
+    fig.legend(handles=handles, loc='upper center', ncol=len(handles),
+               bbox_to_anchor=(0.5, 1.02), frameon=False)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
+    return fig
+
+
+def plot_dynamics_vs_map_fp(theta=THETA_NECKER, J_list=(0.3, 0.5, 0.8),
+                            alphas=(0.5, 1.0, 1.5, 2.0), B=0.0, sigma_J=0.3,
+                            sigma_B=0.2, n_init=20, n_units=200, dt=0.01,
+                            conv_tol=1e-6, eps=1.0, init='uniform',
+                            save=True, fname='dynamics_vs_map_fp'):
+    """Error of the dynamics to where the classical MAP ends up, from the same
+    initial condition.
+
+    Every run gets the same budget of n_units: the map runs n_units iterations
+    and the dynamics n_units time constants, and nothing is discarded. The
+    reference is the map's state at k = n_units, which is its fixed point when
+    it has one and one phase of its period-2 orbit when it has not. The error
+    is taken in the beliefs q_i, the per-node quantity the map represents, so
+    it is comparable across schemes whose state spaces differ (nodes for MF,
+    edges for FBP).
+
+    Rows: coupling J. Columns: scheme. A curve falling to zero means the
+    dynamics reached the same beliefs the map did; a plateau is the distance
+    between the two answers. Grey marks the initialisations where the map was
+    left on a period-2 orbit, so its reference is not a fixed point at all."""
+    het = bool(sigma_J or sigma_B)
+    if het and fname == 'dynamics_vs_map_fp':
+        fname = f'dynamics_vs_map_fp_sJ{sigma_J:g}_sB{sigma_B:g}'
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    n_steps = int(round(n_units / dt))
+    nr, nc = len(J_list), len(ms)
+    fig, axes = plt.subplots(nr, nc, figsize=(2.9 * nc, 2.6 * nr),
+                             sharex=True, sharey=True, squeeze=False)
+    for ri, J in enumerate(J_list):
+        Jm, Bv = ising_params_heterogeneous(theta, J, B, sigma_J, sigma_B)
+        for ci, m in enumerate(ms):
+            ax, n_same, n_cyc = axes[ri, ci], 0, 0
+            for s in range(n_init):
+                xm, qm = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                          n_iter=int(n_units), tol=0.0, dt=1.0,
+                                          seed=s, eps=eps, init=init)
+                cyc = _period2(xm, conv_tol)
+                n_cyc += bool(cyc)
+                _, qd = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                         n_iter=n_steps, tol=0.0, dt=dt,
+                                         seed=s, eps=eps, init=init)
+                e = np.max(np.abs(qd - qm[-1]), axis=1)
+                n_same += bool(e[-1] < conv_tol)
+                ax.plot(np.arange(len(e)) * dt, np.maximum(e, 1e-17), lw=1.0,
+                        alpha=0.75, color='0.55' if cyc else m['c'])
+            ax.set_yscale('log')
+            ax.set_ylim(1e-17, 5)
+            ax.text(0.96, 0.95, f'{n_same}/{n_init} same', transform=ax.transAxes,
+                    ha='right', va='top', fontsize=10)
+            ax.text(0.96, 0.80, f'{n_cyc}/{n_init} map on 2-cycle',
+                    transform=ax.transAxes, ha='right', va='top',
+                    fontsize=9, color='0.35')
+            if ri == 0:
+                ax.set_title(m['lab'], fontsize=12)
+            if ri == nr - 1:
+                ax.set_xlabel(r'time $t/\tau$')
+            if ci == 0:
+                ax.set_ylabel(f'$J$ = {J}\n' + r'$|q(t) - q^{\rm map}|_\infty$')
+    fig.suptitle((rf'disorder: $\sigma_J$ = {sigma_J:g},  $\sigma_B$ = {sigma_B:g}'
+                  if het else 'homogeneous') +
+                 rf',  $B$ = {B:g};  map run for {n_units} iterations', y=1.0,
+                 fontsize=14)
+    fig.tight_layout()
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# Zheng et al. (2020) style: mean relative error vs iterations, by topology
+# ----------------------------------------------------------------------------
+# Zheng et al., Neural Networks 126:42-51, validate a rate network against the
+# mean-field algorithm with the mean relative error of their eq. (25),
+#     delta = (1/M) sum_i |p_i^ref - p_i| / p_i^ref,
+# plotted against the iteration count for a set of graph topologies (chain,
+# single loop, grid, fully connected) and for couplings and fields drawn as
+# J_ij ~ U[0, lambda_1] and h_i ~ U[-lambda_2, lambda_2]. That comparison is
+# ours between the classical map and the network dynamics, so we reproduce
+# their layout with the map's fixed point as the reference and one curve per
+# scheme rather than mean field alone.
+def zheng_topologies(n=9, include_cube=True):
+    """The graph family of Zheng et al. Fig. 2 and 4 on n nodes -- chain,
+    single loop, grid (nearest square), fully connected, 8-connected grid and
+    a random graph with p=0.5 -- plus the Necker cube."""
+    import math
+    s = int(round(math.sqrt(n)))
+    g = {'chain': nx.path_graph(n),
+         'single loop': nx.cycle_graph(n),
+         'grid': nx.convert_node_labels_to_integers(nx.grid_2d_graph(s, s)),
+         'fully connected': nx.complete_graph(n),
+         '8-connected grid': nx.convert_node_labels_to_integers(
+             nx.grid_2d_graph(s, s)),
+         'random $p$=0.5': nx.gnp_random_graph(n, 0.5, seed=0)}
+    d = {k: nx.to_numpy_array(v, dtype=float) for k, v in g.items()}
+    # 8-connected grid: add the diagonals of the s x s lattice
+    A = d['8-connected grid']
+    for i in range(s):
+        for j in range(s):
+            for di, dj in ((1, 1), (1, -1)):
+                a, b = i + di, j + dj
+                if 0 <= a < s and 0 <= b < s:
+                    u, v = i * s + j, a * s + b
+                    A[u, v] = A[v, u] = 1.0
+    if include_cube:
+        d['Necker cube'] = THETA_NECKER.copy()
+    return d
+
+
+def zheng_params(theta, lam_J, lam_B, seed=0, signed=True):
+    """Couplings and fields in the parameterisation of Zheng et al.: the
+    lambdas set the ranges outright rather than a mean and a spread.
+
+    signed=False reproduces their draw, J_ij ~ U[0, lam_J], which is purely
+    ferromagnetic. signed=True (the default here) draws J_ij ~ U[-lam_J,
+    lam_J], so bonds can disagree with one another. That is the more variable
+    and the more honest ensemble: a sign-indefinite coupling matrix is
+    frustrated, has no global alignment to fall into, and its spectrum is
+    roughly symmetric whatever the graph. Fields are h_i ~ U[-lam_B, lam_B]
+    either way."""
+    n = theta.shape[0]
+    rng = np.random.default_rng(seed)
+    U = np.triu(rng.uniform(-lam_J if signed else 0.0, lam_J, (n, n)), 1)
+    return theta * (U + U.T), rng.uniform(-lam_B, lam_B, n)
+
+
+_METRIC_LABEL = {'zheng': 'mean relative error',
+                 'abs': 'mean absolute error',
+                 'tv': 'total variation',
+                 'js': 'Jensen-Shannon  (bits)',
+                 'kl': r'$D_{\mathrm{KL}}(q^{\mathrm{map}}\,\|\,q)$  (nats)',
+                 'hellinger': 'Hellinger distance',
+                 'logodds': 'mean $|\Delta$ log-odds$|$'}
+
+# metrics that span decades and are therefore drawn on a log axis
+_METRIC_LOG = ('kl', 'js', 'hellinger')
+
+
+def _belief_discrepancy(q, q_ref, metric='zheng', floor=1e-12):
+    """Node-averaged discrepancy between a belief trajectory q, shape
+    (n_steps+1, n), and a reference marginal q_ref, shape (n,).
+
+    metric:
+      'zheng'   their eq. (25), mean_i |q_ref - q| / q_ref. Asymmetric and
+                unbounded: it diverges as q_ref -> 0 however small the
+                absolute difference, which is exactly the saturated,
+                strongly coupled regime.
+      'abs'/'tv'  mean absolute error mean_i |q_ref - q|, which for a binary
+                variable is exactly the total variation between the two
+                Bernoullis. Symmetric, invariant under relabelling x -> -x,
+                in [0,1], and operationally the error of the best decision
+                rule. This is the default.
+      'js'      Jensen-Shannon divergence against the mixture m=(p+q)/2,
+                normalised by log 2 so it lies in [0,1]. The symmetric,
+                bounded relative of the KL: finite even when one belief hits
+                0 or 1, because the mixture never does.
+      'hellinger'  Hellinger distance, symmetric and in [0,1], a true metric,
+                more sensitive in the tails than tv.
+      'logodds' mean_i |logit(q_ref) - logit(q)|. Symmetric and unbounded, but
+                in the coordinate the schemes actually compute in, so it keeps
+                its resolution where the beliefs saturate.
+      'kl'      mean_i D_KL(q_ref_i || q_i) between the two Bernoullis, in
+                nats. Unlike eq. (25) it uses both states, so it IS invariant
+                under relabelling x -> -x; but it is asymmetric in its
+                arguments and unbounded, diverging as q -> 0 or 1 with q_ref
+                away from it. Being a divergence rather than a distance it
+                spans many decades, so it belongs on a log axis."""
+    p_ = np.clip(q, floor, 1 - floor)
+    r_ = np.clip(np.broadcast_to(q_ref, q.shape), floor, 1 - floor)
+    if metric == 'zheng':
+        return np.mean(np.abs(r_ - p_) / r_, axis=1)
+    if metric in ('tv', 'abs'):
+        # for a binary variable the total variation between the two Bernoullis
+        # is just |p - q|, so 'abs' and 'tv' are the same number
+        return np.mean(np.abs(r_ - p_), axis=1)
+    if metric == 'hellinger':
+        h2 = 1 - np.sqrt(p_ * r_) - np.sqrt((1 - p_) * (1 - r_))
+        return np.mean(np.sqrt(np.maximum(h2, 0)), axis=1)
+    if metric == 'logodds':
+        lg = lambda z: np.log(z / (1 - z))
+        return np.mean(np.abs(lg(r_) - lg(p_)), axis=1)
+    kl = lambda a, b: a * np.log(a / b) + (1 - a) * np.log((1 - a) / (1 - b))
+    if metric == 'kl':
+        return np.mean(kl(r_, p_), axis=1)
+    if metric == 'js':
+        m_ = (p_ + r_) / 2
+        return np.mean((kl(p_, m_) + kl(r_, m_)) / 2, axis=1) / np.log(2)
+    raise ValueError(f'unknown metric {metric!r}')
+
+
+def _mean_rel_err(q, q_ref, floor=1e-12):
+    """Backwards-compatible alias for their eq. (25)."""
+    return _belief_discrepancy(q, q_ref, metric='zheng', floor=floor)
+
+
+def _graph_inset(ax, theta, rect=(0.46, 0.42, 0.52, 0.56)):
+    """Dashed-box inset with the graph drawn in it, as in their figures."""
+    ins = ax.inset_axes(rect)
+    G = nx.from_numpy_array(theta != 0)
+    pos = (nx.circular_layout(G) if theta.shape[0] != 9 or
+           not nx.check_planarity(G)[0] else nx.kamada_kawai_layout(G))
+    nx.draw_networkx_edges(G, pos, ax=ins, width=0.5, edge_color='0.3')
+    nx.draw_networkx_nodes(G, pos, ax=ins, node_size=14, node_color='k')
+    ins.set_xticks([])
+    ins.set_yticks([])
+    for sp in ins.spines.values():
+        sp.set_linestyle((0, (3, 3)))
+        sp.set_linewidth(0.9)
+        sp.set_color('0.4')
+    ins.patch.set_alpha(0)
+    return ins
+
+
+def _first_clean_seed(theta, lam_J, lam_B, ms, n_iter_map, signed=True,
+                      tol=1e-6, max_tries=60):
+    """Smallest seed for which EVERY scheme's map reaches a genuine fixed
+    point rather than a period-2 orbit. The seed sets both the disorder and
+    the initial state, so a retry is a fresh random instance. Returns
+    (seed, clean); clean is False if no seed in range worked, and the caller
+    should then flag the panel."""
+    for sd in range(max_tries):
+        Jm, Bv = zheng_params(theta, lam_J, lam_B, seed=sd, signed=signed)
+        if all(not _period2(xm, tol) and
+               np.max(np.abs(xm[-1] - xm[-2])) < tol
+               for xm in (iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                           n_iter=n_iter_map, tol=tol * 1e-4,
+                                           dt=1.0, seed=sd)[0] for m in ms)):
+            return sd, True
+    return 0, False
+
+
+# ----------------------------------------------------------------------------
+# Zheng-style simulations: 50 realisations per cell, cached to disk
+# ----------------------------------------------------------------------------
+# Each topology gets one .npy under ZHENG_DIR holding the discrepancy curves,
+# shaped (n_settings, n_schemes, n_real, n_steps+1) -- the trailing two axes
+# are the N networks x T timesteps asked for -- plus a companion
+# <name>__converged.npy of shape (n_settings, n_schemes, n_real) saying, per
+# realisation, whether the classical map reached a fixed point at all. The
+# metric is baked into the curves, so it is part of the filename. Plotting
+# only loads.
+ZHENG_DIR = DATA_FOLDER + 'zheng_like_simulations/'
+
+
+def zheng_builders(n=8, large=False, seed0=0):
+    """{name: theta(realisation)} graph builders.
+
+    The GRAPH IS FIXED for every topology: a realisation redraws only the
+    couplings J_ij, the fields B_i and the initial state, so averaging over
+    realisations averages over random parameter samples on one fixed wiring,
+    not over random wirings.
+
+    n defaults to 8 so that every row has the same size as the Necker cube,
+    which is the graph the rest of the paper is about; the grid is the most
+    square rectangle on n nodes (2x4 at n=8, 3x3 at n=9). Zheng et al. use
+    nine-node MRFs, so n=9 reproduces their family instead."""
+    if not large:
+        a = max(k for k in range(1, int(np.sqrt(n)) + 1) if n % k == 0)
+        fixed = {'chain': nx.path_graph(n),
+                 'single loop': nx.cycle_graph(n),
+                 f'grid ({a}x{n // a})': nx.convert_node_labels_to_integers(
+                     nx.grid_2d_graph(a, n // a)),
+                 'fully connected': nx.complete_graph(n)}
+    else:
+        fixed = {'complete, 25 nodes': nx.complete_graph(25),
+                 'complete, 100 nodes': nx.complete_graph(100),
+                 r'$10	imes10$ lattice': nx.convert_node_labels_to_integers(
+                     nx.grid_2d_graph(10, 10)),
+                 r'scale-free (BA, $m$=3)': nx.barabasi_albert_graph(100, 3,
+                                                                     seed=seed0),
+                 r'Erdos-Renyi, $p$=0.1': nx.gnp_random_graph(100, 0.1,
+                                                              seed=seed0)}
+    b = {k: (lambda r, G=G: nx.to_numpy_array(G, dtype=float))
+         for k, G in fixed.items()}
+    if not large:
+        b['Necker cube'] = lambda r: THETA_NECKER.copy()
+    return b
+
+
+def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
+                   n_real=50, n_steps=700, dt=0.1, n_iter_map=2000,
+                   metric='kl', signed=False, conv_tol=1e-6, recompute=False,
+                   verbose=True):
+    """Compute (or load) the discrepancy curves for one topology.
+
+    For each setting, scheme and realisation r: draw the graph with build(r),
+    the couplings and fields with seed r, run the classical map to its fixed
+    point and the network from the same initial state, and store the
+    discrepancy of the network's beliefs to the map's answer at every step.
+
+    Returns (curves, converged) of shapes
+        (n_settings, n_schemes, n_real, n_steps+1)  and
+        (n_settings, n_schemes, n_real)."""
+    os.makedirs(ZHENG_DIR, exist_ok=True)
+    safe = ''.join(c if c.isalnum() else '_' for c in name).strip('_')
+    nn = build(0).shape[0]
+    f_c = ZHENG_DIR + f'{safe}_n{nn}_{metric}_N{n_real}.npy'
+    f_k = ZHENG_DIR + f'{safe}_n{nn}_{metric}_N{n_real}__converged.npy'
+    if not recompute and os.path.exists(f_c) and os.path.exists(f_k):
+        return np.load(f_c), np.load(f_k)
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    curves = np.full((len(settings), len(ms), n_real, n_steps + 1), np.nan)
+    conv = np.zeros((len(settings), len(ms), n_real), bool)
+    for si, (lJ, lB) in enumerate(tqdm(list(settings),
+                                       desc=f'{name} [{metric}]', disable=not verbose)):
+        for r in range(n_real):
+            theta = build(r)
+            Jm, Bv = zheng_params(theta, lJ, lB, seed=r, signed=signed)
+            for mi, m in enumerate(ms):
+                xm, qm = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                          n_iter=n_iter_map, tol=1e-12, dt=1.0,
+                                          seed=r)
+                conv[si, mi, r] = np.max(np.abs(xm[-1] - xm[-2])) < conv_tol
+                _, qd = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                         n_iter=n_steps, tol=0.0, dt=dt, seed=r)
+                curves[si, mi, r] = _belief_discrepancy(qd, qm[-1], metric=metric)
+    np.save(f_c, curves)
+    np.save(f_k, conv)
+    if verbose:
+        print(f'saved {f_c}  {curves.shape}')
+    return curves, conv
+
+
+def _band(curves, logy, floor=1e-16, band='sd'):
+    """Centre and spread across realisations.
+
+    band='sd' is the spread of the realisations themselves; band='sem' is the
+    uncertainty of the centre, SD/sqrt(N). On a log axis the spread runs over
+    decades, so the arithmetic mean would just track the worst run: there the
+    centre is the geometric mean and the spread is taken in log space."""
+    if band not in ('sd', 'sem'):
+        raise ValueError("band must be 'sd' or 'sem'")
+    c = np.asarray(curves, float)
+    if c.ndim == 1:
+        c = c[None]
+    n = max(np.sum(np.isfinite(c).all(1)), 1)
+    k = 1 / np.sqrt(n) if band == 'sem' else 1.0
+    if not logy:
+        mu, sd = np.nanmean(c, 0), np.nanstd(c, 0) * k
+        return mu, np.maximum(mu - sd, 0), mu + sd
+    L = np.log(np.maximum(c, floor))
+    mu, sd = np.nanmean(L, 0), np.nanstd(L, 0) * k
+    return np.exp(mu), np.exp(mu - sd), np.exp(mu + sd)
+
+
+def plot_zheng_style(n=8, topologies=None,
+                     settings=((0.1, 0.0), (0.5, 0.0), (1.0, 0.0),
+                               (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
+                     alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
+                     n_iter_map=2000, metric='abs', signed=False, n_real=50,
+                     band='sd', logy=None, logfloor=1e-16, logtop=10.0,
+                     recompute=False, save=True, fname='zheng_style'):
+    """Discrepancy between the network dynamics and the classical map, in the
+    layout of Zheng et al. (2020) Fig. 2 and 4, averaged over n_real random
+    realisations.
+
+    Rows: graph topology, drawn in a dashed inset. Columns: the parameter
+    setting (lambda_1, lambda_2) for J_ij ~ U[0, lambda_1] (or U[-l1, l1] with
+    signed=True) and B_i ~ U[-lambda_2, lambda_2]. Each curve is the centre
+    over realisations with a +-1 SD band; on a log axis the centre is the
+    geometric mean and the band is +-1 SD in log space, since the arithmetic
+    mean over decades would only track the worst run. A dashed curve means the
+    map failed to reach a fixed point on most realisations, so the reference is
+    not a fixed point there. Simulation is cached per topology under ZHENG_DIR;
+    pass recompute=True to redo it."""
+    logy = (metric in _METRIC_LOG) if logy is None else logy
+    if fname == 'zheng_style':
+        fname = f'zheng_style_{metric}' + ('_signed' if signed else '')
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    builders = zheng_builders(n=n, large=False)
+    if topologies is None:
+        topologies = list(builders)
+    else:   # tolerate a short name, e.g. 'grid' for 'grid (2x4)'
+        resolve = lambda t: (t if t in builders else
+                             next((k for k in builders if k.startswith(t)), t))
+        topologies = [resolve(t) for t in topologies]
+        miss = [t for t in topologies if t not in builders]
+        if miss:
+            raise KeyError(f'unknown topologies {miss}; have {list(builders)}')
+    nr, nc = len(topologies), len(settings)
+    fig, axes = plt.subplots(nr, nc, figsize=(2.75 * nc, 2.35 * nr),
+                             sharex=True, sharey=True, squeeze=False)
+    for ri, tname in enumerate(topologies):
+        curves, conv = zheng_simulate(tname, builders[tname], settings,
+                                      alphas=alphas, n_real=n_real,
+                                      n_steps=int(n_iterations), dt=dt,
+                                      n_iter_map=n_iter_map, metric=metric,
+                                      signed=signed, recompute=recompute)
+        theta = builders[tname](0)
+        for ci in range(nc):
+            ax = axes[ri, ci]
+            t = np.arange(curves.shape[-1])
+            for mi, m in enumerate(ms):
+                ok = conv[ci, mi]
+                sel = curves[ci, mi][ok] if ok.any() else curves[ci, mi]
+                mu, lo, hi = _band(sel, logy, logfloor, band=band)
+                ls = '-' if ok.mean() > 0.5 else '--'
+                ax.plot(t, np.maximum(mu, logfloor) if logy else mu,
+                        color=m['c'], lw=1.6, ls=ls,
+                        label=m['lab'] if (ri == 0 and ci == 0) else None)
+                ax.fill_between(t, np.maximum(lo, logfloor) if logy else lo,
+                                np.maximum(hi, logfloor) if logy else hi,
+                                color=m['c'], alpha=0.18, lw=0)
+            if logy:
+                ax.set_yscale('log')
+                ax.set_ylim(logfloor, logtop)
+            else:
+                ax.set_ylim(-0.03, 1.03)
+            ax.set_xlim(0, curves.shape[-1] - 1)
+            _graph_inset(ax, theta, rect=(0.46, 0.52, 0.52, 0.46) if logy
+                         else (0.46, 0.42, 0.52, 0.56))
+            if ri == 0:
+                ax.set_title(rf'$\lambda_1$={settings[ci][0]:g},  '
+                             rf'$\lambda_2$={settings[ci][1]:g}', fontsize=12)
+            if ri == nr - 1:
+                ax.set_xlabel('Number of Iterations')
+            if ci == 0:
+                ax.set_ylabel(tname, fontsize=12)
+    from matplotlib.lines import Line2D
+    handles = [Line2D([0], [0], color=m['c'], lw=2.5, label=m['lab']) for m in ms]
+    handles += [Line2D([0], [0], color='0.35', lw=1.6, ls='--',
+                       label='map did not reach a fixed point')]
+    fig.supylabel(_METRIC_LABEL[metric], fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.legend(handles=handles, loc='lower center', ncol=3,
+               bbox_to_anchor=(0.5, 1.005), frameon=False, fontsize=11)
+    lo_ = r'-\lambda_1' if signed else '0'
+    fig.text(0.5, 1.075,
+             rf'$J_{{ij}} \sim U[{lo_},\, \lambda_1]$' + r'$\qquad$' +
+             rf'$B_i \sim U[-\lambda_2,\, \lambda_2]$' + r'$\qquad$' +
+             rf'mean $\pm$ {band.upper()} over {n_real} networks',
+             ha='center', fontsize=13, color='0.15')
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
+    return fig
+
+
+def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
+                     n_iterations=700, dt=0.1, n_iter_map=5000, metric='abs',
+                     signed=False, n_real=50, band='sd', logy=None,
+                     logfloor=1e-16, logtop=10.0, seed=0, recompute=False,
+                     save=True, fname='zheng_large'):
+    """Larger MRFs, as their Fig. 5 extended: the graph on the left and the
+    discrepancy on the right, one row per MRF, averaged over n_real random
+    realisations with +-1 SD bands.
+
+    Their figure is the first two rows (complete graphs on 25 and 100 nodes);
+    the others hold the size at 100 nodes and vary the structure. The lattice
+    and the complete graphs are fixed, so realisations differ in couplings,
+    fields and initial state; the scale-free and Erdos-Renyi rows draw a fresh
+    graph each realisation. Exact inference is out of reach at these sizes,
+    which is the point -- the comparison is map against network."""
+    logy = (metric in _METRIC_LOG) if logy is None else logy
+    if fname == 'zheng_large' and metric != 'abs':
+        fname = f'zheng_large_{metric}'
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    builders = zheng_builders(large=True, seed0=seed)
+    names = list(builders)
+    nr = len(names)
+    fig, axes = plt.subplots(nr, 2, figsize=(9.0, 2.7 * nr), squeeze=False,
+                             gridspec_kw={'width_ratios': [1, 1.6]})
+    for ri, name in enumerate(names):
+        curves, conv = zheng_simulate(name, builders[name], ((lam_J, lam_B),),
+                                      alphas=alphas, n_real=n_real,
+                                      n_steps=int(n_iterations), dt=dt,
+                                      n_iter_map=n_iter_map, metric=metric,
+                                      signed=signed, recompute=recompute)
+        ag, ax = axes[ri, 0], axes[ri, 1]
+        A = builders[name](0)
+        G = nx.from_numpy_array(A)
+        dens = nx.density(G)
+        pos = (nx.kamada_kawai_layout(G) if dens < 0.3 else
+               nx.spring_layout(G, seed=seed))
+        ew, ec = (0.15, '0.8') if dens > 0.3 else (0.7, '0.55')
+        nx.draw_networkx_edges(G, pos, ax=ag, width=ew, edge_color=ec)
+        nx.draw_networkx_nodes(G, pos, ax=ag, node_size=14, node_color='tab:blue')
+        ag.set_xticks([])
+        ag.set_yticks([])
+        ag.set_title(f'{name}\n{G.number_of_nodes()} nodes, '
+                     f'{G.number_of_edges()} edges', fontsize=11)
+        t = np.arange(curves.shape[-1])
+        for mi, m in enumerate(ms):
+            ok = conv[0, mi]
+            sel = curves[0, mi][ok] if ok.any() else curves[0, mi]
+            mu, lo, hi = _band(sel, logy, logfloor, band=band)
+            ax.plot(t, np.maximum(mu, logfloor) if logy else mu, color=m['c'],
+                    lw=1.6, ls='-' if ok.mean() > 0.5 else '--',
+                    label=m['lab'] if ri == 0 else None)
+            ax.fill_between(t, np.maximum(lo, logfloor) if logy else lo,
+                            np.maximum(hi, logfloor) if logy else hi,
+                            color=m['c'], alpha=0.18, lw=0)
+        if logy:
+            ax.set_yscale('log')
+            ax.set_ylim(logfloor, logtop)
+        else:
+            ax.set_ylim(-0.03, 1.03)
+        ax.set_xlim(0, curves.shape[-1] - 1)
+        ax.set_ylabel(_METRIC_LABEL[metric])
+        if ri == nr - 1:
+            ax.set_xlabel('Number of Iterations')
+    from matplotlib.lines import Line2D
+    handles = [Line2D([0], [0], color=m['c'], lw=2.5, label=m['lab']) for m in ms]
+    handles += [Line2D([0], [0], color='0.35', lw=1.6, ls='--',
+                       label='map did not reach a fixed point')]
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.legend(handles=handles, loc='lower center', ncol=3,
+               bbox_to_anchor=(0.5, 1.005), frameon=False, fontsize=11)
+    lo_ = f'-{lam_J:g}' if signed else '0'
+    fig.text(0.5, 1.075,
+             rf'$J_{{ij}} \sim U[{lo_},\, {lam_J:g}]$' + r'$\qquad$' +
+             rf'$B_i \sim U[-{lam_B:g},\, {lam_B:g}]$' + r'$\qquad$' +
+             rf'mean $\pm$ {band.upper()} over {n_real} networks',
+             ha='center', fontsize=13, color='0.15')
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# The whole FBP family as an exact rate network
+# ----------------------------------------------------------------------------
+# Ott & Stoop (2006) reparameterise BP into the log domain and write it as a
+# continuous system with one variable per DIRECTED EDGE, which is exact; they
+# then collapse it to a node-level Hopfield network by assuming weak weights
+# (arctanh x ~ x), many neighbours (so the returning message can be dropped)
+# and outgoing messages that are equal at a node. Zheng et al. (2020) give an
+# exact node-level rate network, but only for mean field, and show that the
+# Ott-style BP networks in fact equal mean field.
+#
+# Both endpoints are the same architecture at two values of one parameter. The
+# FBP family maps onto a rate network with one unit per directed edge,
+#
+#     tau m_e' = -m_e + g_e( sum_e' W[e,e'] m_e' + b_e ),     e = (i->j)
+#     W[(i->j),(k->i)] = 1 for k != j,   W[(i->j),(j->i)] = 1 - alpha
+#     b_(i->j) = B_i,   g_e(u) = (1/alpha) arctanh( tanh(alpha J_ij) tanh u )
+#     readout  Q_i = B_i + sum_k m_(k->i),   q_i = sigmoid(2 Q_i)
+#
+# with no approximation at any alpha. At alpha = 1 the reciprocal weight is 0
+# and W is exactly the non-backtracking (Hashimoto) matrix of the graph. As
+# alpha -> 0 the outgoing messages of a node become equal, the edge units
+# collapse onto one unit per node, and the network becomes the mean-field one
+# of Zheng et al. -- so what Ott & Stoop had to assume, the limit delivers.
+# Note W is not symmetric even though J is, which is why the FBP network has
+# no Lyapunov function and can oscillate where the mean-field one cannot.
+def edge_network(theta, Jmat, Bvec, alpha=1.0):
+    """Build the exact rate network for FBP at this alpha.
+
+    Returns (W, b, Je, edges): the directed-edge weight matrix, the external
+    input per unit, the per-unit gain J_ij that sets its saturation, and the
+    edge list in unit order."""
+    n = len(Bvec)
+    edges = [(i, j) for i in range(n) for j in range(n) if theta[i, j] != 0]
+    idx = {e: k for k, e in enumerate(edges)}
+    W = np.zeros((len(edges), len(edges)))
+    for (i, j), e in idx.items():
+        for k in range(n):
+            if theta[k, i] != 0:
+                W[e, idx[(k, i)]] = (1 - alpha) if k == j else 1.0
+    b = np.array([Bvec[i] for i, j in edges])
+    Je = np.array([Jmat[i, j] for i, j in edges])
+    return W, b, Je, edges
+
+
+def edge_network_run(W, b, Je, edges, Bvec, alpha=1.0, dt=0.1, n_iter=700,
+                     m0=None, seed=0, eps=0.05):
+    """Integrate the edge network and read out the node beliefs each step.
+    Returns (m_traj, q_traj)."""
+    rng = np.random.default_rng(seed)
+    m = eps * rng.standard_normal(len(edges)) if m0 is None else np.array(m0, float)
+    inc = [[k for k, (a, c) in enumerate(edges) if c == i] for i in range(len(Bvec))]
+    readout = lambda mm: 1 / (1 + np.exp(-2 * np.array(
+        [Bvec[i] + mm[inc[i]].sum() for i in range(len(Bvec))])))
+    ms, qs = [m.copy()], [readout(m)]
+    for _ in range(n_iter):
+        z = np.clip(np.tanh(alpha * Je) * np.tanh(W @ m + b), -1 + 1e-15, 1 - 1e-15)
+        m = m + dt * (np.arctanh(z) / alpha - m)
+        ms.append(m.copy())
+        qs.append(readout(m))
+    return np.array(ms), np.array(qs)
+
+
+def node_network_run(Jmat, Bvec, dt=0.1, n_iter=700, m0=None, seed=0, eps=0.05):
+    """The mean-field rate network of Zheng et al.: one unit per node,
+    tau m' = -m + tanh(B + J m), beliefs q = (1+m)/2."""
+    rng = np.random.default_rng(seed)
+    m = eps * rng.standard_normal(len(Bvec)) if m0 is None else np.array(m0, float)
+    ms, qs = [m.copy()], [(m + 1) / 2]
+    for _ in range(n_iter):
+        m = m + dt * (np.tanh(Bvec + Jmat @ m) - m)
+        ms.append(m.copy())
+        qs.append((m + 1) / 2)
+    return np.array(ms), np.array(qs)
+
+
+def plot_network_equivalence(theta=None, alphas=(0.25, 0.5, 1.0, 1.5, 2.0),
+                             lam_J=0.5, lam_B=0.5, dt=0.1, n_iter=400,
+                             alpha_sweep=np.logspace(-3, 0, 13), seed=0,
+                             save=True, fname='network_equivalence'):
+    """The FBP family as an exact rate network.
+
+    (a) Difference between the network's beliefs and the algorithm's, step by
+    step, for every alpha and several graphs. It sits at machine precision:
+    the network does not approximate the algorithm, it is the algorithm.
+    (b) The alpha -> 0 collapse. The spread of the messages leaving a node
+    vanishes, so the 2|E| edge units become |V| node units, and the network's
+    beliefs converge on the mean-field network's. The node-level network of
+    Zheng et al. is the alpha -> 0 end of this one architecture.
+    (c) The weight matrix W on directed edges for three alphas. Off-diagonal
+    structure is the non-backtracking connectivity; the highlighted entries
+    are the reciprocal weights 1 - alpha, the only thing alpha changes."""
+    if theta is None:
+        theta = THETA_NECKER
+    graphs = {'Necker cube': theta,
+              'single loop': nx.to_numpy_array(nx.cycle_graph(8), dtype=float),
+              '3x3 grid': nx.to_numpy_array(
+                  nx.convert_node_labels_to_integers(nx.grid_2d_graph(3, 3)),
+                  dtype=float),
+              'complete, 8': nx.to_numpy_array(nx.complete_graph(8), dtype=float)}
+    fig, axd = plt.subplot_mosaic([['a', 'a', 'b'], ['c0', 'c1', 'c2']],
+                                  figsize=(12.5, 7.6),
+                                  gridspec_kw={'height_ratios': [1.15, 1]})
+
+    # (a) exactness, every alpha x every graph
+    ax = axd['a']
+    cols = plt.cm.viridis(np.linspace(0.1, 0.9, len(alphas)))
+    worst = 0.0
+    for (gname, th), mk in zip(graphs.items(), ('o', 's', '^', 'd')):
+        Jm, Bv = zheng_params(th, lam_J, lam_B, seed=seed, signed=False)
+        mask = Jm != 0
+        for a, c in zip(alphas, cols):
+            W, b, Je, edges = edge_network(th, Jm, Bv, a)
+            rng = np.random.default_rng(seed)
+            m0 = 0.05 * rng.standard_normal(len(edges))
+            _, q_net = edge_network_run(W, b, Je, edges, Bv, alpha=a, dt=dt,
+                                        n_iter=n_iter, m0=m0)
+            M0 = np.zeros_like(Jm)
+            for (i, j), e in zip(edges, range(len(edges))):
+                M0[i, j] = m0[e]
+            _, q_alg = iterate_dynamics('fbp', Jm, Bv, alpha=a, n_iter=n_iter,
+                                        tol=0.0, dt=dt, x0=M0[mask])
+            d = np.max(np.abs(q_net - q_alg), axis=1)
+            worst = max(worst, d.max())
+            ax.plot(np.maximum(d, 1e-18), color=c, lw=1.0, alpha=0.8)
+    ax.axhline(np.finfo(float).eps, color='k', ls=':', lw=1.0)
+    ax.text(0.98, 0.06, f'worst over all runs: {worst:.1e}', transform=ax.transAxes,
+            ha='right', fontsize=11)
+    ax.set_yscale('log')
+    ax.set_ylim(1e-18, 1e-10)
+    ax.set_xlabel('Number of Iterations')
+    ax.set_ylabel(r'$|q_{\rm network} - q_{\rm algorithm}|_\infty$')
+    ax.set_title('a   the network IS the algorithm\n' +
+                 r'4 graphs $\times$ ' + f'{len(alphas)} values of ' + r'$\alpha$',
+                 fontsize=12, loc='left')
+    from matplotlib.lines import Line2D
+    ax.legend(handles=[Line2D([0], [0], color=c, lw=2, label=rf'$\alpha$={a:g}')
+                       for a, c in zip(alphas, cols)] +
+              [Line2D([0], [0], color='k', ls=':', lw=1, label='machine epsilon')],
+              frameon=False, fontsize=9, ncol=2, loc='upper left')
+
+    # (b) alpha -> 0 collapse onto the node network
+    ax = axd['b']
+    Jm, Bv = zheng_params(theta, lam_J, lam_B, seed=seed, signed=False)
+    _, q_mf = node_network_run(Jm, Bv, dt=dt, n_iter=4000)
+    spread, dmf = [], []
+    for a in alpha_sweep:
+        W, b, Je, edges = edge_network(theta, Jm, Bv, a)
+        m, q = edge_network_run(W, b, Je, edges, Bv, alpha=a, dt=dt, n_iter=4000)
+        # as alpha -> 0, M_ij -> J_ij tanh(Q_i): the message factorises into an
+        # edge gain times a node activity, so the j-independent quantity is
+        # v_i^j = M_ij / J_ij -- exactly Ott & Stoop's reparameterisation
+        # n_ij = w_ij v_i^j, which they had to assume and the limit delivers.
+        out = {}
+        for e, (i, j) in enumerate(edges):
+            out.setdefault(i, []).append(m[-1][e] / Je[e])
+        spread.append(max(np.ptp(v) for v in out.values()))
+        dmf.append(np.max(np.abs(q[-1] - q_mf[-1])))
+    ax.loglog(alpha_sweep, np.maximum(spread, 1e-18), 'o-', color='tab:purple',
+              lw=1.6, ms=4, label=r'spread of $v_i^j=M_{i\to j}/J_{ij}$'
+                                  '\nover a node\'s outgoing edges')
+    ax.loglog(alpha_sweep, np.maximum(dmf, 1e-18), 's-', color='tab:red',
+              lw=1.6, ms=4, label=r'$|q_{\rm edge\,net} - q_{\rm MF\,net}|_\infty$')
+    ax.set_xlabel(r'$\alpha$')
+    ax.set_ylabel('deviation at the fixed point')
+    ax.set_title(r'b   $\alpha\to0$:  $M_{i\to j}\to J_{ij}\tanh Q_i$,'
+                 '\n    so the edge net becomes the MF node net',
+                 fontsize=12, loc='left')
+    ax.legend(frameon=False, fontsize=9, loc='lower right')
+
+    # (c) the weight matrix, and what alpha changes in it
+    for k, a in enumerate((0.5, 1.0, 2.0)):
+        ax = axd[f'c{k}']
+        W, b, Je, edges = edge_network(theta, Jm, Bv, a)
+        v = np.abs(W).max()
+        im = ax.imshow(W, cmap='RdBu_r', vmin=-v, vmax=v)
+        ax.set_title(rf'c{k+1}   $\alpha$={a:g}:  reciprocal weight $1-\alpha$={1-a:+.1f}'
+                     + '\n' + rf'       $\rho(W)$={np.max(np.abs(np.linalg.eigvals(W))):.2f}'
+                     + ('   (non-backtracking)' if a == 1.0 else ''),
+                     fontsize=10, loc='left')
+        ax.set_xlabel('presynaptic edge unit')
+        if k == 0:
+            ax.set_ylabel('postsynaptic edge unit')
+        plt.colorbar(im, ax=ax, fraction=0.046)
+    fig.tight_layout()
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
+    return fig
+
+
 if __name__ == "__main__":
     p_list = np.round(np.arange(0.2, 1.01, 0.1), 2)
     d_list = list(range(2, 7))   # degrees 2-6
@@ -3211,9 +4494,42 @@ if __name__ == "__main__":
     #                        J_grid=np.round(np.arange(0.0, 6.0, 0.01), 3),
     #                        gibbs=(150000, 15000), gibbs_q=None,
     #                        theta=THETA_NECKER, save=True, fname='fdt_decomposition_02')
-    plot_duration_threshold(J_grid=np.round(np.linspace(0.20, 3.00, 61), 3),
-                            T_gibbs=np.logspace(1, 5, 5, dtype=int),
-                            T_var=[1, 2, 5, 10, 20, 50, 100],
-                            B=0.0, n_trials=100, sigma_var=0.05, c=10.0,
-                            theta=THETA_NECKER, seed=0, save=True,
-                            fname='duration_threshold')
+    # --- convergence: the classical map vs the dynamical system ------------
+    # dt is in units of tau; dt=0.01 is the rate-network dynamics, dt=1 the map
+    # plot_convergence_vs_steps(d_list=(2, 3, 4, 5, 6), n=8, B=0.0, B_curve=0.1,
+    #                           dt=0.01, recompute=False, save=True)
+    # plot_convergence_vs_steps(d_list=(2, 3, 4, 5, 6), n=8, B=0.0, B_curve=0.1,
+    #                           sigma_J=0.3, sigma_B=0.2, dt=0.01,
+    #                           recompute=False, save=True)
+    # plot_convergence_traces(save=True)
+    # plot_convergence_traces(sigma_J=0.3, sigma_B=0.2, save=True)
+    # plot_convergence_vs_loopiness(n=9, levels=(0, 1, 2, 4, 7, 11), n_graphs=8,
+    #                               J_list=(0.2, 0.4, 0.6), save=True)
+    # plot_map_vs_dynamics(B=0.0, J_show=0.75, recompute=False, save=True)
+    # plot_dynamics_vs_map_fp(theta=THETA_NECKER, J_list=(0.3, 0.5, 0.8), B=0.0,
+    #                         sigma_J=0.3, sigma_B=0.2, n_init=20, n_units=200,
+    #                         save=True)
+    # Zheng et al. (2020) style: mean relative error vs iterations by topology
+    # plot_zheng_style(n=9, n_iterations=700, dt=0.1, save=True)
+    # plot_zheng_large(n_iterations=700, dt=0.1, save=True)
+    # the FBP family as an exact rate network
+    # plot_network_equivalence(save=True)
+    # plot_duration_threshold(J_grid=np.round(np.linspace(0.20, 3.00, 61), 3),
+    #                         T_gibbs=np.logspace(1, 5, 5, dtype=int),
+    #                         T_var=[1, 2, 5, 10, 20, 50, 100],
+    #                         B=0.0, n_trials=100, sigma_var=0.05, c=10.0,
+    #                         theta=THETA_NECKER, seed=0, save=True,
+    #                         fname='duration_threshold')
+    plot_zheng_style(n=8, topologies=('chain', 'single loop', 'grid',
+                                  'fully connected', 'Necker cube'),
+                 settings=((0.1, 0.0), (0.5, 0.0), (1.0, 0.0),
+                           (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
+                 alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
+                 n_iter_map=2000, metric='abs', signed=False, n_real=50,
+                 logy=None, logfloor=1e-16, logtop=10.0, recompute=False,
+                 save=True, fname='zheng_style', band='sem')
+    plot_zheng_large(lam_J=0.5, lam_B=0.5,
+                     alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
+                     n_iter_map=5000, metric='abs', signed=False, n_real=50,
+                     logy=None, logfloor=1e-16, logtop=10.0, seed=0, recompute=False,
+                     save=True, fname='zheng_large', band='sem')
