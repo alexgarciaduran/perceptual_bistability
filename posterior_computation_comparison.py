@@ -3124,8 +3124,204 @@ def _beliefs(kind, x, Jmat, Bvec, mask):
     return 1 / (1 + np.exp(-2 * (Bvec + M.sum(0))))
 
 
+# def iterate_dynamics(kind, Jmat, Bvec, alpha=1.0, n_iter=200000, tol=1e-14,
+#                      dt=0.01, seed=0, eps=0.05, init='small', x0=None):
+#     """Integrate one scheme and return the trajectory.
+
+#     kind: 'mf' or 'fbp' (alpha=1 is LBP). dt is in units of tau: dt=0.01 is the
+#     rate-network dynamics, dt=1 is the classical map. init='small' starts eps
+#     away from the symmetric state (the linear regime, where the decay rate is
+#     the Jacobian's); init='uniform' draws the state uniformly in [-eps, eps],
+#     which with eps=1 spreads the starts over both basins; x0 overrides both.
+#     The initial state depends only on (seed, init, eps), never on dt, so the
+#     same seed gives the map and the dynamics identical initial conditions.
+
+#     Returns (x_traj, q_traj): the state trajectory, shape (n_steps+1, n_state),
+#     with the fixed point in its last row, and the beliefs along the way. Row n
+#     is iteration k=n for the map and time t/tau = n*dt for the dynamics."""
+#     n = len(Bvec)
+#     mask = Jmat != 0.0
+#     rng = np.random.default_rng(seed)
+#     size = n if kind == 'mf' else int(mask.sum())
+#     if x0 is not None:
+#         x = np.array(x0, float)
+#     elif init == 'uniform':
+#         x = rng.uniform(-eps, eps, size)
+#     else:
+#         x = eps * rng.standard_normal(size)
+#     xs, qs = [x.copy()], [_beliefs(kind, x, Jmat, Bvec, mask)]
+#     for _ in range(n_iter):
+#         x = _map_step(kind, x, Jmat, Bvec, alpha, dt, mask)
+#         xs.append(x.copy())
+#         qs.append(_beliefs(kind, x, Jmat, Bvec, mask))
+#         if np.max(np.abs(xs[-1] - xs[-2])) < tol:
+#             break
+#     return np.array(xs), np.array(qs)
+
+_EDGE_CACHE = {}
+
+
+def _edge_index(mask):
+    """(src, dst, rev) for a symmetric adjacency: edge e runs src[e]->dst[e]
+    and rev[e] is the opposite edge. The order is the row-major order of
+    mask's True entries, i.e. exactly the order of `M[mask] = x`, so a state
+    vector stays interchangeable with the dense code's."""
+    key = mask.tobytes()
+    hit = _EDGE_CACHE.get(key)
+    if hit is None:
+        n = mask.shape[0]
+        src, dst = np.nonzero(mask)
+        pos = np.full(n * n, -1, np.int64)
+        pos[src * n + dst] = np.arange(src.size)
+        if len(_EDGE_CACHE) > 64:
+            _EDGE_CACHE.clear()
+        hit = _EDGE_CACHE[key] = (np.ascontiguousarray(src, np.int64),
+                                  np.ascontiguousarray(dst, np.int64),
+                                  pos[dst * n + src])
+    return hit
+
+
+@njit(cache=True, fastmath=True)
+def _dyn_fbp(src, dst, rev, tJ, B, x, alpha, dt, n_iter, tol, keep_x, keep_q,
+             X, Q):
+    """FBP/LBP Euler loop on the directed edges; tJ = tanh(alpha*J_ij) is
+    passed in precomputed. x is updated in place; X/Q hold the trajectories
+    (one row each when not wanted, X[0] then being the penultimate state).
+    Returns the index of the last row written."""
+    E, n = src.size, B.size
+    h = np.empty(n)
+    xn = np.empty(E)
+    k, done = 0, False
+    while True:
+        if keep_x:
+            for e in range(E):
+                X[k, e] = x[e]
+        for i in range(n):
+            h[i] = B[i]
+        for e in range(E):
+            h[dst[e]] += x[e]                    # Q_i = B_i + sum_{k->i} M_ki
+        if keep_q:
+            for i in range(n):
+                Q[k, i] = 1.0 / (1.0 + np.exp(-2.0 * h[i]))
+        elif done or k == n_iter:
+            for i in range(n):
+                Q[0, i] = 1.0 / (1.0 + np.exp(-2.0 * h[i]))
+        if done or k == n_iter:
+            break
+        diff = 0.0
+        for e in range(E):
+            u = h[src[e]] - alpha * x[rev[e]]    # cavity field i->j
+            z = tJ[e] * np.tanh(u)
+            if z > 1.0 - 1e-15:
+                z = 1.0 - 1e-15
+            elif z < -1.0 + 1e-15:
+                z = -1.0 + 1e-15
+            v = x[e] + dt * (np.arctanh(z) / alpha - x[e])
+            d = abs(v - x[e])
+            if d > diff:
+                diff = d
+            xn[e] = v
+        if not keep_x:
+            for e in range(E):
+                X[0, e] = x[e]
+        for e in range(E):
+            x[e] = xn[e]
+        k += 1
+        done = diff < tol
+    return k
+
+
+@njit(cache=True, fastmath=True)
+def _dyn_mf(src, dst, Je, B, x, dt, n_iter, tol, keep_x, keep_q, X, Q):
+    """Mean-field Euler loop; the state is the node magnetisation and Je is
+    the coupling on each directed edge."""
+    E, n = src.size, B.size
+    h = np.empty(n)
+    xn = np.empty(n)
+    k, done = 0, False
+    while True:
+        if keep_x:
+            for i in range(n):
+                X[k, i] = x[i]
+        if keep_q:
+            for i in range(n):
+                Q[k, i] = (x[i] + 1.0) * 0.5
+        elif done or k == n_iter:
+            for i in range(n):
+                Q[0, i] = (x[i] + 1.0) * 0.5
+        if done or k == n_iter:
+            break
+        for i in range(n):
+            h[i] = B[i]
+        for e in range(E):
+            h[src[e]] += Je[e] * x[dst[e]]
+        diff = 0.0
+        for i in range(n):
+            v = x[i] + dt * (np.tanh(h[i]) - x[i])
+            d = abs(v - x[i])
+            if d > diff:
+                diff = d
+            xn[i] = v
+        if not keep_x:
+            for i in range(n):
+                X[0, i] = x[i]
+        for i in range(n):
+            x[i] = xn[i]
+        k += 1
+        done = diff < tol
+    return k
+
+
+# Numba calls scalar libm for tanh/arctanh while NumPy gets SIMD ones, so the
+# kernels win on sparse graphs and lose on dense ones. Above this many
+# directed edges, run the same edge-list update vectorised in NumPy instead.
+# (Raise it if `numba -s | grep SVML` reports SVML operational.)
+_DENSE_EDGES = 500
+
+
+def _dyn_numpy(kind, src, dst, rev, Je, Bvec, x, alpha, dt, n_iter, tol,
+               keep_x, keep_q, X, Q):
+    """The same edge-list update, vectorised over edges with NumPy."""
+    n = Bvec.size
+    key = src if kind == 'mf' else dst
+    o = np.argsort(key, kind='stable')
+    starts = np.searchsorted(key[o], np.arange(n))
+    nz = np.bincount(key, minlength=n) > 0
+    tJ = None if kind == 'mf' else np.tanh(alpha * Je)
+    k, done = 0, False
+    while True:
+        if keep_x:
+            X[k] = x
+        if kind == 'mf':
+            q = (x + 1) / 2
+        else:
+            h = Bvec + np.add.reduceat(x[o], starts) * nz
+            q = 1 / (1 + np.exp(-2 * h))
+        if keep_q:
+            Q[k] = q
+        elif done or k == n_iter:
+            Q[0] = q
+        if done or k == n_iter:
+            break
+        if kind == 'mf':
+            u = Bvec + np.add.reduceat((Je * x[dst])[o], starts) * nz
+            xn = x + dt * (np.tanh(u) - x)
+        else:
+            u = h[src] - alpha * x[rev]
+            z = np.clip(tJ * np.tanh(u), -1 + 1e-15, 1 - 1e-15)
+            xn = x + dt * (np.arctanh(z) / alpha - x)
+        diff = np.abs(xn - x).max()
+        if not keep_x:
+            X[0] = x
+        x[:] = xn
+        k += 1
+        done = diff < tol
+    return k
+
+
 def iterate_dynamics(kind, Jmat, Bvec, alpha=1.0, n_iter=200000, tol=1e-14,
-                     dt=0.01, seed=0, eps=0.05, init='small', x0=None):
+                     dt=0.01, seed=0, eps=0.05, init='small', x0=None,
+                     keep='all'):
     """Integrate one scheme and return the trajectory.
 
     kind: 'mf' or 'fbp' (alpha=1 is LBP). dt is in units of tau: dt=0.01 is the
@@ -3138,7 +3334,68 @@ def iterate_dynamics(kind, Jmat, Bvec, alpha=1.0, n_iter=200000, tol=1e-14,
 
     Returns (x_traj, q_traj): the state trajectory, shape (n_steps+1, n_state),
     with the fixed point in its last row, and the beliefs along the way. Row n
-    is iteration k=n for the map and time t/tau = n*dt for the dynamics."""
+    is iteration k=n for the map and time t/tau = n*dt for the dynamics.
+
+    keep='all' stores both trajectories, as before. keep='q' stores only the
+    beliefs and returns x truncated to its last two rows -- all that the
+    x[-1]-x[-2] fixed-point test needs. keep='last' stores neither. Use the
+    cheaper settings for long runs whose trajectory is never read."""
+    Jmat = np.ascontiguousarray(Jmat, float)
+    Bvec = np.ascontiguousarray(Bvec, float)
+    n = Bvec.size
+    src, dst, rev = _edge_index(Jmat != 0.0)
+    size = n if kind == 'mf' else src.size
+    if x0 is not None:
+        x = np.array(x0, float)
+    else:
+        rng = np.random.default_rng(seed)
+        x = (rng.uniform(-eps, eps, size) if init == 'uniform'
+             else eps * rng.standard_normal(size))
+    x = np.ascontiguousarray(x)
+    keep_x, keep_q = keep == 'all', keep != 'last'
+    X = np.empty((n_iter + 1 if keep_x else 1, size))
+    Q = np.empty((n_iter + 1 if keep_q else 1, n))
+    X[0] = x
+    Je = np.ascontiguousarray(Jmat[src, dst])
+    if src.size >= _DENSE_EDGES:
+        k = _dyn_numpy(kind, src, dst, rev, Je, Bvec, x, alpha, dt, n_iter,
+                       tol, keep_x, keep_q, X, Q)
+    elif kind == 'mf':
+        k = _dyn_mf(src, dst, Je, Bvec, x, dt, n_iter, tol, keep_x, keep_q,
+                    X, Q)
+    else:
+        k = _dyn_fbp(src, dst, rev, np.tanh(alpha * Je), Bvec, x, alpha, dt,
+                     n_iter, tol, keep_x, keep_q, X, Q)
+    xs = X[:k + 1] if keep_x else np.stack([X[0], x])
+    return xs, (Q[:k + 1] if keep_q else Q)
+
+
+def iterate_map(kind, Jmat, Bvec, alpha=1.0, schedule='sequential',
+                n_iter=2000, tol=1e-12, seed=0, eps=0.05, init='small',
+                x0=None, keep='all'):
+    """Run the classical algorithm as a MAP, one sweep per iteration.
+
+    schedule='sequential' (the default) is the Gauss-Seidel order in which the
+    algorithm is normally implemented: nodes, or directed edges, are refreshed
+    one at a time using the values already updated in this sweep. For mean
+    field this is coordinate descent on the mean-field free energy, so it
+    cannot oscillate.
+
+    schedule='parallel' is the Jacobi order written in most papers, in which
+    everything is refreshed at once from the previous sweep. It is identical
+    to iterate_dynamics at dt=1, and it is not a descent: on a bipartite graph
+    a ferromagnet is gauge-equivalent to an antiferromagnet (m_i = eps_i n_i
+    turns tanh(Jm) into -tanh(Jn)), so the parallel map can settle on the
+    staggered period-2 orbit instead of the fixed point.
+
+    keep follows iterate_dynamics: 'all' stores both trajectories, 'q' only
+    the beliefs with x truncated to its last two rows, 'last' neither."""
+    if schedule == 'parallel':
+        return iterate_dynamics(kind, Jmat, Bvec, alpha=alpha, n_iter=n_iter,
+                                tol=tol, dt=1.0, seed=seed, eps=eps,
+                                init=init, x0=x0, keep=keep)
+    if schedule != 'sequential':
+        raise ValueError("schedule must be 'sequential' or 'parallel'")
     n = len(Bvec)
     mask = Jmat != 0.0
     rng = np.random.default_rng(seed)
@@ -3149,14 +3406,36 @@ def iterate_dynamics(kind, Jmat, Bvec, alpha=1.0, n_iter=200000, tol=1e-14,
         x = rng.uniform(-eps, eps, size)
     else:
         x = eps * rng.standard_normal(size)
-    xs, qs = [x.copy()], [_beliefs(kind, x, Jmat, Bvec, mask)]
+    keep_x, keep_q = keep == 'all', keep != 'last'
+    x_first = x.copy()
+    edges = None if kind == 'mf' else list(zip(*np.nonzero(mask)))
+    M = np.zeros_like(Jmat)
+    if kind != 'mf':
+        M[mask] = x
+    t = np.tanh(Jmat * alpha)
+    X = [x.copy()] if keep_x else []
+    Q = [_beliefs(kind, x, Jmat, Bvec, mask)] if keep_q else []
+    prev = x.copy()
     for _ in range(n_iter):
-        x = _map_step(kind, x, Jmat, Bvec, alpha, dt, mask)
-        xs.append(x.copy())
-        qs.append(_beliefs(kind, x, Jmat, Bvec, mask))
-        if np.max(np.abs(xs[-1] - xs[-2])) < tol:
+        if kind == 'mf':
+            for i in range(n):                       # in place: Gauss-Seidel
+                x[i] = np.tanh(Bvec[i] + Jmat[i] @ x)
+        else:
+            for (i, j) in edges:
+                h = Bvec[i] + M[:, i].sum() - alpha * M[j, i]
+                z = min(max(t[i, j] * np.tanh(h), -1 + 1e-15), 1 - 1e-15)
+                M[i, j] = np.arctanh(z) / alpha
+            x = M[mask]
+        if keep_x:
+            X.append(x.copy())
+        if keep_q:
+            Q.append(_beliefs(kind, x, Jmat, Bvec, mask))
+        if np.max(np.abs(x - prev)) < tol:
             break
-    return np.array(xs), np.array(qs)
+        prev = x.copy()
+    xs = np.array(X) if keep_x else np.stack([prev, x])
+    qs = np.array(Q) if keep_q else np.array([_beliefs(kind, x, Jmat, Bvec, mask)])
+    return xs, qs
 
 
 def map_jacobian_eigs(kind, xstar, Jmat, Bvec, alpha=1.0, h=1e-7):
@@ -3827,8 +4106,22 @@ def _graph_inset(ax, theta, rect=(0.46, 0.42, 0.52, 0.56)):
     """Dashed-box inset with the graph drawn in it, as in their figures."""
     ins = ax.inset_axes(rect)
     G = nx.from_numpy_array(theta != 0)
-    pos = (nx.circular_layout(G) if theta.shape[0] != 9 or
-           not nx.check_planarity(G)[0] else nx.kamada_kawai_layout(G))
+    # Kamada-Kawai lays a path out as a straight line, a cycle as a ring and a
+    # lattice as a lattice, so it suits all of these. (It used to fall back to
+    # a circular layout whenever n != 9, which bent the chain into an arc once
+    # the family moved to 8 nodes.)
+    deg = dict(G.degree())
+    if nx.is_connected(G) and max(deg.values()) <= 2 and nx.is_tree(G):
+        # a chain: lay it out on an exactly straight diagonal, in path order
+        ends = [v for v, d in deg.items() if d == 1]
+        order = list(nx.dfs_preorder_nodes(G, source=ends[0]))
+        t = np.linspace(-1, 1, len(order))
+        pos = {v: np.array([t[k], t[k]]) for k, v in enumerate(order)}
+    else:
+        try:
+            pos = nx.kamada_kawai_layout(G)
+        except Exception:
+            pos = nx.spring_layout(G, seed=0)
     nx.draw_networkx_edges(G, pos, ax=ins, width=0.5, edge_color='0.3')
     nx.draw_networkx_nodes(G, pos, ax=ins, node_size=14, node_color='k')
     ins.set_xticks([])
@@ -3870,6 +4163,7 @@ def _first_clean_seed(theta, lam_J, lam_B, ms, n_iter_map, signed=True,
 # metric is baked into the curves, so it is part of the filename. Plotting
 # only loads.
 ZHENG_DIR = DATA_FOLDER + 'zheng_like_simulations/'
+ZHENG_MATRICES_DIR = DATA_FOLDER + 'zheng_like_simulations_matrices/'
 
 
 def zheng_builders(n=8, large=False, seed0=0):
@@ -3909,8 +4203,10 @@ def zheng_builders(n=8, large=False, seed0=0):
 
 def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
                    n_real=50, n_steps=700, dt=0.1, n_iter_map=2000,
-                   metric='kl', signed=False, conv_tol=1e-6, recompute=False,
-                   verbose=True):
+                   metric='kl', signed=False, conv_tol=1e-6,
+                   map_schedule='sequential', recompute=False,
+                   verbose=True, folder_save=ZHENG_DIR,
+                   save_last=False):
     """Compute (or load) the discrepancy curves for one topology.
 
     For each setting, scheme and realisation r: draw the graph with build(r),
@@ -3921,15 +4217,16 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
     Returns (curves, converged) of shapes
         (n_settings, n_schemes, n_real, n_steps+1)  and
         (n_settings, n_schemes, n_real)."""
-    os.makedirs(ZHENG_DIR, exist_ok=True)
+    os.makedirs(folder_save, exist_ok=True)
     safe = ''.join(c if c.isalnum() else '_' for c in name).strip('_')
     nn = build(0).shape[0]
-    f_c = ZHENG_DIR + f'{safe}_n{nn}_{metric}_N{n_real}.npy'
-    f_k = ZHENG_DIR + f'{safe}_n{nn}_{metric}_N{n_real}__converged.npy'
+    sch = map_schedule[:3]          # the schedule changes the data, so it
+    stem = f'{safe}_n{nn}_{metric}_{sch}_N{n_real}'      # belongs in the name
+    f_c, f_k = folder_save + stem + '.npy', folder_save + stem + '__converged.npy'
     if not recompute and os.path.exists(f_c) and os.path.exists(f_k):
         return np.load(f_c), np.load(f_k)
     ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
-    curves = np.full((len(settings), len(ms), n_real, n_steps + 1), np.nan)
+    curves = np.full((len(settings), len(ms), n_real, n_steps + 1 if not save_last else 1), np.nan)
     conv = np.zeros((len(settings), len(ms), n_real), bool)
     for si, (lJ, lB) in enumerate(tqdm(list(settings),
                                        desc=f'{name} [{metric}]', disable=not verbose)):
@@ -3937,13 +4234,17 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
             theta = build(r)
             Jm, Bv = zheng_params(theta, lJ, lB, seed=r, signed=signed)
             for mi, m in enumerate(ms):
-                xm, qm = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
-                                          n_iter=n_iter_map, tol=1e-12, dt=1.0,
-                                          seed=r)
-                conv[si, mi, r] = np.max(np.abs(xm[-1] - xm[-2])) < conv_tol
+                xm, qm = iterate_map(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                     schedule=map_schedule, n_iter=n_iter_map,
+                                     tol=1e-12, seed=r, keep='last')
+                conv[si, mi, r] = np.max(np.abs(xm[-1] - xm[-2]), initial=0.0) < conv_tol
                 _, qd = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
-                                         n_iter=n_steps, tol=0.0, dt=dt, seed=r)
-                curves[si, mi, r] = _belief_discrepancy(qd, qm[-1], metric=metric)
+                                         n_iter=n_steps, tol=0.0, dt=dt, seed=r,
+                                         keep='q')
+                values_to_save = _belief_discrepancy(qd, qm[-1], metric=metric)
+                if save_last:
+                    values_to_save = values_to_save[-1]
+                curves[si, mi, r] = values_to_save
     np.save(f_c, curves)
     np.save(f_k, conv)
     if verbose:
@@ -3973,13 +4274,127 @@ def _band(curves, logy, floor=1e-16, band='sd'):
     return np.exp(mu), np.exp(mu - sd), np.exp(mu + sd)
 
 
+def plot_acc_vs_lambda_matrices(n=8, topologies=None,
+                     n_lambdas=50,
+                     lambda_1_minmax=[0, 1],
+                     lambda_2_minmax=[0, 1],
+                     alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
+                     n_iter_map=2000, metric='abs', signed=False, n_real=100,
+                     recompute=False, save=True, fname='zheng_matrices'):
+    """Discrepancy between the network dynamics and the classical map, in the
+    layout of Zheng et al. (2020) Fig. 2 and 4, averaged over n_real random
+    realisations.
+
+    Rows: graph topology, drawn in a dashed inset. Columns: the parameter
+    setting (lambda_1, lambda_2) for J_ij ~ U[0, lambda_1] (or U[-l1, l1] with
+    signed=True) and B_i ~ U[-lambda_2, lambda_2]. Each curve is the centre
+    over realisations with a +-1 SD band; on a log axis the centre is the
+    geometric mean and the band is +-1 SD in log space, since the arithmetic
+    mean over decades would only track the worst run. A dashed curve means the
+    map failed to reach a fixed point on most realisations, so the reference is
+    not a fixed point there. Simulation is cached per topology under ZHENG_DIR;
+    pass recompute=True to redo it."""
+    # ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    builders = zheng_builders(n=n, large=False)
+    if topologies is None:
+        topologies = list(builders)
+    else:   # tolerate a short name, e.g. 'grid' for 'grid (2x4)'
+        resolve = lambda t: (t if t in builders else
+                             next((k for k in builders if k.startswith(t)), t))
+        topologies = [resolve(t) for t in topologies]
+        miss = [t for t in topologies if t not in builders]
+        if miss:
+            raise KeyError(f'unknown topologies {miss}; have {list(builders)}')
+    
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    if fname == 'zheng_matrices':
+        fname = f'zheng_matrices_{metric}' + ('_signed' if signed else '')
+    lambda_1_list = np.linspace(lambda_1_minmax[0], lambda_1_minmax[1], n_lambdas)
+    lambda_2_list = np.linspace(lambda_2_minmax[0], lambda_2_minmax[1], n_lambdas)
+    lambda_1, lambda_2 = np.meshgrid(lambda_1_list, lambda_2_list)
+    settings = [(l1, l2) for l1, l2 in zip(lambda_1.flatten(),
+                                           lambda_2.flatten())]
+    
+    # settings is lambda_1.flatten() in C order, so reshape(lambda_1.shape)
+    # inverts the flattening exactly: rows index lambda_2, columns lambda_1.
+    # Feeding the same meshgrid arrays to pcolormesh then puts lambda_1 on x
+    # and lambda_2 on y with no transpose to get wrong, and shading='nearest'
+    # treats the linspace values as cell CENTRES -- imshow+extent would offset
+    # the picture by half a cell.
+    logy = metric in _METRIC_LOG
+    mats, failed = {}, {}
+    for tname in topologies:
+        print(tname)
+        curves, conv = zheng_simulate(tname, builders[tname], settings,
+                                      alphas=alphas, n_real=n_real,
+                                      n_steps=int(n_iterations), dt=dt,
+                                      n_iter_map=n_iter_map, metric=metric,
+                                      signed=signed, recompute=recompute,
+                                      folder_save=ZHENG_MATRICES_DIR,
+                                      save_last=True)
+        # last stored step: works for save_last=True and for a full curve
+        v = np.asarray(curves)[..., -1]        # (n_settings, n_schemes, n_real)
+        # average over the realisations whose map reached a fixed point; where
+        # none did, fall back to all of them rather than take an empty mean
+        keep = np.where(conv.any(axis=2, keepdims=True), conv, True)
+        v = np.where(keep, v, np.nan)
+        mats[tname] = (np.exp(np.nanmean(np.log(np.maximum(v, 1e-16)), axis=2))
+                       if logy else np.nanmean(v, axis=2))
+        failed[tname] = conv.mean(axis=2) <= 0.5
+    
+    vals = np.array([m.ravel() for m in mats.values()])
+    vmaxes = np.nanmax(vals, axis=1)
+    vmin = 0
+    # norm = (mpl.colors.LogNorm(vmin=max(np.nanmin(vals[vals > 0]), 1e-16),
+    #                            vmax=vmax) if logy
+    #         else mpl.colors.Normalize(vmin=0.0, vmax=vmax))
+    
+    nr, nc = len(topologies), len(ms)
+    fig, axes = plt.subplots(nr, nc, figsize=(2.6 * nc, 2.35 * nr),
+                             sharex=True, sharey=True, squeeze=False)
+    for ri, tname in enumerate(topologies):
+        for mi, m in enumerate(ms):
+            ax = axes[ri, mi]
+            M = mats[tname][:, mi].reshape(lambda_1.shape)
+            im = ax.pcolormesh(lambda_1, lambda_2, M, shading='nearest',
+                               cmap='viridis', rasterized=True,
+                               vmin=vmin, vmax=vmaxes[ri])
+            # outline where the map did not reach a fixed point on most runs,
+            # i.e. where the reference the discrepancy is measured against is
+            # not actually a fixed point -- the dashed curves of the other figs
+            F = failed[tname][:, mi].reshape(lambda_1.shape).astype(float)
+            if 0 < F.sum() < F.size:
+                ax.contour(lambda_1, lambda_2, F, levels=[0.5], colors='w',
+                           linewidths=1.0, linestyles='--')
+            if ri == 0:
+                ax.set_title(m['lab'], fontsize=12)
+            if mi == 0:
+                ax.set_ylabel(f'{tname}\n' + r'$\lambda_2$', fontsize=11)
+            if ri == nr - 1:
+                ax.set_xlabel(r'$\lambda_1$')
+        cbar = fig.colorbar(im, ax=axes[ri, mi], fraction=0.05, pad=0.03)
+        cbar.set_label(_METRIC_LABEL[metric])
+    lo_ = r'-\lambda_1' if signed else '0'
+    ctr = 'geometric mean' if logy else 'mean'
+    fig.suptitle(rf'$J_{{ij}} \sim U[{lo_},\, \lambda_1]$' + r'$\qquad$' +
+                 r'$B_i \sim U[-\lambda_2,\, \lambda_2]$' + r'$\qquad$' +
+                 rf'{ctr} over {n_real} networks', fontsize=13, color='0.15')
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300,
+                        bbox_inches='tight')
+    return fig
+        
+
+
 def plot_zheng_style(n=8, topologies=None,
                      settings=((0.1, 0.0), (0.5, 0.0), (1.0, 0.0),
                                (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
                      alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
                      n_iter_map=2000, metric='abs', signed=False, n_real=50,
-                     band='sd', logy=None, logfloor=1e-16, logtop=10.0,
-                     recompute=False, save=True, fname='zheng_style'):
+                     map_schedule='sequential', band='sd', logy=None,
+                     logfloor=1e-16, logtop=10.0, recompute=False, save=True,
+                     fname='zheng_style'):
     """Discrepancy between the network dynamics and the classical map, in the
     layout of Zheng et al. (2020) Fig. 2 and 4, averaged over n_real random
     realisations.
@@ -4015,7 +4430,8 @@ def plot_zheng_style(n=8, topologies=None,
                                       alphas=alphas, n_real=n_real,
                                       n_steps=int(n_iterations), dt=dt,
                                       n_iter_map=n_iter_map, metric=metric,
-                                      signed=signed, recompute=recompute)
+                                      signed=signed, map_schedule=map_schedule,
+                                      recompute=recompute)
         theta = builders[tname](0)
         for ci in range(nc):
             ax = axes[ri, ci]
@@ -4024,6 +4440,8 @@ def plot_zheng_style(n=8, topologies=None,
                 ok = conv[ci, mi]
                 sel = curves[ci, mi][ok] if ok.any() else curves[ci, mi]
                 mu, lo, hi = _band(sel, logy, logfloor, band=band)
+                if m['kind'] == 'MF' and ok.mean()<0.5:
+                    print('a')
                 ls = '-' if ok.mean() > 0.5 else '--'
                 ax.plot(t, np.maximum(mu, logfloor) if logy else mu,
                         color=m['c'], lw=1.6, ls=ls,
@@ -4048,18 +4466,18 @@ def plot_zheng_style(n=8, topologies=None,
                 ax.set_ylabel(tname, fontsize=12)
     from matplotlib.lines import Line2D
     handles = [Line2D([0], [0], color=m['c'], lw=2.5, label=m['lab']) for m in ms]
-    handles += [Line2D([0], [0], color='0.35', lw=1.6, ls='--',
-                       label='map did not reach a fixed point')]
+    # handles += [Line2D([0], [0], color='0.35', lw=1.6, ls='--',
+    #                    label='map did not reach a fixed point')]
     fig.supylabel(_METRIC_LABEL[metric], fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     fig.legend(handles=handles, loc='lower center', ncol=3,
-               bbox_to_anchor=(0.5, 1.005), frameon=False, fontsize=11)
-    lo_ = r'-\lambda_1' if signed else '0'
-    fig.text(0.5, 1.075,
-             rf'$J_{{ij}} \sim U[{lo_},\, \lambda_1]$' + r'$\qquad$' +
-             rf'$B_i \sim U[-\lambda_2,\, \lambda_2]$' + r'$\qquad$' +
-             rf'mean $\pm$ {band.upper()} over {n_real} networks',
-             ha='center', fontsize=13, color='0.15')
+               bbox_to_anchor=(0.5, 1.002), frameon=False, fontsize=11)
+    # lo_ = r'-\lambda_1' if signed else '0'
+    # fig.text(0.5, 1.075,
+    #          rf'$J_{{ij}} \sim U[{lo_},\, \lambda_1]$' + r'$\qquad$' +
+    #          rf'$B_i \sim U[-\lambda_2,\, \lambda_2]$' + r'$\qquad$' +
+    #          rf'mean $\pm$ {band.upper()} over {n_real} networks',
+    #          ha='center', fontsize=13, color='0.15')
     if save:
         for ext in ('png', 'svg'):
             fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
@@ -4068,9 +4486,9 @@ def plot_zheng_style(n=8, topologies=None,
 
 def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
                      n_iterations=700, dt=0.1, n_iter_map=5000, metric='abs',
-                     signed=False, n_real=50, band='sd', logy=None,
-                     logfloor=1e-16, logtop=10.0, seed=0, recompute=False,
-                     save=True, fname='zheng_large'):
+                     signed=False, n_real=50, map_schedule='sequential',
+                     band='sd', logy=None, logfloor=1e-16, logtop=10.0,
+                     seed=0, recompute=False, save=True, fname='zheng_large'):
     """Larger MRFs, as their Fig. 5 extended: the graph on the left and the
     discrepancy on the right, one row per MRF, averaged over n_real random
     realisations with +-1 SD bands.
@@ -4095,7 +4513,8 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
                                       alphas=alphas, n_real=n_real,
                                       n_steps=int(n_iterations), dt=dt,
                                       n_iter_map=n_iter_map, metric=metric,
-                                      signed=signed, recompute=recompute)
+                                      signed=signed, map_schedule=map_schedule,
+                                      recompute=recompute)
         ag, ax = axes[ri, 0], axes[ri, 1]
         A = builders[name](0)
         G = nx.from_numpy_array(A)
@@ -4136,12 +4555,6 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     fig.legend(handles=handles, loc='lower center', ncol=3,
                bbox_to_anchor=(0.5, 1.005), frameon=False, fontsize=11)
-    lo_ = f'-{lam_J:g}' if signed else '0'
-    fig.text(0.5, 1.075,
-             rf'$J_{{ij}} \sim U[{lo_},\, {lam_J:g}]$' + r'$\qquad$' +
-             rf'$B_i \sim U[-{lam_B:g},\, {lam_B:g}]$' + r'$\qquad$' +
-             rf'mean $\pm$ {band.upper()} over {n_real} networks',
-             ha='center', fontsize=13, color='0.15')
     if save:
         for ext in ('png', 'svg'):
             fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300, bbox_inches='tight')
@@ -4522,14 +4935,21 @@ if __name__ == "__main__":
     #                         fname='duration_threshold')
     plot_zheng_style(n=8, topologies=('chain', 'single loop', 'grid',
                                   'fully connected', 'Necker cube'),
-                 settings=((0.1, 0.0), (0.5, 0.0), (1.0, 0.0),
-                           (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
-                 alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
-                 n_iter_map=2000, metric='abs', signed=False, n_real=50,
-                 logy=None, logfloor=1e-16, logtop=10.0, recompute=False,
-                 save=True, fname='zheng_style', band='sem')
-    plot_zheng_large(lam_J=0.5, lam_B=0.5,
-                     alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
-                     n_iter_map=5000, metric='abs', signed=False, n_real=50,
-                     logy=None, logfloor=1e-16, logtop=10.0, seed=0, recompute=False,
-                     save=True, fname='zheng_large', band='sem')
+                  settings=((0.1, 0.0), (0.5, 0.0), (1.0, 0.0),
+                            (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
+                  alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
+                  n_iter_map=3000, metric='abs', signed=False, n_real=500,
+                  logy=None, logfloor=1e-16, logtop=10.0, recompute=True,
+                  save=True, fname='zheng_style', band='sd')
+    # plot_zheng_large(lam_J=0.5, lam_B=0.5,
+    #                   alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
+    #                   n_iter_map=5000, metric='abs', signed=False, n_real=100,
+    #                   logy=None, logfloor=1e-16, logtop=10.0, seed=0, recompute=False,
+    #                   save=True, fname='zheng_large', band='sd')
+    # plot_acc_vs_lambda_matrices(n=8, topologies=None, #{'fully connected': nx.complete_graph(8)},
+    #                             n_lambdas=50,
+    #                             lambda_1_minmax=[0, 1],
+    #                             lambda_2_minmax=[0, 1],
+    #                             alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
+    #                             n_iter_map=2000, metric='abs', signed=False, n_real=100,
+    #                             recompute=False, save=True, fname='zheng_matrices')
