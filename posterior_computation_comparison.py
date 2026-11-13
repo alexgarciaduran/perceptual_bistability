@@ -4188,11 +4188,19 @@ def zheng_builders(n=8, large=False, seed0=0):
     else:
         fixed = {'complete, 25 nodes': nx.complete_graph(25),
                  'complete, 100 nodes': nx.complete_graph(100),
-                 r'$10	imes10$ lattice': nx.convert_node_labels_to_integers(
+                 r'$10 \times 10$ lattice': nx.convert_node_labels_to_integers(
                      nx.grid_2d_graph(10, 10)),
-                 r'scale-free (BA, $m$=3)': nx.barabasi_albert_graph(100, 3,
-                                                                     seed=seed0),
+                 # r'scale-free (BA, $m$=3)': nx.barabasi_albert_graph(100, 3,
+                 #                                                     seed=seed0),
+                 r'Erdos-Renyi, $p$=0.01': nx.gnp_random_graph(100, 0.01,
+                                                              seed=seed0),
+                 r'Erdos-Renyi, $p$=0.05': nx.gnp_random_graph(100, 0.05,
+                                                              seed=seed0),
                  r'Erdos-Renyi, $p$=0.1': nx.gnp_random_graph(100, 0.1,
+                                                              seed=seed0),
+                 r'Erdos-Renyi, $p$=0.2': nx.gnp_random_graph(100, 0.2,
+                                                              seed=seed0),
+                 r'Erdos-Renyi, $p$=0.3': nx.gnp_random_graph(100, 0.3,
                                                               seed=seed0)}
     b = {k: (lambda r, G=G: nx.to_numpy_array(G, dtype=float))
          for k, G in fixed.items()}
@@ -4204,7 +4212,7 @@ def zheng_builders(n=8, large=False, seed0=0):
 def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
                    n_real=50, n_steps=700, dt=0.1, n_iter_map=2000,
                    metric='kl', signed=False, conv_tol=1e-6,
-                   map_schedule='sequential', recompute=False,
+                   map_schedule='parallel', recompute=False,
                    verbose=True, folder_save=ZHENG_DIR,
                    save_last=False):
     """Compute (or load) the discrepancy curves for one topology.
@@ -4223,6 +4231,7 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
     sch = map_schedule[:3]          # the schedule changes the data, so it
     stem = f'{safe}_n{nn}_{metric}_{sch}_N{n_real}'      # belongs in the name
     f_c, f_k = folder_save + stem + '.npy', folder_save + stem + '__converged.npy'
+    print(stem)
     if not recompute and os.path.exists(f_c) and os.path.exists(f_k):
         return np.load(f_c), np.load(f_k)
     ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
@@ -4392,7 +4401,7 @@ def plot_zheng_style(n=8, topologies=None,
                                (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
                      alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
                      n_iter_map=2000, metric='abs', signed=False, n_real=50,
-                     map_schedule='sequential', band='sd', logy=None,
+                     map_schedule='parallel', band='sd', logy=None,
                      logfloor=1e-16, logtop=10.0, recompute=False, save=True,
                      fname='zheng_style'):
     """Discrepancy between the network dynamics and the classical map, in the
@@ -4425,6 +4434,8 @@ def plot_zheng_style(n=8, topologies=None,
     nr, nc = len(topologies), len(settings)
     fig, axes = plt.subplots(nr, nc, figsize=(2.75 * nc, 2.35 * nr),
                              sharex=True, sharey=True, squeeze=False)
+    for a in axes.flatten():
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
     for ri, tname in enumerate(topologies):
         curves, conv = zheng_simulate(tname, builders[tname], settings,
                                       alphas=alphas, n_real=n_real,
@@ -4442,9 +4453,9 @@ def plot_zheng_style(n=8, topologies=None,
                 mu, lo, hi = _band(sel, logy, logfloor, band=band)
                 if m['kind'] == 'MF' and ok.mean()<0.5:
                     print('a')
-                ls = '-' if ok.mean() > 0.5 else '--'
+                # ls = '-' if ok.mean() > 0.5 else '--'
                 ax.plot(t, np.maximum(mu, logfloor) if logy else mu,
-                        color=m['c'], lw=1.6, ls=ls,
+                        color=m['c'], lw=1.6, ls='-',
                         label=m['lab'] if (ri == 0 and ci == 0) else None)
                 ax.fill_between(t, np.maximum(lo, logfloor) if logy else lo,
                                 np.maximum(hi, logfloor) if logy else hi,
@@ -4486,9 +4497,10 @@ def plot_zheng_style(n=8, topologies=None,
 
 def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
                      n_iterations=700, dt=0.1, n_iter_map=5000, metric='abs',
-                     signed=False, n_real=50, map_schedule='sequential',
+                     signed=False, n_real=50, map_schedule='parallel',
                      band='sd', logy=None, logfloor=1e-16, logtop=10.0,
-                     seed=0, recompute=False, save=True, fname='zheng_large'):
+                     seed=0, per_row=2, recompute=False, save=True,
+                     fname='zheng_large'):
     """Larger MRFs, as their Fig. 5 extended: the graph on the left and the
     discrepancy on the right, one row per MRF, averaged over n_real random
     realisations with +-1 SD bands.
@@ -4505,9 +4517,14 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
     ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
     builders = zheng_builders(large=True, seed0=seed)
     names = list(builders)
-    nr = len(names)
-    fig, axes = plt.subplots(nr, 2, figsize=(9.0, 2.7 * nr), squeeze=False,
-                             gridspec_kw={'width_ratios': [1, 1.6]})
+    # Two topologies per row, each as a (graph, results) pair, so the figure
+    # is per_row*2 columns wide and grows by one row every per_row topologies.
+    nr = int(np.ceil(len(names) / per_row))
+    fig, axes = plt.subplots(nr, 2 * per_row,
+                             figsize=(7. * per_row, 2.7 * nr), squeeze=False,
+                             gridspec_kw={'width_ratios': [1, 1.4] * per_row})
+    for a in axes.flatten()[1::2]:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
     for ri, name in enumerate(names):
         curves, conv = zheng_simulate(name, builders[name], ((lam_J, lam_B),),
                                       alphas=alphas, n_real=n_real,
@@ -4515,13 +4532,14 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
                                       n_iter_map=n_iter_map, metric=metric,
                                       signed=signed, map_schedule=map_schedule,
                                       recompute=recompute)
-        ag, ax = axes[ri, 0], axes[ri, 1]
+        row, pair = divmod(ri, per_row)
+        ag, ax = axes[row, 2 * pair], axes[row, 2 * pair + 1]
         A = builders[name](0)
         G = nx.from_numpy_array(A)
         dens = nx.density(G)
         pos = (nx.kamada_kawai_layout(G) if dens < 0.3 else
                nx.spring_layout(G, seed=seed))
-        ew, ec = (0.15, '0.8') if dens > 0.3 else (0.7, '0.55')
+        ew, ec = (0.2, '0.7') if dens > 0.3 else (0.7, '0.55')
         nx.draw_networkx_edges(G, pos, ax=ag, width=ew, edge_color=ec)
         nx.draw_networkx_nodes(G, pos, ax=ag, node_size=14, node_color='tab:blue')
         ag.set_xticks([])
@@ -4546,8 +4564,12 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
             ax.set_ylim(-0.03, 1.03)
         ax.set_xlim(0, curves.shape[-1] - 1)
         ax.set_ylabel(_METRIC_LABEL[metric])
-        if ri == nr - 1:
+        if ri + per_row >= len(names):      # bottom-most panel of this column
             ax.set_xlabel('Number of Iterations')
+    for k in range(len(names), nr * per_row):      # blank out any spare pair
+        row, pair = divmod(k, per_row)
+        axes[row, 2 * pair].axis('off')
+        axes[row, 2 * pair + 1].axis('off')
     from matplotlib.lines import Line2D
     handles = [Line2D([0], [0], color=m['c'], lw=2.5, label=m['lab']) for m in ms]
     handles += [Line2D([0], [0], color='0.35', lw=1.6, ls='--',
@@ -4933,19 +4955,19 @@ if __name__ == "__main__":
     #                         B=0.0, n_trials=100, sigma_var=0.05, c=10.0,
     #                         theta=THETA_NECKER, seed=0, save=True,
     #                         fname='duration_threshold')
-    plot_zheng_style(n=8, topologies=('chain', 'single loop', 'grid',
+    plot_zheng_style(n=12, topologies=('chain', 'single loop', 'grid',
                                   'fully connected', 'Necker cube'),
                   settings=((0.1, 0.0), (0.5, 0.0), (1.0, 0.0),
                             (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
-                  alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
-                  n_iter_map=3000, metric='abs', signed=False, n_real=500,
-                  logy=None, logfloor=1e-16, logtop=10.0, recompute=True,
-                  save=True, fname='zheng_style', band='sd')
-    # plot_zheng_large(lam_J=0.5, lam_B=0.5,
-    #                   alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
-    #                   n_iter_map=5000, metric='abs', signed=False, n_real=100,
-    #                   logy=None, logfloor=1e-16, logtop=10.0, seed=0, recompute=False,
-    #                   save=True, fname='zheng_large', band='sd')
+                  alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1200, dt=0.1,
+                  n_iter_map=3000, metric='abs', signed=False, n_real=1000,
+                  logy=None, logfloor=1e-16, logtop=10.0, recompute=False,
+                  save=True, fname='zheng_style', band='sem')
+    plot_zheng_large(lam_J=0.5, lam_B=0.5,
+                      alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
+                      n_iter_map=5000, metric='abs', signed=False, n_real=100,
+                      logy=None, logfloor=1e-16, logtop=10.0, seed=0, recompute=False,
+                      save=True, fname='zheng_large', band='sem')
     # plot_acc_vs_lambda_matrices(n=8, topologies=None, #{'fully connected': nx.complete_graph(8)},
     #                             n_lambdas=50,
     #                             lambda_1_minmax=[0, 1],
