@@ -3875,14 +3875,18 @@ def plot_quartet_fps_vs_ratio(reps=50, ratio_list=np.arange(0.1, 2, 5e-3)+1e-6):
                 markersize=3)
 
 
-def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1), axis='geom'):
+def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1), axis='geom',
+                             ax=None, fig=None):
     arr = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet.npy')          # (R,reps,2,T)
     choice_vals = (_reduce_last_window(_latent_margin(arr)) > 0).astype(float)  # argmax
     p_h = np.nanmean(choice_vals, axis=1)                 # P(horizontal) per ratio
     n   = choice_vals.shape[1]
     err = np.sqrt(p_h * (1 - p_h) / n)                    # binomial SE
-
-    fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
+    # plotting
+    saveflag = False
+    if ax is None:
+        fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
+        saveflag = True
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     if axis == 'geom':
@@ -3898,13 +3902,15 @@ def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1), axis='geom'):
     ax.set_xlabel('Aspect ratio')
     ax.set_ylabel('p(horizontal)')
     ax.set_ylim(-0.02, 1.02)
-    fig.tight_layout()
-    fig.savefig(DATA_FOLDER + 'pH_vs_ratio_quartet.png', dpi=200, bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + 'pH_vs_ratio_quartet.svg', dpi=200, bbox_inches='tight')
+    if saveflag:
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + 'pH_vs_ratio_quartet.png', dpi=200, bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + 'pH_vs_ratio_quartet.svg', dpi=200, bbox_inches='tight')
 
 
 def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
-                                    mode='HV', smooth=0, min_dur=0, axis='geom'):
+                                    mode='HV', smooth=0, min_dur=0, axis='geom',
+                                    ax=None, fig=None):
     """Dominance of the active-ring percept vs aspect ratio. Percept at each step is
     the higher of the two group latents, H if q_h > q_v (argmax). Censored boundary
     runs are dropped; dt must match the save run. smooth: boxcar window (timesteps)
@@ -3947,7 +3953,10 @@ def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
             nsteps = tot / dt                                   # counted timesteps
             prop_err[i_r] = np.sqrt(prop_h[i_r] * (1 - prop_h[i_r]) / nsteps)
 
-    fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
+    saveflag = False    
+    if ax is None:
+        fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
+        saveflag = True
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     if axis == 'geom':
@@ -3981,10 +3990,22 @@ def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
         raise ValueError(f"unknown mode: {mode!r}")
     ax.axvline(x[len(x)//2], color='gray', linestyle=':', alpha=0.6)
     ax.set_xlabel('Aspect ratio')
+    if saveflag:
+        fig.tight_layout()
+        fig.savefig(DATA_FOLDER + f'dominance_{mode}_vs_ratio_quartet.png', dpi=200,
+                    bbox_inches='tight')
+        fig.savefig(DATA_FOLDER + f'dominance_{mode}_vs_ratio_quartet.svg', dpi=200,
+                    bbox_inches='tight')
+
+def plot_ph_and_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
+                                   figsize=(6, 2.5)):
+    fig, ax = plt.subplots(ncols=2, nrows=1, figsize=figsize)
+    plot_quartet_pH_vs_ratio(ratio_list=ratio_list, fig=fig, ax=ax[0])
+    plot_quartet_dominance_vs_ratio(ratio_list=ratio_list, dt=1e-2, fig=fig, ax=ax[1])
     fig.tight_layout()
-    fig.savefig(DATA_FOLDER + f'dominance_{mode}_vs_ratio_quartet.png', dpi=200,
+    fig.savefig(DATA_FOLDER + 'fig_supp_quartet.png', dpi=600,
                 bbox_inches='tight')
-    fig.savefig(DATA_FOLDER + f'dominance_{mode}_vs_ratio_quartet.svg', dpi=200,
+    fig.savefig(DATA_FOLDER + 'fig_supp_quartet.svg', dpi=600,
                 bbox_inches='tight')
 
 
@@ -4104,13 +4125,15 @@ if __name__ == '__main__':
     #                                             seed=6)
     # save_fixed_points_vs_ratio(ratio_list=np.arange(0.01, 2, 1e-2),
     #                             dt=1e-2, n_iters=500, n_reps=5, n_jobs=-1, seed=0)
-    # save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
-    #                       dt=1e-2, n_iters=1000, n_reps=100, n_jobs=10,
-    #                       noise=0.2, seed=0)
-    plot_quartet_pH_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21))
     # plot_quartet_fps_vs_ratio(reps=5, ratio_list=np.arange(0.01, 2, 1e-2))
+    save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
+                          dt=1e-2, n_iters=1000, n_reps=10, n_jobs=10,
+                          noise=0.2, seed=0)
+    plot_quartet_pH_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21))
     plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2)
     plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2, mode='propH')
+    plot_ph_and_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
+                                       figsize=(6, 2.5))
 
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
