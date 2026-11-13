@@ -3887,14 +3887,14 @@ def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1), axis='geom'):
     ax.spines['right'].set_visible(False)
     if axis == 'geom':
         x = np.arange(len(p_h))
-        ax.set_xticks(x, ratio_list[::3])
+        ax.set_xticks([x[0], x[len(x)//2], x[-1]], [ratio_list[0], ratio_list[len(x)//2], ratio_list[-1]])
     else:
         x = ratio_list
     ax.plot(x, p_h, color='forestgreen', linewidth=2.5)
     ax.fill_between(x, p_h - err, p_h + err,
                     color='forestgreen', alpha=0.25)
     ax.axhline(0.5, color='gray', linestyle='--', alpha=0.6)
-    ax.axvline(1.0, color='gray', linestyle=':', alpha=0.6)
+    ax.axvline(x[len(x)//2], color='gray', linestyle=':', alpha=0.6)
     ax.set_xlabel('Aspect ratio')
     ax.set_ylabel('p(horizontal)')
     ax.set_ylim(-0.02, 1.02)
@@ -3952,20 +3952,20 @@ def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
     ax.spines['right'].set_visible(False)
     if axis == 'geom':
         x = np.arange(len(ratio_list))
-        ax.set_xticks(x, ratio_list[::3])
+        ax.set_xticks([x[0], x[len(x)//2], x[-1]], [ratio_list[0], ratio_list[len(x)//2], ratio_list[-1]])
     else:
         x = ratio_list
     if mode == 'raw':
         ax.plot(x, mean_p, color='slateblue', linewidth=2.5)
-        ax.fill_between(ratio_list, mean_p - sem_p, mean_p + sem_p,
+        ax.fill_between(x, mean_p - sem_p, mean_p + sem_p,
                         color='slateblue', alpha=0.25)
         ax.set_ylabel('Dominance duration (s)')
     elif mode == 'HV':
         ax.plot(x, mean_h, color='forestgreen', linewidth=2.5, label='H')
-        ax.fill_between(ratio_list, mean_h - sem_h, mean_h + sem_h,
+        ax.fill_between(x, mean_h - sem_h, mean_h + sem_h,
                         color='forestgreen', alpha=0.25)
         ax.plot(x, mean_v, color='firebrick', linewidth=2.5, label='V')
-        ax.fill_between(ratio_list, mean_v - sem_v, mean_v + sem_v,
+        ax.fill_between(x, mean_v - sem_v, mean_v + sem_v,
                         color='firebrick', alpha=0.25)
         ax.set_ylabel('Dominance duration (s)')
         ax.legend(frameon=False)
@@ -3979,7 +3979,7 @@ def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
         ax.set_ylim(-0.02, 1.02)
     else:
         raise ValueError(f"unknown mode: {mode!r}")
-    ax.axvline(1.0, color='gray', linestyle=':', alpha=0.6)
+    ax.axvline(x[len(x)//2], color='gray', linestyle=':', alpha=0.6)
     ax.set_xlabel('Aspect ratio')
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + f'dominance_{mode}_vs_ratio_quartet.png', dpi=200,
@@ -4104,9 +4104,9 @@ if __name__ == '__main__':
     #                                             seed=6)
     # save_fixed_points_vs_ratio(ratio_list=np.arange(0.01, 2, 1e-2),
     #                             dt=1e-2, n_iters=500, n_reps=5, n_jobs=-1, seed=0)
-    save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
-                          dt=1e-2, n_iters=1000, n_reps=100, n_jobs=10,
-                          noise=0.2, seed=0)
+    # save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
+    #                       dt=1e-2, n_iters=1000, n_reps=100, n_jobs=10,
+    #                       noise=0.2, seed=0)
     plot_quartet_pH_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21))
     # plot_quartet_fps_vs_ratio(reps=5, ratio_list=np.arange(0.01, 2, 1e-2))
     plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2)
