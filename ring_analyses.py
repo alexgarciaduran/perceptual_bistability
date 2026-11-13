@@ -237,12 +237,12 @@ class ring:
         ring_offset = 0 if state == 1 else 4
     
         # edge length: horizontal edges ~ 1, vertical edges ~ ratio (aspect ratio)
-        def edge_len(idx):
-            etype = QUARTET_NODE_DEFS[idx % 8]['type']
-            return 1.0 if etype == 'H' else ratio
         # def edge_len(idx):
         #     etype = QUARTET_NODE_DEFS[idx % 8]['type']
-        #     return np.sqrt(ratio) if etype == 'V' else 1.0/np.sqrt(ratio)
+        #     return 1.0 if etype == 'H' else ratio
+        def edge_len(idx):
+            etype = QUARTET_NODE_DEFS[idx % 8]['type']
+            return np.sqrt(ratio) if etype == 'V' else 1.0/np.sqrt(ratio)
 
         nlh = 0
         if z_center == 1:
@@ -3753,60 +3753,119 @@ def nice_quartet_example(downsample=1, n_iters=1000, dt=0.001,
                 bbox_inches='tight')
 
 
-def _simulate_quartet(ratio, seed, dt, n_iters, noise):
-    """One quartet simulation; returns (post_cont, choice_h) read from ring1's
-    active window. noise=0 for fixed points, noise>0 for stochastic choice."""
-    posterior = ring(epsilon=1e-4, n_dots=8).mean_field_sde(
-        dt=dt, tau=0.1, n_iters=n_iters, j=0.5, true='CW',
-        noise=noise, plot=False, discrete_stim=True, s=[0., 1], b=[0., 3.],
-        noise_stim=0.2, coh=None, nstates=2, quartet=True,
+def _active_ring_latents(posterior, n_iters, stim_stamps):
+    """Active-ring group posteriors (q_h, q_v) = P(moving) of the H and V edge
+    groups of whichever ring the stimulus drives at each step, stacked as (2, T).
+    block even -> state1 lit -> ring2 active; block odd -> ring1 active."""
+    q_h1 = np.nanmean(posterior[[0, 2], 0, :], axis=0)   # ring1 H edges
+    q_v1 = np.nanmean(posterior[[1, 3], 0, :], axis=0)   # ring1 V edges
+    q_h2 = np.nanmean(posterior[[5, 7], 0, :], axis=0)   # ring2 H edges
+    q_v2 = np.nanmean(posterior[[4, 6], 0, :], axis=0)   # ring2 V edges
+    ring1_active = (np.arange(n_iters) // stim_stamps) % 2 == 1
+    q_h = np.where(ring1_active, q_h1, q_h2)
+    q_v = np.where(ring1_active, q_v1, q_v2)
+    return np.stack([q_h, q_v])                          # (2, T): [q_h, q_v]
+
+
+def _latent_margin(arr):
+    """Signed dominance margin q_h - q_v from latents (..., 2, T), shape (..., T).
+    Its sign is the argmax: >0 means the H group is the higher of the two (percept H),
+    0 at NM/balance. The choice is sign(margin), not a graded posterior."""
+    return arr[..., 0, :] - arr[..., 1, :]
+
+
+def _simulate_quartet(ratio, seed, dt, n_iters, noise,
+                      j=0.6, eps=1e-3, b_nm=3.0, noise_stim=0.2, tau=0.1):
+    """Dynamical-stimulus run; returns the active-ring group posteriors (q_h, q_v)
+    as a (2, T) array. The percept each step is the larger of the two (argmax); the
+    psychometric uses post = (q_h + 1 - q_v)/2."""
+    posterior = ring(epsilon=eps, n_dots=8).mean_field_sde(
+        dt=dt, tau=tau, n_iters=n_iters, j=j, true='CW',
+        noise=noise, plot=False, discrete_stim=True, s=[0., 1], b=[0., b_nm],
+        noise_stim=noise_stim, coh=None, nstates=2, quartet=True,
         ratio=ratio+1e-6, stim_stamps=n_iters//4, return_all=True, seed=seed)
-
-    W = n_iters // 6
-    q_h = np.nanmean(posterior[[0, 2], 0, -W:])   # H edges of ring1
-    q_v = np.nanmean(posterior[[1, 3], 0, -W:])   # V edges of ring1
-    return (q_h + 1 - q_v) * 0.5, (1.0 if q_h > q_v else 0.0)
+    return _active_ring_latents(posterior, n_iters, n_iters//4)
 
 
-def _run_grid(ratio_list, n_reps, dt, n_iters, noise, n_jobs, seed):
-    """Run (ratio x rep) grid in parallel; return (post_vals, choice_vals)."""
+def _simulate_quartet_fp(ratio, seed, dt, n_iters,
+                         j=0.6, eps=1e-2, b_nm=0.0, noise_stim=0.2, tau=0.1):
+    """Static-stimulus fixed point: hold one frame so one ring stays active,
+    noise=0, run long for convergence; return active-ring (q_h, q_v) as (2, T)."""
+    posterior = ring(epsilon=eps, n_dots=8).mean_field_sde(
+        dt=dt, tau=tau, n_iters=n_iters, j=j, true='CW',
+        noise=0.0, plot=False, discrete_stim=True, s=[0., 1], b=[0., b_nm],
+        noise_stim=noise_stim, coh=None, nstates=2, quartet=True,
+        ratio=ratio+1e-6, stim_stamps=n_iters+1, return_all=True, seed=seed)
+    q_h = np.nanmean(posterior[[5, 7], 0, :], axis=0)   # ring2 H (held frame -> ring2 active)
+    q_v = np.nanmean(posterior[[4, 6], 0, :], axis=0)   # ring2 V
+    return np.stack([q_h, q_v])                          # (2, T)
+
+
+def _run_grid(ratio_list, n_reps, dt, n_iters, noise, n_jobs, seed, fp=False,
+              **sim_kwargs):
+    """Run (ratio x rep) grid in parallel; return the latent series as post_vals of
+    shape (n_ratios, n_reps, 2, T) ([...,0]=q_h, [...,1]=q_v). fp=True uses the
+    static-stimulus sim; sim_kwargs (j, eps, b_nm, noise_stim, tau) override defaults."""
     np.random.seed(seed)
     tasks = [(i_r, rep, ratio)
              for i_r, ratio in enumerate(ratio_list)
              for rep in range(n_reps)]
-    results = Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(_simulate_quartet)(ratio, rep, dt, n_iters, noise)
-        for _, rep, ratio in tqdm(tasks))
-    post_vals   = np.zeros((len(ratio_list), n_reps))
-    choice_vals = np.zeros((len(ratio_list), n_reps))
-    for (i_r, rep, _), (pc, ch) in zip(tasks, results):
-        post_vals[i_r, rep]   = pc
-        choice_vals[i_r, rep] = ch
-    return post_vals, choice_vals
+    if fp:
+        results = Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(_simulate_quartet_fp)(ratio, rep, dt, n_iters, **sim_kwargs)
+            for _, rep, ratio in tqdm(tasks))
+    else:
+        results = Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(_simulate_quartet)(ratio, rep, dt, n_iters, noise, **sim_kwargs)
+            for _, rep, ratio in tqdm(tasks))
+    T = results[0].shape[-1]
+    post_vals = np.zeros((len(ratio_list), n_reps, 2, T))   # [..., 0]=q_h, [...,1]=q_v
+    for (i_r, rep, _), pc in zip(tasks, results):
+        post_vals[i_r, rep] = pc
+    return post_vals
+
+
+def _reduce_last_window(post_series):
+    """Last steps of _simulate_quartet: average the posterior over the final
+    window to recover the per-trial scalar. post_series: (..., T)."""
+    W = post_series.shape[-1] // 6
+    return np.nanmean(post_series[..., -W:], axis=-1)
+
+
+def _dominance_durations(percept):
+    """Run-lengths (timesteps) and percept value of each run in a boolean series."""
+    change = np.flatnonzero(np.diff(percept.astype(int))) + 1
+    bounds = np.concatenate(([0], change, [percept.size]))
+    lengths = np.diff(bounds)
+    values = percept[bounds[:-1]]          # percept value at each run's start
+    return lengths, values
 
 
 def save_fixed_points_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
-                               dt=1e-2, n_iters=400, n_reps=10, n_jobs=-1, seed=0):
-    """Deterministic (noise=0) run for fixed points -> saves continuous posterior."""
-    post_vals, _ = _run_grid(ratio_list, n_reps, dt, n_iters,
-                             noise=0.0, n_jobs=n_jobs, seed=seed)
+                               dt=1e-2, n_iters=1500, n_reps=10, n_jobs=-1, seed=0,
+                               **sim_kwargs):
+    """Static-stimulus fixed points (noise=0, held frame, long n_iters) -> saves the
+    active-ring posterior series. sim_kwargs: j, eps, b_nm, noise_stim, tau."""
+    post_vals = _run_grid(ratio_list, n_reps, dt, n_iters,
+                          noise=0.0, n_jobs=n_jobs, seed=seed, fp=True, **sim_kwargs)
     np.save(DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy', post_vals)
     return post_vals
 
 
 def save_choice_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
                          dt=1e-2, n_iters=400, n_reps=50, n_jobs=-1,
-                         noise=0.2, seed=0):
-    """Stochastic (noise>0) run for choice probability -> saves choices."""
-    _, choice_vals = _run_grid(ratio_list, n_reps, dt, n_iters,
-                               noise=noise, n_jobs=n_jobs, seed=seed)
-    np.save(DATA_FOLDER + 'choice_vs_ratio_quartet.npy', choice_vals)
-    return choice_vals
+                         noise=0.2, seed=0, **sim_kwargs):
+    """Stochastic (noise>0) run for choice/dominance -> saves the active-ring
+    posterior series. sim_kwargs: j, eps, b_nm, noise_stim, tau."""
+    post_vals = _run_grid(ratio_list, n_reps, dt, n_iters,
+                          noise=noise, n_jobs=n_jobs, seed=seed, **sim_kwargs)
+    np.save(DATA_FOLDER + 'choice_vs_ratio_quartet.npy', post_vals)
+    return post_vals
 
 
-def plot_quartet_fps_vs_ratio(reps=50):
-    ratio_list=np.arange(0.1, 2, 5e-3)+1e-6
-    post_vals = np.load(DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy')
+def plot_quartet_fps_vs_ratio(reps=50, ratio_list=np.arange(0.1, 2, 5e-3)+1e-6):
+    arr = np.load(DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy')  # (R,reps,2,T)
+    post_vals = _reduce_last_window(_latent_margin(arr))   # q_h-q_v (sign=argmax)
     fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -3816,8 +3875,9 @@ def plot_quartet_fps_vs_ratio(reps=50):
                 markersize=3)
 
 
-def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1)):
-    choice_vals = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet.npy')
+def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1), axis='geom'):
+    arr = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet.npy')          # (R,reps,2,T)
+    choice_vals = (_reduce_last_window(_latent_margin(arr)) > 0).astype(float)  # argmax
     p_h = np.nanmean(choice_vals, axis=1)                 # P(horizontal) per ratio
     n   = choice_vals.shape[1]
     err = np.sqrt(p_h * (1 - p_h) / n)                    # binomial SE
@@ -3825,8 +3885,13 @@ def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1)):
     fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.plot(ratio_list, p_h, color='forestgreen', linewidth=2.5)
-    ax.fill_between(ratio_list, p_h - err, p_h + err,
+    if axis == 'geom':
+        x = np.arange(len(p_h))
+        ax.set_xticks(x, ratio_list[::3])
+    else:
+        x = ratio_list
+    ax.plot(x, p_h, color='forestgreen', linewidth=2.5)
+    ax.fill_between(x, p_h - err, p_h + err,
                     color='forestgreen', alpha=0.25)
     ax.axhline(0.5, color='gray', linestyle='--', alpha=0.6)
     ax.axvline(1.0, color='gray', linestyle=':', alpha=0.6)
@@ -3836,6 +3901,91 @@ def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1)):
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'pH_vs_ratio_quartet.png', dpi=200, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'pH_vs_ratio_quartet.svg', dpi=200, bbox_inches='tight')
+
+
+def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
+                                    mode='HV', smooth=0, min_dur=0, axis='geom'):
+    """Dominance of the active-ring percept vs aspect ratio. Percept at each step is
+    the higher of the two group latents, H if q_h > q_v (argmax). Censored boundary
+    runs are dropped; dt must match the save run. smooth: boxcar window (timesteps)
+    low-passing each latent before comparison (<=1 disables). min_dur: discard
+    episodes shorter than this (timesteps). mode:
+      'raw'   : mean dominance duration, H and V pooled (s)
+      'HV'    : mean dominance duration of H and V overlaid (s)
+      'propH' : H predominance = time fraction sum(D_H)/(sum(D_H)+sum(D_V))
+      'propV' : V predominance = 1 - propH"""
+    arr = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet.npy')  # (R, reps, 2, T)
+    n_ratios, n_reps = arr.shape[:2]
+    mean_h = np.full(n_ratios, np.nan); sem_h = np.full(n_ratios, np.nan)
+    mean_v = np.full(n_ratios, np.nan); sem_v = np.full(n_ratios, np.nan)
+    mean_p = np.full(n_ratios, np.nan); sem_p = np.full(n_ratios, np.nan)   # pooled
+    prop_h = np.full(n_ratios, np.nan); prop_err = np.full(n_ratios, np.nan)
+    for i_r in range(n_ratios):
+        dh, dv = [], []
+        for rep in range(n_reps):
+            q_h, q_v = arr[i_r, rep, 0], arr[i_r, rep, 1]
+            if smooth > 1:
+                k = np.ones(smooth) / smooth
+                q_h = np.convolve(q_h, k, mode='same')
+                q_v = np.convolve(q_v, k, mode='same')
+            lengths, values = _dominance_durations(q_h > q_v)   # percept = argmax
+            if lengths.size > 2:
+                lengths, values = lengths[1:-1], values[1:-1]   # drop censored ends
+                keep = lengths >= min_dur
+                lengths, values = lengths[keep], values[keep]   # drop brief episodes
+                dh.extend(lengths[values] * dt)                 # H episodes (s)
+                dv.extend(lengths[~values] * dt)                # V episodes (s)
+        dh, dv = np.asarray(dh), np.asarray(dv)
+        pooled = np.concatenate([dh, dv])
+        if dh.size: mean_h[i_r], sem_h[i_r] = dh.mean(), dh.std() / np.sqrt(dh.size)
+        if dv.size: mean_v[i_r], sem_v[i_r] = dv.mean(), dv.std() / np.sqrt(dv.size)
+        if pooled.size:
+            mean_p[i_r], sem_p[i_r] = pooled.mean(), pooled.std() / np.sqrt(pooled.size)
+        tot = dh.sum() + dv.sum()
+        if tot > 0:
+            prop_h[i_r] = dh.sum() / tot
+            nsteps = tot / dt                                   # counted timesteps
+            prop_err[i_r] = np.sqrt(prop_h[i_r] * (1 - prop_h[i_r]) / nsteps)
+
+    fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    if axis == 'geom':
+        x = np.arange(len(ratio_list))
+        ax.set_xticks(x, ratio_list[::3])
+    else:
+        x = ratio_list
+    if mode == 'raw':
+        ax.plot(x, mean_p, color='slateblue', linewidth=2.5)
+        ax.fill_between(ratio_list, mean_p - sem_p, mean_p + sem_p,
+                        color='slateblue', alpha=0.25)
+        ax.set_ylabel('Dominance duration (s)')
+    elif mode == 'HV':
+        ax.plot(x, mean_h, color='forestgreen', linewidth=2.5, label='H')
+        ax.fill_between(ratio_list, mean_h - sem_h, mean_h + sem_h,
+                        color='forestgreen', alpha=0.25)
+        ax.plot(x, mean_v, color='firebrick', linewidth=2.5, label='V')
+        ax.fill_between(ratio_list, mean_v - sem_v, mean_v + sem_v,
+                        color='firebrick', alpha=0.25)
+        ax.set_ylabel('Dominance duration (s)')
+        ax.legend(frameon=False)
+    elif mode in ('propH', 'propV'):
+        y = prop_h if mode == 'propH' else 1 - prop_h
+        color = 'forestgreen' if mode == 'propH' else 'firebrick'
+        ax.plot(x, y, color=color, linewidth=2.5)
+        ax.fill_between(x, y - prop_err, y + prop_err, color=color, alpha=0.25)
+        ax.axhline(0.5, color='gray', linestyle='--', alpha=0.6)
+        ax.set_ylabel(f'{mode[-1]} predominance')
+        ax.set_ylim(-0.02, 1.02)
+    else:
+        raise ValueError(f"unknown mode: {mode!r}")
+    ax.axvline(1.0, color='gray', linestyle=':', alpha=0.6)
+    ax.set_xlabel('Aspect ratio')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + f'dominance_{mode}_vs_ratio_quartet.png', dpi=200,
+                bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + f'dominance_{mode}_vs_ratio_quartet.svg', dpi=200,
+                bbox_inches='tight')
 
 
 if __name__ == '__main__':
@@ -3928,36 +4078,40 @@ if __name__ == '__main__':
     # nice_quartet_example(n_iters=8000, dt=1e-3, downsample=20, stamps=250)
     # motion_quartet_example(n_iters=5000, dt=0.01, nreps=50, cols=True,
     #                         downsample=25)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
-                                                true='CW', noise=0.0, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=1,
-                                                stim_stamps=100, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
-                                                true='CW', noise=0.0, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=1,
-                                                stim_stamps=100, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
-                                                true='CW', noise=0.0, plot=True,
-                                                discrete_stim=True, s=[0., 1],
-                                                b=[0.0, 2.5], noise_stim=1, coh=None,
-                                                nstates=2, quartet=True, ratio=1,
-                                                stim_stamps=100, stim_weight=1,
-                                                colors=True,
-                                                seed=6)
-    # save_choice_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-1),
-    #                      dt=1e-2, n_iters=400, n_reps=100, n_jobs=10,
-    #                      noise=0.2, seed=0)
-    # plot_quartet_pH_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-1))
-    # plot_quartet_fps_vs_ratio(reps=50)
-    
+    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=1,
+    #                                             stim_stamps=100, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=6)
+    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=1,
+    #                                             stim_stamps=100, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=6)
+    # ring(epsilon=1e-4, n_dots=8).mean_field_sde(dt=0.01, tau=0.1, n_iters=400, j=0.3,
+    #                                             true='CW', noise=0.0, plot=True,
+    #                                             discrete_stim=True, s=[0., 1],
+    #                                             b=[0.0, 2.5], noise_stim=1, coh=None,
+    #                                             nstates=2, quartet=True, ratio=1,
+    #                                             stim_stamps=100, stim_weight=1,
+    #                                             colors=True,
+    #                                             seed=6)
+    # save_fixed_points_vs_ratio(ratio_list=np.arange(0.01, 2, 1e-2),
+    #                             dt=1e-2, n_iters=500, n_reps=5, n_jobs=-1, seed=0)
+    save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
+                          dt=1e-2, n_iters=1000, n_reps=100, n_jobs=10,
+                          noise=0.2, seed=0)
+    plot_quartet_pH_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21))
+    # plot_quartet_fps_vs_ratio(reps=5, ratio_list=np.arange(0.01, 2, 1e-2))
+    plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2)
+    plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2, mode='propH')
+
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
     # # # ring(epsilon=0.001).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.7,
