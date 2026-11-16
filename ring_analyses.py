@@ -3828,7 +3828,8 @@ def _run_grid(ratio_list, n_reps, dt, n_iters, noise, n_jobs, seed, fp=False,
 def _reduce_last_window(post_series):
     """Last steps of _simulate_quartet: average the posterior over the final
     window to recover the per-trial scalar. post_series: (..., T)."""
-    W = post_series.shape[-1] // 6
+    # W = post_series.shape[-1] // 1000
+    W = 10  # last 10 steps
     return np.nanmean(post_series[..., -W:], axis=-1)
 
 
@@ -3854,12 +3855,12 @@ def save_fixed_points_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
 
 def save_choice_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
                          dt=1e-2, n_iters=400, n_reps=50, n_jobs=-1,
-                         noise=0.2, seed=0, **sim_kwargs):
+                         noise=0.2, seed=0, long_or_short='long', **sim_kwargs):
     """Stochastic (noise>0) run for choice/dominance -> saves the active-ring
     posterior series. sim_kwargs: j, eps, b_nm, noise_stim, tau."""
     post_vals = _run_grid(ratio_list, n_reps, dt, n_iters,
                           noise=noise, n_jobs=n_jobs, seed=seed, **sim_kwargs)
-    np.save(DATA_FOLDER + 'choice_vs_ratio_quartet.npy', post_vals)
+    np.save(DATA_FOLDER + f'choice_vs_ratio_quartet_{long_or_short}.npy', post_vals)
     return post_vals
 
 
@@ -3877,7 +3878,7 @@ def plot_quartet_fps_vs_ratio(reps=50, ratio_list=np.arange(0.1, 2, 5e-3)+1e-6):
 
 def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1), axis='geom',
                              ax=None, fig=None):
-    arr = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet.npy')          # (R,reps,2,T)
+    arr = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet_short.npy')          # (R,reps,2,T)
     choice_vals = (_reduce_last_window(_latent_margin(arr)) > 0).astype(float)  # argmax
     p_h = np.nanmean(choice_vals, axis=1)                 # P(horizontal) per ratio
     n   = choice_vals.shape[1]
@@ -3900,7 +3901,7 @@ def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1), axis='geom',
     ax.axhline(0.5, color='gray', linestyle='--', alpha=0.6)
     ax.axvline(x[len(x)//2], color='gray', linestyle=':', alpha=0.6)
     ax.set_xlabel('Aspect ratio')
-    ax.set_ylabel('p(horizontal)')
+    ax.set_ylabel('p(Horizontal)')
     ax.set_ylim(-0.02, 1.02)
     if saveflag:
         fig.tight_layout()
@@ -3920,7 +3921,7 @@ def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
       'HV'    : mean dominance duration of H and V overlaid (s)
       'propH' : H predominance = time fraction sum(D_H)/(sum(D_H)+sum(D_V))
       'propV' : V predominance = 1 - propH"""
-    arr = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet.npy')  # (R, reps, 2, T)
+    arr = np.load(DATA_FOLDER + 'choice_vs_ratio_quartet_long.npy')  # (R, reps, 2, T)
     n_ratios, n_reps = arr.shape[:2]
     mean_h = np.full(n_ratios, np.nan); sem_h = np.full(n_ratios, np.nan)
     mean_v = np.full(n_ratios, np.nan); sem_v = np.full(n_ratios, np.nan)
@@ -3970,10 +3971,10 @@ def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
                         color='slateblue', alpha=0.25)
         ax.set_ylabel('Dominance duration (s)')
     elif mode == 'HV':
-        ax.plot(x, mean_h, color='forestgreen', linewidth=2.5, label='H')
+        ax.plot(x, mean_h, color='forestgreen', linewidth=2.5, label='Horizontal')
         ax.fill_between(x, mean_h - sem_h, mean_h + sem_h,
                         color='forestgreen', alpha=0.25)
-        ax.plot(x, mean_v, color='firebrick', linewidth=2.5, label='V')
+        ax.plot(x, mean_v, color='firebrick', linewidth=2.5, label='Vertical')
         ax.fill_between(x, mean_v - sem_v, mean_v + sem_v,
                         color='firebrick', alpha=0.25)
         ax.set_ylabel('Dominance duration (s)')
@@ -3984,7 +3985,7 @@ def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
         ax.plot(x, y, color=color, linewidth=2.5)
         ax.fill_between(x, y - prop_err, y + prop_err, color=color, alpha=0.25)
         ax.axhline(0.5, color='gray', linestyle='--', alpha=0.6)
-        ax.set_ylabel(f'{mode[-1]} predominance')
+        ax.set_ylabel(f"{mode[-1]} predominance")
         ax.set_ylim(-0.02, 1.02)
     else:
         raise ValueError(f"unknown mode: {mode!r}")
@@ -3998,11 +3999,13 @@ def plot_quartet_dominance_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2), dt=1e-2,
                     bbox_inches='tight')
 
 def plot_ph_and_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
-                                   figsize=(6, 2.5)):
-    fig, ax = plt.subplots(ncols=2, nrows=1, figsize=figsize)
+                                   figsize=(9.5, 2.5)):
+    fig, ax = plt.subplots(ncols=3, nrows=1, figsize=figsize)
+    fig.tight_layout()
     plot_quartet_pH_vs_ratio(ratio_list=ratio_list, fig=fig, ax=ax[0])
     plot_quartet_dominance_vs_ratio(ratio_list=ratio_list, dt=1e-2, fig=fig, ax=ax[1])
-    fig.tight_layout()
+    plot_quartet_dominance_vs_ratio(ratio_list=ratio_list, dt=1e-2, fig=fig, ax=ax[2],
+                                    mode='propH')
     fig.savefig(DATA_FOLDER + 'fig_supp_quartet.png', dpi=600,
                 bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'fig_supp_quartet.svg', dpi=600,
@@ -4126,14 +4129,17 @@ if __name__ == '__main__':
     # save_fixed_points_vs_ratio(ratio_list=np.arange(0.01, 2, 1e-2),
     #                             dt=1e-2, n_iters=500, n_reps=5, n_jobs=-1, seed=0)
     # plot_quartet_fps_vs_ratio(reps=5, ratio_list=np.arange(0.01, 2, 1e-2))
+    # save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
+    #                       dt=1e-2, n_iters=24_000, n_reps=10, n_jobs=10,
+    #                       noise=0.2, seed=0, long_or_short='long')
     save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
-                          dt=1e-2, n_iters=1000, n_reps=10, n_jobs=10,
-                          noise=0.2, seed=0)
-    plot_quartet_pH_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21))
-    plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2)
-    plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2, mode='propH')
+                          dt=1e-2, n_iters=500, n_reps=200, n_jobs=10,
+                          noise=0.2, seed=0, long_or_short='short')
+    # plot_quartet_pH_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21))
+    # plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2)
+    # plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2, mode='propH')
     plot_ph_and_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
-                                       figsize=(6, 2.5))
+                                       figsize=(10, 3.2))
 
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
