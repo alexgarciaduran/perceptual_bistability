@@ -3370,6 +3370,122 @@ def iterate_dynamics(kind, Jmat, Bvec, alpha=1.0, n_iter=200000, tol=1e-14,
     return xs, (Q[:k + 1] if keep_q else Q)
 
 
+def _init_x(kind, Jmat, Bvec, seed=0, eps=0.05, init='small', clip=False):
+    """The initial state iterate_dynamics and iterate_map draw for a seed:
+    eps*N(0,1) ('small') or U[-eps, eps] ('uniform'), on the nodes for MF and
+    on the directed edges for FBP.
+
+    clip=True pulls it into each unit's encodable range -- |m_i| <= 1 for a
+    node, |M_ij| <= J_ij for an edge -- which is what a firing rate can carry.
+    Without it an edge whose coupling is smaller than eps starts off-scale and
+    the spiking run begins pinned at the maximum rate."""
+    mask = Jmat != 0.0
+    n = len(Bvec)
+    size = n if kind == 'mf' else int(mask.sum())
+    rng = np.random.default_rng(seed)
+    x = (rng.uniform(-eps, eps, size) if init == 'uniform'
+         else eps * rng.standard_normal(size))
+    if clip:
+        scale = np.ones(n) if kind == 'mf' else np.abs(Jmat[mask])
+        x = np.clip(x, -scale, scale)
+    return x
+
+
+def iterate_spiking(kind, Jmat, Bvec, alpha=1.0, n_iter=700, dt=0.1,
+                    tau_s=1.0, n_pool=100, rate_gain=50.0, rate_base=50.0,
+                    tau_ms=20.0, seed=0, eps=0.05, init='small', x0=None,
+                    keep='q', record=False):
+    """The same network as iterate_dynamics, but units talk in spikes.
+
+    Each unit keeps the rate state x of iterate_dynamics and fires Poisson
+    spikes at r_hat = rate_gain * (x / scale) + rate_base Hz, the encoding of
+    Zheng et al. (2020) Sec. 4.2 (their 50*r + 50, so 0-100 Hz). scale is the
+    unit's own dynamic range, so every unit spans the same rates: |m| <= 1 for
+    MF, and |M_ij| <= J_ij for FBP (the log-message is bounded by its coupling,
+    which is what lets an edge unit carry it in a non-negative rate at all).
+    The rate must be affine in the unit's state, not in its belief difference
+    tanh(M): a downstream unit sums its inputs, and sum(tanh^-1(r_k)) would put
+    a nonlinearity on every synapse.
+
+    n_pool is the number of neurons per unit; spikes are counted in the Euler
+    bin and low-pass filtered with tau_s (in units of tau, as dt is), giving
+    the decoded state the downstream units actually see. Only the transmitted
+    signal is noisy: the unit's own x leaks toward f(decoded), as in Zheng's
+    Eqs. (13)-(16) before the spike train is replaced by its trial average.
+    tau_ms sets how long tau is in real time, and so how many spikes fall in a
+    bin -- the decoded state has SD ~ 1/sqrt(n_pool * tau_s * rate), which is
+    the floor these runs plateau at.
+
+    Returns (x_traj, q_traj) like iterate_dynamics, both read out from the
+    spikes rather than from the clean state. record=True appends the spike
+    counts and the clean rates (Hz) per bin, both (n_iter, n_units), for a
+    raster."""
+    Jmat = np.ascontiguousarray(Jmat, float)
+    Bvec = np.ascontiguousarray(Bvec, float)
+    n = Bvec.size
+    src, dst, rev = _edge_index(Jmat != 0.0)
+    Je = np.ascontiguousarray(Jmat[src, dst])
+    size = n if kind == 'mf' else src.size
+    scale = np.ones(n) if kind == 'mf' else np.abs(Je)
+    if x0 is not None:
+        x = np.array(x0, float)
+    else:
+        rng0 = np.random.default_rng(seed)
+        x = (rng0.uniform(-eps, eps, size) if init == 'uniform'
+             else eps * rng0.standard_normal(size))
+    x = np.clip(x, -scale, scale)          # a unit cannot encode more
+    rng = np.random.default_rng(seed + 10 ** 6)
+    key = src if kind == 'mf' else dst            # grouping, as in _dyn_numpy
+    o = np.argsort(key, kind='stable')
+    nz = np.bincount(key, minlength=n) > 0
+    # clamp the group starts so an isolated node cannot index past the edge
+    # list; nz then zeroes whatever reduceat returned for its empty group
+    starts = np.minimum(np.searchsorted(key[o], np.arange(n)),
+                        max(key.size - 1, 0))
+    grp = ((lambda v: np.add.reduceat(v[o], starts) * nz) if key.size
+           else (lambda v: np.zeros(n)))
+    tJ = np.tanh(alpha * Je)
+    lam = dt * tau_ms * 1e-3 * n_pool             # spikes per Hz per bin
+    s = rate_gain * (x / scale) + rate_base       # filtered trace, in Hz
+    keep_x, keep_q = keep == 'all', keep != 'last'
+    X = np.empty((n_iter + 1 if keep_x else 1, size))
+    Q = np.empty((n_iter + 1 if keep_q else 1, n))
+    S = np.empty((n_iter, size), np.int64) if record else None
+    R = np.empty((n_iter, size)) if record else None
+    for k in range(n_iter + 1):
+        xh = (s - rate_base) / rate_gain * scale          # decoded from spikes
+        if kind == 'mf':
+            q = (xh + 1) / 2
+        else:
+            h = Bvec + grp(xh)
+            q = 1 / (1 + np.exp(-2 * h))
+        if keep_x:
+            X[k] = xh
+        if keep_q:
+            Q[k] = q
+        else:
+            X[0], Q[0] = xh, q
+        if k == n_iter:
+            break
+        if kind == 'mf':
+            u = Bvec + grp(Je * xh[dst])
+            f = np.tanh(u)
+        else:
+            u = h[src] - alpha * xh[rev]
+            z = np.clip(tJ * np.tanh(u), -1 + 1e-15, 1 - 1e-15)
+            f = np.arctanh(z) / alpha
+        x = x + dt * (f - x)
+        rate = np.clip(rate_gain * (x / scale) + rate_base,
+                       0.0, rate_base + rate_gain)
+        cnt = rng.poisson(rate * lam)
+        if record:
+            S[k], R[k] = cnt, rate
+        s = s + (dt / tau_s) * (cnt / lam - s)
+    xs = X[:k + 1] if keep_x else np.stack([X[0], X[0]])
+    qs = Q[:k + 1] if keep_q else Q[:1]
+    return (xs, qs, S, R) if record else (xs, qs)
+
+
 def iterate_map(kind, Jmat, Bvec, alpha=1.0, schedule='sequential',
                 n_iter=2000, tol=1e-12, seed=0, eps=0.05, init='small',
                 x0=None, keep='all'):
@@ -4212,7 +4328,8 @@ def zheng_builders(n=8, large=False, seed0=0):
 def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
                    n_real=50, n_steps=700, dt=0.1, n_iter_map=2000,
                    metric='kl', signed=False, conv_tol=1e-6,
-                   map_schedule='parallel', recompute=False,
+                   map_schedule='parallel', engine='dynamics', n_pool=100,
+                   tau_s=1.0, tau_ms=20.0, recompute=False,
                    verbose=True, folder_save=ZHENG_DIR,
                    save_last=False):
     """Compute (or load) the discrepancy curves for one topology.
@@ -4222,6 +4339,10 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
     point and the network from the same initial state, and store the
     discrepancy of the network's beliefs to the map's answer at every step.
 
+    engine='dynamics' is the deterministic rate network; engine='spiking' is
+    the same network read out from Poisson spikes, n_pool neurons per unit
+    (see iterate_spiking). The two are cached separately.
+
     Returns (curves, converged) of shapes
         (n_settings, n_schemes, n_real, n_steps+1)  and
         (n_settings, n_schemes, n_real)."""
@@ -4229,7 +4350,8 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
     safe = ''.join(c if c.isalnum() else '_' for c in name).strip('_')
     nn = build(0).shape[0]
     sch = map_schedule[:3]          # the schedule changes the data, so it
-    stem = f'{safe}_n{nn}_{metric}_{sch}_N{n_real}'      # belongs in the name
+    spk = f'_spkK{n_pool}' if engine == 'spiking' else ''
+    stem = f'{safe}_n{nn}_{metric}_{sch}_N{n_real}{spk}'  # belongs in the name
     f_c, f_k = folder_save + stem + '.npy', folder_save + stem + '__converged.npy'
     print(stem)
     if not recompute and os.path.exists(f_c) and os.path.exists(f_k):
@@ -4243,13 +4365,21 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
             theta = build(r)
             Jm, Bv = zheng_params(theta, lJ, lB, seed=r, signed=signed)
             for mi, m in enumerate(ms):
+                x0 = (_init_x(m['kind'], Jm, Bv, seed=r, clip=True)
+                      if engine == 'spiking' else None)
                 xm, qm = iterate_map(m['kind'], Jm, Bv, alpha=m['alpha'],
                                      schedule=map_schedule, n_iter=n_iter_map,
-                                     tol=1e-12, seed=r, keep='last')
+                                     tol=1e-12, seed=r, x0=x0, keep='last')
                 conv[si, mi, r] = np.max(np.abs(xm[-1] - xm[-2]), initial=0.0) < conv_tol
-                _, qd = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
-                                         n_iter=n_steps, tol=0.0, dt=dt, seed=r,
-                                         keep='q')
+                if engine == 'spiking':
+                    _, qd = iterate_spiking(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                            n_iter=n_steps, dt=dt, tau_s=tau_s,
+                                            n_pool=n_pool, tau_ms=tau_ms,
+                                            seed=r, x0=x0, keep='q')
+                else:
+                    _, qd = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                             n_iter=n_steps, tol=0.0, dt=dt,
+                                             seed=r, keep='q')
                 values_to_save = _belief_discrepancy(qd, qm[-1], metric=metric)
                 if save_last:
                     values_to_save = values_to_save[-1]
@@ -4401,7 +4531,8 @@ def plot_zheng_style(n=8, topologies=None,
                                (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
                      alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
                      n_iter_map=2000, metric='abs', signed=False, n_real=50,
-                     map_schedule='parallel', band='sd', logy=None,
+                     map_schedule='parallel', engine='dynamics', n_pool=100,
+                     band='sd', logy=None,
                      logfloor=1e-16, logtop=10.0, recompute=False, save=True,
                      fname='zheng_style'):
     """Discrepancy between the network dynamics and the classical map, in the
@@ -4420,6 +4551,7 @@ def plot_zheng_style(n=8, topologies=None,
     logy = (metric in _METRIC_LOG) if logy is None else logy
     if fname == 'zheng_style':
         fname = f'zheng_style_{metric}' + ('_signed' if signed else '')
+        fname += f'_spkK{n_pool}' if engine == 'spiking' else ''
     ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
     builders = zheng_builders(n=n, large=False)
     if topologies is None:
@@ -4442,6 +4574,7 @@ def plot_zheng_style(n=8, topologies=None,
                                       n_steps=int(n_iterations), dt=dt,
                                       n_iter_map=n_iter_map, metric=metric,
                                       signed=signed, map_schedule=map_schedule,
+                                      engine=engine, n_pool=n_pool,
                                       recompute=recompute)
         theta = builders[tname](0)
         for ci in range(nc):
@@ -4498,6 +4631,7 @@ def plot_zheng_style(n=8, topologies=None,
 def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
                      n_iterations=700, dt=0.1, n_iter_map=5000, metric='abs',
                      signed=False, n_real=50, map_schedule='parallel',
+                     engine='dynamics', n_pool=100,
                      band='sd', logy=None, logfloor=1e-16, logtop=10.0,
                      seed=0, per_row=2, recompute=False, save=True,
                      fname='zheng_large'):
@@ -4514,6 +4648,8 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
     logy = (metric in _METRIC_LOG) if logy is None else logy
     if fname == 'zheng_large' and metric != 'abs':
         fname = f'zheng_large_{metric}'
+    if engine == 'spiking':
+        fname += f'_spkK{n_pool}'
     ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
     builders = zheng_builders(large=True, seed0=seed)
     names = list(builders)
@@ -4531,6 +4667,7 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
                                       n_steps=int(n_iterations), dt=dt,
                                       n_iter_map=n_iter_map, metric=metric,
                                       signed=signed, map_schedule=map_schedule,
+                                      engine=engine, n_pool=n_pool,
                                       recompute=recompute)
         row, pair = divmod(ri, per_row)
         ag, ax = axes[row, 2 * pair], axes[row, 2 * pair + 1]
@@ -4609,6 +4746,91 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
 # of Zheng et al. -- so what Ott & Stoop had to assume, the limit delivers.
 # Note W is not symmetric even though J is, which is why the FBP network has
 # no Lyapunov function and can oscillate where the mean-field one cannot.
+def plot_spike_examples(name='chain', n=9, lam_J=1.0, lam_B=0.1,
+                        schemes=(('mf', 1.0), ('fbp', 1.0)), n_pool=100,
+                        n_units=9, T_tau=250.0, dt=0.1, tau_ms=20.0,
+                        tau_s=1.0, rate_gain=50.0, rate_base=50.0, seed=0,
+                        save=True, fname='spike_examples'):
+    """Spikes, rates and beliefs of the spiking network, in the layout of
+    Zheng et al. (2020) Fig. 3.
+
+    Left: a raster of one neuron drawn from each unit's pool. Thinning the
+    pool's Poisson count with probability 1/n_pool is exactly that neuron's
+    own train. Middle: the decoded firing rate in Hz, the quantity their
+    Fig. 3B shows. Right: the belief each node's rate stands for, against the
+    fixed point of the classical algorithm (dashed).
+
+    One row per scheme. For MF a unit is a node, encoding
+    m_i = b(x_i = 1) - b(x_i = -1); for FBP a unit is a directed edge carrying
+    its log-message, so only the first n_units edges are drawn."""
+    builders = zheng_builders(n=n, large=False)
+    key = name if name in builders else next(k for k in builders
+                                             if k.startswith(name))
+    A = builders[key](0)
+    Jm, Bv = zheng_params(A, lam_J, lam_B, seed=seed, signed=False)
+    mask = Jm != 0.0
+    ei, ej = np.nonzero(mask)
+    n_iter = int(round(T_tau / dt))
+    t = np.arange(n_iter + 1) * dt * tau_ms * 1e-3            # seconds
+    rng = np.random.default_rng(seed + 7)
+    fig, axes = plt.subplots(len(schemes), 3, squeeze=False,
+                             figsize=(13.5, 3.0 * len(schemes)))
+    for ri, (kind, al) in enumerate(schemes):
+        _, qm = iterate_map(kind, Jm, Bv, alpha=al, n_iter=5000, tol=1e-13,
+                            seed=seed, keep='last')
+        xs, qs, S, _ = iterate_spiking(kind, Jm, Bv, alpha=al, n_iter=n_iter,
+                                       dt=dt, tau_s=tau_s, n_pool=n_pool,
+                                       tau_ms=tau_ms, rate_gain=rate_gain,
+                                       rate_base=rate_base, seed=seed,
+                                       keep='all', record=True)
+        scale = np.ones(len(Bv)) if kind == 'mf' else np.abs(Jm[mask])
+        us = np.arange(min(n_units, xs.shape[1]))
+        cols = plt.cm.tab10(np.arange(len(us)) % 10)
+        lab = ([rf'$x_{{{u}}}$' for u in us] if kind == 'mf'
+               else [rf'{ei[u]}$\to${ej[u]}' for u in us])
+        ax = axes[ri, 0]
+        for k, u in enumerate(us):
+            idx = np.nonzero(rng.binomial(S[:, u], 1 / n_pool))[0]
+            ax.vlines(t[idx], k - .42, k + .42, color=cols[k], lw=.55)
+        ax.set_yticks(us)
+        ax.set_yticklabels(lab, fontsize=8)
+        ax.set_ylim(-.7, len(us) - .3)
+        ax.invert_yaxis()
+        if ri == 0:
+            ax.set_title('spikes (one neuron per unit)', fontsize=11)
+        ax = axes[ri, 1]
+        for k, u in enumerate(us):
+            ax.plot(t, rate_gain * (xs[:, u] / scale[u]) + rate_base,
+                    color=cols[k], lw=.8)
+        ax.set_ylim(0, rate_base + rate_gain)
+        if ri == 0:
+            ax.set_title('decoded firing rate (Hz)', fontsize=11)
+        ax = axes[ri, 2]
+        for i in range(min(n_units, len(Bv))):
+            ax.plot(t, qs[:, i], color=plt.cm.tab10(i % 10), lw=.8)
+            ax.axhline(qm[-1][i], color=plt.cm.tab10(i % 10), ls='--', lw=.8)
+        ax.set_ylim(-.02, 1.02)
+        if ri == 0:
+            ax.set_title(r'belief $q_i$ (dashed: algorithm)', fontsize=11)
+        tag = 'MF' if kind == 'mf' else ('LBP' if abs(al - 1) < 1e-9
+                                         else rf'FBP $\alpha$={al:g}')
+        axes[ri, 0].set_ylabel(tag, fontsize=12)
+        for a in axes[ri]:
+            a.spines['right'].set_visible(False)
+            a.spines['top'].set_visible(False)
+            a.set_xlim(0, t[-1])
+            if ri == len(schemes) - 1:
+                a.set_xlabel('time (s)')
+    fig.suptitle(rf'{key},  $\lambda_1$={lam_J:g},  $\lambda_2$={lam_B:g},  '
+                 rf'{n_pool} neurons per unit', fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300,
+                        bbox_inches='tight')
+    return fig
+
+
 def edge_network(theta, Jmat, Bvec, alpha=1.0):
     """Build the exact rate network for FBP at this alpha.
 
