@@ -5545,22 +5545,14 @@ if __name__ == "__main__":
     ZHENG_TOPO = ('chain', 'single loop', 'grid', 'fully connected', 'Necker cube')
     ZHENG_SET = ((0.1, 0.1), (1.0 , 0.1), (0.1, 1.0), (1.0, 1.0))
 
-    # # 1. Zheng's own setup, one network per panel, as they plot it.
-    # for engine in ('dynamics', 'spiking'):
-    #     plot_zheng_style(n=9, topologies=ZHENG_TOPO, settings=ZHENG_SET,
-    #                       n_iterations=5000, dt=0.1, metric='abs',
-    #                       engine=engine, n_pool=100, map_schedule='parallel',
-    #                       clean_seed=True, fname=f'zheng_1seed_{engine}')
     plot_zheng_style(n=8, topologies=ZHENG_TOPO, settings=ZHENG_SET,
-                      n_iterations=700, dt=0.1, metric='abs',
+                      n_iterations=700, dt=0.1, metric='abs', n_real=50,
                       engine='spiking', n_pool=1, map_schedule='parallel',
-                      clean_seed=True, fname='zheng_1seed_spiking',
-                      recompute=True)
+                      clean_seed=False, fname='zheng_1seed_spiking',
+                      recompute=True, ref='attractor')
 
-    # # 5. Spikes, rates and beliefs, their Fig. 3.
-    plot_spike_examples(name='chain', n=8, lam_J=0.5, lam_B=0.5,
+    plot_spike_examples(name='chain', n=8, lam_J=0.1, lam_B=0.2,
                         n_pool=1, T_tau=40.0, fname='spike_examples_chain', dt=0.1)
-    plot_spike_examples(name='grid', n=8, lam_J=0.5, lam_B=0.5,
+    plot_spike_examples(name='grid', n=8, lam_J=0.1, lam_B=0.2,
                         n_pool=1, T_tau=40.0, fname='spike_examples_grid', dt=0.1)
-    # plot_critical_slowing(include_gibbs=True, which=1)
 
