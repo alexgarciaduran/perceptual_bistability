@@ -254,6 +254,38 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
                 ccg=np.array(ccg_all), example=example)
 
 
+def save_conditions(filename, res):
+    """
+    Write every condition to one npz as flat arrays.
+
+    Storing the dicts as dtype=object would pickle them, and a pickle written
+    by numpy 2.x cannot be read by numpy 1.x (it refers to numpy._core), so
+    the cache would only load in the environment that produced it.
+    """
+    flat = {}
+    for condition, out in res.items():
+        for key in ('rsc', 'cp', 'ccg'):
+            flat['%s__%s' % (condition, key)] = np.asarray(out[key])
+        if out['example'] is not None:
+            flat['%s__su' % condition] = np.asarray(out['example'][0])
+            flat['%s__mu' % condition] = np.asarray(out['example'][1])
+    np.savez(filename, **flat)
+
+
+def load_conditions(filename):
+    """Read back what save_conditions wrote, without unpickling anything."""
+    data = np.load(filename, allow_pickle=False)
+    res = {}
+    for name in data.files:
+        condition, key = name.split('__')
+        res.setdefault(condition, {})[key] = data[name]
+    for condition, out in res.items():
+        example = ((out.pop('su'), out.pop('mu'))
+                   if 'su' in out else None)
+        out['example'] = example
+    return res
+
+
 def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
             folder=None, verbose=True, mixed_mu=None):
     """Every stimulus condition for one algorithm, cached to disk."""
@@ -262,8 +294,7 @@ def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
     filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s.npz' % (
         kind, alpha, n_trials, n_nets, 'mix' if mixed else 'same')
     if not recompute and os.path.exists(filename):
-        data = np.load(filename, allow_pickle=True)
-        return {k: data[k].item() for k in data.files}
+        return load_conditions(filename)
     res = {}
     res['random'] = run_condition(kind, alpha, J_MONO * JSTAR[kind], 0.0,
                                   n_trials, n_nets, mixed_mu=mixed)
@@ -275,8 +306,7 @@ def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
             n_trials, n_nets, mixed_mu=mixed)
         if verbose:
             print('  disparity %.2f done' % disparity, flush=True)
-    np.savez(filename, **{k: np.array(v, dtype=object)
-                          for k, v in res.items()})
+    save_conditions(filename, res)
     return res
 
 
