@@ -3392,14 +3392,22 @@ def _init_x(kind, Jmat, Bvec, seed=0, eps=0.05, init='small', clip=False):
 
 
 def iterate_spiking(kind, Jmat, Bvec, alpha=1.0, n_iter=700, dt=0.1,
-                    tau_s=1.0, n_pool=100, rate_gain=50.0, rate_base=50.0,
-                    tau_ms=20.0, seed=0, eps=0.05, init='small', x0=None,
+                    tau_s=0.5, n_pool=10, rate_gain=50.0, rate_base=50.0,
+                    tau_ms=200.0, seed=0, eps=0.05, init='small', x0=None,
                     keep='q', record=False):
     """The same network as iterate_dynamics, but units talk in spikes.
 
     Each unit keeps the rate state x of iterate_dynamics and fires Poisson
     spikes at r_hat = rate_gain * (x / scale) + rate_base Hz, the encoding of
-    Zheng et al. (2020) Sec. 4.2 (their 50*r + 50, so 0-100 Hz). scale is the
+    Zheng et al. (2020) Sec. 4.2 (their 50*r + 50); the defaults here are
+    100*r + 100, so 0-200 Hz. The defaults are the cheapest setting that still
+    reaches a belief floor of about 0.03 on the Necker cube: 10 neurons per
+    unit, a 100 ms synapse (tau_s = 0.5 of a 200 ms tau) and a 200 Hz ceiling.
+    The floor goes as 1/sqrt(rate_gain * n_pool * tau_s * tau_ms), so those
+    four trade off exactly; 10 neurons at 100 ms match 100 neurons at 20 ms.
+    Note tau_s is free here, unlike in Zheng, because we integrate their
+    Eqs. (11), (13) and (14) directly rather than the tau_r >> tau_s
+    reduction (16) -- the synapse is never eliminated. scale is the
     unit's own dynamic range, so every unit spans the same rates: |m| <= 1 for
     MF, and |M_ij| <= J_ij for FBP (the log-message is bounded by its coupling,
     which is what lets an edge unit carry it in a non-negative rate at all).
@@ -4104,6 +4112,235 @@ def plot_dynamics_vs_map_fp(theta=THETA_NECKER, J_list=(0.3, 0.5, 0.8),
 # ours between the classical map and the network dynamics, so we reproduce
 # their layout with the map's fixed point as the reference and one curve per
 # scheme rather than mean field alone.
+@njit(cache=True)
+def _nb_seed(seed):
+    """Seed numba's own RNG; np.random.seed outside an njit function does not
+    reach it."""
+    np.random.seed(seed)
+
+
+@njit(cache=True)
+def _gibbs_relax_chunk(J, B, s, n_sweeps, out):
+    """Advance M Gibbs chains -- the rows of s, updated in place -- by n_sweeps
+    full sweeps, writing the across-chain mean of 1[x_i = +1] after each sweep
+    into out."""
+    M, n = s.shape
+    for t in range(n_sweeps):
+        for c in range(M):
+            for i in range(n):
+                h = B[i]
+                for k in range(n):
+                    h += J[i, k] * s[c, k]
+                if np.random.random() < 1.0 / (1.0 + np.exp(-2.0 * h)):
+                    s[c, i] = 1.0
+                else:
+                    s[c, i] = -1.0
+        for i in range(n):
+            acc = 0.0
+            for c in range(M):
+                if s[c, i] == 1.0:
+                    acc += 1.0
+            out[t, i] = acc / M
+
+
+def _crossing_times(d, fracs, step=1.0):
+    """First times at which d falls to frac*d[0], linearly interpolated between
+    samples so the answer is not quantised to the sampling step. NaN when a
+    threshold is never crossed, which the plot then leaves as a gap."""
+    out = []
+    for fr in fracs:
+        thr = d[0] * fr
+        hit = np.nonzero(d <= thr)[0]
+        if not len(hit):
+            out.append(np.nan)
+        elif hit[0] == 0:
+            out.append(0.0)
+        else:
+            k = hit[0]
+            lo, hi = d[k - 1], d[k]
+            f = (lo - thr) / (lo - hi) if lo > hi else 0.0
+            out.append((k - 1 + f) * step)
+    return out
+
+
+def _gibbs_relax_times(Jmat, Bvec, q_exact, fracs, n_chains=1000,
+                       max_sweeps=20000, chunk=500, seed=0):
+    """Settling times of the across-chain mean marginal towards the exact
+    marginal, for n_chains Gibbs chains started from the uninformative state.
+
+    One sweep updates every variable once, as one step of the classical map
+    does, so sweeps and units of tau are the same axis. Chains advance in
+    chunks and stop as soon as the strictest threshold is crossed; a cell that
+    never crosses within max_sweeps returns NaN rather than a censored value
+    passed off as a measurement."""
+    rng = np.random.default_rng(seed)
+    n = len(Bvec)
+    s = np.where(rng.random((n_chains, n)) < 0.5, 1.0, -1.0)
+    buf = np.empty((chunk, n))
+    _nb_seed(seed)
+    d = [float(np.abs(0.5 - q_exact).mean())]
+    done = 0
+    while done < max_sweeps:
+        k = min(chunk, max_sweeps - done)
+        _gibbs_relax_chunk(Jmat, Bvec, s, k, buf)
+        d.extend(np.abs(buf[:k] - q_exact).mean(1))
+        done += k
+        if d[-1] <= d[0] * min(fracs):
+            break
+    return _crossing_times(np.asarray(d), fracs)
+
+
+def compute_critical_slowing(theta=None, B_list=(0.3, 0.1, 0.03, 0.01),
+                             alphas=(0.5, 1.0, 1.25), J_grid=None, dt=0.01,
+                             n_iter=40000, fracs=(0.5, 0.1),
+                             include_gibbs=False, gibbs_chains=1000,
+                             gibbs_stride=8, gibbs_max_sweeps=20000,
+                             gibbs_chunk=500, recompute=False,
+                             folder_save=DATA_FOLDER, verbose=True):
+    """Settling time of each scheme, against coupling and against confidence.
+
+    For every field B and coupling J the network starts from the uninformative
+    state (q = 1/2 everywhere) and is integrated with step dt; the settling
+    times are the first times mean_i |q_i(t) - q_i(inf)| falls to each fraction
+    in fracs of its initial value, in units of tau. That is the transient a
+    reaction time would measure, not the asymptotic local rate of
+    map_jacobian_eigs -- the two peak at the same J but at slightly different
+    confidences.
+
+    The peak is the bifurcation smeared by the field. Its height grows as
+    B^(-2/3), the mean-field pitchfork exponent (m ~ B^(1/3) at threshold), and
+    is nearly the same for every scheme, so it measures the evidence and not
+    the algorithm; its position moves right with alpha. alphas stops at 1.25
+    because a bifurcation exists only for alpha < lmax/2, which is 1.5 on the
+    Necker cube.
+
+    include_gibbs adds a Gibbs sampler on the same axis. Its asymptote is the
+    EXACT marginal, not its own fixed point -- being unbiased it has none --
+    and its q(t) is the mean over gibbs_chains parallel chains, which makes it
+    the noiseless counterpart of the deterministic variational runs. One sweep
+    counts as one tau. It is evaluated on every gibbs_stride-th J, since each
+    cell costs far more than a variational one, and exact_marginals keeps it to
+    graphs of at most about 20 nodes.
+
+    Two fracs are returned because the half-life may not see what separates the
+    schemes: Gibbs has to equilibrate BETWEEN basins while the variational
+    schemes converge inside one, and with B > 0 the subdominant mode carries
+    little weight, so the slow mode may show up only in the last few percent.
+    Compare column 2 (the fracs[0] time) with column 3 before concluding.
+
+    Returns (data, ms): data of shape (n_B, n_schemes, n_J, 2 + len(fracs))
+    holding (J, q_inf, t_frac0, t_frac1), and the method list for labels and
+    colours."""
+    theta = THETA_NECKER if theta is None else theta
+    if J_grid is None:
+        J_grid = np.round(np.arange(0.01, 1.501, 0.005), 4)
+    ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
+    if include_gibbs:
+        ms = ms + [dict(kind='gibbs', lab='Gibbs', c='k', ls='-', alpha=1.0)]
+    tag = '_'.join('%s%g' % (m['kind'], m['alpha']) for m in ms)
+    extra = '_gM%ds%d' % (gibbs_chains, gibbs_stride) if include_gibbs else ''
+    f = folder_save + ('critical_slowing_v2_n%d_%s_B%d_J%d%s.npy'
+                       % (len(theta), tag, len(B_list), len(J_grid), extra))
+    if not recompute and os.path.exists(f):
+        return np.load(f), ms
+    out = np.full((len(B_list), len(ms), len(J_grid), 2 + len(fracs)), np.nan)
+    for bi, B in enumerate(tqdm(list(B_list), desc='critical slowing',
+                                disable=not verbose)):
+        for mi, m in enumerate(ms):
+            for ji, J in enumerate(J_grid):
+                if m['kind'] == 'gibbs' and ji % gibbs_stride:
+                    out[bi, mi, ji, 0] = J
+                    continue
+                Jm, Bv = ising_params_heterogeneous(theta, J, B)
+                if m['kind'] == 'gibbs':
+                    qx = exact_marginals(Jm, Bv)
+                    ts = _gibbs_relax_times(Jm, Bv, qx, fracs,
+                                            n_chains=gibbs_chains,
+                                            max_sweeps=gibbs_max_sweeps,
+                                            chunk=gibbs_chunk, seed=ji)
+                    out[bi, mi, ji] = [J, qx.mean()] + list(ts)
+                else:
+                    size = (len(theta) if m['kind'] == 'mf'
+                            else int((Jm != 0).sum()))
+                    _, q = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                            n_iter=n_iter, tol=0.0, dt=dt,
+                                            x0=np.full(size, 1e-6), keep='q')
+                    d = np.abs(q - q[-1]).mean(1)
+                    out[bi, mi, ji] = ([J, q[-1].mean()]
+                                       + _crossing_times(d, fracs, step=dt))
+    np.save(f, out)
+    if verbose:
+        print('saved ' + f)
+    return out, ms
+
+
+def plot_critical_slowing(theta=None, B_list=(0.3, 0.1, 0.03, 0.01),
+                          alphas=(0.5, 1.0, 1.25), J_grid=None, dt=0.01,
+                          n_iter=40000, fracs=(0.5, 0.1), which=0,
+                          include_gibbs=False, gibbs_chains=2000,
+                          gibbs_stride=8, q_max=0.999, logy=True,
+                          recompute=False, save=True, fname='critical_slowing'):
+    """Critical slowing down: settling time against coupling (top row) and
+    against confidence (bottom row), one column per field B.
+
+    The confidence axis is the observable one -- J is not measurable, q is --
+    and it comes from inverting each scheme's monotone q(J) onto a common grid,
+    so a column compares the schemes at matched confidence. Against J the peaks
+    separate cleanly by alpha; against q they compress, and what discriminates
+    there is the high-confidence tail.
+
+    which selects the threshold in fracs: 0 is the half-life, 1 the stricter
+    one. Gibbs, when included, is drawn with markers since it is computed on a
+    coarser J grid."""
+    data, ms = compute_critical_slowing(theta, B_list, alphas, J_grid, dt,
+                                        n_iter, fracs=fracs,
+                                        include_gibbs=include_gibbs,
+                                        gibbs_chains=gibbs_chains,
+                                        gibbs_stride=gibbs_stride,
+                                        recompute=recompute)
+    col = 2 + which
+    nc = len(B_list)
+    fig, ax = plt.subplots(2, nc, figsize=(3.4 * nc, 6.2), squeeze=False)
+    for ci, B in enumerate(B_list):
+        for mi, m in enumerate(ms):
+            a = data[ci, mi]
+            ok = np.isfinite(a[:, 1]) & np.isfinite(a[:, col])
+            if not ok.any():
+                continue
+            ax[0, ci].plot(a[ok, 0], a[ok, col], color=m['c'], lw=1.7,
+                           marker='o' if m['kind'] == 'gibbs' else None, ms=3,
+                           label=m['lab'] if ci == 0 else None)
+            if ok.sum() > 1:
+                qu = np.linspace(a[ok, 1][0] + 1e-4, q_max, 400)
+                ax[1, ci].plot(qu, np.interp(qu, a[ok, 1], a[ok, col]),
+                               color=m['c'], lw=1.7)
+        ax[0, ci].set_title(r'$B$ = %g' % B, fontsize=12)
+        ax[0, ci].set_xlabel(r'coupling $J$')
+        ax[1, ci].set_xlabel(r'confidence $q$')
+        ax[1, ci].set_xlim(0.5, 1.0)
+        for r in (0, 1):
+            if logy:
+                ax[r, ci].set_yscale('log')
+            ax[r, ci].spines['right'].set_visible(False)
+            ax[r, ci].spines['top'].set_visible(False)
+            if ci:
+                ax[r, ci].set_yticklabels([])
+    lo = np.nanmin(data[..., col]) * 0.8
+    hi = np.nanmax(data[..., col]) * 1.3
+    for a_ in ax.flatten():
+        a_.set_ylim(max(lo, 1e-3), hi)
+    for r in (0, 1):
+        ax[r, 0].set_ylabel(r'settling time  $t/\tau$')
+    fig.legend(loc='lower center', ncol=len(ms), bbox_to_anchor=(0.5, 1.0),
+               frameon=False, fontsize=11)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    if save:
+        for ext in ('png', 'svg'):
+            fig.savefig(DATA_FOLDER + '%s.%s' % (fname, ext), dpi=300,
+                        bbox_inches='tight')
+    return fig
+
+
 def zheng_topologies(n=9, include_cube=True):
     """The graph family of Zheng et al. Fig. 2 and 4 on n nodes -- chain,
     single loop, grid (nearest square), fully connected, 8-connected grid and
@@ -4218,26 +4455,47 @@ def _mean_rel_err(q, q_ref, floor=1e-12):
     return _belief_discrepancy(q, q_ref, metric='zheng', floor=floor)
 
 
-def _graph_inset(ax, theta, rect=(0.46, 0.42, 0.52, 0.56)):
-    """Dashed-box inset with the graph drawn in it, as in their figures."""
-    ins = ax.inset_axes(rect)
+def _graph_pos(theta):
+    """(G, positions) for drawing an MRF.
+
+    Kamada-Kawai lays a cycle out as a ring and a lattice as a lattice, so it
+    suits all of these. (It used to fall back to a circular layout whenever
+    n != 9, which bent the chain into an arc once the family moved to 8
+    nodes.) A path is special-cased onto an exactly straight diagonal."""
     G = nx.from_numpy_array(theta != 0)
-    # Kamada-Kawai lays a path out as a straight line, a cycle as a ring and a
-    # lattice as a lattice, so it suits all of these. (It used to fall back to
-    # a circular layout whenever n != 9, which bent the chain into an arc once
-    # the family moved to 8 nodes.)
     deg = dict(G.degree())
     if nx.is_connected(G) and max(deg.values()) <= 2 and nx.is_tree(G):
-        # a chain: lay it out on an exactly straight diagonal, in path order
         ends = [v for v, d in deg.items() if d == 1]
         order = list(nx.dfs_preorder_nodes(G, source=ends[0]))
         t = np.linspace(-1, 1, len(order))
-        pos = {v: np.array([t[k], t[k]]) for k, v in enumerate(order)}
-    else:
-        try:
-            pos = nx.kamada_kawai_layout(G)
-        except Exception:
-            pos = nx.spring_layout(G, seed=0)
+        return G, {v: np.array([t[k], t[k]]) for k, v in enumerate(order)}
+    try:
+        return G, nx.kamada_kawai_layout(G)
+    except Exception:
+        return G, nx.spring_layout(G, seed=0)
+
+
+def _graph_panel(ax, theta, label=None, node_size=60, lw=0.9):
+    """The MRF drawn as a panel of its own, for a figure column rather than
+    an inset inside a results panel. No frame, equal aspect."""
+    G, pos = _graph_pos(theta)
+    nx.draw_networkx_edges(G, pos, ax=ax, width=lw, edge_color='0.3')
+    nx.draw_networkx_nodes(G, pos, ax=ax, node_size=node_size, node_color='k')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.set_aspect('equal')
+    ax.margins(0.14)
+    if label:
+        ax.set_title(label, fontsize=12)
+    return ax
+
+
+def _graph_inset(ax, theta, rect=(0.46, 0.42, 0.52, 0.56)):
+    """Dashed-box inset with the graph drawn in it, as in their figures."""
+    ins = ax.inset_axes(rect)
+    G, pos = _graph_pos(theta)
     nx.draw_networkx_edges(G, pos, ax=ins, width=0.5, edge_color='0.3')
     nx.draw_networkx_nodes(G, pos, ax=ins, node_size=14, node_color='k')
     ins.set_xticks([])
@@ -4251,19 +4509,38 @@ def _graph_inset(ax, theta, rect=(0.46, 0.42, 0.52, 0.56)):
 
 
 def _first_clean_seed(theta, lam_J, lam_B, ms, n_iter_map, signed=True,
-                      tol=1e-6, max_tries=60):
+                      tol=1e-6, max_tries=60, spk=None):
     """Smallest seed for which EVERY scheme's map reaches a genuine fixed
     point rather than a period-2 orbit. The seed sets both the disorder and
     the initial state, so a retry is a fresh random instance. Returns
     (seed, clean); clean is False if no seed in range worked, and the caller
-    should then flag the panel."""
+    should then flag the panel.
+
+    spk, when given, also requires every scheme's spiking run to stay in the
+    map's basin: dict(n_steps, dt, n_pool, tau_s, tau_ms, tol). Note that this
+    selects on the very quantity the figure reports, so it is only ever a way
+    to pick one illustrative network, never evidence about how often a
+    spiking network agrees with its algorithm."""
     for sd in range(max_tries):
         Jm, Bv = zheng_params(theta, lam_J, lam_B, seed=sd, signed=signed)
-        if all(not _period2(xm, tol) and
-               np.max(np.abs(xm[-1] - xm[-2])) < tol
-               for xm in (iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
-                                           n_iter=n_iter_map, tol=tol * 1e-4,
-                                           dt=1.0, seed=sd)[0] for m in ms)):
+        ok = True
+        for m in ms:
+            xm, qm = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                      n_iter=n_iter_map, tol=tol * 1e-4,
+                                      dt=1.0, seed=sd)
+            if _period2(xm, tol) or np.max(np.abs(xm[-1] - xm[-2])) >= tol:
+                ok = False
+            elif spk is not None:
+                _, qs = iterate_spiking(
+                    m['kind'], Jm, Bv, alpha=m['alpha'], n_iter=spk['n_steps'],
+                    dt=spk['dt'], tau_s=spk['tau_s'], n_pool=spk['n_pool'],
+                    tau_ms=spk['tau_ms'], seed=sd,
+                    x0=_init_x(m['kind'], Jm, Bv, seed=sd, clip=True),
+                    keep='q')
+                ok = np.abs(qs[-1] - qm[-1]).mean() <= spk['tol']
+            if not ok:
+                break
+        if ok:
             return sd, True
     return 0, False
 
@@ -4325,11 +4602,46 @@ def zheng_builders(n=8, large=False, seed0=0):
     return b
 
 
+def _attractors(kind, Jmat, Bvec, alpha=1.0, n_init=50, dt=0.1, tol=2e-3,
+                n_iter=20000, seed0=10 ** 5):
+    """Distinct belief fixed points of the deterministic dynamics, found by
+    restarting from n_init states drawn uniformly over each unit's own range
+    (|m| <= 1 for a node, |M_ij| <= J_ij for an edge).
+
+    These are the attractors of the algorithm AS THE NETWORK RUNS IT, which is
+    why the dynamics is used rather than the map: the parallel map can sit on a
+    period-2 orbit that the continuous-time system never visits.
+
+    Returns an (n_attractors, n_nodes) array of beliefs. Two caveats belong
+    with any use of it. Random restarts cannot PROVE the set is complete, so
+    store how many were found -- a count that creeps up with graph size means
+    the enumeration is missing some. And distance to the nearest attractor only
+    tests anything while that count is small: on a large spin glass almost any
+    state is close to some fixed point."""
+    mask = Jmat != 0.0
+    n = len(Bvec)
+    size = n if kind == 'mf' else int(mask.sum())
+    scale = np.ones(n) if kind == 'mf' else np.abs(Jmat[mask])
+    rng = np.random.default_rng(seed0)
+    out = []
+    for _ in range(n_init):
+        _, q = iterate_dynamics(kind, Jmat, Bvec, alpha=alpha, n_iter=n_iter,
+                                tol=1e-13, dt=dt,
+                                x0=rng.uniform(-1, 1, size) * scale,
+                                keep='last')
+        f = q[-1]
+        if not any(np.abs(f - o).mean() < tol for o in out):
+            out.append(f)
+    return np.array(out)
+
+
 def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
                    n_real=50, n_steps=700, dt=0.1, n_iter_map=2000,
                    metric='kl', signed=False, conv_tol=1e-6,
-                   map_schedule='parallel', engine='dynamics', n_pool=100,
-                   tau_s=1.0, tau_ms=20.0, recompute=False,
+                   map_schedule='parallel', engine='dynamics', n_pool=10,
+                   tau_s=1, tau_ms=250.0, clean_seed=False,
+                   seed_probe_pool=10, ref='map', n_attr_init=50,
+                   recompute=False,
                    verbose=True, folder_save=ZHENG_DIR,
                    save_last=False):
     """Compute (or load) the discrepancy curves for one topology.
@@ -4343,14 +4655,25 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
     the same network read out from Poisson spikes, n_pool neurons per unit
     (see iterate_spiking). The two are cached separately.
 
+    clean_seed picks one network per cell, as Zheng et al. plot it. The seed
+    probe always uses seed_probe_pool neurons, not n_pool, so the same
+    networks are chosen whatever pool size is then simulated -- otherwise a
+    small pool would reject every seed on its own noise floor and the panels
+    would no longer be comparable across n_pool.
+
     Returns (curves, converged) of shapes
         (n_settings, n_schemes, n_real, n_steps+1)  and
         (n_settings, n_schemes, n_real)."""
     os.makedirs(folder_save, exist_ok=True)
+    if clean_seed:                 # one network per cell, as Zheng et al. plot
+        n_real = 1
     safe = ''.join(c if c.isalnum() else '_' for c in name).strip('_')
     nn = build(0).shape[0]
     sch = map_schedule[:3]          # the schedule changes the data, so it
-    spk = f'_spkK{n_pool}' if engine == 'spiking' else ''
+    spk = ((f'_spkK{n_pool}_ts{tau_s:g}_tm{tau_ms:g}'
+            if engine == 'spiking' else '')
+           + ('_clean1' if clean_seed else '')
+           + ('_refattr' if ref == 'attractor' else ''))
     stem = f'{safe}_n{nn}_{metric}_{sch}_N{n_real}{spk}'  # belongs in the name
     f_c, f_k = folder_save + stem + '.npy', folder_save + stem + '__converged.npy'
     print(stem)
@@ -4359,9 +4682,24 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
     ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
     curves = np.full((len(settings), len(ms), n_real, n_steps + 1 if not save_last else 1), np.nan)
     conv = np.zeros((len(settings), len(ms), n_real), bool)
+    # ref='attractor' also records, per realisation, whether the run ended in
+    # a DIFFERENT attractor than the map did, and how many were found:
+    # columns (flipped, n_attractors). Saved beside the curves as __flipped.
+    flip = np.zeros((len(settings), len(ms), n_real, 2))
     for si, (lJ, lB) in enumerate(tqdm(list(settings),
                                        desc=f'{name} [{metric}]', disable=not verbose)):
-        for r in range(n_real):
+        if clean_seed:
+            sd, found = _first_clean_seed(
+                build(0), lJ, lB, ms, n_iter_map, signed=signed,
+                spk=dict(n_steps=min(n_steps, 1000), dt=dt,
+                         n_pool=seed_probe_pool, tau_s=tau_s, tau_ms=tau_ms,
+                         tol=0.25))
+            if verbose and not found:
+                print(f'  {name} {(lJ, lB)}: no clean seed found, using 0')
+            seeds = [sd]
+        else:
+            seeds = list(range(n_real))
+        for ri, r in enumerate(seeds):
             theta = build(r)
             Jm, Bv = zheng_params(theta, lJ, lB, seed=r, signed=signed)
             for mi, m in enumerate(ms):
@@ -4370,7 +4708,7 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
                 xm, qm = iterate_map(m['kind'], Jm, Bv, alpha=m['alpha'],
                                      schedule=map_schedule, n_iter=n_iter_map,
                                      tol=1e-12, seed=r, x0=x0, keep='last')
-                conv[si, mi, r] = np.max(np.abs(xm[-1] - xm[-2]), initial=0.0) < conv_tol
+                conv[si, mi, ri] = np.max(np.abs(xm[-1] - xm[-2]), initial=0.0) < conv_tol
                 if engine == 'spiking':
                     _, qd = iterate_spiking(m['kind'], Jm, Bv, alpha=m['alpha'],
                                             n_iter=n_steps, dt=dt, tau_s=tau_s,
@@ -4380,12 +4718,28 @@ def zheng_simulate(name, build, settings, alphas=(0.5, 1.0, 1.5, 2.0),
                     _, qd = iterate_dynamics(m['kind'], Jm, Bv, alpha=m['alpha'],
                                              n_iter=n_steps, tol=0.0, dt=dt,
                                              seed=r, keep='q')
-                values_to_save = _belief_discrepancy(qd, qm[-1], metric=metric)
+                if ref == 'attractor':
+                    # distance to the NEAREST fixed point of the algorithm, so
+                    # that landing in the other basin is not charged as an
+                    # implementation error; which basin is recorded separately
+                    att = _attractors(m['kind'], Jm, Bv, alpha=m['alpha'],
+                                      n_init=n_attr_init, dt=dt)
+                    D = np.stack([_belief_discrepancy(qd, a, metric=metric)
+                                  for a in att])
+                    values_to_save = D.min(0)
+                    k_map = int(np.argmin([np.abs(a - qm[-1]).mean()
+                                           for a in att]))
+                    flip[si, mi, ri] = (int(np.argmin(D[:, -1])) != k_map,
+                                        len(att))
+                else:
+                    values_to_save = _belief_discrepancy(qd, qm[-1], metric=metric)
                 if save_last:
                     values_to_save = values_to_save[-1]
-                curves[si, mi, r] = values_to_save
+                curves[si, mi, ri] = values_to_save
     np.save(f_c, curves)
     np.save(f_k, conv)
+    if ref == 'attractor':
+        np.save(folder_save + stem + '__flipped.npy', flip)
     if verbose:
         print(f'saved {f_c}  {curves.shape}')
     return curves, conv
@@ -4531,8 +4885,8 @@ def plot_zheng_style(n=8, topologies=None,
                                (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
                      alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=700, dt=0.1,
                      n_iter_map=2000, metric='abs', signed=False, n_real=50,
-                     map_schedule='parallel', engine='dynamics', n_pool=100,
-                     band='sd', logy=None,
+                     map_schedule='parallel', engine='dynamics', n_pool=10,
+                     clean_seed=False, ref='attractor', band='sd', logy=None,
                      logfloor=1e-16, logtop=10.0, recompute=False, save=True,
                      fname='zheng_style'):
     """Discrepancy between the network dynamics and the classical map, in the
@@ -4564,9 +4918,13 @@ def plot_zheng_style(n=8, topologies=None,
         if miss:
             raise KeyError(f'unknown topologies {miss}; have {list(builders)}')
     nr, nc = len(topologies), len(settings)
-    fig, axes = plt.subplots(nr, nc, figsize=(2.75 * nc, 2.35 * nr),
-                             sharex=True, sharey=True, squeeze=False)
-    for a in axes.flatten():
+    # The MRF gets a column of its own on the left instead of an inset inside
+    # every panel. sharex/sharey cannot span that column, so the result panels
+    # drop their inner tick labels by hand.
+    fig, axes = plt.subplots(nr, nc + 1, figsize=(2.75 * nc + 2.3, 2.35 * nr),
+                             squeeze=False,
+                             gridspec_kw={'width_ratios': [0.85] + [1] * nc})
+    for a in axes[:, 1:].flatten():
         a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
     for ri, tname in enumerate(topologies):
         curves, conv = zheng_simulate(tname, builders[tname], settings,
@@ -4575,10 +4933,12 @@ def plot_zheng_style(n=8, topologies=None,
                                       n_iter_map=n_iter_map, metric=metric,
                                       signed=signed, map_schedule=map_schedule,
                                       engine=engine, n_pool=n_pool,
+                                      clean_seed=clean_seed, ref=ref,
                                       recompute=recompute)
         theta = builders[tname](0)
+        _graph_panel(axes[ri, 0], theta, label=tname)
         for ci in range(nc):
-            ax = axes[ri, ci]
+            ax = axes[ri, ci + 1]
             t = np.arange(curves.shape[-1])
             for mi, m in enumerate(ms):
                 ok = conv[ci, mi]
@@ -4599,20 +4959,22 @@ def plot_zheng_style(n=8, topologies=None,
             else:
                 ax.set_ylim(-0.03, 1.03)
             ax.set_xlim(0, curves.shape[-1] - 1)
-            _graph_inset(ax, theta, rect=(0.46, 0.52, 0.52, 0.46) if logy
-                         else (0.46, 0.42, 0.52, 0.56))
             if ri == 0:
                 ax.set_title(rf'$\lambda_1$={settings[ci][0]:g},  '
                              rf'$\lambda_2$={settings[ci][1]:g}', fontsize=12)
             if ri == nr - 1:
                 ax.set_xlabel('Number of Iterations')
+            else:
+                ax.set_xticklabels([])
             if ci == 0:
-                ax.set_ylabel(tname, fontsize=12)
+                if ri == nr // 2:
+                    ax.set_ylabel(_METRIC_LABEL[metric], fontsize=12)
+            else:
+                ax.set_yticklabels([])
     from matplotlib.lines import Line2D
     handles = [Line2D([0], [0], color=m['c'], lw=2.5, label=m['lab']) for m in ms]
     # handles += [Line2D([0], [0], color='0.35', lw=1.6, ls='--',
     #                    label='map did not reach a fixed point')]
-    fig.supylabel(_METRIC_LABEL[metric], fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     fig.legend(handles=handles, loc='lower center', ncol=3,
                bbox_to_anchor=(0.5, 1.002), frameon=False, fontsize=11)
@@ -4631,7 +4993,7 @@ def plot_zheng_style(n=8, topologies=None,
 def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
                      n_iterations=700, dt=0.1, n_iter_map=5000, metric='abs',
                      signed=False, n_real=50, map_schedule='parallel',
-                     engine='dynamics', n_pool=100,
+                     engine='dynamics', n_pool=10, clean_seed=False,
                      band='sd', logy=None, logfloor=1e-16, logtop=10.0,
                      seed=0, per_row=2, recompute=False, save=True,
                      fname='zheng_large'):
@@ -4646,10 +5008,11 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
     graph each realisation. Exact inference is out of reach at these sizes,
     which is the point -- the comparison is map against network."""
     logy = (metric in _METRIC_LOG) if logy is None else logy
-    if fname == 'zheng_large' and metric != 'abs':
-        fname = f'zheng_large_{metric}'
-    if engine == 'spiking':
-        fname += f'_spkK{n_pool}'
+    if fname == 'zheng_large':          # only decorate the default name
+        if metric != 'abs':
+            fname = f'zheng_large_{metric}'
+        if engine == 'spiking':
+            fname += f'_spkK{n_pool}'
     ms = [m for m in _susc_methods(alphas) if m['kind'] != 'exact']
     builders = zheng_builders(large=True, seed0=seed)
     names = list(builders)
@@ -4668,6 +5031,7 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
                                       n_iter_map=n_iter_map, metric=metric,
                                       signed=signed, map_schedule=map_schedule,
                                       engine=engine, n_pool=n_pool,
+                                      clean_seed=clean_seed,
                                       recompute=recompute)
         row, pair = divmod(ri, per_row)
         ag, ax = axes[row, 2 * pair], axes[row, 2 * pair + 1]
@@ -4747,9 +5111,9 @@ def plot_zheng_large(lam_J=0.5, lam_B=0.5, alphas=(0.5, 1.0, 1.5, 2.0),
 # Note W is not symmetric even though J is, which is why the FBP network has
 # no Lyapunov function and can oscillate where the mean-field one cannot.
 def plot_spike_examples(name='chain', n=9, lam_J=1.0, lam_B=0.1,
-                        schemes=(('mf', 1.0), ('fbp', 1.0)), n_pool=100,
-                        n_units=9, T_tau=250.0, dt=0.1, tau_ms=20.0,
-                        tau_s=1.0, rate_gain=50.0, rate_base=50.0, seed=0,
+                        schemes=(('mf', 1.0), ('fbp', 1.0)), n_pool=10,
+                        n_units=9, T_tau=25.0, dt=0.1, tau_ms=250.0,
+                        tau_s=1, rate_gain=50.0, rate_base=50.0, seed=0,
                         save=True, fname='spike_examples'):
     """Spikes, rates and beliefs of the spiking network, in the layout of
     Zheng et al. (2020) Fig. 3.
@@ -5177,23 +5541,26 @@ if __name__ == "__main__":
     #                         B=0.0, n_trials=100, sigma_var=0.05, c=10.0,
     #                         theta=THETA_NECKER, seed=0, save=True,
     #                         fname='duration_threshold')
-    plot_zheng_style(n=12, topologies=('chain', 'single loop', 'grid',
-                                  'fully connected', 'Necker cube'),
-                  settings=((0.1, 0.0), (0.5, 0.0), (1.0, 0.0),
-                            (0.1, 1.0), (0.5, 1.0), (1.0, 1.0)),
-                  alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1200, dt=0.1,
-                  n_iter_map=3000, metric='abs', signed=False, n_real=1000,
-                  logy=None, logfloor=1e-16, logtop=10.0, recompute=False,
-                  save=True, fname='zheng_style', band='sem')
-    plot_zheng_large(lam_J=0.5, lam_B=0.5,
-                      alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
-                      n_iter_map=5000, metric='abs', signed=False, n_real=100,
-                      logy=None, logfloor=1e-16, logtop=10.0, seed=0, recompute=False,
-                      save=True, fname='zheng_large', band='sem')
-    # plot_acc_vs_lambda_matrices(n=8, topologies=None, #{'fully connected': nx.complete_graph(8)},
-    #                             n_lambdas=50,
-    #                             lambda_1_minmax=[0, 1],
-    #                             lambda_2_minmax=[0, 1],
-    #                             alphas=(0.5, 1.0, 1.5, 2.0), n_iterations=1000, dt=0.1,
-    #                             n_iter_map=2000, metric='abs', signed=False, n_real=100,
-    #                             recompute=False, save=True, fname='zheng_matrices')
+
+    ZHENG_TOPO = ('chain', 'single loop', 'grid', 'fully connected', 'Necker cube')
+    ZHENG_SET = ((0.1, 0.1), (1.0 , 0.1), (0.1, 1.0), (1.0, 1.0))
+
+    # # 1. Zheng's own setup, one network per panel, as they plot it.
+    # for engine in ('dynamics', 'spiking'):
+    #     plot_zheng_style(n=9, topologies=ZHENG_TOPO, settings=ZHENG_SET,
+    #                       n_iterations=5000, dt=0.1, metric='abs',
+    #                       engine=engine, n_pool=100, map_schedule='parallel',
+    #                       clean_seed=True, fname=f'zheng_1seed_{engine}')
+    plot_zheng_style(n=8, topologies=ZHENG_TOPO, settings=ZHENG_SET,
+                      n_iterations=700, dt=0.1, metric='abs',
+                      engine='spiking', n_pool=1, map_schedule='parallel',
+                      clean_seed=True, fname='zheng_1seed_spiking',
+                      recompute=True)
+
+    # # 5. Spikes, rates and beliefs, their Fig. 3.
+    plot_spike_examples(name='chain', n=8, lam_J=0.5, lam_B=0.5,
+                        n_pool=1, T_tau=40.0, fname='spike_examples_chain', dt=0.1)
+    plot_spike_examples(name='grid', n=8, lam_J=0.5, lam_B=0.5,
+                        n_pool=1, T_tau=40.0, fname='spike_examples_grid', dt=0.1)
+    # plot_critical_slowing(include_gibbs=True, which=1)
+
