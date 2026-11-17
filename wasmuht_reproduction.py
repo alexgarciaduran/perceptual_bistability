@@ -37,19 +37,44 @@ C_AMB, C_UNAMB, C_RAND = '#6a3d9a', '#1f78b4', '#33a02c'   # their colours
 TAU_MS, DT = 200.0, 0.05                 # tau = 200 ms, bin = dt*tau = 10 ms
 BIN_MS = DT * TAU_MS
 T_TRIAL = int(round(2000.0 / BIN_MS))    # 2 s trial
-K, N_MU = 200, 20                        # pool size, neurons in the multi-unit
-GAIN, BASE = 25.0, 50.0                  # percept modulates 25-75 Hz
+# Encoding matched to their recordings. At their example site (Fig. 1a) the
+# single unit fires near 65 spks/s and the multi-unit near 145, and their
+# Methods set the Schmitt-trigger level so that multi-unit rates for the 0 deg
+# cylinder lay between 10 and 200 spks/s. The multi-unit is therefore about
+# two neurons' worth of spikes above threshold, not a large pool. GAIN is the
+# half-depth of percept modulation: rate = BASE +- GAIN as the belief flips.
+K, N_MU = 10, 2                          # pool size, neurons in the multi-unit
+GAIN, BASE = 20.0, 65.0                  # single unit 45-85, multi-unit 90-170
 TAU_S = 1.0
-SIG_IND, SIG_COM = 0.06, 0.012
+# No injected sensory noise. A common input shared across all nodes would be
+# indistinguishable from the top-down signal this reproduction exists to show
+# is unnecessary, so adding one to match their random-motion baseline would
+# assume the conclusion. The only variability is the spiking itself, acting
+# through the random initial state.
+SIG_IND, SIG_COM = 0.0, 0.0
 JSTAR = {'mf': 0.33, 'fbp': 0.545}
-J_MONO, J_BI = 0.60, 1.50                # J = ratio * J*
+# J_MONO is fitted, not assumed: random motion still shows r_SC = 0.23 in their
+# data, and only a coupling close to criticality gives slow enough fluctuations
+# to produce any shared variance at all without a bistable percept.
+J_MONO, J_BI = 0.85, 1.50                # J = ratio * J*
 DISPARITIES = (0.0, 0.01, 0.02, 0.03)    # degrees, as in their Fig. 2a
-B_PER_DEG = 10.0
-MAXLAG_MS = 500.0
+# fitted: their r_SC falls from 0.42 to 0.28 over 0 to 0.03 deg, which needs a
+# field of only ~0.06 at full disparity. The earlier value of 10 was five times
+# too steep and drove the unambiguous condition to zero correlation.
+B_PER_DEG = 2.0
+MAXLAG_MS = 1000.0                       # their Figs. 3b and 4b reach 10^3 ms
+N_CHOICE = 15                            # steps averaged for the reported percept
+# How the multi-unit is composed. True: its N_MU neurons are scattered at
+# random over ALL units, as a real electrode would pick up a mixture that need
+# not share the single unit's tuning. False: they all come from the single
+# unit's own pool. A GLOBAL signal (the percept) survives mixing; a LOCAL one
+# (coupling between neighbours) is diluted by it, so comparing the two
+# separates those two sources without needing a distance metric.
+MIXED_MU = True
 
 
 def _trial(kind, al, Jm, Bvec, rng):
-    """One trial. Returns (su, mu) count trains (T_TRIAL, n) and the percept."""
+    """One trial. Returns pool counts (T_TRIAL, n) and the reported percept."""
     mask = Jm != 0.0
     n = len(Bvec)
     size = n if kind == 'mf' else int(mask.sum())
@@ -57,8 +82,8 @@ def _trial(kind, al, Jm, Bvec, rng):
     x = np.clip(0.05 * rng.standard_normal(size), -scale, scale)
     lam = DT * TAU_MS * 1e-3 * K
     s = GAIN * (x / scale) + BASE
-    su = np.empty((T_TRIAL, n), np.int64)
-    mu = np.empty((T_TRIAL, n), np.int64)
+    pool = np.empty((T_TRIAL, n), np.int64)
+    sgn = np.empty(T_TRIAL)
     q = _beliefs(kind, x, Jm, Bvec, mask)
     for t in range(T_TRIAL):
         xh = (s - BASE) / GAIN * scale
@@ -69,13 +94,13 @@ def _trial(kind, al, Jm, Bvec, rng):
         x = x + DT * (f - x)
         node = x if kind == 'mf' else (2 * q - 1)        # recorded at the node
         rate = np.clip(GAIN * node + BASE, 0.0, GAIN + BASE)
-        cnt = rng.poisson(rate * lam)
-        a = rng.binomial(cnt, 1.0 / K)
-        su[t] = a
-        mu[t] = rng.binomial(np.maximum(cnt - a, 0), N_MU / (K - 1))
+        pool[t] = rng.poisson(rate * lam)
+        sgn[t] = np.mean(q) - 0.5
         urate = np.clip(GAIN * (x / scale) + BASE, 0.0, GAIN + BASE)
         s = s + (DT / TAU_S) * (rng.poisson(urate * lam) / lam - s)
-    return su, mu, float(np.mean(q) - 0.5)
+    # the reported percept is the signed average over the last N_CHOICE steps,
+    # not the single final sample, which is noisy
+    return pool, float(np.mean(sgn[-N_CHOICE:]))
 
 
 def _ccg(a, b, maxlag):
@@ -95,8 +120,27 @@ def _auc(a, b):
     return (r[:len(a)].sum() - len(a) * (len(a) + 1) / 2) / (len(a) * len(b))
 
 
+def _compose(pool, alloc, rng):
+    """Single unit and multi-unit counts from the pool counts of every node.
+
+    alloc[i, j] is how many of site i's multi-unit neurons sit in node j; the
+    single unit is one further neuron of node i, excluded from its own pool so
+    the two never share a cell."""
+    n = pool.shape[1]
+    su = np.stack([rng.binomial(pool[:, i], 1.0 / K) for i in range(n)], 1)
+    mu = np.zeros_like(su)
+    for i in range(n):
+        for j in range(n):
+            if alloc[i, j] == 0:
+                continue
+            avail = pool[:, j] - (su[:, j] if j == i else 0)
+            mu[:, i] += rng.binomial(np.maximum(avail, 0),
+                                     alloc[i, j] / (K - (1 if j == i else 0)))
+    return su, mu
+
+
 def run_condition(kind, al, Jv, Bv, n_trials=120, n_nets=5, seed0=0,
-                  sigma_J=0.25, sigma_B=0.05):
+                  sigma_J=0.25, sigma_B=0.05, mixed_mu=None):
     """All sites of all network realisations for one stimulus condition.
 
     Heterogeneous couplings and fields make the sites differ, which is what
@@ -111,9 +155,14 @@ def run_condition(kind, al, Jv, Bv, n_trials=120, n_nets=5, seed0=0,
         Jm, Bvec = ising_params_heterogeneous(
             THETA_NECKER, Jv, Bv, sigma_J=sigma_J * Jv, sigma_B=sigma_B,
             seed=seed0 + r)
+        # the electrode's composition is fixed for the site, not redrawn
+        alloc = (rng.multinomial(N_MU, np.ones(n) / n, size=n)
+                 if (MIXED_MU if mixed_mu is None else mixed_mu)
+                 else np.eye(n, dtype=int) * N_MU)
         SU, MU, PER = [], [], []
         for _ in range(n_trials):
-            a, b, p = _trial(kind, al, Jm, Bvec, rng)
+            pool, p = _trial(kind, al, Jm, Bvec, rng)
+            a, b = _compose(pool, alloc, rng)
             SU.append(a); MU.append(b); PER.append(p)
         SU, MU, PER = np.array(SU), np.array(MU), np.array(PER)
         cs, cu = SU.sum(1), MU.sum(1)
@@ -135,20 +184,23 @@ def run_condition(kind, al, Jv, Bv, n_trials=120, n_nets=5, seed0=0,
 
 
 def run_all(kind='mf', al=1.0, n_trials=120, n_nets=5, recompute=False,
-            folder=DATA_FOLDER, verbose=True):
+            folder=DATA_FOLDER, verbose=True, mixed_mu=None):
     """Every stimulus condition for one algorithm, cached to disk."""
-    f = folder + 'wasmuht_%s_a%g_T%d_N%d.npz' % (kind, al, n_trials, n_nets)
+    mix = MIXED_MU if mixed_mu is None else mixed_mu
+    f = folder + 'wasmuht_%s_a%g_T%d_N%d_%s.npz' % (
+        kind, al, n_trials, n_nets, 'mix' if mix else 'same')
     if not recompute and os.path.exists(f):
         z = np.load(f, allow_pickle=True)
         return {k: z[k].item() for k in z.files}
     out = {}
     out['random'] = run_condition(kind, al, J_MONO * JSTAR[kind], 0.0,
-                                  n_trials, n_nets)
+                                  n_trials, n_nets, mixed_mu=mix)
     if verbose:
         print('  random motion done', flush=True)
     for d in DISPARITIES:
         out['disp%.2f' % d] = run_condition(kind, al, J_BI * JSTAR[kind],
-                                            B_PER_DEG * d, n_trials, n_nets)
+                                            B_PER_DEG * d, n_trials, n_nets,
+                                            mixed_mu=mix)
         if verbose:
             print('  disparity %.2f done' % d, flush=True)
     np.savez(f, **{k: np.array(v, dtype=object) for k, v in out.items()})
@@ -214,6 +266,8 @@ def plot_figure2(res, fname='wasmuht_fig2'):
         ax[1].plot(lag, m, color=col, lw=2, label=nm)
         ax[1].fill_between(lag, m - e, m + e, color=col, alpha=.2, lw=0)
     ax[1].set_xlabel(r'integration window $\tau$ (ms)')
+    ax[1].set_xscale('log')          # their Figs. 3b and 4b use a log tau axis
+    ax[1].set_xlim(BIN_MS, MAXLAG_MS)
     ax[1].set_ylabel(r'$r_{CCG}$'); ax[1].legend(frameon=False, fontsize=9)
     for a in ax:
         a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
@@ -251,6 +305,8 @@ def plot_figure3(res, fname='wasmuht_fig3'):
         ax[1].plot(lag, m, color=col, lw=2, label='%s (n=%d)' % (nm, s.sum()))
         ax[1].fill_between(lag, m - e, m + e, color=col, alpha=.2, lw=0)
     ax[1].set_xlabel(r'integration window $\tau$ (ms)')
+    ax[1].set_xscale('log')          # their Figs. 3b and 4b use a log tau axis
+    ax[1].set_xlim(BIN_MS, MAXLAG_MS)
     ax[1].set_ylabel(r'$r_{CCG}$')
     ax[1].set_title('median CP = %.2f' % med, fontsize=11)
     ax[1].legend(frameon=False, fontsize=9)
@@ -267,9 +323,10 @@ if __name__ == '__main__':
     for kind, al, tag in (('mf', 1.0, 'MF'), ('fbp', 1.0, 'LBP')):
         print(tag, flush=True)
         res = run_all(kind, al)
-        plot_figure1(res, 'wasmuht_fig1_%s' % tag)
-        plot_figure2(res, 'wasmuht_fig2_%s' % tag)
-        plot_figure3(res, 'wasmuht_fig3_%s' % tag)
+        sfx = '%s_%s' % (tag, 'mixed' if MIXED_MU else 'same')
+        plot_figure1(res, 'wasmuht_fig1_%s' % sfx)
+        plot_figure2(res, 'wasmuht_fig2_%s' % sfx)
+        plot_figure3(res, 'wasmuht_fig3_%s' % sfx)
         print('  rSC  ambiguous %.3f | unambiguous %.3f | random %.3f'
               % (np.nanmean(res['disp0.00']['rsc']),
                  np.nanmean(res['disp%.2f' % DISPARITIES[-1]]['rsc']),
