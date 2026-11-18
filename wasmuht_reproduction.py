@@ -145,7 +145,7 @@ CIRCUITS = {
     'k20_total': dict(gain=20.7, K=20, tau_s=0.50, r_mono=0.933, r_bi=1.28,
                       bpd=1.29, sigma_B=0.15),
 }
-CIRCUIT = 'best'                         # the one currently loaded
+CIRCUIT = 'k20'                         # the one currently loaded
 
 
 def critical_coupling(kind, alpha=1.0, neighs=3.0):
@@ -550,6 +550,7 @@ def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
     filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s_%s_%s.npz' % (
         kind, alpha, n_trials, n_nets, CIRCUIT,
         'carry' if CARRY_STATE else 'reset', 'mix' if mixed else 'same')
+    print(filename)
     if not recompute and os.path.exists(filename):
         return load_conditions(filename)
     res = {}
@@ -875,9 +876,217 @@ def plot_figure_4(res, name='wasmuht_fig4'):
     return fig
 
 
+def plot_figure_5(res, name='wasmuht_fig5', n_boot=2000,
+                  sizes=(5, 10, 15, 20, 30, 40, 60, 90)):
+    """
+    How the CP--r_SC correlation depends on how many sites were recorded.
+
+    Sites are drawn without replacement, so the horizontal axis reads as the
+    size of a hypothetical recording rather than as a resampling of this one.
+    Left, the fitted line from each draw, darker the more sites it is fitted
+    to. Right, the correlation itself against the number of sites.
+    """
+    out = res['disp0.00']
+    cp = np.nanmean(out['cp_time'], 1)
+    rsc = out['rsc']
+    ok = np.isfinite(cp) & np.isfinite(rsc)
+    cp, rsc = cp[ok], rsc[ok]
+    n_site = cp.size
+    rng = np.random.default_rng(0)
+    sizes = [n for n in sizes if n <= n_site]
+
+    boot = {}
+    for n in sizes:
+        vals, fits = [], []
+        for _ in range(n_boot):
+            idx = (np.arange(n_site) if n == n_site
+                   else rng.choice(n_site, n, replace=False))
+            if rsc[idx].std() <= 0 or cp[idx].std() <= 0:
+                continue
+            vals.append(pearsonr(rsc[idx], cp[idx])[0])
+            fits.append(np.polyfit(rsc[idx], cp[idx], 1))
+        boot[n] = (np.array(vals), np.array(fits))
+
+    fig, ax = plt.subplots(ncols=2, figsize=(12.5, 4.6))
+    grid = np.linspace(rsc.min(), rsc.max(), 20)
+    shown = [n for n in (sizes[1], sizes[len(sizes) // 2], sizes[-1])]
+    ax[0].scatter(rsc, cp, s=16, color='0.7', zorder=1)
+    for k, n in enumerate(shown):
+        shade = 0.3 + 0.7 * k / max(len(shown) - 1, 1)
+        for coef in boot[n][1][:60]:
+            ax[0].plot(grid, np.polyval(coef, grid), color=C_AMB,
+                       alpha=.1 * shade, lw=1, zorder=2)
+        ax[0].plot([], [], color=C_AMB, alpha=shade, lw=2,
+                   label='%d sites' % n)
+    ax[0].plot(grid, np.polyval(np.polyfit(rsc, cp, 1), grid), 'k-', lw=2,
+               zorder=3)
+    ax[0].set_xlabel(r'$r_{SC}$')
+    ax[0].set_ylabel('choice probability')
+    ax[0].legend(frameon=False, title='fits drawn from')
+
+    med = [np.median(boot[n][0]) for n in sizes]
+    lo = [np.percentile(boot[n][0], 5) for n in sizes]
+    hi = [np.percentile(boot[n][0], 95) for n in sizes]
+    ax[1].fill_between(sizes, lo, hi, color=C_AMB, alpha=.25,
+                       label='5--95% of draws')
+    ax[1].plot(sizes, med, color=C_AMB, lw=2, marker='o', label='median')
+    ax[1].axhline(WASMUHT['r_cp_rsc'], color=C_REF, ls='--', lw=1.6,
+                  label='Wasmuht et al.')
+    ax[1].axvline(39, color='0.6', ls=':', lw=1.4)
+    ax[1].set_xscale('log')
+    ax[1].set_xticks(sizes)
+    ax[1].set_xticklabels([str(n) for n in sizes])
+    ax[1].set_xlabel('number of sites')
+    ax[1].set_ylabel(r'corr(CP, $r_{SC}$)')
+    ax[1].legend(frameon=False, loc='lower right')
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    fig.tight_layout()
+    save_figure(fig, name)
+    return fig
+
+
+# one parameter varied at a time; the baseline value is in every list, so the
+# rows of the sweep figure share a common point
+SWEEPS = (('gain', 'encoding gain (Hz)', (10.0, 15.0, 20.2, 30.0)),
+          ('K', 'pool size', (3, 6, 12, 25)),
+          ('tau_s', r'synapse $\tau_s$ (units of $\tau$)',
+           (0.1, 0.2, 0.5, 1.0)),
+          ('r_bi', r'$J_{bi}/J^\star$', (1.3, 1.7, 2.15, 2.6)),
+          ('bpd', 'disparity scale', (2.0, 4.0, 7.55, 12.0)))
+
+
+def run_parameter_sweep(kind='fbp', alpha=1.0, circuit='best', sweeps=SWEEPS,
+                        n_trials=100, n_nets=4, verbose=True):
+    """
+    Vary each parameter in turn around a circuit, holding the others.
+
+    Every setting is a full set of stimulus conditions and gets its own cache
+    entry, so the sweep figure can be rebuilt without simulating again.
+
+    Returns
+    -------
+    dict
+        One entry per parameter, holding its axis label, the values tried,
+        and for each value the mean r_SC, CP and cumulative correlogram of
+        every stimulus condition.
+    """
+    global CIRCUIT
+    base = dict(CIRCUITS[circuit])
+    conds = ['random'] + ['disp%.2f' % d for d in DISPARITIES]
+    sweep = {}
+    for pname, label, values in sweeps:
+        # the circuit's own value is always tried, so every row has a star
+        values = sorted(set(list(values) + [base[pname]]))
+        rows = []
+        for v in values:
+            use_circuit(dict(base, **{pname: v}), kind, alpha)
+            # the rest of the circuit must be in the key too, or two
+            # sweeps that happen to try the same value collide
+            CIRCUIT = 'sweep_%s_%s_%g' % (
+                circuit if isinstance(circuit, str) else 'custom',
+                pname, v)
+            res = run_all(kind, alpha, n_trials=n_trials, n_nets=n_nets,
+                          verbose=True)
+            rows.append({c: dict(rsc=fisher_mean(res[c]['rsc']),
+                                 cp=float(np.nanmean(res[c]['cp'])),
+                                 rccg=np.nanmean(res[c]['rccg'], 0))
+                         for c in conds})
+            if verbose:
+                print('  %s = %g done' % (pname, v), flush=True)
+        sweep[pname] = dict(label=label, values=list(values), rows=rows,
+                            base=base[pname])
+    use_circuit(circuit, kind, alpha)              # put the circuit back
+    return sweep
+
+
+def plot_figure_6(sweep, name='wasmuht_fig6_sweep'):
+    """
+    The sweep: one row per parameter, one colour per value.
+
+    Columns are r_SC against the parameter, CP against the parameter, r_SC
+    against disparity, and the cumulative correlogram for each of the three
+    stimuli. Dashed lines mark the values they report, and a star marks the
+    value the circuit itself uses.
+    """
+    rows = list(sweep)
+    fig, ax = plt.subplots(len(rows), 6, figsize=(22, 3.2 * len(rows)),
+                           squeeze=False)
+    titles = (r'$r_{SC}$ against parameter', 'CP against parameter',
+              r'$r_{SC}$ against disparity', 'ambiguous', 'unambiguous',
+              'random motion')
+    stim = (('disp0.00', 'ambiguous', C_AMB),
+            ('disp0.03', 'unambiguous', C_UNAMB),
+            ('random', 'random motion', C_RAND))
+    for r, pname in enumerate(rows):
+        d = sweep[pname]
+        values, data = d['values'], d['rows']
+        shades = plt.cm.viridis(np.linspace(.15, .9, len(values)))
+        used = int(np.argmin([abs(v - d['base']) for v in values]))
+
+        for cond, lab, colour in stim:
+            y = [x[cond]['rsc'] for x in data]
+            ax[r, 0].plot(values, y, marker='o', ms=5, color=colour, lw=2,
+                          label=lab)
+            ax[r, 0].plot(values[used], y[used], marker='*', ms=17,
+                          color=colour, mec='k', mew=.6, ls='none', zorder=5)
+            ax[r, 0].axhline(WASMUHT['rsc_' + {'disp0.00': 'amb',
+                                               'disp0.03': 'unamb',
+                                               'random': 'rand'}[cond]],
+                             color=colour, ls='--', lw=1, alpha=.7)
+        for cond, lab, colour in (stim[0], stim[2]):
+            y = [x[cond]['cp'] for x in data]
+            ax[r, 1].plot(values, y, marker='o', ms=5, color=colour, lw=2,
+                          label=lab)
+            ax[r, 1].plot(values[used], y[used], marker='*', ms=17,
+                          color=colour, mec='k', mew=.6, ls='none', zorder=5)
+            ax[r, 1].axhline(WASMUHT['cp_' + ('amb' if cond == 'disp0.00'
+                                              else 'rand')],
+                             color=colour, ls='--', lw=1, alpha=.7)
+
+        for k, (v, x) in enumerate(zip(values, data)):
+            wide = 3.2 if k == used else 1.8
+            tag = ('%g (used)' % v) if k == used else '%g' % v
+            ax[r, 2].plot(DISPARITIES,
+                          [x['disp%.2f' % dd]['rsc'] for dd in DISPARITIES],
+                          marker='*' if k == used else 'o',
+                          ms=15 if k == used else 5, color=shades[k],
+                          lw=wide, label=tag)
+            lag = np.arange(x['disp0.00']['rccg'].size) * BIN_MS
+            for c, (cond, lab, _) in enumerate(stim):
+                ax[r, 3 + c].plot(lag, x[cond]['rccg'], color=shades[k],
+                                  lw=wide, label=tag)
+        for c in range(3, 6):
+            ax[r, c].set_xscale('log')
+            ax[r, c].set_xlim(BIN_MS, MAXLAG_MS)
+            ax[r, c].set_xlabel(r'$\tau$ (ms)')
+            ax[r, c].set_ylabel(r'$r_{CCG}$')
+        ax[r, 0].set_xlabel(d['label'])
+        ax[r, 0].set_ylabel(r'$r_{SC}$')
+        ax[r, 1].set_xlabel(d['label'])
+        ax[r, 1].set_ylabel('CP')
+        ax[r, 2].set_xlabel('disparity (deg)')
+        ax[r, 2].set_ylabel(r'$r_{SC}$')
+        ax[r, 2].legend(frameon=False, fontsize=8, title=d['label'],
+                        title_fontsize=8)
+        if r == 0:
+            for c in range(6):
+                ax[r, c].set_title(titles[c], fontsize=13)
+            ax[r, 0].legend(frameon=False, fontsize=8)
+    for a in ax.ravel():
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    fig.tight_layout()
+    save_figure(fig, name)
+    return fig
+
+
 # the schemes run when none is named on the command line
 SCHEMES = (('mf', 1.0, 'MF'), ('fbp', 1.0, 'LBP'),
            ('fbp', 0.5, 'FBP_05'), ('fbp', 1.45, 'FBP_145'))
+
+SCHEMES = (('fbp', 1.0, 'LBP'), )
 
 
 if __name__ == '__main__':
@@ -892,19 +1101,23 @@ if __name__ == '__main__':
                if len(sys.argv) > 3 else SCHEMES)
     for kind, alpha, tag in schemes:
         use_circuit(circuit, kind, alpha)
-        print('%s on circuit %s: J* = %.3f, J_bi = %.3f, J_mono = %.3f'
-              % (tag, circuit, JSTAR[kind], J_BI * JSTAR[kind],
-                 J_MONO * JSTAR[kind]), flush=True)
-        res = run_all(kind, alpha, recompute=True)
-        suffix = '%s_%s_%s' % (tag, circuit, 'mixed' if MIXED_MU else 'same')
-        plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
-        plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
-        plot_figure_3(res, 'wasmuht_fig3_%s' % suffix)
-        plot_figure_4(res, 'wasmuht_fig4_%s' % suffix)
-        print('  rSC  ambiguous %.3f | unambiguous %.3f | random %.3f'
-              % (np.nanmean(res['disp0.00']['rsc']),
-                 np.nanmean(res['disp%.2f' % DISPARITIES[-1]]['rsc']),
-                 np.nanmean(res['random']['rsc'])), flush=True)
-        print('  CP   ambiguous %.3f | random %.3f'
-              % (np.nanmean(res['disp0.00']['cp']),
-                 np.nanmean(res['random']['cp'])), flush=True)
+    #     print('%s on circuit %s: J* = %.3f, J_bi = %.3f, J_mono = %.3f'
+    #           % (tag, circuit, JSTAR[kind], J_BI * JSTAR[kind],
+    #              J_MONO * JSTAR[kind]), flush=True)
+    #     res = run_all(kind, alpha, recompute=False, verbose=True)
+    #     suffix = '%s_%s_%s' % (tag, circuit, 'mixed' if MIXED_MU else 'same')
+    #     plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
+    #     plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
+    #     plot_figure_3(res, 'wasmuht_fig3_%s' % suffix)
+    #     plot_figure_4(res, 'wasmuht_fig4_%s' % suffix)
+    #     print('  rSC  ambiguous %.3f | unambiguous %.3f | random %.3f'
+    #           % (np.nanmean(res['disp0.00']['rsc']),
+    #              np.nanmean(res['disp%.2f' % DISPARITIES[-1]]['rsc']),
+    #              np.nanmean(res['random']['rsc'])), flush=True)
+    #     print('  CP   ambiguous %.3f | random %.3f'
+    #           % (np.nanmean(res['disp0.00']['cp']),
+    #              np.nanmean(res['random']['cp'])), flush=True)
+    sweep = run_parameter_sweep(circuit='best')
+    sweep = run_parameter_sweep(circuit='k20')
+    plot_figure_6(sweep)
+
