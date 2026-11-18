@@ -55,6 +55,17 @@ T_TRIAL = int(round(2000.0 / BIN_MS))    # 2 s trial
 TAU_S = 1.0
 MAXLAG_MS = 1000.0                       # their Figs. 3b and 4b reach 10^3 ms
 N_CHOICE = 15                            # steps averaged for the reported percept
+BIN_LONG = 100.0                         # independent bin of their Fig. 6
+N_LAG = 4                                # +-50 to 450 ms, their r_SC^tau=4
+
+# Tuning strength. Their sites differ in how strongly the cylinder modulates
+# firing (F_cylinder), which correlates with both CP and r_SC, so each site
+# draws its own readout gain. It scales only the RECORDED rate: the channel
+# between units keeps GAIN, so the inference is untouched and the diversity is
+# purely an encoding property. Without it every site is statistically
+# identical, CP has no across-site variance, and their Fig. 6, which is an
+# across-site correlation, has nothing to measure.
+SIGMA_G = 0.30
 
 # Encoding matched to their recordings. At their example site (Fig. 1a) the
 # single unit fires near 65 spks/s and the multi-unit near 145, and their
@@ -62,7 +73,7 @@ N_CHOICE = 15                            # steps averaged for the reported perce
 # cylinder lay between 10 and 200 spks/s. The multi-unit is therefore about two
 # neurons' worth of spikes above threshold, not a large pool. GAIN is the
 # half-depth of percept modulation: rate = BASE +- GAIN as the belief flips.
-K, N_MU = 10, 2                          # pool size, neurons in the multi-unit
+K, N_MU = 50, 2                          # pool size, neurons in the multi-unit
 GAIN, BASE = 20.0, 65.0                  # single unit 45-85, multi-unit 90-170
 
 # No injected sensory noise. A common input shared across all nodes would be
@@ -92,7 +103,7 @@ B_PER_DEG = 2.0
 MIXED_MU = True
 
 
-def simulate_trial(kind, alpha, j_mat, b_vec, rng):
+def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None):
     """
     Simulate one 2 s trial of the spiking inference network.
 
@@ -108,6 +119,8 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng):
         External field at each node.
     rng : numpy Generator
         Random source for the Poisson spiking.
+    gain_site : array [N] or None
+        Per-site readout gain. None gives every site the global GAIN.
 
     Returns
     -------
@@ -117,6 +130,7 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng):
         Signed average of the global belief over the last N_CHOICE steps.
     """
     mask = j_mat != 0.0
+    gain_site = np.full(N, GAIN) if gain_site is None else gain_site
     size = N if kind == 'mf' else int(mask.sum())
     scale = np.ones(N) if kind == 'mf' else np.abs(j_mat[mask])
     x = np.clip(0.05 * rng.standard_normal(size), -scale, scale)
@@ -132,7 +146,7 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng):
         f = pc._map_step(kind, x_hat, j_mat, b_now, alpha, 1.0, mask)
         x = x + DT * (f - x)
         node = x if kind == 'mf' else (2 * q - 1)       # recorded at the node
-        rate = np.clip(GAIN * node + BASE, 0.0, GAIN + BASE)
+        rate = np.clip(BASE + gain_site * node, 0.0, BASE + gain_site)
         pool[t] = rng.poisson(rate * lam)
         sgn[t] = np.mean(q) - 0.5
         # the message/magnetisation units carry their own spiking channel
@@ -193,6 +207,56 @@ def compose_electrode(pool, alloc, rng):
     return su, mu
 
 
+def rsc_matrix(su, mu):
+    """
+    Spike count correlation between every pair of long bins, for one site.
+
+    Parameters
+    ----------
+    su, mu : array [trials, bins]
+        Counts of the single unit and the multi-unit in independent bins.
+
+    Returns
+    -------
+    array [bins, bins]
+        Entry (i, j) is the correlation across trials between the single unit
+        in bin i and the multi-unit in bin j.
+    """
+    a = su - su.mean(0, keepdims=True)
+    b = mu - mu.mean(0, keepdims=True)
+    sd_a, sd_b = su.std(0), mu.std(0)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        out = (a.T @ b) / su.shape[0] / np.outer(sd_a, sd_b)
+    out[sd_a <= 0, :] = np.nan
+    out[:, sd_b <= 0] = np.nan
+    return out
+
+
+def rsc_components(mat, n_lag=N_LAG):
+    """Instantaneous (the diagonal) and long-timescale (the off-diagonals)
+    parts of the correlation matrix, as functions of trial time."""
+    n = mat.shape[0]
+    long = np.full(n, np.nan)
+    for i in range(n):
+        idx = [i + d for d in range(-n_lag, n_lag + 1)
+               if d != 0 and 0 <= i + d < n]
+        long[i] = np.nanmean(mat[i, idx])
+    return np.diag(mat).copy(), long
+
+
+def cp_timecourse(su, percept):
+    """Choice probability per bin, from the single unit alone."""
+    n = su.shape[1]
+    out = np.full(n, np.nan)
+    pos, neg = percept > 0, percept <= 0
+    if pos.sum() > 5 and neg.sum() > 5:
+        for i in range(n):
+            if su[:, i].std() > 0:
+                auc = roc_auc(su[pos, i], su[neg, i])
+                out[i] = max(auc, 1 - auc)
+    return out
+
+
 def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
                   sigma_J=0.25, sigma_B=0.05, mixed_mu=None):
     """
@@ -207,6 +271,9 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
     trial-summed counts of one example site.
     """
     rsc, cp, ccg_all, example = [], [], [], None
+    tau0_all, tau4_all, cp_time, gain_all = [], [], [], []
+    per_bin = int(round(BIN_LONG / BIN_MS))
+    n_long = T_TRIAL // per_bin
     n_lag = int(round(MAXLAG_MS / BIN_MS))
     weights = np.array([T_TRIAL - abs(k)
                         for k in range(-n_lag, n_lag + 1)], float)
@@ -219,9 +286,13 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
         alloc = (rng.multinomial(N_MU, np.ones(N) / N, size=N)
                  if (MIXED_MU if mixed_mu is None else mixed_mu)
                  else np.eye(N, dtype=int) * N_MU)
+        # tuning strength is a property of the site, drawn once
+        gain_site = GAIN * np.clip(
+            np.exp(SIGMA_G * rng.standard_normal(N)), 0.3, 2.2)
         su_all, mu_all, percept = [], [], []
         for _ in range(n_trials):
-            pool, p = simulate_trial(kind, alpha, j_mat, b_vec, rng)
+            pool, p = simulate_trial(kind, alpha, j_mat, b_vec, rng,
+                                     gain_site)
             su, mu = compose_electrode(pool, alloc, rng)
             su_all.append(su)
             mu_all.append(mu)
@@ -229,6 +300,11 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
         su_all, mu_all = np.array(su_all), np.array(mu_all)
         percept = np.array(percept)
         count_su, count_mu = su_all.sum(1), mu_all.sum(1)
+        # the same counts in the long bins of their Fig. 6
+        su_long = su_all[:, :n_long * per_bin].reshape(
+            n_trials, n_long, per_bin, N).sum(2)
+        mu_long = mu_all[:, :n_long * per_bin].reshape(
+            n_trials, n_long, per_bin, N).sum(2)
         for i in range(N):
             if count_su[:, i].std() <= 0 or count_mu[:, i].std() <= 0:
                 continue
@@ -248,10 +324,18 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
                 cp.append(max(auc, 1 - auc))
             else:
                 cp.append(np.nan)
+            inst, long = rsc_components(
+                rsc_matrix(su_long[:, :, i], mu_long[:, :, i]))
+            tau0_all.append(inst)
+            tau4_all.append(long)
+            cp_time.append(cp_timecourse(su_long[:, :, i], percept))
+            gain_all.append(gain_site[i])
             if example is None and r == 0 and i == 0:
                 example = (count_su[:, i].copy(), count_mu[:, i].copy())
     return dict(rsc=np.array(rsc), cp=np.array(cp),
-                ccg=np.array(ccg_all), example=example)
+                ccg=np.array(ccg_all), example=example,
+                tau0=np.array(tau0_all), tau4=np.array(tau4_all),
+                cp_time=np.array(cp_time), gain=np.array(gain_all))
 
 
 def save_conditions(filename, res):
@@ -264,7 +348,8 @@ def save_conditions(filename, res):
     """
     flat = {}
     for condition, out in res.items():
-        for key in ('rsc', 'cp', 'ccg'):
+        for key in ('rsc', 'cp', 'ccg', 'tau0', 'tau4', 'cp_time',
+                    'gain'):
             flat['%s__%s' % (condition, key)] = np.asarray(out[key])
         if out['example'] is not None:
             flat['%s__su' % condition] = np.asarray(out['example'][0])
@@ -296,7 +381,8 @@ def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
     if not recompute and os.path.exists(filename):
         return load_conditions(filename)
     res = {}
-    res['random'] = run_condition(kind, alpha, J_MONO * JSTAR[kind], 0.0,
+    jstar = JSTAR[kind] if kind in ('mf', 'fbp') else 1/(2*alpha)*np.log(3/(3-2*alpha))
+    res['random'] = run_condition(kind, alpha, J_MONO * jstar, 0.0,
                                   n_trials, n_nets, mixed_mu=mixed)
     if verbose:
         print('  random motion done', flush=True)
@@ -444,14 +530,80 @@ def plot_figure_3(res, name='wasmuht_fig3'):
     return fig
 
 
+def plot_figure_4(res, name='wasmuht_fig4'):
+    """Their Fig. 6: does the long-timescale correlation predict CP?
+
+    For each site the long-lag correlation is fitted with a parabola in trial
+    time; the sign of its derivative says whether that correlation is rising
+    or decaying. Their result is a dissociation: a rising long-lag correlation
+    in the first half goes with a larger CP in the second, while the
+    instantaneous correlation predicts nothing.
+    """
+    out = res['disp0.00']
+    tau0, tau4, cps = out['tau0'], out['tau4'], out['cp_time']
+    n_long = tau4.shape[1]
+    t = (np.arange(n_long) + .5) * BIN_LONG / 1000.0
+    half = n_long // 2
+    fig, ax = plt.subplots(ncols=3, figsize=(15, 3.9))
+
+    ax[0].plot(t, np.nanmean(tau0, 0), color='0.4', lw=2,
+               label='instantaneous')
+    ax[0].plot(t, np.nanmean(tau4, 0), color=C_AMB, lw=2, label='long lag')
+    ax[0].set_xlabel('time (s)')
+    ax[0].set_ylabel(r'$r_{SC}$')
+    ax[0].legend(frameon=False)
+    ax[0].set_title('the two components', fontsize=14)
+
+    for curves, colour, lab in ((tau4, C_AMB, 'long lag'),
+                                (tau0, '0.4', 'instantaneous')):
+        slope = []
+        for c in curves:
+            ok = np.isfinite(c)
+            if ok.sum() < 5:
+                slope.append(np.nan)
+                continue
+            a, b, _ = np.polyfit(t[ok], c[ok], 2)
+            slope.append(np.mean(2 * a * t[:half] + b))
+        slope = np.array(slope)
+        late = np.nanmean(cps[:, half:], 1)
+        ok = np.isfinite(slope) & np.isfinite(late)
+        r_val, p_val = pearsonr(slope[ok], late[ok])
+        ax[1].scatter(slope[ok], late[ok], s=26, color=colour, alpha=.75,
+                      label='%s: r = %+.2f, p = %.3f' % (lab, r_val, p_val))
+        rising = ok & (slope > 0)
+        decaying = ok & (slope <= 0)
+        for sel, style in ((rising, '-'), (decaying, '--')):
+            if sel.sum() > 1:
+                ax[2].plot(t, np.nanmean(cps[sel], 0), style, color=colour,
+                           lw=2, label='%s, slope %s (n=%d)'
+                           % (lab, '>0' if style == '-' else '<0', sel.sum()))
+    ax[1].set_xlabel('slope of the correlation, first half')
+    ax[1].set_ylabel('CP, second half')
+    ax[1].legend(frameon=False)
+    ax[1].set_title('does the slope predict CP?', fontsize=14)
+    ax[2].axhline(0.5, color='0.7', lw=.8)
+    ax[2].set_xlabel('time (s)')
+    ax[2].set_ylabel('CP')
+    ax[2].legend(frameon=False, fontsize=8)
+    ax[2].set_title('CP split by the sign of the slope', fontsize=14)
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    fig.tight_layout()
+    save_figure(fig, name)
+    return fig
+
+
 if __name__ == '__main__':
-    for kind, alpha, tag in (('mf', 1.0, 'MF'), ('fbp', 1.0, 'LBP')):
+    for kind, alpha, tag in (('mf', 1.0, 'MF'), ('fbp', 1.0, 'LBP'),
+                             ('fbp', 0.5, 'FBP_05'), ('fbp', 1.45, 'FBP_145')):
         print(tag, flush=True)
-        res = run_all(kind, alpha)
+        res = run_all(kind, alpha, recompute=True)
         suffix = '%s_%s' % (tag, 'mixed' if MIXED_MU else 'same')
         plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
         plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
         plot_figure_3(res, 'wasmuht_fig3_%s' % suffix)
+        plot_figure_4(res, 'wasmuht_fig4_%s' % suffix)
         print('  rSC  ambiguous %.3f | unambiguous %.3f | random %.3f'
               % (np.nanmean(res['disp0.00']['rsc']),
                  np.nanmean(res['disp%.2f' % DISPARITIES[-1]]['rsc']),
