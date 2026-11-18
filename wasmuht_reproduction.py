@@ -67,6 +67,15 @@ N_LAG = 4                                # +-50 to 450 ms, their r_SC^tau=4
 # across-site correlation, has nothing to measure.
 SIGMA_G = 0.30
 
+# Their analysis choices, followed here. Trials whose count is further than
+# N_OUTLIER sd from the site's mean are dropped; the rest are z-scored against
+# the N_ZWIN trials on either side, which removes slow drift in excitability;
+# and r_SC values are averaged through Fisher's z. Only sites whose single
+# unit and multi-unit are both strongly tuned, and similarly so, are analysed,
+# as they select for strong and matching tuning.
+N_OUTLIER, N_ZWIN = 3.0, 5
+TUNE_MIN, TUNE_MATCH = 0.5, 1.5
+
 # Encoding matched to their recordings. At their example site (Fig. 1a) the
 # single unit fires near 65 spks/s and the multi-unit near 145, and their
 # Methods set the Schmitt-trigger level so that multi-unit rates for the 0 deg
@@ -159,15 +168,50 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None):
 
 
 def cross_correlogram(a, b, max_lag):
-    """Mean-subtracted spike-time cross-correlogram of two [trials, T] arrays."""
+    """
+    Mean-subtracted correlogram of two [trials, T] count arrays, per time bin.
+
+    Subtracting the across-trial mean at each bin removes the stimulus-locked
+    response, which is what their shift predictor does. Passing the same array
+    twice gives the auto-correlogram. Computed by FFT, which matters once the
+    bin is small enough that the lag range runs to thousands of bins.
+    """
     a = a - a.mean(0, keepdims=True)
     b = b - b.mean(0, keepdims=True)
-    n_time = a.shape[1]
-    ccg = np.zeros(2 * max_lag + 1)
-    for k in range(-max_lag, max_lag + 1):
-        i0, i1 = max(0, -k), n_time - max(0, k)
-        ccg[k + max_lag] = np.mean(a[:, i0:i1] * b[:, i0 + k:i1 + k])
-    return ccg
+    n_trial, n_time = a.shape
+    n_fft = 1 << int(np.ceil(np.log2(2 * n_time)))
+    product = (np.conj(np.fft.rfft(a, n_fft, axis=1))
+               * np.fft.rfft(b, n_fft, axis=1))
+    full = np.fft.irfft(product, n_fft, axis=1).sum(0)
+    lags = np.arange(-max_lag, max_lag + 1)
+    return full[lags % n_fft] / (n_trial * (n_time - np.abs(lags)))
+
+
+def fisher_mean(values):
+    """Average correlations through Fisher's z, as all their statistics do."""
+    v = np.asarray(values, float)
+    v = v[np.isfinite(v)]
+    return np.tanh(np.mean(np.arctanh(np.clip(v, -0.999999, 0.999999)))) \
+        if v.size else np.nan
+
+
+def zscore_trials(counts, n_side=N_ZWIN):
+    """
+    Normalise each trial against its neighbours, their equation (2).
+
+    The mean and standard deviation come from the n_side trials before and
+    after the current one, so slow drift in excitability does not inflate the
+    correlation. The window shrinks at the ends of the session.
+    """
+    n = counts.size
+    out = np.full(n, np.nan)
+    for k in range(n):
+        lo, hi = max(0, k - n_side), min(n, k + n_side + 1)
+        neigh = np.r_[counts[lo:k], counts[k + 1:hi]]
+        sd = neigh.std()
+        if sd > 0:
+            out[k] = (counts[k] - neigh.mean()) / sd
+    return out
 
 
 def roc_auc(a, b):
@@ -270,7 +314,7 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
     dict with per-site r_SC and CP, the cumulative r_CCG of each site, and the
     trial-summed counts of one example site.
     """
-    rsc, cp, ccg_all, example = [], [], [], None
+    rsc, cp, ccg_all, rccg_all, example = [], [], [], [], None
     tau0_all, tau4_all, cp_time, gain_all = [], [], [], []
     per_bin = int(round(BIN_LONG / BIN_MS))
     n_long = T_TRIAL // per_bin
@@ -305,35 +349,70 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
             n_trials, n_long, per_bin, N).sum(2)
         mu_long = mu_all[:, :n_long * per_bin].reshape(
             n_trials, n_long, per_bin, N).sum(2)
+        # their selection: both units strongly and similarly tuned. The
+        # multi-unit's tuning is the mean over the nodes its neurons occupy.
+        mu_gain = alloc @ gain_site / max(N_MU, 1)
         for i in range(N):
             if count_su[:, i].std() <= 0 or count_mu[:, i].std() <= 0:
                 continue
-            rsc.append(np.corrcoef(count_su[:, i], count_mu[:, i])[0, 1])
+            ratio = gain_site[i] / mu_gain[i] if mu_gain[i] > 0 else np.inf
+            if (gain_site[i] < TUNE_MIN * GAIN
+                    or mu_gain[i] < TUNE_MIN * GAIN
+                    or not 1 / TUNE_MATCH <= ratio <= TUNE_MATCH):
+                continue
+            # drop outlying trials, then z-score against neighbouring trials
+            keep = ((np.abs(count_su[:, i] - count_su[:, i].mean())
+                     <= N_OUTLIER * count_su[:, i].std())
+                    & (np.abs(count_mu[:, i] - count_mu[:, i].mean())
+                       <= N_OUTLIER * count_mu[:, i].std()))
+            if keep.sum() < 20:
+                continue
+            z_su = zscore_trials(count_su[keep, i])
+            z_mu = zscore_trials(count_mu[keep, i])
+            good = np.isfinite(z_su) & np.isfinite(z_mu)
+            if good.sum() < 20 or z_su[good].std() <= 0:
+                continue
+            rsc.append(np.corrcoef(z_su[good], z_mu[good])[0, 1])
             # Cov(sum_t a, sum_t b) = sum_k (T - |k|) ccg(k), and r_SC divides
             # by the sd of the trial-summed counts, so the full cumulative
             # area equals r_SC
-            ccg = cross_correlogram(su_all[:, :, i], mu_all[:, :, i],
-                                    n_lag) * weights
+            train_su, train_mu = su_all[keep, :, i], mu_all[keep, :, i]
+            c_xy = cross_correlogram(train_su, train_mu, n_lag)
+            # our cumulative form: the share of the count covariance within
+            # +-tau, so the full area is r_SC by construction
+            ccg = c_xy * weights
             ccg_all.append(np.array([ccg[n_lag - k:n_lag + k + 1].sum()
                                      for k in range(n_lag + 1)])
-                           / (count_su[:, i].std() * count_mu[:, i].std()))
-            count_pref = count_su[percept > 0, i]
-            count_null = count_su[percept <= 0, i]
+                           / (count_su[keep, i].std()
+                              * count_mu[keep, i].std()))
+            # their form, equation (7): the cross-correlogram integral over
+            # the geometric mean of the two auto-correlogram integrals taken
+            # over the same window, so the denominator grows with tau. The
+            # rate normalisation they apply cancels between the two.
+            c_xx = cross_correlogram(train_su, train_su, n_lag)
+            c_yy = cross_correlogram(train_mu, train_mu, n_lag)
+            cum = lambda c: np.array([c[n_lag - k:n_lag + k + 1].sum()
+                                      for k in range(n_lag + 1)])
+            den = np.sqrt(np.clip(cum(c_xx) * cum(c_yy), 1e-30, None))
+            rccg_all.append(cum(c_xy) / den)
+            count_pref = count_su[keep, i][percept[keep] > 0]
+            count_null = count_su[keep, i][percept[keep] <= 0]
             if len(count_pref) > 5 and len(count_null) > 5:
                 auc = roc_auc(count_pref, count_null)
                 cp.append(max(auc, 1 - auc))
             else:
                 cp.append(np.nan)
             inst, long = rsc_components(
-                rsc_matrix(su_long[:, :, i], mu_long[:, :, i]))
+                rsc_matrix(su_long[keep, :, i], mu_long[keep, :, i]))
             tau0_all.append(inst)
             tau4_all.append(long)
-            cp_time.append(cp_timecourse(su_long[:, :, i], percept))
+            cp_time.append(cp_timecourse(su_long[keep, :, i], percept[keep]))
             gain_all.append(gain_site[i])
             if example is None and r == 0 and i == 0:
                 example = (count_su[:, i].copy(), count_mu[:, i].copy())
     return dict(rsc=np.array(rsc), cp=np.array(cp),
-                ccg=np.array(ccg_all), example=example,
+                ccg=np.array(ccg_all), rccg=np.array(rccg_all),
+                example=example,
                 tau0=np.array(tau0_all), tau4=np.array(tau4_all),
                 cp_time=np.array(cp_time), gain=np.array(gain_all))
 
@@ -348,8 +427,8 @@ def save_conditions(filename, res):
     """
     flat = {}
     for condition, out in res.items():
-        for key in ('rsc', 'cp', 'ccg', 'tau0', 'tau4', 'cp_time',
-                    'gain'):
+        for key in ('rsc', 'cp', 'ccg', 'rccg', 'tau0', 'tau4',
+                    'cp_time', 'gain'):
             flat['%s__%s' % (condition, key)] = np.asarray(out[key])
         if out['example'] is not None:
             flat['%s__su' % condition] = np.asarray(out['example'][0])
@@ -466,7 +545,7 @@ def plot_figure_2(res, name='wasmuht_fig2'):
                                   ('disp%.2f' % DISPARITIES[-1], C_UNAMB,
                                    'unambiguous cylinder'),
                                   ('random', C_RAND, 'random motion')):
-        ccg = res[label]['ccg']
+        ccg = res[label]['rccg']        # their equation (7)
         mean = ccg.mean(0)
         err = ccg.std(0) / np.sqrt(len(ccg))
         ax[1].plot(lag, mean, color=colour, lw=2, label=legend)
