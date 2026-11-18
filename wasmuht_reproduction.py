@@ -47,7 +47,10 @@ THETA = pc.THETA_NECKER
 N = THETA.shape[0]
 DATA_FOLDER = pc.DATA_FOLDER
 
-C_AMB, C_UNAMB, C_RAND = '#6a3d9a', '#1f78b4', '#33a02c'  # their colours
+# sampled from their figures: magenta for the ambiguous cylinder, grey
+# for the unambiguous one, green for random motion
+C_AMB, C_UNAMB, C_RAND = '#a21d66', '#7f7f7f', '#047d37'
+C_REF = '#444444'                        # markers for their values
 
 TAU_MS, DT = 200.0, 0.05                 # tau = 200 ms, bin = dt*tau = 10 ms
 BIN_MS = DT * TAU_MS
@@ -66,6 +69,7 @@ N_LAG = 4                                # +-50 to 450 ms, their r_SC^tau=4
 # identical, CP has no across-site variance, and their Fig. 6, which is an
 # across-site correlation, has nothing to measure.
 SIGMA_G = 0.30
+SIGMA_B = 0.05                           # field heterogeneity, set by the circuit
 
 # Their analysis choices, followed here. Trials whose count is further than
 # N_OUTLIER sd from the site's mean are dropped; the rest are z-scored against
@@ -111,8 +115,74 @@ B_PER_DEG = 2.0
 # separates those two sources without needing a distance metric.
 MIXED_MU = True
 
+# Whether the network state is carried from one trial to the next instead of
+# being reset. A perceptual system inherits its state at stimulus onset, and
+# the reset is what makes the correlation climb through the trial, but it also
+# introduces drift across trials and lowers the correlations the circuit was
+# fitted to, so it is off by default.
+CARRY_STATE = False
 
-def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None):
+# Their published values, for reference in the figures.
+WASMUHT = dict(rsc_amb=0.42, rsc_unamb=0.28, rsc_rand=0.23, cp_amb=0.69,
+               cp_rand=0.56, r_cp_rsc=0.43, cp_high=0.48, cp_low=0.30,
+               t90_amb=400.0, t90_rand=32.0)
+
+# Named circuits. Each fixes everything the four inference schemes share; the
+# couplings are ratios of that scheme's own J*(alpha), so the stimulus sets
+# the regime for all of them. 'best' is the circuit on which a single scheme
+# fits as well as it can, and is the one quoted; 'total' is the circuit
+# fairest to all four at once, used to rank the schemes against each other.
+CIRCUITS = {
+    'best':  dict(gain=20.2, K=3, tau_s=0.20, r_mono=0.923, r_bi=2.15,
+                  bpd=7.55, sigma_B=0.05),
+    'total': dict(gain=28.0, K=3, tau_s=0.35, r_mono=0.793, r_bi=1.18,
+                  bpd=1.45, sigma_B=0.05),
+    # refitted with the pool size held at 20. A larger pool is quieter, so the
+    # coupling must sit nearer threshold for the network to switch at all, and
+    # the disparity effect and the Fig. 6 dissociation both weaken.
+    'k20':   dict(gain=20.0, K=20, tau_s=0.20, r_mono=0.840, r_bi=1.43,
+                  bpd=2.33, sigma_B=0.15),
+    'k20_total': dict(gain=20.7, K=20, tau_s=0.50, r_mono=0.933, r_bi=1.28,
+                      bpd=1.29, sigma_B=0.15),
+}
+CIRCUIT = 'best'                         # the one currently loaded
+
+
+def critical_coupling(kind, alpha=1.0, neighs=3.0):
+    """
+    Coupling at which the scheme acquires a second fixed point.
+
+    For mean field this is 1 / lambda_max; for fractional belief propagation
+    it is log(neighs / (neighs - 2 alpha)) / (2 alpha), which diverges at
+    alpha = neighs / 2, so no coupling makes those schemes bistable.
+    """
+    if kind == 'mf':
+        return 1.0 / neighs
+    return (np.inf if 2 * alpha >= neighs
+            else float(np.log(neighs / (neighs - 2 * alpha)) / (2 * alpha)))
+
+
+def use_circuit(circuit='best', kind='fbp', alpha=1.0):
+    """
+    Point the module at one circuit and one inference scheme.
+
+    Pass a name from CIRCUITS or a dictionary of the same shape. The coupling
+    ratios are resolved through this scheme's own critical coupling, so the
+    same circuit puts every scheme at a matched distance from its bifurcation
+    rather than at the same absolute coupling.
+    """
+    global GAIN, K, TAU_S, J_BI, J_MONO, B_PER_DEG, SIGMA_B, CIRCUIT
+    c = CIRCUITS[circuit] if isinstance(circuit, str) else dict(circuit)
+    GAIN, K, TAU_S = c['gain'], int(c['K']), c['tau_s']
+    J_BI, J_MONO, B_PER_DEG = c['r_bi'], c['r_mono'], c['bpd']
+    SIGMA_B = c.get('sigma_B', 0.05)
+    CIRCUIT = circuit if isinstance(circuit, str) else 'custom'
+    JSTAR[kind] = critical_coupling(kind, alpha)
+    return c
+
+
+def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None,
+                   state=None):
     """
     Simulate one 2 s trial of the spiking inference network.
 
@@ -130,6 +200,8 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None):
         Random source for the Poisson spiking.
     gain_site : array [N] or None
         Per-site readout gain. None gives every site the global GAIN.
+    state : tuple or None
+        The previous trial's end state, or None to start from rest.
 
     Returns
     -------
@@ -137,14 +209,20 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None):
         Spike counts of the whole pool at each node and time bin.
     percept : float
         Signed average of the global belief over the last N_CHOICE steps.
+    state : tuple
+        The unit states and synaptic traces at the end of the trial, to be
+        passed back in as `state` when trials are run without a reset.
     """
     mask = j_mat != 0.0
     gain_site = np.full(N, GAIN) if gain_site is None else gain_site
     size = N if kind == 'mf' else int(mask.sum())
     scale = np.ones(N) if kind == 'mf' else np.abs(j_mat[mask])
-    x = np.clip(0.05 * rng.standard_normal(size), -scale, scale)
+    if state is None:
+        x = np.clip(0.05 * rng.standard_normal(size), -scale, scale)
+        synapse = GAIN * (x / scale) + BASE
+    else:
+        x, synapse = state[0].copy(), state[1].copy()
     lam = DT * TAU_MS * 1e-3 * K
-    synapse = GAIN * (x / scale) + BASE
     pool = np.empty((T_TRIAL, N), np.int64)
     sgn = np.empty(T_TRIAL)
     for t in range(T_TRIAL):
@@ -164,7 +242,7 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None):
                                             - synapse)
     # the reported percept averages the last N_CHOICE steps, not the single
     # final sample, which is noisy
-    return pool, float(np.mean(sgn[-N_CHOICE:]))
+    return pool, float(np.mean(sgn[-N_CHOICE:])), (x, synapse)
 
 
 def cross_correlogram(a, b, max_lag):
@@ -203,14 +281,22 @@ def zscore_trials(counts, n_side=N_ZWIN):
     after the current one, so slow drift in excitability does not inflate the
     correlation. The window shrinks at the ends of the session.
     """
-    n = counts.size
-    out = np.full(n, np.nan)
-    for k in range(n):
-        lo, hi = max(0, k - n_side), min(n, k + n_side + 1)
-        neigh = np.r_[counts[lo:k], counts[k + 1:hi]]
-        sd = neigh.std()
-        if sd > 0:
-            out[k] = (counts[k] - neigh.mean()) / sd
+    x = np.asarray(counts, float)
+    n = x.size
+    k = np.arange(n)
+    lo = np.maximum(0, k - n_side)
+    hi = np.minimum(n, k + n_side + 1)
+    cum = np.concatenate([[0.0], np.cumsum(x)])
+    cum2 = np.concatenate([[0.0], np.cumsum(x * x)])
+    # window totals with the trial itself taken out
+    total = cum[hi] - cum[lo] - x
+    total2 = cum2[hi] - cum2[lo] - x * x
+    count = (hi - lo - 1).astype(float)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        mean = total / count
+        var = total2 / count - mean ** 2
+        sd = np.sqrt(np.maximum(var, 0.0))
+        out = np.where(sd > 0, (x - mean) / sd, np.nan)
     return out
 
 
@@ -315,7 +401,7 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
     trial-summed counts of one example site.
     """
     rsc, cp, ccg_all, rccg_all, example = [], [], [], [], None
-    tau0_all, tau4_all, cp_time, gain_all = [], [], [], []
+    tau0_all, tau4_all, cp_time, gain_all, mat_all = [], [], [], [], []
     per_bin = int(round(BIN_LONG / BIN_MS))
     n_long = T_TRIAL // per_bin
     n_lag = int(round(MAXLAG_MS / BIN_MS))
@@ -333,10 +419,11 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
         # tuning strength is a property of the site, drawn once
         gain_site = GAIN * np.clip(
             np.exp(SIGMA_G * rng.standard_normal(N)), 0.3, 2.2)
-        su_all, mu_all, percept = [], [], []
+        su_all, mu_all, percept, state = [], [], [], None
         for _ in range(n_trials):
-            pool, p = simulate_trial(kind, alpha, j_mat, b_vec, rng,
-                                     gain_site)
+            pool, p, end = simulate_trial(kind, alpha, j_mat, b_vec, rng,
+                                          gain_site, state)
+            state = end if CARRY_STATE else None
             su, mu = compose_electrode(pool, alloc, rng)
             su_all.append(su)
             mu_all.append(mu)
@@ -402,19 +489,22 @@ def run_condition(kind, alpha, j_val, b_val, n_trials=120, n_nets=5, seed0=0,
                 cp.append(max(auc, 1 - auc))
             else:
                 cp.append(np.nan)
-            inst, long = rsc_components(
-                rsc_matrix(su_long[keep, :, i], mu_long[keep, :, i]))
+            mat = rsc_matrix(su_long[keep, :, i], mu_long[keep, :, i])
+            inst, long = rsc_components(mat)
+            mat_all.append(mat)
             tau0_all.append(inst)
             tau4_all.append(long)
             cp_time.append(cp_timecourse(su_long[keep, :, i], percept[keep]))
             gain_all.append(gain_site[i])
-            if example is None and r == 0 and i == 0:
+            # the first site that passes selection, not necessarily the first
+            if example is None:
                 example = (count_su[:, i].copy(), count_mu[:, i].copy())
     return dict(rsc=np.array(rsc), cp=np.array(cp),
                 ccg=np.array(ccg_all), rccg=np.array(rccg_all),
                 example=example,
                 tau0=np.array(tau0_all), tau4=np.array(tau4_all),
-                cp_time=np.array(cp_time), gain=np.array(gain_all))
+                cp_time=np.array(cp_time), gain=np.array(gain_all),
+                rsc_mat=np.array(mat_all))
 
 
 def save_conditions(filename, res):
@@ -428,7 +518,7 @@ def save_conditions(filename, res):
     flat = {}
     for condition, out in res.items():
         for key in ('rsc', 'cp', 'ccg', 'rccg', 'tau0', 'tau4',
-                    'cp_time', 'gain'):
+                    'cp_time', 'gain', 'rsc_mat'):
             flat['%s__%s' % (condition, key)] = np.asarray(out[key])
         if out['example'] is not None:
             flat['%s__su' % condition] = np.asarray(out['example'][0])
@@ -455,20 +545,24 @@ def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
     """Every stimulus condition for one algorithm, cached to disk."""
     folder = DATA_FOLDER if folder is None else folder
     mixed = MIXED_MU if mixed_mu is None else mixed_mu
-    filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s.npz' % (
-        kind, alpha, n_trials, n_nets, 'mix' if mixed else 'same')
+    # the circuit belongs in the name: the same scheme on two circuits is
+    # two different simulations and must not share a cache entry
+    filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s_%s_%s.npz' % (
+        kind, alpha, n_trials, n_nets, CIRCUIT,
+        'carry' if CARRY_STATE else 'reset', 'mix' if mixed else 'same')
     if not recompute and os.path.exists(filename):
         return load_conditions(filename)
     res = {}
     jstar = JSTAR[kind] if kind in ('mf', 'fbp') else 1/(2*alpha)*np.log(3/(3-2*alpha))
     res['random'] = run_condition(kind, alpha, J_MONO * jstar, 0.0,
-                                  n_trials, n_nets, mixed_mu=mixed)
+                                  n_trials, n_nets, sigma_B=SIGMA_B,
+                                  mixed_mu=mixed)
     if verbose:
         print('  random motion done', flush=True)
     for disparity in DISPARITIES:
         res['disp%.2f' % disparity] = run_condition(
-            kind, alpha, J_BI * JSTAR[kind], B_PER_DEG * disparity,
-            n_trials, n_nets, mixed_mu=mixed)
+            kind, alpha, J_BI * jstar, B_PER_DEG * disparity,
+            n_trials, n_nets, sigma_B=SIGMA_B, mixed_mu=mixed)
         if verbose:
             print('  disparity %.2f done' % disparity, flush=True)
     save_conditions(filename, res)
@@ -506,6 +600,9 @@ def plot_figure_1(res, name='wasmuht_fig1'):
         ax[k].legend(frameon=False)
     ax[2].hist([res['disp0.00']['rsc'], res['random']['rsc']], bins=12,
                color=[C_AMB, C_RAND], label=['ambiguous', 'random motion'])
+    for key, colour in (('rsc_amb', C_AMB), ('rsc_rand', C_RAND)):
+        ax[2].axvline(WASMUHT[key], color=colour, ls='--', lw=1.8)
+    ax[2].plot([], [], ls='--', color=C_REF, label='Wasmuht et al.')
     ax[2].set_xlabel(r'$r_{SC}$')
     ax[2].set_ylabel('sites')
     ax[2].legend(frameon=False)
@@ -540,6 +637,13 @@ def plot_figure_2(res, name='wasmuht_fig2'):
     ax[0].set_xlabel('disparity (deg)')
     ax[0].set_ylabel(r'$r_{SC}$')
     ax[0].axhline(0, color='0.7', lw=.8)
+    for pos, key, col in ((0, 'rsc_rand', C_RAND), (1, 'rsc_amb', C_AMB),
+                          (4, 'rsc_unamb', C_UNAMB)):
+        ax[0].plot(pos, WASMUHT[key], marker='_', ms=26, mew=3, color=col,
+                   zorder=6)
+    ax[0].plot([], [], marker='_', ms=14, mew=3, color='0.3', ls='none',
+               label='Wasmuht et al.')
+    ax[0].legend(frameon=False, loc='lower left')
     lag = np.arange(res['random']['ccg'].shape[1]) * BIN_MS
     for label, colour, legend in (('disp0.00', C_AMB, 'ambiguous cylinder'),
                                   ('disp%.2f' % DISPARITIES[-1], C_UNAMB,
@@ -555,6 +659,13 @@ def plot_figure_2(res, name='wasmuht_fig2'):
     ax[1].set_xscale('log')          # their Figs. 3b and 4b use a log tau axis
     ax[1].set_xlim(BIN_MS, MAXLAG_MS)
     ax[1].set_ylabel(r'$r_{CCG}$')
+    # where their curves sit: the plateau lag of each, at 90% of its r_SC
+    for key, lagkey, col in (('rsc_amb', 't90_amb', C_AMB),
+                             ('rsc_rand', 't90_rand', C_RAND)):
+        ax[1].plot(WASMUHT[lagkey], .9 * WASMUHT[key], marker='*', ms=16,
+                   color=col, mec='k', mew=.6, ls='none', zorder=6)
+    ax[1].plot([], [], marker='*', ms=12, color='0.3', mec='k', mew=.6,
+               ls='none', label='Wasmuht et al.')
     ax[1].legend(frameon=False)
     for a in ax:
         a.spines['right'].set_visible(False)
@@ -579,6 +690,10 @@ def plot_figure_3(res, name='wasmuht_fig3'):
         ax[0].set_title('r = %.2f, p = %.3f, n = %d'
                         % (r_val, p_val, ok.sum()), fontsize=14)
     ax[0].axhline(0.5, color='0.7', lw=.8)
+    ax[0].plot(WASMUHT['rsc_amb'], WASMUHT['cp_amb'], marker='*', ms=18,
+               color='crimson', mec='k', mew=.6, ls='none', zorder=6,
+               label='Wasmuht et al.')
+    ax[0].legend(frameon=False, loc='lower right')
     ax[0].set_xlabel(r'$r_{SC}$')
     ax[0].set_ylabel('choice probability')
     cp_median = np.nanmedian(cp[ok])
@@ -599,8 +714,11 @@ def plot_figure_3(res, name='wasmuht_fig3'):
     ax[1].set_xscale('log')
     ax[1].set_xlim(BIN_MS, MAXLAG_MS)
     ax[1].set_ylabel(r'$r_{CCG}$')
+    for key, colour in (('cp_high', '#a21d66'), ('cp_low', '0.25')):
+        ax[1].axhline(WASMUHT[key], color=colour, ls='--', lw=1.4)
+    ax[1].plot([], [], ls='--', color=C_REF, label='Wasmuht et al.')
     ax[1].set_title('median CP = %.2f' % cp_median, fontsize=14)
-    ax[1].legend(frameon=False)
+    ax[1].legend(frameon=False, fontsize=8)
     for a in ax:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
@@ -609,63 +727,147 @@ def plot_figure_3(res, name='wasmuht_fig3'):
     return fig
 
 
-def plot_figure_4(res, name='wasmuht_fig4'):
-    """Their Fig. 6: does the long-timescale correlation predict CP?
+def site_slopes(curves, t):
+    """
+    Per-site parabola through the long-lag correlation, and its derivative.
 
-    For each site the long-lag correlation is fitted with a parabola in trial
-    time; the sign of its derivative says whether that correlation is rising
-    or decaying. Their result is a dissociation: a rising long-lag correlation
-    in the first half goes with a larger CP in the second, while the
-    instantaneous correlation predicts nothing.
+    Returns the fitted curves, the derivative evaluated on the same grid, and
+    the vertex of each parabola. A site whose vertex falls inside the trial
+    has a peak there; theirs peak near 0.8 s.
+    """
+    fits = np.full((len(curves), t.size), np.nan)
+    deriv = np.full((len(curves), t.size), np.nan)
+    vertex = np.full(len(curves), np.nan)
+    for i, c in enumerate(curves):
+        ok = np.isfinite(c)
+        if ok.sum() < 5:
+            continue
+        a, b, c0 = np.polyfit(t[ok], c[ok], 2)
+        fits[i] = np.polyval([a, b, c0], t)
+        deriv[i] = 2 * a * t + b
+        if a != 0:
+            vertex[i] = -b / (2 * a)
+    return fits, deriv, vertex
+
+
+def plot_figure_4(res, name='wasmuht_fig4'):
+    """
+    Their Fig. 6: do the dynamics of the long-lag correlation predict CP?
+
+    (a) the correlation between every pair of long bins, averaged over sites;
+    (b) its long-lag component with the parabola they fit; (c) the across-site
+    correlation between the slope at one time and CP at another; (d) CP split
+    by the sign of the slope; (e) the per-site parabolas behind (b); and (f)
+    where their vertices fall.
     """
     out = res['disp0.00']
     tau0, tau4, cps = out['tau0'], out['tau4'], out['cp_time']
     n_long = tau4.shape[1]
     t = (np.arange(n_long) + .5) * BIN_LONG / 1000.0
     half = n_long // 2
-    fig, ax = plt.subplots(ncols=3, figsize=(15, 3.9))
+    fits, deriv, vertex = site_slopes(tau4, t)
+    fits0, deriv0, _ = site_slopes(tau0, t)
+    fig, ax = plt.subplots(2, 3, figsize=(15.5, 8))
 
-    ax[0].plot(t, np.nanmean(tau0, 0), color='0.4', lw=2,
-               label='instantaneous')
-    ax[0].plot(t, np.nanmean(tau4, 0), color=C_AMB, lw=2, label='long lag')
-    ax[0].set_xlabel('time (s)')
-    ax[0].set_ylabel(r'$r_{SC}$')
-    ax[0].legend(frameon=False)
-    ax[0].set_title('the two components', fontsize=14)
+    # (a) the correlation matrix, with the band used for the long-lag part
+    mat = np.nanmean(out['rsc_mat'], 0)
+    lim = np.nanmax(np.abs(mat))
+    im = ax[0, 0].imshow(mat, origin='lower', cmap='viridis', vmin=-lim,
+                         vmax=lim, extent=[0, 2, 0, 2])
+    for d in (-N_LAG, -1, 1, N_LAG):
+        ax[0, 0].plot([0, 2], [0 - d * BIN_LONG / 1000, 2 - d * BIN_LONG
+                               / 1000], color='w', lw=.8)
+    ax[0, 0].set_xlim(0, 2)
+    ax[0, 0].set_ylim(0, 2)
+    ax[0, 0].set_xlabel('multi-unit bin $t_j$ (s)')
+    ax[0, 0].set_ylabel('single-unit bin $t_i$ (s)')
+    ax[0, 0].set_title(r'(a) $r_{SC}(t_i, t_j)$', fontsize=13)
+    fig.colorbar(im, ax=ax[0, 0], fraction=.046)
 
-    for curves, colour, lab in ((tau4, C_AMB, 'long lag'),
-                                (tau0, '0.4', 'instantaneous')):
-        slope = []
-        for c in curves:
-            ok = np.isfinite(c)
-            if ok.sum() < 5:
-                slope.append(np.nan)
-                continue
-            a, b, _ = np.polyfit(t[ok], c[ok], 2)
-            slope.append(np.mean(2 * a * t[:half] + b))
-        slope = np.array(slope)
-        late = np.nanmean(cps[:, half:], 1)
-        ok = np.isfinite(slope) & np.isfinite(late)
-        r_val, p_val = pearsonr(slope[ok], late[ok])
-        ax[1].scatter(slope[ok], late[ok], s=26, color=colour, alpha=.75,
-                      label='%s: r = %+.2f, p = %.3f' % (lab, r_val, p_val))
-        rising = ok & (slope > 0)
-        decaying = ok & (slope <= 0)
-        for sel, style in ((rising, '-'), (decaying, '--')):
+    # (b) the long-lag component and the parabola they fit
+    mean = np.nanmean(tau4, 0)
+    err = np.nanstd(tau4, 0) / np.sqrt(np.sum(np.isfinite(tau4), 0))
+    ax[0, 1].errorbar(t, mean, yerr=err, color=C_AMB, lw=1.4, marker='o',
+                      ms=4, label=r'$r_{SC}^{\tau=4}$')
+    coef = np.polyfit(t, mean, 2)
+    ax[0, 1].plot(t, np.polyval(coef, t), 'k-', lw=2,
+                  label='parabola, curvature %+.4f' % coef[0])
+    ax[0, 1].axvline(0.8, color=C_REF, ls=':', lw=1.4)
+    ax[0, 1].annotate('their peak', xy=(0.82, ax[0, 1].get_ylim()[0]),
+                      fontsize=8, color=C_REF)
+    ax[0, 1].set_xlabel('time (s)')
+    ax[0, 1].set_ylabel(r'$r_{SC}$')
+    ax[0, 1].legend(frameon=False, fontsize=9)
+    ax[0, 1].set_title('(b) long-lag component', fontsize=13)
+
+    # (c) slope at one time against CP at another, across sites
+    corr = np.full((n_long, n_long), np.nan)
+    for i in range(n_long):
+        for j in range(n_long):
+            ok = np.isfinite(deriv[:, i]) & np.isfinite(cps[:, j])
+            if ok.sum() > 5:
+                corr[i, j] = pearsonr(deriv[ok, i], cps[ok, j])[0]
+    im = ax[0, 2].imshow(corr, origin='lower', cmap='viridis', vmin=-.6,
+                         vmax=.6, extent=[0, 2, 0, 2])
+    ax[0, 2].axhline(1, color='k', lw=.9, ls='--')
+    ax[0, 2].axvline(1, color='k', lw=.9, ls='--')
+    ax[0, 2].set_xlabel('CP time (s)')
+    ax[0, 2].set_ylabel('slope time (s)')
+    ax[0, 2].set_title('(c) corr(slope, CP) across sites', fontsize=13)
+    fig.colorbar(im, ax=ax[0, 2], fraction=.046)
+
+    # (d) CP split by the sign of the slope, for both components
+    late = np.nanmean(cps[:, half:], 1)
+    for d, colour, lab in ((deriv, C_AMB, 'long lag'),
+                           (deriv0, 'k', 'instantaneous')):
+        early = np.nanmean(d[:, :half], 1)
+        ok = np.isfinite(early) & np.isfinite(late)
+        r_val, p_val = pearsonr(early[ok], late[ok])
+        for sel, style in (((early > 0) & ok, '-'), ((early <= 0) & ok, '--')):
             if sel.sum() > 1:
-                ax[2].plot(t, np.nanmean(cps[sel], 0), style, color=colour,
-                           lw=2, label='%s, slope %s (n=%d)'
-                           % (lab, '>0' if style == '-' else '<0', sel.sum()))
-    ax[1].set_xlabel('slope of the correlation, first half')
-    ax[1].set_ylabel('CP, second half')
-    ax[1].legend(frameon=False)
-    ax[1].set_title('does the slope predict CP?', fontsize=14)
-    ax[2].axhline(0.5, color='0.7', lw=.8)
-    ax[2].set_xlabel('time (s)')
-    ax[2].set_ylabel('CP')
-    ax[2].legend(frameon=False, fontsize=8)
-    ax[2].set_title('CP split by the sign of the slope', fontsize=14)
-    for a in ax:
+                ax[1, 0].plot(t, np.nanmean(cps[sel], 0), style, color=colour,
+                              lw=2, label='%s, slope %s (n=%d)'
+                              % (lab, '>0' if style == '-' else '<0',
+                                 sel.sum()))
+        print('  %-14s slope -> late CP: r = %+.2f, p = %.3f'
+              % (lab, r_val, p_val))
+    ax[1, 0].axhline(0.5, color='0.7', lw=.8)
+    ax[1, 0].axhline(WASMUHT['cp_amb'], color=C_REF, ls='--', lw=1.3)
+    ax[1, 0].set_xlabel('time (s)')
+    ax[1, 0].set_ylabel('CP')
+    ax[1, 0].legend(frameon=False, fontsize=8)
+    ax[1, 0].set_title('(d) CP split by the sign of the slope', fontsize=13)
+
+    # (e) every site's parabola
+    peak = np.array([np.isfinite(v) and 0 < v < t[-1] for v in vertex])
+    for i, f in enumerate(fits):
+        if not np.isfinite(f).any():
+            continue
+        ax[1, 1].plot(t, f, lw=.9, alpha=.55,
+                      color=C_AMB if peak[i] else '0.45')
+    ax[1, 1].plot(t, np.polyval(coef, t), 'k-', lw=2.5, label='mean fit')
+    ax[1, 1].plot([], [], color=C_AMB, lw=1.2,
+                  label='peak inside the trial (n=%d)' % peak.sum())
+    ax[1, 1].plot([], [], color='0.45', lw=1.2,
+                  label='no peak inside (n=%d)' % (len(fits) - peak.sum()))
+    ax[1, 1].set_xlabel('time (s)')
+    ax[1, 1].set_ylabel(r'$r_{SC}^{\tau=4}$')
+    ax[1, 1].legend(frameon=False, fontsize=8)
+    ax[1, 1].set_title('(e) the parabola of every site', fontsize=13)
+
+    # (f) where those peaks sit
+    inside = vertex[np.isfinite(vertex) & (vertex > 0) & (vertex < t[-1])]
+    ax[1, 2].hist(inside, bins=np.linspace(0, 2, 11), color=C_AMB, alpha=.85)
+    ax[1, 2].axvline(0.8, color=C_REF, ls=':', lw=2, label='their peak')
+    if inside.size:
+        ax[1, 2].axvline(np.median(inside), color='k', lw=2,
+                         label='our median %.2f s' % np.median(inside))
+    ax[1, 2].set_xlabel('vertex of the parabola (s)')
+    ax[1, 2].set_ylabel('sites')
+    ax[1, 2].legend(frameon=False, fontsize=8)
+    ax[1, 2].set_title('(f) where each site peaks', fontsize=13)
+
+    for a in ax.ravel():
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
     fig.tight_layout()
@@ -673,12 +875,28 @@ def plot_figure_4(res, name='wasmuht_fig4'):
     return fig
 
 
+# the schemes run when none is named on the command line
+SCHEMES = (('mf', 1.0, 'MF'), ('fbp', 1.0, 'LBP'),
+           ('fbp', 0.5, 'FBP_05'), ('fbp', 1.45, 'FBP_145'))
+
+
 if __name__ == '__main__':
-    for kind, alpha, tag in (('mf', 1.0, 'MF'), ('fbp', 1.0, 'LBP'),
-                             ('fbp', 0.5, 'FBP_05'), ('fbp', 1.45, 'FBP_145')):
-        print(tag, flush=True)
+    # usage: python wasmuht_reproduction.py [circuit] [scheme] [alpha]
+    #   python wasmuht_reproduction.py                 every scheme, 'best'
+    #   python wasmuht_reproduction.py total           every scheme, 'total'
+    #   python wasmuht_reproduction.py best fbp 1.0    loopy BP alone
+    import sys
+    circuit = sys.argv[1] if len(sys.argv) > 1 else 'best'
+    schemes = ([(sys.argv[2], float(sys.argv[3]),
+                 '%s_a%s' % (sys.argv[2].upper(), sys.argv[3]))]
+               if len(sys.argv) > 3 else SCHEMES)
+    for kind, alpha, tag in schemes:
+        use_circuit(circuit, kind, alpha)
+        print('%s on circuit %s: J* = %.3f, J_bi = %.3f, J_mono = %.3f'
+              % (tag, circuit, JSTAR[kind], J_BI * JSTAR[kind],
+                 J_MONO * JSTAR[kind]), flush=True)
         res = run_all(kind, alpha, recompute=True)
-        suffix = '%s_%s' % (tag, 'mixed' if MIXED_MU else 'same')
+        suffix = '%s_%s_%s' % (tag, circuit, 'mixed' if MIXED_MU else 'same')
         plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
         plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
         plot_figure_3(res, 'wasmuht_fig3_%s' % suffix)
