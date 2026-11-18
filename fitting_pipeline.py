@@ -3022,7 +3022,7 @@ def bms(log_model_evidence):
 
 
 def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
-                                   model='MF', bic=True,
+                                   model='MF', aic=True,
                                    plot_all=False, method='nelder-mead',
                                    dots=False):
     all_df = load_data(data_folder=DATA_FOLDER, n_participants='all')
@@ -3068,18 +3068,18 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
                 nllh = optimization(data=data, n_iters=10).nlh_boltzmann_mf_prev_response(pars=pars)
             if model in ['LBP', 'LBP5']:
                 nllh = optimization(data=data, n_iters=10).nlh_boltzmann_lbp(pars=pars)
-            if bic:
+            if aic:
                 if model in ['MF5', 'FBP', 'LBP5', 'MF_PR']:
                     numpars = 5 
                 elif model == 'MF5_PR':
                     numpars = 6
                 else:
                     numpars = 4
-                nllh = numpars*np.log(len(dataframe))+2*(nllh)  # +log_prior(pars)*len(dataframe))
-                # nllh = numpars*2+2*(nllh)  # +log_prior(pars)*len(dataframe))
+                # nllh = numpars*np.log(len(dataframe))+2*(nllh)  # +log_prior(pars)*len(dataframe))
+                nllh = numpars*2+2*(nllh)  # +log_prior(pars)*len(dataframe))
             llh_all[i_e, i_s] = nllh
     
-    if not bic:
+    if not aic:
         n_subjects = llh_all.shape[1]
         lrt_stats = np.zeros(n_subjects)
         lrt_pvals = np.zeros(n_subjects)
@@ -3104,9 +3104,9 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
     # alpha, xp, pxp, r = rfx_bms_from_loglik(-llh_all[:2].T)
     # print('Exceedance probability {var} (Original, Null):' + str(xp))
     LME = np.column_stack((llh_all[0], llh_all[1]))
-    post, exc = bms(-LME/2) if bic else bms(-LME)
+    post, exc = bms(-LME/2) if aic else bms(-LME)
     
-    var = 'BIC' if bic else 'NLH'
+    var = 'AIC' if aic else 'NLH'
     print(f'Exceedance probability {var} (Original, Null):' + str(exc))
     print(f'Posterior probability {var} (Original, Null):' + str(post))
     llh_all[2] = llh_all[1]-llh_all[0]
@@ -3119,9 +3119,9 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
     print(f'Proportion of subjects {var} > 0')
     print(np.mean(llh_all[2]>0))
     if dots:
-        fig, ax = plt.subplots(1, figsize=(3, 3))
+        fig, ax = plt.subplots(1, figsize=(2, 4))
     else:
-        fig, ax = plt.subplots(1, figsize=(1.5, 3))
+        fig, ax = plt.subplots(1, figsize=(2, 4))
     if plot_all:
         ax.boxplot(llh_all.T)
         ax.set_xticks([1, 2, 3], ['Full', 'Null', 'Null-Full'], rotation=45)
@@ -3144,8 +3144,8 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
             else:
                 ax.plot([jitter[0]], [llh_all[2, i_s]],
                          color='k', marker='o', linestyle='', markersize=4, alpha=0.6)
-    if bic:
-        ax.set_ylabel(r'$\Delta BIC$')
+    if aic:
+        ax.set_ylabel(r'$\Delta AIC$')
     else:
         ax.set_ylabel(r'$\Delta$ NLLH')
     fig.tight_layout()
@@ -3157,16 +3157,19 @@ def plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False,
         ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
         ax.text((x1+x2)*.5, y+h, f"p = {p_rel:.2e}", ha='center', va='bottom', color=col)
         ax.set_ylim(np.min((np.min(llh_all[2])-200, -10)), y+200)
-        ax.text(3, np.max(llh_all[2])+50, f"p = {p:.2e}", ha='center', va='bottom', color=col)
+        ax.text(3, np.max(llh_all[2])+50, f"p = {p:.4f}", ha='center', va='bottom', color=col)
     else:
-        ax.text(0, np.max(llh_all[2])+10, f"p = {p:.2e}", ha='center', va='bottom', color='k')
-        if bic:
-            ax.set_xticks([1], [r'$BIC(Null)-BIC(Full)$'])
-        else:
-            ax.set_xticks([1], [r'$NLLH(Null)-NLLH(Full)$'])
-    namefig = 'BIC_difference' if bic else 'NLLH_difference'
-    fig.savefig(SV_FOLDER + f'{namefig}.png', dpi=200, bbox_inches='tight')
-    fig.savefig(SV_FOLDER + f'{namefig}.pdf', dpi=200, bbox_inches='tight')
+        ax.text(0, np.max(llh_all[2])+10, f"p = {p:.3f}", ha='center', va='bottom', color='k')
+        ax.set_xticks([0], ['Null-Original'])
+        if aic:
+            ax.set_ylim(-80, 250)
+        ax.set_xlim(-0.5, 0.8)
+        ax.text(0.8, 0.35, 'Better', rotation=90, fontsize=13, transform=ax.transAxes)
+        ax.text(0.8, 0.04, 'Worse', rotation=90, fontsize=13, transform=ax.transAxes)
+    namefig = 'AIC_difference' if aic else 'NLLH_difference'
+    fig.savefig(SV_FOLDER + f'{namefig}.png', dpi=600, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'{namefig}.svg', dpi=600, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + f'{namefig}.pdf', dpi=600, bbox_inches='tight')
 
 
 def mcmc_all_subjects(plot=True, burn_in=100, iterations=20000, load_params=True,
@@ -4842,8 +4845,8 @@ if __name__ == '__main__':
     #                   plot_subs=False)
     # plot_fitted_params(sv_folder=SV_FOLDER, model='MF5', method=opt_algorithm,
     #                     subjects='separated')
-    # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
-    #                                 bic=True, dots=True)
+    plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
+                                    aic=True, dots=True)
     # plot_log_likelihood_difference(sv_folder=SV_FOLDER, mcmc=False, model='MF5', method=opt_algorithm,
     #                                 bic=False, dots=True)
     # plot_conf_vs_coupling_3_groups(method='BADS', model='MF5', extra='', bw=0.7,
@@ -4901,5 +4904,5 @@ if __name__ == '__main__':
     # plot_confidence_calibration_vs_stim(source='all', column='zscore_abs_confidence')
     # response_confidence_stats(all_df=None, data_folder=DATA_FOLDER,
     #                           categorical=False, verbose=True)
-    plot_regression_weights_lmm(sv_folder=SV_FOLDER, model='MF5',
-                                method='BADS', ax=None, fig=None)
+    # plot_regression_weights_lmm(sv_folder=SV_FOLDER, model='MF5',
+    #                             method='BADS', ax=None, fig=None)
