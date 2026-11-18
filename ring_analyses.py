@@ -48,10 +48,14 @@ QUARTET_NODE_DEFS = {
     2: {'src': 2, 'dst': 3, 'type': 'H'},  # BR->BL
     3: {'src': 3, 'dst': 0, 'type': 'V'},  # BL->TL
     # ring2: CW direction is V
-    4: {'src': 0, 'dst': 3, 'type': 'V'},  # TL->BL
-    5: {'src': 3, 'dst': 2, 'type': 'H'},  # BL->BR
-    6: {'src': 2, 'dst': 1, 'type': 'V'},  # BR->TR
-    7: {'src': 1, 'dst': 0, 'type': 'H'},  # TR->TL
+    # 4: {'src': 0, 'dst': 3, 'type': 'V'},  # TL->BL
+    # 5: {'src': 3, 'dst': 2, 'type': 'H'},  # BL->BR
+    # 6: {'src': 2, 'dst': 1, 'type': 'V'},  # BR->TR
+    # 7: {'src': 1, 'dst': 0, 'type': 'H'},  # TR->TL
+    4: {'src': 3, 'dst': 2, 'type': 'H'},  # BL->BR
+    5: {'src': 2, 'dst': 1, 'type': 'V'},  # BR->TR
+    6: {'src': 1, 'dst': 0, 'type': 'H'},  # TR->TL
+    7: {'src': 0, 'dst': 3, 'type': 'V'},  # TL->BL
 }
 
 
@@ -871,7 +875,7 @@ class ring:
         if discrete_stim and coh is not None:
             discrete_stim = False
         if ini_cond is None:
-            q_mf = np.clip(np.random.randn(n_dots, nstates)*5e-2+0.5, 0, 1)
+            q_mf = np.clip(np.random.randn(n_dots, nstates)*1e-1+0.5, 0, 1)
         else:
             ini_cond = np.array(ini_cond)
             q_mf = np.repeat(ini_cond.reshape(-1, 1), self.ndots, axis=1).T
@@ -3787,21 +3791,23 @@ def _simulate_quartet(ratio, seed, dt, n_iters, noise,
     return _active_ring_latents(posterior, n_iters, n_iters//4)
 
 
-def _simulate_quartet_fp(ratio, seed, dt, n_iters,
-                         j=0.6, eps=1e-2, b_nm=0.0, noise_stim=0.2, tau=0.1):
+def _simulate_quartet_fp(ratio, seed, dt, n_iters, eps,
+                         j=0.6, b_nm=3.0, noise_stim=1, tau=0.1):
     """Static-stimulus fixed point: hold one frame so one ring stays active,
     noise=0, run long for convergence; return active-ring (q_h, q_v) as (2, T)."""
     posterior = ring(epsilon=eps, n_dots=8).mean_field_sde(
         dt=dt, tau=tau, n_iters=n_iters, j=j, true='CW',
         noise=0.0, plot=False, discrete_stim=True, s=[0., 1], b=[0., b_nm],
         noise_stim=noise_stim, coh=None, nstates=2, quartet=True,
-        ratio=ratio+1e-6, stim_stamps=n_iters+1, return_all=True, seed=seed)
-    q_h = np.nanmean(posterior[[5, 7], 0, :], axis=0)   # ring2 H (held frame -> ring2 active)
-    q_v = np.nanmean(posterior[[4, 6], 0, :], axis=0)   # ring2 V
+        ratio=ratio, stim_stamps=n_iters+1, return_all=True, seed=seed)
+    # q_h = np.nanmean(posterior[[5, 7], 0, :], axis=0)   # ring2 H (held frame -> ring2 active)
+    # q_v = np.nanmean(posterior[[4, 6], 0, :], axis=0)   # ring2 V
+    q_h = np.nanmean(posterior[[4, 6], 0, :], axis=0)   # ring2 H (held frame -> ring2 active)
+    q_v = np.nanmean(posterior[[5, 7], 0, :], axis=0)   # ring2 V
     return np.stack([q_h, q_v])                          # (2, T)
 
 
-def _run_grid(ratio_list, n_reps, dt, n_iters, noise, n_jobs, seed, fp=False,
+def _run_grid(ratio_list, n_reps, dt, n_iters, noise, n_jobs, seed, eps=1e-3, fp=False,
               **sim_kwargs):
     """Run (ratio x rep) grid in parallel; return the latent series as post_vals of
     shape (n_ratios, n_reps, 2, T) ([...,0]=q_h, [...,1]=q_v). fp=True uses the
@@ -3812,7 +3818,7 @@ def _run_grid(ratio_list, n_reps, dt, n_iters, noise, n_jobs, seed, fp=False,
              for rep in range(n_reps)]
     if fp:
         results = Parallel(n_jobs=n_jobs, backend="loky")(
-            delayed(_simulate_quartet_fp)(ratio, rep, dt, n_iters, **sim_kwargs)
+            delayed(_simulate_quartet_fp)(ratio, rep, dt, n_iters, eps, **sim_kwargs)
             for _, rep, ratio in tqdm(tasks))
     else:
         results = Parallel(n_jobs=n_jobs, backend="loky")(
@@ -3843,13 +3849,13 @@ def _dominance_durations(percept):
 
 
 def save_fixed_points_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
-                               dt=1e-2, n_iters=1500, n_reps=10, n_jobs=-1, seed=0,
+                               dt=1e-2, n_iters=1500, n_reps=10, n_jobs=-1, seed=0, eps=1e-3,
                                **sim_kwargs):
     """Static-stimulus fixed points (noise=0, held frame, long n_iters) -> saves the
     active-ring posterior series. sim_kwargs: j, eps, b_nm, noise_stim, tau."""
-    post_vals = _run_grid(ratio_list, n_reps, dt, n_iters,
+    post_vals = _run_grid(ratio_list, n_reps, dt, n_iters, eps=eps,
                           noise=0.0, n_jobs=n_jobs, seed=seed, fp=True, **sim_kwargs)
-    np.save(DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy', post_vals)
+    np.save(DATA_FOLDER + f'fps_posterior_vs_ratio_quartet_epsilon_{eps}.npy', post_vals)
     return post_vals
 
 
@@ -3864,16 +3870,71 @@ def save_choice_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
     return post_vals
 
 
-def plot_quartet_fps_vs_ratio(reps=50, ratio_list=np.arange(0.1, 2, 5e-3)+1e-6):
-    arr = np.load(DATA_FOLDER + 'fps_posterior_vs_ratio_quartet.npy')  # (R,reps,2,T)
-    post_vals = _reduce_last_window(_latent_margin(arr))   # q_h-q_v (sign=argmax)
-    fig, ax = plt.subplots(ncols=1, figsize=(3.5, 2.5))
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+def plot_quartet_fps_vs_ratio(ratio_list=np.geomspace(0.5, 2, 100),
+                              eps=1e-2):
+    arr = np.load(DATA_FOLDER + f'fps_posterior_vs_ratio_quartet_epsilon_{eps}.npy')  # (R,reps,2,T)
+    reps = arr.shape[1]
+    post_vals = _reduce_last_window(arr)   # q_h-q_v (sign=argmax)
+    fig, ax = plt.subplots(ncols=2, figsize=(5.5, 2.5))
+    x = np.arange(len(ratio_list))
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_xticks([x[0], x[len(x)//2], x[-1]],
+                     [0.5, 1, 2])
+        a.set_ylim(-0.1, 1.1)
+        a.set_yticks([0, 0.5, 1])
     for rep in range(reps):
-        ax.plot(ratio_list, post_vals[:, rep], color='k',
-                linestyle='', marker='.', alpha=0.5,
-                markersize=3)
+        ax[0].plot(x, post_vals[:, rep, 0], color='forestgreen',
+                   linestyle='', marker='.', alpha=0.5,
+                   markersize=3)
+        ax[1].plot(x, post_vals[:, rep, 1], color='firebrick',
+                   linestyle='', marker='.', alpha=0.5,
+                   markersize=3)
+    ax[0].set_xlabel('Aspect ratio')
+    ax[1].set_xlabel('Aspect ratio')
+    ax[0].set_ylabel('q(H)')
+    ax[1].set_ylabel('q(V)')
+    fig.tight_layout()
+    fig.savefig(DATA_FOLDER + 'fixed_points_quartet.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'fixed_points_quartet.svg', dpi=400, bbox_inches='tight')
+
+
+def plot_quartet_fps_vs_ratio_different_eps(ratio_list=np.geomspace(0.5, 2, 100),
+                                            epslist=[1e-2, 1e-3, 1e-4]):
+    fig, ax = plt.subplots(ncols=len(epslist), figsize=(2.8*len(epslist), 3.2), sharey=True)
+    x = np.arange(len(ratio_list))
+    fig.tight_layout()
+    for a in ax:
+        a.spines['top'].set_visible(False)
+        a.spines['right'].set_visible(False)
+        a.set_xticks([x[0], x[len(x)//2], x[-1]],
+                     [0.5, 1, 2])
+        a.set_ylim(-0.1, 1.1)
+        a.set_yticks([0, 0.5, 1])
+        a.set_xlabel('Aspect ratio')
+    for i_eps, eps in enumerate(epslist):
+        arr = np.load(DATA_FOLDER + f'fps_posterior_vs_ratio_quartet_epsilon_{eps}.npy')  # (R,reps,2,T)
+        reps = arr.shape[1]
+        post_vals = _reduce_last_window(arr)
+        for rep in range(reps):
+            ax[i_eps].plot(x, post_vals[:, rep, 0], color='forestgreen',
+                           linestyle='', marker='.', alpha=0.5,
+                           markersize=2)
+        # # inset: zoom the x-axis around aspect ratio = 1 to reveal the bistability window
+        # mid, half = len(x) // 2, 12
+        # axin = ax[i_eps].inset_axes([0.08, 0.55, 0.38, 0.4])
+        # for rep in range(reps):
+        #     axin.plot(x, post_vals[:, rep, 0], color='forestgreen', linestyle='',
+        #               marker='.', alpha=0.5, markersize=3)
+        # axin.set_xlim(mid - half, mid + half); axin.set_ylim(-0.1, 1.1)
+        # axin.set_xticks([mid], ['1']); axin.set_yticks([0, 1])
+        # axin.tick_params(labelsize=8)
+        # ax[i_eps].indicate_inset_zoom(axin, edgecolor='gray')
+        ax[i_eps].set_title(rf'$\varepsilon = {eps}$', fontsize=16)
+    ax[0].set_ylabel(r'$q(H)$')
+    fig.savefig(DATA_FOLDER + 'fixed_points_quartet_diff_eps.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'fixed_points_quartet_diff_eps.svg', dpi=400, bbox_inches='tight')
 
 
 def plot_quartet_pH_vs_ratio(ratio_list=np.arange(0., 2, 1e-1), axis='geom',
@@ -4126,20 +4187,27 @@ if __name__ == '__main__':
     #                                             stim_stamps=100, stim_weight=1,
     #                                             colors=True,
     #                                             seed=6)
-    # save_fixed_points_vs_ratio(ratio_list=np.arange(0.01, 2, 1e-2),
-    #                             dt=1e-2, n_iters=500, n_reps=5, n_jobs=-1, seed=0)
-    # plot_quartet_fps_vs_ratio(reps=5, ratio_list=np.arange(0.01, 2, 1e-2))
+    for eps in [0.02, 0.04, 0.06, 0.08]:
+        print('Epsilon ', eps)
+        save_fixed_points_vs_ratio(ratio_list=np.geomspace(0.5, 2, 100),
+                                    dt=1e-2, n_iters=500, n_reps=5, n_jobs=-1, seed=0, eps=eps)
+        plot_quartet_fps_vs_ratio(ratio_list=np.geomspace(0.5, 2, 100),
+                                  eps=eps)
+        plt.show()
+        plt.pause(0.01)
+    plot_quartet_fps_vs_ratio_different_eps(ratio_list=np.geomspace(0.5, 2, 100),
+                                            epslist=[1e-1, 1e-2, 1e-3, 5e-4])
     # save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
     #                       dt=1e-2, n_iters=24_000, n_reps=10, n_jobs=10,
     #                       noise=0.2, seed=0, long_or_short='long')
-    save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
-                          dt=1e-2, n_iters=500, n_reps=200, n_jobs=10,
-                          noise=0.2, seed=0, long_or_short='short')
+    # save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
+    #                       dt=1e-2, n_iters=500, n_reps=200, n_jobs=10,
+    #                       noise=0.2, seed=0, long_or_short='short')
     # plot_quartet_pH_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21))
     # plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2)
     # plot_quartet_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21), dt=1e-2, mode='propH')
-    plot_ph_and_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
-                                       figsize=(10, 3.2))
+    # plot_ph_and_dominance_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
+    #                                    figsize=(10, 3.2))
 
     # mean_posterior_vs_aspect_ratio_quartet(aspect_ratio_list=np.arange(0, 2, 1e-2),
     #                                         nreps=50, j_list=[0, 1, 2], simulate=False)
