@@ -1082,89 +1082,140 @@ def plot_figure_6(sweep, name='wasmuht_fig6_sweep'):
 
 
 def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='best',
-                       ratios=(0.5, 0.7, 0.85, 1.0, 1.15, 1.4, 1.7, 2.15),
-                       n_trials=120, n_nets=8, verbose=True):
+                       ratios=(0.5, 0.7, 0.85, 1.0, 1.15, 1.4, 1.7, 2.15,
+                               2.6, 3.0),
+                       disparities=DISPARITIES, n_trials=120, n_nets=8,
+                       verbose=True):
     """
     Choice-related activity as the coupling is taken through its threshold.
 
     The stimulus sets the coupling, so sweeping J is the manipulation an
-    experiment can actually make: the cylinder and random motion differ in
+    experiment can make: their cylinder and their random dot motion differ in
     how strongly the local motion signals constrain one another, not in any
-    decision variable. Everything else about the circuit is held fixed, and
-    there is no feedback anywhere in the model.
+    decision variable. Every other parameter of the circuit is held fixed and
+    nothing is fed back from a later stage.
 
-    Returns one entry per coupling ratio, holding r_SC and CP per site.
+    Each coupling is run at each disparity, so the sweep also gives r_SC as a
+    function of the disambiguating evidence. Nothing is cached: run_condition
+    simulates afresh, so the call costs a few minutes.
+
+    Returns
+    -------
+    list of dict
+        One entry per coupling ratio, each holding the per-site r_SC and CP at
+        zero disparity and the mean r_SC and CP at every disparity.
     """
-    global CIRCUIT
     base = dict(CIRCUITS[circuit])
     out = []
     for ratio in ratios:
         use_circuit(dict(base, r_bi=ratio), kind, alpha)
-        CIRCUIT = 'coupling_%s_%g' % (circuit, ratio)
-        res = run_condition(kind, alpha, J_BI * JSTAR[kind], 0.0, n_trials,
-                            n_nets, 0, sigma_J=0.25, sigma_B=SIGMA_B,
-                            mixed_mu=True)
-        cp = np.nanmean(res['cp_time'], 1)
-        out.append(dict(ratio=ratio, rsc=res['rsc'], cp=cp,
-                        rccg=np.nanmean(res['rccg'], 0),
-                        gain=res['gain']))
+        by_disp = {}
+        for d in disparities:
+            res = run_condition(kind, alpha, J_BI * JSTAR[kind],
+                                B_PER_DEG * d, n_trials, n_nets, 0,
+                                sigma_J=0.25, sigma_B=SIGMA_B, mixed_mu=True)
+            by_disp[d] = dict(rsc=fisher_mean(res['rsc']),
+                              cp=float(np.nanmean(res['cp'])))
+            if d == 0.0:
+                zero = res
+        out.append(dict(ratio=ratio, rsc=zero['rsc'], cp=zero['cp'],
+                        rccg=np.nanmean(zero['rccg'], 0), by_disp=by_disp))
         if verbose:
-            print('  J/J* = %.2f done (%d sites)' % (ratio, res['rsc'].size),
+            print('  J/J* = %.2f done (%d sites)' % (ratio, zero['rsc'].size),
                   flush=True)
     use_circuit(circuit, kind, alpha)
     return out
 
 
+def matched_coupling(ratios, values, target):
+    """The coupling at which a measure first reaches a reported value."""
+    ratios, values = np.asarray(ratios, float), np.asarray(values, float)
+    if target < values.min() or target > values.max():
+        return np.nan
+    return float(np.interp(target, values, ratios))
+
+
 def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
     """
-    Choice-related activity appears when the coupling crosses threshold.
+    Both of their conditions placed on one coupling axis.
 
-    Left, the spike count correlation between the two recordings; middle, the
-    choice probability of the single unit; right, the two against each other
-    across sites. Nothing in the network reads the animal's choice and nothing
-    is fed back: both quantities are produced by lateral coupling alone, and
-    both switch on at the bifurcation.
+    The first two panels sweep the coupling and mark the values reported for
+    the ambiguous cylinder and for random dot motion, with the coupling at
+    which the model reaches each. If the mapping from stimulus to coupling
+    holds, the random-motion value should be matched below threshold and the
+    ambiguous value above it. The third panel adds the disambiguating
+    evidence, and the fourth shows that the two measures move together across
+    sites as well as across couplings.
     """
     ratios = np.array([d['ratio'] for d in sweep])
-    fig, ax = plt.subplots(ncols=3, figsize=(15.5, 4.2))
+    rsc = np.array([fisher_mean(d['rsc']) for d in sweep])
+    cp = np.array([np.nanmean(d['cp']) for d in sweep])
+    fig, ax = plt.subplots(ncols=4, figsize=(21, 4.3))
 
-    for a, key, lab, target in ((ax[0], 'rsc', r'$r_{SC}$', 'rsc_amb'),
-                                (ax[1], 'cp', 'choice probability', 'cp_amb')):
-        mean = np.array([fisher_mean(d[key]) if key == 'rsc'
-                         else np.nanmean(d[key]) for d in sweep])
-        err = np.array([np.nanstd(d[key]) / np.sqrt(np.isfinite(d[key]).sum())
-                        for d in sweep])
-        a.errorbar(ratios, mean, yerr=err, color=C_AMB, lw=2, marker='o', ms=6)
+    for a, curve, err, lab, keys in (
+            (ax[0], rsc, [np.nanstd(d['rsc']) / np.sqrt(np.isfinite(d['rsc']).sum())
+                          for d in sweep], r'$r_{SC}$',
+             (('rsc_amb', 'ambiguous cylinder', C_AMB),
+              ('rsc_rand', 'random dot motion', C_RAND))),
+            (ax[1], cp, [np.nanstd(d['cp']) / np.sqrt(np.isfinite(d['cp']).sum())
+                         for d in sweep], 'choice probability',
+             (('cp_amb', 'ambiguous cylinder', C_AMB),
+              ('cp_rand', 'random dot motion', C_RAND)))):
+        a.errorbar(ratios, curve, yerr=err, color='0.25', lw=2, marker='o',
+                   ms=5, zorder=3)
         a.axvline(1.0, color='k', ls=':', lw=1.6)
-        a.axhline(WASMUHT[target], color=C_REF, ls='--', lw=1.4,
-                  label='Wasmuht et al., ambiguous')
-        a.annotate('bistable', xy=(1.04, a.get_ylim()[0]), fontsize=9)
+        for key, text, colour in keys:
+            a.axhline(WASMUHT[key], color=colour, ls='--', lw=1.5, label=text)
+            m = matched_coupling(ratios, curve, WASMUHT[key])
+            if np.isfinite(m):
+                a.plot([m, m], [a.get_ylim()[0], WASMUHT[key]], color=colour,
+                       ls=':', lw=1.4)
+                a.plot(m, WASMUHT[key], marker='o', ms=9, color=colour,
+                       mec='k', mew=.7, zorder=4)
+                a.annotate(r'%.2f' % m, xy=(m, WASMUHT[key]),
+                           xytext=(m + .04, WASMUHT[key] - .035),
+                           fontsize=9, color=colour)
         a.set_xlabel(r'coupling $J/J^\star$')
         a.set_ylabel(lab)
         a.legend(frameon=False, fontsize=9, loc='upper left')
-    ax[0].set_title('shared variability between two recordings', fontsize=12)
-    ax[1].set_title('how well one neuron predicts the report', fontsize=12)
+    ax[0].set_title('shared variability, and where theirs is matched',
+                    fontsize=12)
+    ax[1].set_title('choice probability, and where theirs is matched',
+                    fontsize=12)
 
     shades = plt.cm.viridis(np.linspace(.12, .9, len(sweep)))
+    disps = sorted(sweep[0]['by_disp'])
+    for c, d in zip(shades, sweep):
+        ax[2].plot(disps, [d['by_disp'][x]['rsc'] for x in disps], marker='o',
+                   ms=4, color=c, lw=1.8, label='%.2f' % d['ratio'])
+    for key, colour in (('rsc_amb', C_AMB), ('rsc_unamb', C_UNAMB)):
+        ax[2].axhline(WASMUHT[key], color=colour, ls='--', lw=1.4)
+    ax[2].set_xlabel('disparity (deg)')
+    ax[2].set_ylabel(r'$r_{SC}$')
+    ax[2].legend(frameon=False, fontsize=8, title=r'$J/J^\star$',
+                 title_fontsize=8, ncol=2)
+    ax[2].set_title('evidence pulls the correlation down at every coupling',
+                    fontsize=12)
+
     for c, d in zip(shades, sweep):
         ok = np.isfinite(d['rsc']) & np.isfinite(d['cp'])
-        ax[2].scatter(d['rsc'][ok], d['cp'][ok], s=16, color=c, alpha=.7,
-                      label=r'%.2f' % d['ratio'])
+        ax[3].scatter(d['rsc'][ok], d['cp'][ok], s=15, color=c, alpha=.7)
     allr = np.concatenate([d['rsc'] for d in sweep])
     allc = np.concatenate([d['cp'] for d in sweep])
     ok = np.isfinite(allr) & np.isfinite(allc)
     fit = np.polyfit(allr[ok], allc[ok], 1)
     grid = np.linspace(allr[ok].min(), allr[ok].max(), 20)
-    ax[2].plot(grid, np.polyval(fit, grid), 'k-', lw=2)
-    ax[2].plot(WASMUHT['rsc_amb'], WASMUHT['cp_amb'], marker='*', ms=20,
-               color=C_REF, mec='k', mew=.6, ls='none',
-               label='Wasmuht et al.')
-    ax[2].set_xlabel(r'$r_{SC}$')
-    ax[2].set_ylabel('choice probability')
-    ax[2].legend(frameon=False, fontsize=8, title=r'$J/J^\star$',
-                 title_fontsize=8, ncol=2)
-    ax[2].set_title('they rise together, across sites and couplings',
-                    fontsize=12)
+    ax[3].plot(grid, np.polyval(fit, grid), 'k-', lw=2)
+    for rk, ck, colour, text in (('rsc_amb', 'cp_amb', C_AMB, 'ambiguous'),
+                                 ('rsc_rand', 'cp_rand', C_RAND, 'random')):
+        ax[3].plot(WASMUHT[rk], WASMUHT[ck], marker='*', ms=20, color=colour,
+                   mec='k', mew=.7, ls='none', label=text)
+    ax[3].set_xlabel(r'$r_{SC}$')
+    ax[3].set_ylabel('choice probability')
+    ax[3].legend(frameon=False, fontsize=9, title='Wasmuht et al.',
+                 title_fontsize=9)
+    ax[3].set_title('the two move together across sites', fontsize=12)
+
     for a in ax:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
@@ -1188,27 +1239,29 @@ if __name__ == '__main__':
     import sys
     circuit = sys.argv[1] if len(sys.argv) > 1 else 'best'
     schemes = ([(sys.argv[2], float(sys.argv[3]),
-                 '%s_a%s' % (sys.argv[2].upper(), sys.argv[3]))]
-               if len(sys.argv) > 3 else SCHEMES)
+                  '%s_a%s' % (sys.argv[2].upper(), sys.argv[3]))]
+                if len(sys.argv) > 3 else SCHEMES)
     for kind, alpha, tag in schemes:
         use_circuit(circuit, kind, alpha)
-    #     print('%s on circuit %s: J* = %.3f, J_bi = %.3f, J_mono = %.3f'
-    #           % (tag, circuit, JSTAR[kind], J_BI * JSTAR[kind],
-    #              J_MONO * JSTAR[kind]), flush=True)
-    #     res = run_all(kind, alpha, recompute=False, verbose=True)
-    #     suffix = '%s_%s_%s' % (tag, circuit, 'mixed' if MIXED_MU else 'same')
-    #     plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
-    #     plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
-    #     plot_figure_3(res, 'wasmuht_fig3_%s' % suffix)
-    #     plot_figure_4(res, 'wasmuht_fig4_%s' % suffix)
-    #     print('  rSC  ambiguous %.3f | unambiguous %.3f | random %.3f'
-    #           % (np.nanmean(res['disp0.00']['rsc']),
-    #              np.nanmean(res['disp%.2f' % DISPARITIES[-1]]['rsc']),
-    #              np.nanmean(res['random']['rsc'])), flush=True)
-    #     print('  CP   ambiguous %.3f | random %.3f'
-    #           % (np.nanmean(res['disp0.00']['cp']),
-    #              np.nanmean(res['random']['cp'])), flush=True)
-    sweep = run_parameter_sweep(circuit='best')
+        print('%s on circuit %s: J* = %.3f, J_bi = %.3f, J_mono = %.3f'
+              % (tag, circuit, JSTAR[kind], J_BI * JSTAR[kind],
+                  J_MONO * JSTAR[kind]), flush=True)
+        res = run_all(kind, alpha, recompute=False, verbose=True)
+        suffix = '%s_%s_%s' % (tag, circuit, 'mixed' if MIXED_MU else 'same')
+        plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
+        plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
+        plot_figure_3(res, 'wasmuht_fig3_%s' % suffix)
+        plot_figure_4(res, 'wasmuht_fig4_%s' % suffix)
+        print('  rSC  ambiguous %.3f | unambiguous %.3f | random %.3f'
+              % (np.nanmean(res['disp0.00']['rsc']),
+                  np.nanmean(res['disp%.2f' % DISPARITIES[-1]]['rsc']),
+                  np.nanmean(res['random']['rsc'])), flush=True)
+        print('  CP   ambiguous %.3f | random %.3f'
+              % (np.nanmean(res['disp0.00']['cp']),
+                  np.nanmean(res['random']['cp'])), flush=True)
+    # sweep = run_parameter_sweep(circuit='best')
     # sweep = run_parameter_sweep(circuit='k20')
-    plot_figure_6(sweep)
-
+    # plot_figure_6(sweep)
+    # plot_figure_7(sweep, name='wasmuht_fig7_coupling')
+    # sweep = run_coupling_sweep()
+    # plot_figure_7(sweep)
