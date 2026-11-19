@@ -15104,12 +15104,12 @@ if __name__ == '__main__':
     #                           avoid_first=True, window_conv=1,
     #                           zscore_number_switches=False, 
     #                           normalize_variables=True, hysteresis_area=True)
-    # plot_cv_vs_J(n=1, n_bins=9, min_durations=2, use_log=False,
-    #               n_boot=100, seed=0, jstar=1/4, agg='median',
-    #               dur_file='all_dominance_durations.pkl')
-    # peak_vs_nbins(n=1, nbins_range=range(4, 19), min_durations=2,
-    #               use_log=False, agg='median', n_boot=100, n_seeds=5,
-    #               jstar=1/4, dur_file='all_dominance_durations.pkl')
+    plot_cv_vs_J(n=1, n_bins=9, min_durations=2, use_log=False,
+                  n_boot=100, seed=0, jstar=1/4, agg='median',
+                  dur_file='all_dominance_durations.pkl')
+    peak_vs_nbins(n=1, nbins_range=range(4, 19), min_durations=2,
+                  use_log=False, agg='median', n_boot=100, n_seeds=5,
+                  jstar=1/4, dur_file='all_dominance_durations.pkl')
     # plot_noise_variables_vs_fitted_params(n=1, variable='std_dominance',
     #                                       fitted_variable='J', full=True)
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
