@@ -875,7 +875,7 @@ class ring:
         if discrete_stim and coh is not None:
             discrete_stim = False
         if ini_cond is None:
-            q_mf = np.clip(np.random.randn(n_dots, nstates)*1e-1+0.5, 0, 1)
+            q_mf = np.clip(np.random.randn(n_dots, nstates)*3e-1+0.5, 0, 1)
         else:
             ini_cond = np.array(ini_cond)
             q_mf = np.repeat(ini_cond.reshape(-1, 1), self.ndots, axis=1).T
@@ -3831,6 +3831,25 @@ def _run_grid(ratio_list, n_reps, dt, n_iters, noise, n_jobs, seed, eps=1e-3, fp
     return post_vals
 
 
+def _run_grid_eps(eps_list, n_reps, dt, n_iters, noise, n_jobs, seed, ratio=1, fp=False,
+                  **sim_kwargs):
+    """Run (ratio x rep) grid in parallel; return the latent series as post_vals of
+    shape (n_ratios, n_reps, 2, T) ([...,0]=q_h, [...,1]=q_v). fp=True uses the
+    static-stimulus sim; sim_kwargs (j, eps, b_nm, noise_stim, tau) override defaults."""
+    np.random.seed(seed)
+    tasks = [(i_r, rep, eps)
+             for i_r, eps in enumerate(eps_list)
+             for rep in range(n_reps)]
+    results = Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(_simulate_quartet_fp)(ratio, rep, dt, n_iters, eps, **sim_kwargs)
+        for _, rep, eps in tqdm(tasks))
+    T = results[0].shape[-1]
+    post_vals = np.zeros((len(eps_list), n_reps, 2, T))   # [..., 0]=q_h, [...,1]=q_v
+    for (i_r, rep, _), pc in zip(tasks, results):
+        post_vals[i_r, rep] = pc
+    return post_vals
+
+
 def _reduce_last_window(post_series):
     """Last steps of _simulate_quartet: average the posterior over the final
     window to recover the per-trial scalar. post_series: (..., T)."""
@@ -3856,6 +3875,18 @@ def save_fixed_points_vs_ratio(ratio_list=np.arange(0.1, 2, 1e-2),
     post_vals = _run_grid(ratio_list, n_reps, dt, n_iters, eps=eps,
                           noise=0.0, n_jobs=n_jobs, seed=seed, fp=True, **sim_kwargs)
     np.save(DATA_FOLDER + f'fps_posterior_vs_ratio_quartet_epsilon_{eps}.npy', post_vals)
+    return post_vals
+
+
+def save_fixed_points_vs_epsilon(eps_list=np.logspace(-4, -1, 100),
+                                 ratio=1,
+                                 dt=1e-2, n_iters=1500, n_reps=10, n_jobs=-1, seed=0, eps=1e-3,
+                                 **sim_kwargs):
+    """Static-stimulus fixed points (noise=0, held frame, long n_iters) -> saves the
+    active-ring posterior series. sim_kwargs: j, eps, b_nm, noise_stim, tau."""
+    post_vals = _run_grid_eps(eps_list, n_reps, dt, n_iters, ratio=ratio,
+                              noise=0.0, n_jobs=n_jobs, seed=seed, fp=True, **sim_kwargs)
+    np.save(DATA_FOLDER + 'fps_posterior_vs_epsilon_quartet.npy', post_vals)
     return post_vals
 
 
@@ -3898,6 +3929,68 @@ def plot_quartet_fps_vs_ratio(ratio_list=np.geomspace(0.5, 2, 100),
     fig.tight_layout()
     fig.savefig(DATA_FOLDER + 'fixed_points_quartet.png', dpi=400, bbox_inches='tight')
     fig.savefig(DATA_FOLDER + 'fixed_points_quartet.svg', dpi=400, bbox_inches='tight')
+
+
+def critical_epsilon_quartet(j=0.6, b_nm=3.0, sigma=1.0):
+
+    def residual(m):
+        log_eps = j - 1. / (2 * m * (1 - m))            # pitchfork locus
+        delta = (j + log_eps) * (2*m - 1) - 2*j - 2./sigma - log_eps - b_nm
+        return m - sigmoid(delta)
+
+    m = np.linspace(1e-3, 1 - 1e-3, 100000)
+    r = np.array([residual(mi) for mi in m])
+    best = (np.nan, np.nan)
+    for k in np.where(np.sign(r[:-1]) != np.sign(r[1:]))[0]:
+        lo, hi = m[k], m[k+1]
+        for _ in range(100):                             # bisection refine
+            mid = 0.5 * (lo + hi)
+            lo, hi = (mid, hi) if np.sign(residual(mid)) == np.sign(residual(lo)) else (lo, mid)
+        m_star = 0.5 * (lo + hi)
+        eps_star = np.exp(j - 1. / (2 * m_star * (1 - m_star)))
+        if np.isnan(best[0]) or eps_star > best[0]:
+            best = (eps_star, m_star)
+    return best
+
+
+def plot_quartet_fps_vs_epsilon(eps_list=np.logspace(-4, -1, 100),
+                                log_eps=False, epsvals_to_plot=[1e-1, 1e-2, 1e-3, 5e-4]):
+    fig, a = plt.subplots(ncols=1, figsize=(3.2, 2.8))
+    fig.tight_layout()
+    a.spines['top'].set_visible(False)
+    a.spines['right'].set_visible(False)
+    a.set_ylim(-0.1, 1.1)
+    a.set_yticks([0, 0.5, 1])
+    a.set_xlabel(r'Explaining away: $ \frac{1}{4} \log \varepsilon$' if log_eps else r'$\varepsilon$')
+    arr = np.load(DATA_FOLDER + 'fps_posterior_vs_epsilon_quartet.npy')  # (R,reps,2,T)
+    reps = arr.shape[1]
+    post_vals = _reduce_last_window(arr)
+    # analytical pitchfork threshold eps* (ratio=1, sigma=1, j=0.6, b_nm=3), no fit
+    eps_star, m_star = critical_epsilon_quartet(j=0.6, b_nm=3.0, sigma=1.0)
+    a.axvline(np.log(eps_star)/4 if log_eps else eps_star, color='forestgreen', lw=3, alpha=0.3)
+    eps_list = np.log(eps_list[::2])/4 if log_eps else eps_list[::2]
+    for rep in range(reps):
+        vals = post_vals[::2, rep, 0]
+        if log_eps:
+            idx_vals = (np.abs(vals - 0.5) > 0.2)*(eps_list < -2)
+            idx_vals_2 = eps_list >= -2
+        else:
+            idx_vals = (np.abs(vals - 0.5) > 0.2)*(eps_list <= 1e-3)
+            idx_vals_2 = eps_list > 1e-3
+        a.plot(eps_list[idx_vals], vals[idx_vals], color='forestgreen',
+                linestyle='', marker='.', alpha=0.5,
+                markersize=2)
+        a.plot(eps_list[idx_vals_2], vals[idx_vals_2], color='forestgreen',
+               linestyle='', marker='.', alpha=0.5,
+               markersize=2)
+    if not log_eps:
+        a.set_xscale('log')
+
+    a.invert_xaxis()
+    a.set_title('a')
+    a.set_ylabel(r'$q(H)$')
+    fig.savefig(DATA_FOLDER + 'fixed_points_quartet_vs_eps.png', dpi=400, bbox_inches='tight')
+    fig.savefig(DATA_FOLDER + 'fixed_points_quartet_vs_eps.svg', dpi=400, bbox_inches='tight')
 
 
 def plot_quartet_fps_vs_ratio_different_eps(ratio_list=np.geomspace(0.5, 2, 100),
@@ -4187,16 +4280,18 @@ if __name__ == '__main__':
     #                                             stim_stamps=100, stim_weight=1,
     #                                             colors=True,
     #                                             seed=6)
-    for eps in [0.02, 0.04, 0.06, 0.08]:
-        print('Epsilon ', eps)
-        save_fixed_points_vs_ratio(ratio_list=np.geomspace(0.5, 2, 100),
-                                    dt=1e-2, n_iters=500, n_reps=5, n_jobs=-1, seed=0, eps=eps)
-        plot_quartet_fps_vs_ratio(ratio_list=np.geomspace(0.5, 2, 100),
-                                  eps=eps)
-        plt.show()
-        plt.pause(0.01)
-    plot_quartet_fps_vs_ratio_different_eps(ratio_list=np.geomspace(0.5, 2, 100),
-                                            epslist=[1e-1, 1e-2, 1e-3, 5e-4])
+    # for eps in [0.02, 0.04, 0.06, 0.08]:
+    #     print('Epsilon ', eps)
+    #     save_fixed_points_vs_ratio(ratio_list=np.geomspace(0.5, 2, 100),
+    #                                 dt=1e-2, n_iters=500, n_reps=5, n_jobs=-1, seed=0, eps=eps)
+    #     plot_quartet_fps_vs_ratio(ratio_list=np.geomspace(0.5, 2, 100),
+    #                               eps=eps)
+    #     plt.show()
+    #     plt.pause(0.01)
+    # save_fixed_points_vs_epsilon(eps_list=np.logspace(-5, -1, 400), n_iters=4000, n_reps=10)
+    plot_quartet_fps_vs_epsilon(eps_list=np.logspace(-5, -1, 400), log_eps=True)
+    # plot_quartet_fps_vs_ratio_different_eps(ratio_list=np.geomspace(0.5, 2, 100),
+    #                                         epslist=[1e-1, 0.06, 1e-2, 1e-3, 5e-4])
     # save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
     #                       dt=1e-2, n_iters=24_000, n_reps=10, n_jobs=10,
     #                       noise=0.2, seed=0, long_or_short='long')
