@@ -550,7 +550,6 @@ def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
     filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s_%s_%s.npz' % (
         kind, alpha, n_trials, n_nets, CIRCUIT,
         'carry' if CARRY_STATE else 'reset', 'mix' if mixed else 'same')
-    print(filename)
     if not recompute and os.path.exists(filename):
         return load_conditions(filename)
     res = {}
@@ -1082,6 +1081,98 @@ def plot_figure_6(sweep, name='wasmuht_fig6_sweep'):
     return fig
 
 
+def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='best',
+                       ratios=(0.5, 0.7, 0.85, 1.0, 1.15, 1.4, 1.7, 2.15),
+                       n_trials=120, n_nets=8, verbose=True):
+    """
+    Choice-related activity as the coupling is taken through its threshold.
+
+    The stimulus sets the coupling, so sweeping J is the manipulation an
+    experiment can actually make: the cylinder and random motion differ in
+    how strongly the local motion signals constrain one another, not in any
+    decision variable. Everything else about the circuit is held fixed, and
+    there is no feedback anywhere in the model.
+
+    Returns one entry per coupling ratio, holding r_SC and CP per site.
+    """
+    global CIRCUIT
+    base = dict(CIRCUITS[circuit])
+    out = []
+    for ratio in ratios:
+        use_circuit(dict(base, r_bi=ratio), kind, alpha)
+        CIRCUIT = 'coupling_%s_%g' % (circuit, ratio)
+        res = run_condition(kind, alpha, J_BI * JSTAR[kind], 0.0, n_trials,
+                            n_nets, 0, sigma_J=0.25, sigma_B=SIGMA_B,
+                            mixed_mu=True)
+        cp = np.nanmean(res['cp_time'], 1)
+        out.append(dict(ratio=ratio, rsc=res['rsc'], cp=cp,
+                        rccg=np.nanmean(res['rccg'], 0),
+                        gain=res['gain']))
+        if verbose:
+            print('  J/J* = %.2f done (%d sites)' % (ratio, res['rsc'].size),
+                  flush=True)
+    use_circuit(circuit, kind, alpha)
+    return out
+
+
+def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
+    """
+    Choice-related activity appears when the coupling crosses threshold.
+
+    Left, the spike count correlation between the two recordings; middle, the
+    choice probability of the single unit; right, the two against each other
+    across sites. Nothing in the network reads the animal's choice and nothing
+    is fed back: both quantities are produced by lateral coupling alone, and
+    both switch on at the bifurcation.
+    """
+    ratios = np.array([d['ratio'] for d in sweep])
+    fig, ax = plt.subplots(ncols=3, figsize=(15.5, 4.2))
+
+    for a, key, lab, target in ((ax[0], 'rsc', r'$r_{SC}$', 'rsc_amb'),
+                                (ax[1], 'cp', 'choice probability', 'cp_amb')):
+        mean = np.array([fisher_mean(d[key]) if key == 'rsc'
+                         else np.nanmean(d[key]) for d in sweep])
+        err = np.array([np.nanstd(d[key]) / np.sqrt(np.isfinite(d[key]).sum())
+                        for d in sweep])
+        a.errorbar(ratios, mean, yerr=err, color=C_AMB, lw=2, marker='o', ms=6)
+        a.axvline(1.0, color='k', ls=':', lw=1.6)
+        a.axhline(WASMUHT[target], color=C_REF, ls='--', lw=1.4,
+                  label='Wasmuht et al., ambiguous')
+        a.annotate('bistable', xy=(1.04, a.get_ylim()[0]), fontsize=9)
+        a.set_xlabel(r'coupling $J/J^\star$')
+        a.set_ylabel(lab)
+        a.legend(frameon=False, fontsize=9, loc='upper left')
+    ax[0].set_title('shared variability between two recordings', fontsize=12)
+    ax[1].set_title('how well one neuron predicts the report', fontsize=12)
+
+    shades = plt.cm.viridis(np.linspace(.12, .9, len(sweep)))
+    for c, d in zip(shades, sweep):
+        ok = np.isfinite(d['rsc']) & np.isfinite(d['cp'])
+        ax[2].scatter(d['rsc'][ok], d['cp'][ok], s=16, color=c, alpha=.7,
+                      label=r'%.2f' % d['ratio'])
+    allr = np.concatenate([d['rsc'] for d in sweep])
+    allc = np.concatenate([d['cp'] for d in sweep])
+    ok = np.isfinite(allr) & np.isfinite(allc)
+    fit = np.polyfit(allr[ok], allc[ok], 1)
+    grid = np.linspace(allr[ok].min(), allr[ok].max(), 20)
+    ax[2].plot(grid, np.polyval(fit, grid), 'k-', lw=2)
+    ax[2].plot(WASMUHT['rsc_amb'], WASMUHT['cp_amb'], marker='*', ms=20,
+               color=C_REF, mec='k', mew=.6, ls='none',
+               label='Wasmuht et al.')
+    ax[2].set_xlabel(r'$r_{SC}$')
+    ax[2].set_ylabel('choice probability')
+    ax[2].legend(frameon=False, fontsize=8, title=r'$J/J^\star$',
+                 title_fontsize=8, ncol=2)
+    ax[2].set_title('they rise together, across sites and couplings',
+                    fontsize=12)
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    fig.tight_layout()
+    save_figure(fig, name)
+    return fig
+
+
 # the schemes run when none is named on the command line
 SCHEMES = (('mf', 1.0, 'MF'), ('fbp', 1.0, 'LBP'),
            ('fbp', 0.5, 'FBP_05'), ('fbp', 1.45, 'FBP_145'))
@@ -1118,6 +1209,6 @@ if __name__ == '__main__':
     #           % (np.nanmean(res['disp0.00']['cp']),
     #              np.nanmean(res['random']['cp'])), flush=True)
     sweep = run_parameter_sweep(circuit='best')
-    sweep = run_parameter_sweep(circuit='k20')
+    # sweep = run_parameter_sweep(circuit='k20')
     plot_figure_6(sweep)
 
