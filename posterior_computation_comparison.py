@@ -4344,7 +4344,7 @@ def plot_critical_slowing(theta=None, B_list=(0.3, 0.1, 0.03, 0.01),
 
 def plot_spiking_raster(kind='fbp', alpha=1.0, theta=None, J=0.45, B=0.0,
                         sigma_J=0.35, sigma_B=0.6, n_iter=400, n_show=6,
-                        seed=0, name='fig_spiking_raster', **kw):
+                        seed=0, name='fig_spiking_raster', n=9, **kw):
     """
     Spikes in, beliefs out: the network of Section "spiking" on the cube.
 
@@ -4359,7 +4359,7 @@ def plot_spiking_raster(kind='fbp', alpha=1.0, theta=None, J=0.45, B=0.0,
     has to find its own fixed point, which is a sharper test of the network
     than a symmetric graph on which every unit agrees.
     """
-    theta = (zheng_topologies()['random $p$=0.5'] if theta is None else theta)
+    theta = (zheng_topologies(n=n)['random $p$=0.5'] if theta is None else theta)
     Jmat, Bvec = ising_params_heterogeneous(theta, J, B, sigma_J=sigma_J,
                                             sigma_B=sigma_B, seed=seed)
     xs, qs, S, R = iterate_spiking(kind, Jmat, Bvec, alpha=alpha,
@@ -4371,43 +4371,58 @@ def plot_spiking_raster(kind='fbp', alpha=1.0, theta=None, J=0.45, B=0.0,
     t = np.arange(S.shape[0]) * dt * tau_ms / 1000.0
     rng = np.random.default_rng(seed + 1)
 
-    fig, ax = plt.subplots(ncols=2, figsize=(12, 4.2),
-                           gridspec_kw=dict(width_ratios=[1.15, 1]))
-    units = np.linspace(0, S.shape[1] - 1, min(n_show, S.shape[1])).astype(int)
-    units = units[np.argsort(xs[-1, units])]
-    row = 0
-    for u in units:
-        for c in range(n_pool):
-            # thin the pool count back into one neuron, for display only
-            hit = rng.binomial(S[:, u], 1.0 / n_pool) > 0
-            ax[0].plot(t[hit], np.full(hit.sum(), row), '|', color='0.25',
-                       ms=3, mew=.7)
-            row += 1
-        ax[0].axhline(row - .5, color='0.85', lw=.6)
-    ax[0].set_xlabel('time (s)')
-    ax[0].set_ylabel('neuron, grouped by unit')
-    ax[0].set_ylim(-1, row)
-    ax[0].set_title('%d units of %d neurons, firing independently'
-                    % (len(units), n_pool), fontsize=12)
-
     # the same network without spikes, started the same way: with two
     # attractors the comparison only means something if both pick the same one
     _, q_det = iterate_dynamics(kind, Jmat, Bvec, alpha=alpha, seed=seed,
                                 keep='all')
     ref = q_det[-1]
-    tq = np.arange(qs.shape[0]) * dt * tau_ms / 1000.0
     order = np.argsort(ref)
     shades = plt.cm.viridis(np.linspace(.08, .92, len(order)))
-    for c, i in zip(shades, order):
+    colour_of = {node: shades[k] for k, node in enumerate(order)}
+
+    # which node reads each unit: for BP a message i->j enters node j, which
+    # is its column in M, so the two panels can share a colour per node
+    mask = Jmat != 0.0
+    dest = (np.arange(len(Bvec)) if kind == 'mf' else np.nonzero(mask)[1])
+
+    fig, ax = plt.subplots(ncols=2, figsize=(12, 4.6),
+                           gridspec_kw=dict(width_ratios=[1.15, 1]))
+    # spread the shown nodes over the range of beliefs, so the raster
+    # carries the whole colour scale rather than one end of it
+    have = [n for n in order if (dest == n).sum()]
+    pick = np.linspace(0, len(have) - 1, min(n_show, len(have)))
+    shown = [have[i] for i in np.unique(pick.astype(int))]
+    row, ticks, labels = 0, [], []
+    for node in shown:
+        start = row
+        for u in np.nonzero(dest == node)[0]:
+            for _ in range(n_pool):
+                # thin the pool count back into one neuron, for display only
+                hit = rng.binomial(S[:, u], 1.0 / n_pool) > 0
+                ax[0].plot(t[hit], np.full(hit.sum(), row), '|',
+                           color=colour_of[node], ms=3, mew=.7)
+                row += 1
+        ticks.append((start + row - 1) / 2)
+        labels.append('%d' % node)
+        ax[0].axhline(row - .5, color='0.85', lw=.6)
+    ax[0].set_xlabel('time (s)')
+    ax[0].set_ylabel('node the spikes arrive at')
+    ax[0].set_yticks(ticks)
+    ax[0].set_yticklabels(labels)
+    ax[0].set_ylim(-1, row)
+    ax[0].set_title('the spikes arriving at each node', fontsize=12)
+
+    tq = np.arange(qs.shape[0]) * dt * tau_ms / 1000.0
+    for i in order:
+        c = colour_of[i]
         ax[1].plot(tq, qs[:, i], lw=1.2, alpha=.9, color=c)
         ax[1].axhline(ref[i], color=c, ls='--', lw=1.1)
-    ax[1].plot([], [], 'k--', lw=1.1, label='each unit, its own fixed point')
+    ax[1].plot([], [], 'k--', lw=1.1, label='each node, its own fixed point')
     ax[1].set_xlabel('time (s)')
     ax[1].set_ylabel(r'belief $q_i$ decoded from spikes')
     ax[1].set_ylim(-.02, 1.02)
     ax[1].legend(frameon=False, loc='lower left', fontsize=9)
-    ax[1].set_title('every node settles on a different belief, and finds it',
-                    fontsize=12)
+    ax[1].set_title('the belief each one forms from them', fontsize=12)
     for a in ax:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
@@ -5685,6 +5700,11 @@ if __name__ == "__main__":
     # plot_zheng_large(n_iterations=700, dt=0.1, save=True)
     # the FBP family as an exact rate network
     # plot_network_equivalence(save=True)
+    kw = {'n_pool': 5, 'tau_s': 1,
+          'rate_gain': 100, 'rate_base': 100}
+    plot_spiking_raster(kind='fbp', alpha=1.0, theta=None, J=0.45, B=0.0,
+                        sigma_J=0.35, sigma_B=0.6, n_iter=200, n_show=6,
+                        seed=0, name='fig_spiking_raster', n=6, **kw)
     # plot_duration_threshold(J_grid=np.round(np.linspace(0.20, 3.00, 61), 3),
     #                         T_gibbs=np.logspace(1, 5, 5, dtype=int),
     #                         T_var=[1, 2, 5, 10, 20, 50, 100],
@@ -5692,17 +5712,17 @@ if __name__ == "__main__":
     #                         theta=THETA_NECKER, seed=0, save=True,
     #                         fname='duration_threshold')
 
-    ZHENG_TOPO = ('chain', 'single loop', 'grid', 'fully connected', 'Necker cube')
-    ZHENG_SET = ((0.1, 0.1), (1.0 , 0.1), (0.1, 1.0), (1.0, 1.0))
+    # ZHENG_TOPO = ('chain', 'single loop', 'grid', 'fully connected', 'Necker cube')
+    # ZHENG_SET = ((0.1, 0.1), (1.0 , 0.1), (0.1, 1.0), (1.0, 1.0))
 
-    plot_zheng_style(n=8, topologies=ZHENG_TOPO, settings=ZHENG_SET,
-                      n_iterations=700, dt=0.1, metric='abs', n_real=50,
-                      engine='spiking', n_pool=1, map_schedule='parallel',
-                      clean_seed=False, fname='zheng_1seed_spiking',
-                      recompute=True, ref='attractor')
+    # plot_zheng_style(n=8, topologies=ZHENG_TOPO, settings=ZHENG_SET,
+    #                   n_iterations=700, dt=0.1, metric='abs', n_real=50,
+    #                   engine='spiking', n_pool=1, map_schedule='parallel',
+    #                   clean_seed=False, fname='zheng_1seed_spiking',
+    #                   recompute=True, ref='attractor')
 
-    plot_spike_examples(name='chain', n=8, lam_J=0.1, lam_B=0.2,
-                        n_pool=1, T_tau=40.0, fname='spike_examples_chain', dt=0.1)
-    plot_spike_examples(name='grid', n=8, lam_J=0.1, lam_B=0.2,
-                        n_pool=1, T_tau=40.0, fname='spike_examples_grid', dt=0.1)
+    # plot_spike_examples(name='chain', n=8, lam_J=0.1, lam_B=0.2,
+    #                     n_pool=1, T_tau=40.0, fname='spike_examples_chain', dt=0.1)
+    # plot_spike_examples(name='grid', n=8, lam_J=0.1, lam_B=0.2,
+    #                     n_pool=1, T_tau=40.0, fname='spike_examples_grid', dt=0.1)
 
