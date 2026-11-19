@@ -4341,6 +4341,156 @@ def plot_critical_slowing(theta=None, B_list=(0.3, 0.1, 0.03, 0.01),
     return fig
 
 
+
+def plot_spiking_raster(kind='fbp', alpha=1.0, theta=None, J=0.45, B=0.0,
+                        sigma_J=0.35, sigma_B=0.6, n_iter=400, n_show=6,
+                        seed=0, name='fig_spiking_raster', **kw):
+    """
+    Spikes in, beliefs out: the network of Section "spiking" on the cube.
+
+    Each unit is a pool of `n_pool` neurons that share its state and fire
+    independently, so the only thing crossing between units is spikes. The
+    left panel thins the pooled counts back into single neurons to show what
+    the units actually emit; the right panel is what a downstream reader
+    recovers from those spikes.
+
+    The graph and its couplings are heterogeneous by default, so the nodes
+    settle on different beliefs rather than all on the same one: each trace
+    has to find its own fixed point, which is a sharper test of the network
+    than a symmetric graph on which every unit agrees.
+    """
+    theta = (zheng_topologies()['random $p$=0.5'] if theta is None else theta)
+    Jmat, Bvec = ising_params_heterogeneous(theta, J, B, sigma_J=sigma_J,
+                                            sigma_B=sigma_B, seed=seed)
+    xs, qs, S, R = iterate_spiking(kind, Jmat, Bvec, alpha=alpha,
+                                   n_iter=n_iter, seed=seed, keep='all',
+                                   record=True, **kw)
+    n_pool = kw.get('n_pool', 10)
+    tau_ms = kw.get('tau_ms', 200.0)
+    dt = kw.get('dt', 0.1)
+    t = np.arange(S.shape[0]) * dt * tau_ms / 1000.0
+    rng = np.random.default_rng(seed + 1)
+
+    fig, ax = plt.subplots(ncols=2, figsize=(12, 4.2),
+                           gridspec_kw=dict(width_ratios=[1.15, 1]))
+    units = np.linspace(0, S.shape[1] - 1, min(n_show, S.shape[1])).astype(int)
+    units = units[np.argsort(xs[-1, units])]
+    row = 0
+    for u in units:
+        for c in range(n_pool):
+            # thin the pool count back into one neuron, for display only
+            hit = rng.binomial(S[:, u], 1.0 / n_pool) > 0
+            ax[0].plot(t[hit], np.full(hit.sum(), row), '|', color='0.25',
+                       ms=3, mew=.7)
+            row += 1
+        ax[0].axhline(row - .5, color='0.85', lw=.6)
+    ax[0].set_xlabel('time (s)')
+    ax[0].set_ylabel('neuron, grouped by unit')
+    ax[0].set_ylim(-1, row)
+    ax[0].set_title('%d units of %d neurons, firing independently'
+                    % (len(units), n_pool), fontsize=12)
+
+    # the same network without spikes, started the same way: with two
+    # attractors the comparison only means something if both pick the same one
+    _, q_det = iterate_dynamics(kind, Jmat, Bvec, alpha=alpha, seed=seed,
+                                keep='all')
+    ref = q_det[-1]
+    tq = np.arange(qs.shape[0]) * dt * tau_ms / 1000.0
+    order = np.argsort(ref)
+    shades = plt.cm.viridis(np.linspace(.08, .92, len(order)))
+    for c, i in zip(shades, order):
+        ax[1].plot(tq, qs[:, i], lw=1.2, alpha=.9, color=c)
+        ax[1].axhline(ref[i], color=c, ls='--', lw=1.1)
+    ax[1].plot([], [], 'k--', lw=1.1, label='each unit, its own fixed point')
+    ax[1].set_xlabel('time (s)')
+    ax[1].set_ylabel(r'belief $q_i$ decoded from spikes')
+    ax[1].set_ylim(-.02, 1.02)
+    ax[1].legend(frameon=False, loc='lower left', fontsize=9)
+    ax[1].set_title('every node settles on a different belief, and finds it',
+                    fontsize=12)
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    fig.tight_layout()
+    for e in ('png', 'pdf'):
+        fig.savefig(DATA_FOLDER + '%s.%s' % (name, e), dpi=400,
+                    bbox_inches='tight')
+    return fig
+
+
+def plot_spiking_error(kind='fbp', alpha=1.0, J=0.6, B=0.1, n_iter=400,
+                       n_seed=12, products=((25, 3), (50, 3), (50, 10),
+                                            (100, 10), (100, 25), (200, 25)),
+                       name='fig_spiking_error'):
+    """
+    How closely the spiking network tracks the algorithm it implements.
+
+    Left: the error against the algorithm's fixed point over time, one curve
+    per graph, so the convergence can be compared across topologies. Right:
+    the error it settles at, against the product of encoding gain and pool
+    size, which is the combination the diffusion limit says should set it;
+    points from different gains and pool sizes fall on one line.
+    """
+    graphs = zheng_topologies()
+    fig, ax = plt.subplots(ncols=2, figsize=(12.5, 4.4))
+    colours = plt.cm.viridis(np.linspace(0, .88, len(graphs)))
+
+    for c, (label, theta) in zip(colours, graphs.items()):
+        Jmat, Bvec = ising_params_heterogeneous(theta, J, B)
+        ref = (fractional_bp(Jmat, Bvec, alpha=alpha) if kind == 'fbp'
+               else (_mf_magnetization(Jmat, Bvec, np.zeros(len(Bvec))) + 1) / 2)
+        err = []
+        for s_ in range(n_seed):
+            _, qs = iterate_spiking(kind, Jmat, Bvec, alpha=alpha,
+                                    n_iter=n_iter, seed=s_, keep='all')
+            err.append(np.abs(qs - ref[None, :]).mean(1))
+        err = np.array(err)
+        t = np.arange(err.shape[1]) * 0.1 * 200.0 / 1000.0
+        ax[0].plot(t, err.mean(0), color=c, lw=1.8, label=label)
+        ax[0].fill_between(t, err.mean(0) - err.std(0), err.mean(0) + err.std(0),
+                           color=c, alpha=.18, lw=0)
+    ax[0].set_yscale('log')
+    ax[0].set_xlabel('time (s)')
+    ax[0].set_ylabel(r'$|q_{\mathrm{network}}-q_{\mathrm{algorithm}}|$')
+    ax[0].legend(frameon=False, fontsize=8, ncol=2)
+    ax[0].set_title('every graph settles onto its own algorithm', fontsize=12)
+
+    theta = THETA_NECKER
+    Jmat, Bvec = ising_params_heterogeneous(theta, J, B)
+    ref = (fractional_bp(Jmat, Bvec, alpha=alpha) if kind == 'fbp'
+           else (_mf_magnetization(Jmat, Bvec, np.zeros(len(Bvec))) + 1) / 2)
+    prod, floor = [], []
+    for gain, pool in products:
+        e = []
+        for s_ in range(n_seed):
+            _, qs = iterate_spiking(kind, Jmat, Bvec, alpha=alpha,
+                                    n_iter=n_iter, seed=s_, keep='all',
+                                    rate_gain=float(gain), rate_base=float(gain),
+                                    n_pool=int(pool))
+            e.append(np.abs(qs[-n_iter // 4:] - ref[None, :]).mean())
+        prod.append(gain * pool)
+        floor.append(np.mean(e))
+    prod, floor = np.array(prod, float), np.array(floor)
+    ax[1].loglog(prod, floor, 'o', ms=8, color=THEME if 'THEME' in globals()
+                 else '#a21d66')
+    fit = np.polyfit(np.log(prod), np.log(floor), 1)
+    grid = np.linspace(prod.min(), prod.max(), 20)
+    ax[1].loglog(grid, np.exp(np.polyval(fit, np.log(grid))), 'k--', lw=1.4,
+                 label=r'slope %.2f (predicted $-1/2$)' % fit[0])
+    ax[1].set_xlabel(r'gain $\times$ pool size')
+    ax[1].set_ylabel('error it settles at')
+    ax[1].legend(frameon=False)
+    ax[1].set_title('precision is bought with spikes, however they are spent',
+                    fontsize=12)
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    fig.tight_layout()
+    for e in ('png', 'pdf'):
+        fig.savefig(DATA_FOLDER + '%s.%s' % (name, e), dpi=400,
+                    bbox_inches='tight')
+    return fig
+
 def zheng_topologies(n=9, include_cube=True):
     """The graph family of Zheng et al. Fig. 2 and 4 on n nodes -- chain,
     single loop, grid (nearest square), fully connected, 8-connected grid and
