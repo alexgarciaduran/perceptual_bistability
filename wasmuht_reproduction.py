@@ -587,6 +587,8 @@ def save_sweep(filename, sweep):
     flat = {}
     for n, entry in enumerate(sweep):
         flat['s%d__ratio' % n] = np.asarray(entry['ratio'])
+        flat['s%d__circuit_ratio' % n] = np.asarray(
+            entry.get('circuit_ratio', np.nan))
         for key in ('rsc', 'cp', 'rccg'):
             flat['s%d__%s' % (n, key)] = np.asarray(entry[key])
         disparities = sorted(entry['by_disp'])
@@ -616,14 +618,17 @@ def load_sweep(filename):
                    for k, (d, r, c) in enumerate(zip(out['disp'],
                                                      out['disp_rsc'],
                                                      out['disp_cp']))}
-        sweep.append(dict(ratio=float(out['ratio']), rsc=out['rsc'],
+        sweep.append(dict(ratio=float(out['ratio']),
+                          circuit_ratio=float(out.get('circuit_ratio',
+                                                      np.nan)),
+                          rsc=out['rsc'],
                           cp=out['cp'], rccg=out['rccg'], by_disp=by_disp))
     return sweep
 
 
 def save_figure(fig, name):
     """Save in both formats, as everywhere else in the project."""
-    for extension in ('png', 'pdf'):
+    for extension in ('png', 'pdf', 'svg'):
         fig.savefig(DATA_FOLDER + '%s.%s' % (name, extension), dpi=400,
                     bbox_inches='tight')
 
@@ -1170,6 +1175,9 @@ def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='match',
         sigma_J, 'mix' if mixed_mu else 'same',
         '-'.join('%g' % ratio for ratio in ratios))
     if not recompute and os.path.exists(filename):
+        # load the circuit even on a cache hit: the figure reads J_BI, and a
+        # stale one would draw a different coupling from the same saved data
+        use_circuit(circuit, kind, alpha)
         return load_sweep(filename)
     base = dict(CIRCUITS[circuit])
     out = []
@@ -1186,7 +1194,8 @@ def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='match',
                               rsc_sites=res['rsc'])
             if d == 0.0:
                 zero = res
-        out.append(dict(ratio=ratio, rsc=zero['rsc'], cp=zero['cp'],
+        out.append(dict(ratio=ratio, circuit_ratio=base['r_bi'],
+                        rsc=zero['rsc'], cp=zero['cp'],
                         rccg=np.nanmean(zero['rccg'], 0), by_disp=by_disp))
         if verbose:
             print('  J/J* = %.2f done (%d sites)' % (ratio, zero['rsc'].size),
@@ -1219,7 +1228,7 @@ def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
     ratios = np.array([d['ratio'] for d in sweep])
     rsc = np.array([fisher_mean(d['rsc']) for d in sweep])
     cp = np.array([np.nanmean(d['cp']) for d in sweep])
-    fig, ax = plt.subplots(ncols=4, figsize=(21, 4.3))
+    fig, ax = plt.subplots(ncols=4, figsize=(15, 3.3))
 
     for a, curve, err, lab, keys in (
             (ax[0], rsc, [np.nanstd(d['rsc']) / np.sqrt(np.isfinite(d['rsc']).sum())
@@ -1254,8 +1263,12 @@ def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
     # categorical positions, as in Fig. 2: the disparities are 0.01 apart, so
     # a linear axis would pile every violin on top of the next
     positions = list(range(len(disps)))
-    # the violins are the circuit's own coupling, the one Fig. 2 also shows
-    shown = min(sweep, key=lambda d: abs(d['ratio'] - J_BI))
+    # the violins are the circuit's own coupling, the one Fig. 2 also shows.
+    # It travels with the data: reading it from J_BI would draw a different
+    # coupling from the same saved sweep whenever that global had moved on.
+    target = sweep[0].get('circuit_ratio', np.nan)
+    target = J_BI if not np.isfinite(target) else target
+    shown = min(sweep, key=lambda d: abs(d['ratio'] - target))
     data = [np.asarray(shown['by_disp'][x]['rsc_sites']) for x in disps]
     data = [v[np.isfinite(v)] for v in data]
     violins = ax[2].violinplot(data, positions=positions, widths=.75,
@@ -1293,10 +1306,9 @@ def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
         ax[3].plot(WASMUHT[rk], WASMUHT[ck], marker='*', ms=20, color=colour,
                    mec='k', mew=.7, ls='none', label=text)
     ax[3].set_xlabel(r'$r_{SC}$')
-    ax[3].set_ylabel('choice probability')
+    ax[3].set_ylabel('Choice probability')
     ax[3].legend(frameon=False, fontsize=11, title='Wasmuht et al.',
                  title_fontsize=12)
-    ax[3].set_title('the two move together across sites', fontsize=12)
     # one block per coupling, so the bar shows the colours actually drawn
     edges = np.concatenate(([ratios[0] - (ratios[1] - ratios[0]) / 2],
                             (ratios[:-1] + ratios[1:]) / 2,
