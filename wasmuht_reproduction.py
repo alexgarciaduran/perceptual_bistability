@@ -145,11 +145,11 @@ CIRCUITS = {
     'k20_total': dict(gain=20.7, K=20, tau_s=0.50, r_mono=0.933, r_bi=1.28,
                       bpd=1.29, sigma_B=0.15),
     # the only circuit that reaches all four of their reported values at once,
-    # found with the multi-unit drawn from the single unit's own pool. bpd is
-    # not constrained by that fit, since both conditions were run at zero
-    # disparity, so it is carried over from 'k20'.
+    # found with the multi-unit drawn from the single unit's own pool. Those
+    # four are all measured at zero disparity and so say nothing about bpd,
+    # which is set separately by their unambiguous cylinder.
     'match': dict(gain=27.6, K=3, tau_s=0.20, r_mono=0.78, r_bi=1.14,
-                  bpd=2.33, sigma_B=0.15),
+                  bpd=4.33, sigma_B=0.15),
 }
 CIRCUIT = 'match'                         # the one currently loaded
 
@@ -553,8 +553,8 @@ def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
     mixed = MIXED_MU if mixed_mu is None else mixed_mu
     # the circuit belongs in the name: the same scheme on two circuits is
     # two different simulations and must not share a cache entry
-    filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s_%s_%s.npz' % (
-        kind, alpha, n_trials, n_nets, CIRCUIT,
+    filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s_b%g_%s_%s.npz' % (
+        kind, alpha, n_trials, n_nets, CIRCUIT, B_PER_DEG,
         'carry' if CARRY_STATE else 'reset', 'mix' if mixed else 'same')
     if not recompute and os.path.exists(filename):
         return load_conditions(filename)
@@ -573,6 +573,52 @@ def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
             print('  disparity %.2f done' % disparity, flush=True)
     save_conditions(filename, res)
     return res
+
+
+def save_sweep(filename, sweep):
+    """
+    Write a coupling sweep to one npz as flat arrays.
+
+    Same reason as save_conditions: the sweep is a list of dicts holding a
+    nested dict, which numpy would only store by pickling, so it is flattened
+    into one array per field and the disparities are kept as three parallel
+    arrays rather than as keys.
+    """
+    flat = {}
+    for n, entry in enumerate(sweep):
+        flat['s%d__ratio' % n] = np.asarray(entry['ratio'])
+        for key in ('rsc', 'cp', 'rccg'):
+            flat['s%d__%s' % (n, key)] = np.asarray(entry[key])
+        disparities = sorted(entry['by_disp'])
+        flat['s%d__disp' % n] = np.asarray(disparities)
+        flat['s%d__disp_rsc' % n] = np.asarray(
+            [entry['by_disp'][d]['rsc'] for d in disparities])
+        flat['s%d__disp_cp' % n] = np.asarray(
+            [entry['by_disp'][d]['cp'] for d in disparities])
+        for k, d in enumerate(disparities):
+            flat['s%d__sites%d' % (n, k)] = np.asarray(
+                entry['by_disp'][d]['rsc_sites'])
+    np.savez(filename, **flat)
+
+
+def load_sweep(filename):
+    """Read back what save_sweep wrote, without unpickling anything."""
+    data = np.load(filename, allow_pickle=False)
+    entries = {}
+    for name in data.files:
+        index, key = name.split('__')
+        entries.setdefault(int(index[1:]), {})[key] = data[name]
+    sweep = []
+    for n in sorted(entries):
+        out = entries[n]
+        by_disp = {float(d): dict(rsc=float(r), cp=float(c),
+                                  rsc_sites=out['sites%d' % k])
+                   for k, (d, r, c) in enumerate(zip(out['disp'],
+                                                     out['disp_rsc'],
+                                                     out['disp_cp']))}
+        sweep.append(dict(ratio=float(out['ratio']), rsc=out['rsc'],
+                          cp=out['cp'], rccg=out['rccg'], by_disp=by_disp))
+    return sweep
 
 
 def save_figure(fig, name):
@@ -1088,10 +1134,10 @@ def plot_figure_6(sweep, name='wasmuht_fig6_sweep'):
 
 
 def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='match',
-                       ratios=(0.5, 0.7, 0.85, 1.0, 1.15, 1.4, 1.7, 2.15,
-                               2.6, 3.0),
+                       ratios=np.arange(0.5, 1.5, 1e-1),
                        disparities=DISPARITIES, n_trials=120, n_nets=8,
-                       sigma_J=0.0, mixed_mu=MIXED_MU, verbose=True):
+                       sigma_J=0.0, mixed_mu=MIXED_MU, recompute=False,
+                       folder=None, verbose=True):
     """
     Choice-related activity as the coupling is taken through its threshold.
 
@@ -1102,8 +1148,9 @@ def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='match',
     nothing is fed back from a later stage.
 
     Each coupling is run at each disparity, so the sweep also gives r_SC as a
-    function of the disambiguating evidence. Nothing is cached: run_condition
-    simulates afresh, so the call costs a few minutes.
+    function of the disambiguating evidence. The whole sweep is cached to disk
+    under a name carrying everything that changes it, so the couplings are
+    simulated once and later calls load in under a second.
 
     Returns
     -------
@@ -1111,6 +1158,19 @@ def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='match',
         One entry per coupling ratio, each holding the per-site r_SC and CP at
         zero disparity and the mean r_SC and CP at every disparity.
     """
+    folder = DATA_FOLDER if folder is None else folder
+    # always sample the circuit's own coupling, so the violins below are the
+    # same simulation Fig. 2 shows rather than the nearest ratio on the grid
+    ratios = tuple(sorted(set(ratios) | {CIRCUITS[circuit]['r_bi']}))
+    # every argument that changes the result belongs in the name, or two
+    # sweeps that differ only in one of them would share a cache entry
+    filename = folder + ('wasmuht_coupling_%s_a%g_T%d_N%d_%s_b%g_sJ%g_%s_%s'
+                         '.npz') % (
+        kind, alpha, n_trials, n_nets, circuit, CIRCUITS[circuit]['bpd'],
+        sigma_J, 'mix' if mixed_mu else 'same',
+        '-'.join('%g' % ratio for ratio in ratios))
+    if not recompute and os.path.exists(filename):
+        return load_sweep(filename)
     base = dict(CIRCUITS[circuit])
     out = []
     for ratio in ratios:
@@ -1122,7 +1182,8 @@ def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='match',
                                 sigma_J=sigma_J, sigma_B=SIGMA_B,
                                 mixed_mu=mixed_mu)
             by_disp[d] = dict(rsc=fisher_mean(res['rsc']),
-                              cp=float(np.nanmean(res['cp'])))
+                              cp=float(np.nanmean(res['cp'])),
+                              rsc_sites=res['rsc'])
             if d == 0.0:
                 zero = res
         out.append(dict(ratio=ratio, rsc=zero['rsc'], cp=zero['cp'],
@@ -1131,6 +1192,7 @@ def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='match',
             print('  J/J* = %.2f done (%d sites)' % (ratio, zero['rsc'].size),
                   flush=True)
     use_circuit(circuit, kind, alpha)
+    save_sweep(filename, out)
     return out
 
 
@@ -1175,34 +1237,47 @@ def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
             a.axhline(WASMUHT[key], color=colour, ls='--', lw=1.5, label=text)
             m = matched_coupling(ratios, curve, WASMUHT[key])
             if np.isfinite(m):
-                a.plot([m, m], [a.get_ylim()[0], WASMUHT[key]], color=colour,
+                a.plot([m, m], [-0.2, WASMUHT[key]], color=colour,
                        ls=':', lw=1.4)
+                a.set_ylim(-0.05 if a == ax[0] else 0.495, a.get_ylim()[1])
                 a.plot(m, WASMUHT[key], marker='o', ms=9, color=colour,
                        mec='k', mew=.7, zorder=4)
                 a.annotate(r'%.2f' % m, xy=(m, WASMUHT[key]),
                            xytext=(m + .04, WASMUHT[key] - .035),
                            fontsize=9, color=colour)
-        a.set_xlabel(r'coupling $J/J^\star$')
+        a.set_xlabel(r'Coupling $J/J^\star$')
         a.set_ylabel(lab)
-        a.legend(frameon=False, fontsize=9, loc='upper left')
-    ax[0].set_title('shared variability, and where theirs is matched',
-                    fontsize=12)
-    ax[1].set_title('choice probability, and where theirs is matched',
-                    fontsize=12)
+        a.legend(frameon=False, fontsize=12, loc='upper left')
 
     shades = plt.cm.viridis(np.linspace(.12, .9, len(sweep)))
     disps = sorted(sweep[0]['by_disp'])
-    for c, d in zip(shades, sweep):
-        ax[2].plot(disps, [d['by_disp'][x]['rsc'] for x in disps], marker='o',
-                   ms=4, color=c, lw=1.8, label='%.2f' % d['ratio'])
-    for key, colour in (('rsc_amb', C_AMB), ('rsc_unamb', C_UNAMB)):
-        ax[2].axhline(WASMUHT[key], color=colour, ls='--', lw=1.4)
-    ax[2].set_xlabel('disparity (deg)')
+    # categorical positions, as in Fig. 2: the disparities are 0.01 apart, so
+    # a linear axis would pile every violin on top of the next
+    positions = list(range(len(disps)))
+    # the violins are the circuit's own coupling, the one Fig. 2 also shows
+    shown = min(sweep, key=lambda d: abs(d['ratio'] - J_BI))
+    data = [np.asarray(shown['by_disp'][x]['rsc_sites']) for x in disps]
+    data = [v[np.isfinite(v)] for v in data]
+    violins = ax[2].violinplot(data, positions=positions, widths=.75,
+                               showmeans=True)
+    for body, colour in zip(violins['bodies'],
+                            [C_AMB] + [C_UNAMB] * (len(disps) - 1)):
+        body.set_facecolor(colour)
+        body.set_alpha(.65)
+    for key in ('cbars', 'cmins', 'cmaxes', 'cmeans'):
+        violins[key].set_color('0.3')
+        violins[key].set_linewidth(1.1)
+    for pos, key, colour in ((0, 'rsc_amb', C_AMB),
+                             (len(disps) - 1, 'rsc_unamb', C_UNAMB)):
+        ax[2].plot(pos, WASMUHT[key], marker='_', ms=26, mew=3, color=colour,
+                   zorder=6)
+    ax[2].plot([], [], marker='_', ms=14, mew=3, color='0.3', ls='none',
+               label='Wasmuht et al.')
+    ax[2].set_xticks(positions)
+    ax[2].set_xticklabels(['%.2f' % x for x in disps])
+    ax[2].set_xlabel('Disparity (deg)')
     ax[2].set_ylabel(r'$r_{SC}$')
-    ax[2].legend(frameon=False, fontsize=8, title=r'$J/J^\star$',
-                 title_fontsize=8, ncol=2)
-    ax[2].set_title('evidence pulls the correlation down at every coupling',
-                    fontsize=12)
+    ax[2].legend(frameon=False, fontsize=12, loc='lower left')
 
     for c, d in zip(shades, sweep):
         ok = np.isfinite(d['rsc']) & np.isfinite(d['cp'])
@@ -1219,9 +1294,19 @@ def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
                    mec='k', mew=.7, ls='none', label=text)
     ax[3].set_xlabel(r'$r_{SC}$')
     ax[3].set_ylabel('choice probability')
-    ax[3].legend(frameon=False, fontsize=9, title='Wasmuht et al.',
-                 title_fontsize=9)
+    ax[3].legend(frameon=False, fontsize=11, title='Wasmuht et al.',
+                 title_fontsize=12)
     ax[3].set_title('the two move together across sites', fontsize=12)
+    # one block per coupling, so the bar shows the colours actually drawn
+    edges = np.concatenate(([ratios[0] - (ratios[1] - ratios[0]) / 2],
+                            (ratios[:-1] + ratios[1:]) / 2,
+                            [ratios[-1] + (ratios[-1] - ratios[-2]) / 2]))
+    bar = fig.colorbar(mpl.cm.ScalarMappable(
+        norm=mpl.colors.BoundaryNorm(edges, len(shades)),
+        cmap=mpl.colors.ListedColormap(shades)), ax=ax[3])
+    bar.set_label(r'coupling $J/J^\star$')
+    bar.set_ticks(ratios)
+    bar.ax.set_yticklabels(['%.2f' % r for r in ratios], fontsize=8)
 
     for a in ax:
         a.spines['right'].set_visible(False)
@@ -1270,5 +1355,5 @@ if __name__ == '__main__':
     # sweep = run_parameter_sweep(circuit='k20')
     # plot_figure_6(sweep)
     # plot_figure_7(sweep, name='wasmuht_fig7_coupling')
-    sweep = run_coupling_sweep()
+    sweep = run_coupling_sweep(recompute=False)
     plot_figure_7(sweep)
