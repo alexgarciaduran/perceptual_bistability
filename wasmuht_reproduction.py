@@ -113,7 +113,7 @@ B_PER_DEG = 2.0
 # unit's own pool. A GLOBAL signal (the percept) survives mixing, a LOCAL one
 # (coupling between neighbours) is diluted by it, so comparing the two
 # separates those two sources without needing a distance metric.
-MIXED_MU = True
+MIXED_MU = False
 
 # Whether the network state is carried from one trial to the next instead of
 # being reset. A perceptual system inherits its state at stimulus onset, and
@@ -144,8 +144,14 @@ CIRCUITS = {
                   bpd=2.33, sigma_B=0.15),
     'k20_total': dict(gain=20.7, K=20, tau_s=0.50, r_mono=0.933, r_bi=1.28,
                       bpd=1.29, sigma_B=0.15),
+    # the only circuit that reaches all four of their reported values at once,
+    # found with the multi-unit drawn from the single unit's own pool. bpd is
+    # not constrained by that fit, since both conditions were run at zero
+    # disparity, so it is carried over from 'k20'.
+    'match': dict(gain=27.6, K=3, tau_s=0.20, r_mono=0.78, r_bi=1.14,
+                  bpd=2.33, sigma_B=0.15),
 }
-CIRCUIT = 'k20'                         # the one currently loaded
+CIRCUIT = 'match'                         # the one currently loaded
 
 
 def critical_coupling(kind, alpha=1.0, neighs=3.0):
@@ -1081,11 +1087,11 @@ def plot_figure_6(sweep, name='wasmuht_fig6_sweep'):
     return fig
 
 
-def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='best',
+def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='match',
                        ratios=(0.5, 0.7, 0.85, 1.0, 1.15, 1.4, 1.7, 2.15,
                                2.6, 3.0),
                        disparities=DISPARITIES, n_trials=120, n_nets=8,
-                       verbose=True):
+                       sigma_J=0.0, mixed_mu=MIXED_MU, verbose=True):
     """
     Choice-related activity as the coupling is taken through its threshold.
 
@@ -1113,7 +1119,8 @@ def run_coupling_sweep(kind='fbp', alpha=1.0, circuit='best',
         for d in disparities:
             res = run_condition(kind, alpha, J_BI * JSTAR[kind],
                                 B_PER_DEG * d, n_trials, n_nets, 0,
-                                sigma_J=0.25, sigma_B=SIGMA_B, mixed_mu=True)
+                                sigma_J=sigma_J, sigma_B=SIGMA_B,
+                                mixed_mu=mixed_mu)
             by_disp[d] = dict(rsc=fisher_mean(res['rsc']),
                               cp=float(np.nanmean(res['cp'])))
             if d == 0.0:
@@ -1236,32 +1243,32 @@ if __name__ == '__main__':
     #   python wasmuht_reproduction.py                 every scheme, 'best'
     #   python wasmuht_reproduction.py total           every scheme, 'total'
     #   python wasmuht_reproduction.py best fbp 1.0    loopy BP alone
-    import sys
-    circuit = sys.argv[1] if len(sys.argv) > 1 else 'best'
-    schemes = ([(sys.argv[2], float(sys.argv[3]),
-                  '%s_a%s' % (sys.argv[2].upper(), sys.argv[3]))]
-                if len(sys.argv) > 3 else SCHEMES)
-    for kind, alpha, tag in schemes:
-        use_circuit(circuit, kind, alpha)
-        print('%s on circuit %s: J* = %.3f, J_bi = %.3f, J_mono = %.3f'
-              % (tag, circuit, JSTAR[kind], J_BI * JSTAR[kind],
-                  J_MONO * JSTAR[kind]), flush=True)
-        res = run_all(kind, alpha, recompute=False, verbose=True)
-        suffix = '%s_%s_%s' % (tag, circuit, 'mixed' if MIXED_MU else 'same')
-        plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
-        plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
-        plot_figure_3(res, 'wasmuht_fig3_%s' % suffix)
-        plot_figure_4(res, 'wasmuht_fig4_%s' % suffix)
-        print('  rSC  ambiguous %.3f | unambiguous %.3f | random %.3f'
-              % (np.nanmean(res['disp0.00']['rsc']),
-                  np.nanmean(res['disp%.2f' % DISPARITIES[-1]]['rsc']),
-                  np.nanmean(res['random']['rsc'])), flush=True)
-        print('  CP   ambiguous %.3f | random %.3f'
-              % (np.nanmean(res['disp0.00']['cp']),
-                  np.nanmean(res['random']['cp'])), flush=True)
+    # import sys
+    # circuit = sys.argv[1] if len(sys.argv) > 1 else 'best'
+    # schemes = ([(sys.argv[2], float(sys.argv[3]),
+    #               '%s_a%s' % (sys.argv[2].upper(), sys.argv[3]))]
+    #             if len(sys.argv) > 3 else SCHEMES)
+    # for kind, alpha, tag in schemes:
+    #     use_circuit(circuit, kind, alpha)
+    #     print('%s on circuit %s: J* = %.3f, J_bi = %.3f, J_mono = %.3f'
+    #           % (tag, circuit, JSTAR[kind], J_BI * JSTAR[kind],
+    #               J_MONO * JSTAR[kind]), flush=True)
+    #     res = run_all(kind, alpha, recompute=False, verbose=True)
+    #     suffix = '%s_%s_%s' % (tag, circuit, 'mixed' if MIXED_MU else 'same')
+    #     plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
+    #     plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
+    #     plot_figure_3(res, 'wasmuht_fig3_%s' % suffix)
+    #     plot_figure_4(res, 'wasmuht_fig4_%s' % suffix)
+    #     print('  rSC  ambiguous %.3f | unambiguous %.3f | random %.3f'
+    #           % (np.nanmean(res['disp0.00']['rsc']),
+    #               np.nanmean(res['disp%.2f' % DISPARITIES[-1]]['rsc']),
+    #               np.nanmean(res['random']['rsc'])), flush=True)
+    #     print('  CP   ambiguous %.3f | random %.3f'
+    #           % (np.nanmean(res['disp0.00']['cp']),
+    #               np.nanmean(res['random']['cp'])), flush=True)
     # sweep = run_parameter_sweep(circuit='best')
     # sweep = run_parameter_sweep(circuit='k20')
     # plot_figure_6(sweep)
     # plot_figure_7(sweep, name='wasmuht_fig7_coupling')
-    # sweep = run_coupling_sweep()
-    # plot_figure_7(sweep)
+    sweep = run_coupling_sweep()
+    plot_figure_7(sweep)

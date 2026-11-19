@@ -15104,7 +15104,13 @@ if __name__ == '__main__':
     #                           avoid_first=True, window_conv=1,
     #                           zscore_number_switches=False, 
     #                           normalize_variables=True, hysteresis_area=True)
-    plot_cv_vs_J(n=1, n_bins=9, min_durations=2, use_log=False,
+    plot_cv_vs_J(n=1, n_bins=7, min_durations=2, use_log=False,
+                  n_boot=100, seed=0, jstar=1/4, agg='median',
+                  dur_file='all_dominance_durations.pkl')
+    plot_cv_vs_J(n=1, n_bins=8, min_durations=2, use_log=False,
+                  n_boot=100, seed=0, jstar=1/4, agg='median',
+                  dur_file='all_dominance_durations.pkl')
+    plot_cv_vs_J(n=1, n_bins=10, min_durations=2, use_log=False,
                   n_boot=100, seed=0, jstar=1/4, agg='median',
                   dur_file='all_dominance_durations.pkl')
     peak_vs_nbins(n=1, nbins_range=range(4, 19), min_durations=2,
