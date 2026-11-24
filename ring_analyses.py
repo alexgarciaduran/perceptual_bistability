@@ -3286,7 +3286,7 @@ def experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25,
                         ini_cond = 'CW'
                     if b == 0:
                         ini_cond = ['CW', 'CCW'][np.random.choice([0, 1])]
-                    mf_sims = ring(epsilon=0.1, n_dots=8).mean_field_sde(dt=0.1, tau=0.2,
+                    mf_sims = ring(epsilon=0.01, n_dots=8).mean_field_sde(dt=0.1, tau=0.2,
                                                                          n_iters=300, j=j,
                                                                          true=ini_cond,
                                                                          noise=0.1, plot=False,
@@ -4172,9 +4172,9 @@ if __name__ == '__main__':
     #                         jlist=np.arange(0, 1.05, 0.05).round(4),
     #                         nreps=20, dt=0.05, tau=0.1, n_iters=2500, true='CW', noise_stim=0.1,
     #                         load_data=True)
-    # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='CW', j=0.4, b=[0., 0., 0.], plot=True,
+    # ring(epsilon=0.01, n_dots=8).mean_field_ring(true='CW', j=0.6, b=[0., 0., 0.], plot=True,
     #                                               n_iters=100, noise=0)
-    # ring(epsilon=0.001, n_dots=8).mean_field_ring(true='NM', j=0.4, b=[0., 0., 0.], plot=True,
+    # ring(epsilon=0.01, n_dots=8).mean_field_ring(true='NM', j=0.6, b=[0., 0., 0.], plot=True,
     #                                               n_iters=100, noise=0)
     # bifurcations_difference_stim_epsilon(nreps=100, resimulate=False, epslist=[0.1])
     # n_objects_ring_stim_epsilon(nreps=50, resimulate=False)
@@ -4207,10 +4207,10 @@ if __name__ == '__main__':
     #                                                 b=[0, 0.5, 0], noise_stim=0.,
     #                                                 coh=0., nstates=3, stim_stamps=1)
     # ring(epsilon=0.2, n_dots=8).mean_field_sde(dt=0.1, tau=0.2, n_iters=200, j=0.,
-    #                                            true='CW', noise=0.1, plot=True,
-    #                                            discrete_stim=True, s=0.1,
-    #                                            b=[0, 1, 0], noise_stim=0.0,
-    #                                            coh=0.25, nstates=3, stim_stamps=1)
+    #                                             true='CW', noise=0.1, plot=True,
+    #                                             discrete_stim=True, s=0.1,
+    #                                             b=[0, 1, 0], noise_stim=0.0,
+    #                                             coh=0.25, nstates=3, stim_stamps=1)
     # good seed: 5, 20, 30
     # ring(epsilon=1e-2, n_dots=20).mean_field_sde(dt=0.01, tau=0.2, n_iters=1000, j=0.3,
     #                                               true='CW', noise=0.2, plot=True,
@@ -4289,7 +4289,7 @@ if __name__ == '__main__':
     #     plt.show()
     #     plt.pause(0.01)
     # save_fixed_points_vs_epsilon(eps_list=np.logspace(-5, -1, 400), n_iters=4000, n_reps=10)
-    plot_quartet_fps_vs_epsilon(eps_list=np.logspace(-5, -1, 400), log_eps=True)
+    # plot_quartet_fps_vs_epsilon(eps_list=np.logspace(-5, -1, 400), log_eps=True)
     # plot_quartet_fps_vs_ratio_different_eps(ratio_list=np.geomspace(0.5, 2, 100),
     #                                         epslist=[1e-1, 0.06, 1e-2, 1e-3, 5e-4])
     # save_choice_vs_ratio(ratio_list=np.geomspace(0.5, 2, 21),
@@ -4322,17 +4322,19 @@ if __name__ == '__main__':
     # fig, ax = plt.subplots(nrows=2, figsize=(10, 5))
     # ax[0].imshow(snm.T, aspect='auto', cmap='binary', vmin=0, vmax=1)
     # ax[1].imshow(scw.T, aspect='auto', cmap='binary', vmin=0, vmax=1)
-    # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j=0.7,
+    # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j_list=[0.3],
     #                         true='CW', noise=0.1,
     #                         cohlist=np.arange(0, 0.6, 0.1),
     #                         nreps=5)
     # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j_list=[0., 4],
     #                         noise=0.1, cohlist=np.arange(0, 0.22, 2e-2),
     #                         nreps=1000, noise_stim=0.2)
-    # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-    #                         nsims=50, simulate=False, biasnm=0., j=0.4)
-    # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-    #                         nsims=50, simulate=False, biasnm=0.5, j=0.4)
+    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+                            nsims=5, simulate=True, biasnm=0., j=0.6)
+    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+                            nsims=5, simulate=True, biasnm=0.5, j=0.6)
+    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+                            nsims=5, simulate=True, biasnm=1, j=0.6)
     # for biasnm in [0.5]:
     #     print(f'B_NM = {biasnm}')
     #     for j in [0., 0.2, 0.4]:
@@ -4368,3 +4370,6 @@ if __name__ == '__main__':
     #                                             tritone=True,
     #                                             stim_stamps=50, colors=True,
     #                                             erase_middle_tritone=True, noise_gaussian=0.15)
+    # plot_j_stim_biases_vs_a(cohlist=np.arange(0, 0.51, 1e-2).round(4),
+    #                             sigmalist=np.arange(0.05, 0.2, 1e-3).round(4),
+    #                             plot_matrix=True, epsilon=0.1)
