@@ -5306,6 +5306,11 @@ def plot_spike_examples(name='chain', n=9, lam_J=1.0, lam_B=0.1,
     rng = np.random.default_rng(seed + 7)
     fig, axes = plt.subplots(len(schemes), 3, squeeze=False,
                              figsize=(13.5, 3.0 * len(schemes)))
+    labels = [r'Network $\hat{q}_i$', r'True $q_i$']
+    handles = [plt.Line2D([0], [0], color='k',
+                          linestyle=['-', '--'][i_l],
+                          label=label)
+               for i_l, label in enumerate(labels)]
     for ri, (kind, al) in enumerate(schemes):
         _, qm = iterate_map(kind, Jm, Bv, alpha=al, n_iter=5000, tol=1e-13,
                             seed=seed, keep='last')
@@ -5324,37 +5329,35 @@ def plot_spike_examples(name='chain', n=9, lam_J=1.0, lam_B=0.1,
             idx = np.nonzero(rng.binomial(S[:, u], 1 / n_pool))[0]
             ax.vlines(t[idx], k - .42, k + .42, color=cols[k], lw=.55)
         ax.set_yticks(us)
-        ax.set_yticklabels(lab, fontsize=8)
+        ax.set_yticklabels(lab, fontsize=12)
         ax.set_ylim(-.7, len(us) - .3)
         ax.invert_yaxis()
-        if ri == 0:
-            ax.set_title('spikes (one neuron per unit)', fontsize=11)
         ax = axes[ri, 1]
         for k, u in enumerate(us):
             ax.plot(t, rate_gain * (xs[:, u] / scale[u]) + rate_base,
                     color=cols[k], lw=.8)
         ax.set_ylim(0, rate_base + rate_gain)
-        if ri == 0:
-            ax.set_title('decoded firing rate (Hz)', fontsize=11)
+        ax.set_ylabel(r'Decoded firing rate, $r_i$')
         ax = axes[ri, 2]
         for i in range(min(n_units, len(Bv))):
             ax.plot(t, qs[:, i], color=plt.cm.tab10(i % 10), lw=.8)
             ax.axhline(qm[-1][i], color=plt.cm.tab10(i % 10), ls='--', lw=.8)
         ax.set_ylim(-.02, 1.02)
-        if ri == 0:
-            ax.set_title(r'belief $q_i$ (dashed: algorithm)', fontsize=11)
+        ax.set_ylabel(r'Belief $q_i$')
         tag = 'MF' if kind == 'mf' else ('LBP' if abs(al - 1) < 1e-9
                                          else rf'FBP $\alpha$={al:g}')
-        axes[ri, 0].set_ylabel(tag, fontsize=12)
+        axes[ri, 0].set_ylabel(tag)
         for a in axes[ri]:
             a.spines['right'].set_visible(False)
             a.spines['top'].set_visible(False)
             a.set_xlim(0, t[-1])
             if ri == len(schemes) - 1:
                 a.set_xlabel('time (s)')
-    fig.suptitle(rf'{key},  $\lambda_1$={lam_J:g},  $\lambda_2$={lam_B:g},  '
-                 rf'{n_pool} neurons per unit', fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    axes[0, -1].legend(handles=handles, loc='upper right', frameon=False)
+    axes[1, -1].legend(handles=handles, loc='upper right', frameon=False)
+    # fig.suptitle(rf'{key},  $\lambda_1$={lam_J:g},  $\lambda_2$={lam_B:g},  '
+    #              rf'{n_pool} neurons per unit', fontsize=12)
+    fig.tight_layout()
     if save:
         for ext in ('png', 'svg'):
             fig.savefig(DATA_FOLDER + f'{fname}.{ext}', dpi=300,
