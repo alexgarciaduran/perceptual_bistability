@@ -78,6 +78,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp, quad, cumulative_trapezoid
 from scipy.optimize import root_scalar
+from matplotlib.lines import Line2D
 
 import matplotlib as mpl
 mpl.rcParams['font.size'] = 16
@@ -752,6 +753,74 @@ def figD_sim_vs_theory(a_list=(0.5, 1.0, 1.5), frac_list=(0.0,), kd=0.15,
 
 
 # =====================================================================
+#  SECTION E -- Hamiltonian phase portrait  (x, p)
+# =====================================================================
+def figE_phase_portrait(a=1.0, b=0.0, D=0.1):
+    """Phase portrait of the escape Hamiltonian  H = p f - D p^2.
+
+    Canonical (x, p) plane for  x_dot = f + eta ,  eta = -2D p  (sigma^2=2D):
+        x_dot =  dH/dp = f - 2D p ,     p_dot = -dH/dx = -p f'(x) .
+    The two zero-energy (H=0) manifolds are the noiseless relaxation line
+    p = 0 (eta = 0, downhill) and the escape branch p = f/D (eta = -2f,
+    uphill).  The optimal switch is the heteroclinic orbit: ascent
+    xL -> xbar on p = f/D, then free descent xbar -> xR on p = 0.
+    """
+    r = wells_and_barrier(a, b)
+    xL, xbar, xR = r[0], r[1], r[-1]
+
+    xv = np.linspace(xL - 0.4, xR + 0.4, 400)
+    pmax = 1.4 * np.max(np.abs(f(np.linspace(xL, xR, 400), a, b) / D))
+    pv = np.linspace(-pmax, pmax, 400)
+    X, P = np.meshgrid(xv, pv)
+    H = P * f(X, a, b) - D * P ** 2
+    dX = f(X, a, b) - 2 * D * P                 # x_dot = dH/dp
+    dP = -P * fp(X, a)                          # p_dot = -dH/dx
+
+    fig, ax = plt.subplots(figsize=(7.5, 6))
+    ax.streamplot(xv, pv, dX, dP, color="0.82", density=1.1, linewidth=0.7,
+                  arrowsize=0.8)
+    ax.contour(X, P, H, levels=np.linspace(-2, 2, 13), colors="0.88",
+               linewidths=0.6)
+
+    ax.axhline(0.0, color="steelblue", lw=3)
+    ax.plot(xv, f(xv, a, b) / D, color="firebrick", lw=3)
+
+    # optimal switch: ascent xL->xbar on p=f/D, descent xbar->xR on p=0
+    xa = np.linspace(xL, xbar, 200)
+    ax.plot(xa, f(xa, a, b) / D, color="firebrick", lw=6, alpha=0.5, zorder=1)
+    xd = np.linspace(xbar, xR, 120)
+    ax.plot(xd, np.zeros_like(xd), color="steelblue", lw=7, alpha=0.5, zorder=1)
+
+    # finite-T orbits H=const (C=-4DH): H<0 cross the barrier (jump wells),
+    # H>0 are closed flank loops that turn back without crossing.
+    f2max = np.max(f(np.linspace(xL, xR, 400), a, b) ** 2)
+    H_esc = sorted([-1.2 * f2max / (4 * D), -0.3 * f2max / (4 * D)])
+    ax.contour(X, P, H, levels=H_esc, colors=["seagreen", "darkorange"],
+               linewidths=2.2, linestyles="--", zorder=4)
+    ax.contour(X, P, H, levels=[0.4 * f2max / (4 * D)], colors=["purple"],
+               linewidths=2.0, zorder=4)
+
+    for xs in (xL, xbar, xR):                   # wells + barrier on p=0
+        ax.plot(xs, 0.0, "ko", ms=10, zorder=5)
+
+    handles = [
+        Line2D([0], [0], color="firebrick", lw=3, label=r"instanton $H=0$ ($\eta=-2f$)"),
+        Line2D([0], [0], color="steelblue", lw=3, label=r"relaxation $p=0$ ($\eta=0$)"),
+        Line2D([0], [0], color="darkorange", lw=2.2, ls="--",
+               label=r"finite-$T$ escape $H<0$ (crosses)"),
+        Line2D([0], [0], color="purple", lw=2.0,
+               label=r"$H>0$: turns back (no crossing)"),
+    ]
+    ax.set(xlabel="position x", ylabel="momentum p",
+           xlim=(xv[0], xv[-1]), ylim=(-pmax, pmax),
+           title=f"Escape Hamiltonian H=pf−Dp²  (a={a}, b={b}, D={D})")
+    ax.legend(handles=handles, frameon=False, fontsize=10, loc="upper right")
+    ax.spines[["right", "top"]].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+# =====================================================================
 #  main
 # =====================================================================
 def main():
@@ -761,6 +830,7 @@ def main():
         "B_param_dependence.png": figB_param_dependence(),
         "C_noise_vs_stimulus.png": figC_noise_vs_stimulus(a=1.0),
         "D_sim_vs_theory.png": figD_sim_vs_theory(),
+        "E_phase_portrait.png": figE_phase_portrait(a=1.0, b=0.0, D=0.1),
     }
     for name, fig in figs.items():
         path = os.path.join(FIGDIR, name)
@@ -771,3 +841,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    figE_phase_portrait(a=1.0, b=0.0, D=0.1)
