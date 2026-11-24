@@ -56,7 +56,10 @@ TAU_MS, DT = 200.0, 0.05                 # tau = 200 ms, bin = dt*tau = 10 ms
 BIN_MS = DT * TAU_MS
 T_TRIAL = int(round(2000.0 / BIN_MS))    # 2 s trial
 TAU_S = 1.0
-MAXLAG_MS = 1000.0                       # their Figs. 3b and 4b reach 10^3 ms
+MAXLAG_MS = 1000.0
+# their Figs. 3b and 4b draw the integration window from 1 ms, although the
+# first point any binned correlogram can carry is one bin wide
+TAU_MIN = 1.0                       # their Figs. 3b and 4b reach 10^3 ms
 N_CHOICE = 15                            # steps averaged for the reported percept
 BIN_LONG = 100.0                         # independent bin of their Fig. 6
 N_LAG = 4                                # +-50 to 450 ms, their r_SC^tau=4
@@ -95,6 +98,13 @@ GAIN, BASE = 20.0, 65.0                  # single unit 45-85, multi-unit 90-170
 # assume the conclusion. The only variability is the spiking itself, acting
 # through the random initial state.
 SIG_IND, SIG_COM = 0.0, 0.0
+
+# Shared input to the neurons recorded at one site, in spikes/s. It modulates
+# their firing rate but never enters the inference, so it correlates the two
+# recordings without carrying any percept: the feed-forward common input that
+# their control conditions are usually explained by. TAU_FAST is its
+# correlation time in units of TAU_MS, so 0.15 is 30 ms.
+SIG_FAST, TAU_FAST = 0.0, 0.15
 
 JSTAR = {'mf': 0.33, 'fbp': 0.545}
 # J_MONO is fitted, not assumed: random motion still shows r_SC = 0.23 in their
@@ -229,6 +239,11 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None,
     else:
         x, synapse = state[0].copy(), state[1].copy()
     lam = DT * TAU_MS * 1e-3 * K
+    # stationary Ornstein-Uhlenbeck, one per node, shared by every neuron
+    # recorded there and independent of the network state
+    fast = rng.standard_normal(N)
+    decay = DT / TAU_FAST
+    kick = np.sqrt(2 * decay)
     pool = np.empty((T_TRIAL, N), np.int64)
     sgn = np.empty(T_TRIAL)
     for t in range(T_TRIAL):
@@ -239,7 +254,8 @@ def simulate_trial(kind, alpha, j_mat, b_vec, rng, gain_site=None,
         f = pc._map_step(kind, x_hat, j_mat, b_now, alpha, 1.0, mask)
         x = x + DT * (f - x)
         node = x if kind == 'mf' else (2 * q - 1)       # recorded at the node
-        rate = np.clip(BASE + gain_site * node, 0.0, BASE + gain_site)
+        fast = fast - decay * fast + kick * rng.standard_normal(N)
+        rate = np.clip(BASE + gain_site * node + SIG_FAST * fast, 0.0, None)
         pool[t] = rng.poisson(rate * lam)
         sgn[t] = np.mean(q) - 0.5
         # the message/magnetisation units carry their own spiking channel
@@ -546,18 +562,58 @@ def load_conditions(filename):
     return res
 
 
+def bin_width(out):
+    """
+    The bin a saved condition was run at, read back from the data.
+
+    The correlograms carry MAXLAG_MS / BIN_MS + 1 points, so the bin follows
+    from their length. Taking it from the data rather than from the module
+    keeps a figure honest when a cache is loaded under other settings.
+
+    Parameters
+    ----------
+    out : dict
+        One condition, as run_condition returns it.
+
+    Returns
+    -------
+    float
+        Bin width in ms.
+    """
+    return MAXLAG_MS / (np.asarray(out['rccg']).shape[-1] - 1)
+
+
 def run_all(kind='mf', alpha=1.0, n_trials=120, n_nets=5, recompute=False,
-            folder=None, verbose=True, mixed_mu=None):
-    """Every stimulus condition for one algorithm, cached to disk."""
+            folder=None, verbose=True, mixed_mu=None, bin_ms=None):
+    """
+    Every stimulus condition for one algorithm, cached to disk.
+
+    bin_ms selects the run: it sets the step, the bin and the trial length
+    together, so one argument picks between a coarse and a fine simulation
+    instead of three globals that have to agree.
+    """
+    global DT, BIN_MS, T_TRIAL
+    if bin_ms is not None:
+        BIN_MS = float(bin_ms)
+        DT = BIN_MS / TAU_MS
+        T_TRIAL = int(round(2000.0 / BIN_MS))
     folder = DATA_FOLDER if folder is None else folder
     mixed = MIXED_MU if mixed_mu is None else mixed_mu
     # the circuit belongs in the name: the same scheme on two circuits is
     # two different simulations and must not share a cache entry
-    filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s_b%g_%s_%s.npz' % (
-        kind, alpha, n_trials, n_nets, CIRCUIT, B_PER_DEG,
+    # the bin width belongs in the name too: a finer step is a different
+    # simulation, and its correlograms reach lags the coarse one cannot
+    fast_tag = '' if SIG_FAST == 0 else '_f%g_tf%g' % (SIG_FAST, TAU_FAST)
+    filename = folder + 'wasmuht_%s_a%g_T%d_N%d_%s_b%g_bin%g%s_%s_%s.npz' % (
+        kind, alpha, n_trials, n_nets, CIRCUIT, B_PER_DEG, BIN_MS, fast_tag,
         'carry' if CARRY_STATE else 'reset', 'mix' if mixed else 'same')
     if not recompute and os.path.exists(filename):
-        return load_conditions(filename)
+        cached = load_conditions(filename)
+        got = bin_width(cached['random'])
+        if abs(got - BIN_MS) < 1e-9:
+            return cached
+        print('  cache holds %g ms bins, %g ms asked for: recomputing'
+              % (got, BIN_MS), flush=True)
     res = {}
     jstar = JSTAR[kind] if kind in ('mf', 'fbp') else 1/(2*alpha)*np.log(3/(3-2*alpha))
     res['random'] = run_condition(kind, alpha, J_MONO * jstar, 0.0,
@@ -673,7 +729,7 @@ def plot_figure_1(res, name='wasmuht_fig1'):
 
 def plot_figure_2(res, name='wasmuht_fig2'):
     """Their Fig. 2: r_SC against disparity (violins), and r_CCG against tau."""
-    fig, ax = plt.subplots(ncols=2, figsize=(11, 3.8))
+    fig, ax = plt.subplots(ncols=2, figsize=(9, 3.8))
     data = [res['random']['rsc']] + [res['disp%.2f' % d]['rsc']
                                      for d in DISPARITIES]
     # categorical positions: the disparities are 0.01 apart, so plotting them
@@ -701,7 +757,8 @@ def plot_figure_2(res, name='wasmuht_fig2'):
     ax[0].plot([], [], marker='_', ms=14, mew=3, color='0.3', ls='none',
                label='Wasmuht et al.')
     ax[0].legend(frameon=False, loc='lower left')
-    lag = np.arange(res['random']['ccg'].shape[1]) * BIN_MS
+    lag = (np.arange(res['random']['ccg'].shape[1])
+           * bin_width(res['random']))
     for label, colour, legend in (('disp0.00', C_AMB, 'ambiguous cylinder'),
                                   ('disp%.2f' % DISPARITIES[-1], C_UNAMB,
                                    'unambiguous cylinder'),
@@ -714,7 +771,7 @@ def plot_figure_2(res, name='wasmuht_fig2'):
                            alpha=.2, lw=0)
     ax[1].set_xlabel(r'integration window $\tau$ (ms)')
     ax[1].set_xscale('log')          # their Figs. 3b and 4b use a log tau axis
-    ax[1].set_xlim(BIN_MS, MAXLAG_MS)
+    ax[1].set_xlim(TAU_MIN, MAXLAG_MS)
     ax[1].set_ylabel(r'$r_{CCG}$')
     # where their curves sit: the plateau lag of each, at 90% of its r_SC
     for key, lagkey, col in (('rsc_amb', 't90_amb', C_AMB),
@@ -734,7 +791,7 @@ def plot_figure_2(res, name='wasmuht_fig2'):
 
 def plot_figure_3(res, name='wasmuht_fig3'):
     """Their Figs. 4a and 4b: CP against r_SC, and r_CCG split at the median CP."""
-    fig, ax = plt.subplots(ncols=2, figsize=(11, 3.8))
+    fig, ax = plt.subplots(ncols=2, figsize=(8, 3.8))
     rsc, cp, ccg = (res['disp0.00']['rsc'], res['disp0.00']['cp'],
                     res['disp0.00']['ccg'])
     ok = np.isfinite(cp) & np.isfinite(rsc)
@@ -754,7 +811,7 @@ def plot_figure_3(res, name='wasmuht_fig3'):
     ax[0].set_xlabel(r'$r_{SC}$')
     ax[0].set_ylabel('choice probability')
     cp_median = np.nanmedian(cp[ok])
-    lag = np.arange(ccg.shape[1]) * BIN_MS
+    lag = np.arange(ccg.shape[1]) * bin_width(res['disp0.00'])
     for group, colour, legend in ((cp >= cp_median, '#b2182b',
                                    'CP $\\geq$ median'),
                                   (cp < cp_median, '#2166ac', 'CP < median')):
@@ -769,13 +826,13 @@ def plot_figure_3(res, name='wasmuht_fig3'):
                            alpha=.2, lw=0)
     ax[1].set_xlabel(r'integration window $\tau$ (ms)')
     ax[1].set_xscale('log')
-    ax[1].set_xlim(BIN_MS, MAXLAG_MS)
+    ax[1].set_xlim(TAU_MIN, MAXLAG_MS)
     ax[1].set_ylabel(r'$r_{CCG}$')
     for key, colour in (('cp_high', '#a21d66'), ('cp_low', '0.25')):
         ax[1].axhline(WASMUHT[key], color=colour, ls='--', lw=1.4)
     ax[1].plot([], [], ls='--', color=C_REF, label='Wasmuht et al.')
     ax[1].set_title('median CP = %.2f' % cp_median, fontsize=14)
-    ax[1].legend(frameon=False, fontsize=8)
+    ax[1].legend(frameon=False, fontsize=12)
     for a in ax:
         a.spines['right'].set_visible(False)
         a.spines['top'].set_visible(False)
@@ -1115,7 +1172,7 @@ def plot_figure_6(sweep, name='wasmuht_fig6_sweep'):
                                   lw=wide, label=tag)
         for c in range(3, 6):
             ax[r, c].set_xscale('log')
-            ax[r, c].set_xlim(BIN_MS, MAXLAG_MS)
+            ax[r, c].set_xlim(TAU_MIN, MAXLAG_MS)
             ax[r, c].set_xlabel(r'$\tau$ (ms)')
             ax[r, c].set_ylabel(r'$r_{CCG}$')
         ax[r, 0].set_xlabel(d['label'])
@@ -1291,15 +1348,85 @@ def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
     ax[2].set_xlabel('Disparity (deg)')
     ax[2].set_ylabel(r'$r_{SC}$')
     ax[2].legend(frameon=False, fontsize=12, loc='lower left')
-
+    # one row of small panels for the slope changing with the coupling, and
+    # one row of two large panels for what that slope does. a2 keeps the two
+    # large axes last, so a2[-2] and a2[-1] still name them.
+    f2 = plt.figure(figsize=(len(sweep)*1.7, 4.))
+    top_grid = f2.add_gridspec(1, len(sweep), left=.035, right=.995,
+                               top=.95, bottom=.68, wspace=.25)
+    a2 = [f2.add_subplot(top_grid[0, k]) for k in range(len(sweep))]
+    # the two summary panels are square and centred under the row: the side
+    # is set from the height so that both axes keep the same proportions
+    height = .4
+    side = height * f2.get_figheight() / f2.get_figwidth()
+    half = side * (2 + .4) / 2
+    low_grid = f2.add_gridspec(1, 2, left=.5 - half*1.2, right=.5 + half*1.2,
+                               top=.56, bottom=.56 - height, wspace=.6)
+    a2.append(f2.add_subplot(low_grid[0, 0]))
+    a2.append(f2.add_subplot(low_grid[0, 1]))
+    a_ind = 0
+    slopevals = {'ratio': [],
+                 'slope': [],
+                 'pval': []}
     for c, d in zip(shades, sweep):
         ok = np.isfinite(d['rsc']) & np.isfinite(d['cp'])
-        ax[3].scatter(d['rsc'][ok], d['cp'][ok], s=15, color=c, alpha=.7)
+        ratio = round(d['ratio'], 4)
+        # color = 'r' if ratio == 1 else c
+        color = c
+        ax[3].scatter(d['rsc'][ok], d['cp'][ok], s=15, color=color, alpha=.7)
+        a2[a_ind].scatter(d['rsc'][ok], d['cp'][ok], s=15, color=color, alpha=.7)
+        a2[a_ind].spines['right'].set_visible(False)
+        a2[a_ind].spines['top'].set_visible(False)
+        r, p = pearsonr(d['rsc'][ok], d['cp'][ok])
+        slopevals['slope'].append(r)
+        slopevals['pval'].append(p)
+        slopevals['ratio'].append(ratio)
+        fit = np.polyfit(d['rsc'][ok], d['cp'][ok], 1)
+        grid = np.linspace(d['rsc'][ok].min(), d['rsc'][ok].max(), 20)
+        a2[a_ind].plot(grid, np.polyval(fit, grid), 'k-', lw=2)
+        a2[a_ind].set_title(f'Ratio:{ratio}', fontsize=12)
+        a_ind += 1
+    # one pair of limits across the scatter panels, so they can be read
+    # against each other. The last two carry other units and keep their own,
+    # which is why the figure is not simply built with sharex and sharey.
+    finite_rsc = np.concatenate([d['rsc'][np.isfinite(d['rsc'])]
+                                 for d in sweep])
+    finite_cp = np.concatenate([d['cp'][np.isfinite(d['cp'])] for d in sweep])
+    pad_x = .05 * np.ptp(finite_rsc)
+    pad_y = .05 * np.ptp(finite_cp)
+    for k in range(len(sweep)):
+        a2[k].set_xlim(finite_rsc.min() - pad_x, finite_rsc.max() + pad_x)
+        a2[k].set_ylim(finite_cp.min() - pad_y, finite_cp.max() + pad_y)
+        a2[k].locator_params(axis='x', nbins=3)
+        a2[k].locator_params(axis='y', nbins=4)
+        if k > 0:
+            a2[k].set_yticklabels([])
+    a2[0].set_xlabel('rSC')
+    a2[0].set_ylabel('CP')
+    a2[-2].set_ylabel('Correlation')
+    a2[-1].set_ylabel('p-value')
+    a2[-2].set_xlabel('Coupling ratio')
+    a2[-1].set_xlabel('Coupling ratio')
+    a2[-2].spines['right'].set_visible(False)
+    a2[-2].spines['top'].set_visible(False)
+    a2[-2].plot(slopevals['ratio'], slopevals['slope'],
+                color='k', linestyle='', marker='o',
+                markersize=5)
+    a2[-1].spines['right'].set_visible(False)
+    a2[-1].spines['top'].set_visible(False)
+    a2[-1].axhline(0.01, color='firebrick', linestyle='--')
+    a2[-1].axvline(1, color='firebrick', linestyle='--')
+    a2[-1].plot(slopevals['ratio'], slopevals['pval'],
+                color='k', linestyle='', marker='o',
+                markersize=5)
+    a2[-1].set_yscale('log')
+    save_figure(f2, name + '_rsc_cp')
     allr = np.concatenate([d['rsc'] for d in sweep])
     allc = np.concatenate([d['cp'] for d in sweep])
     ok = np.isfinite(allr) & np.isfinite(allc)
     fit = np.polyfit(allr[ok], allc[ok], 1)
     grid = np.linspace(allr[ok].min(), allr[ok].max(), 20)
+    ax[3].axhline(0.5, color='gray', linestyle=':', alpha=0.7)
     ax[3].plot(grid, np.polyval(fit, grid), 'k-', lw=2)
     for rk, ck, colour, text in (('rsc_amb', 'cp_amb', C_AMB, 'ambiguous'),
                                  ('rsc_rand', 'cp_rand', C_RAND, 'random')):
@@ -1307,6 +1434,10 @@ def plot_figure_7(sweep, name='wasmuht_fig7_coupling'):
                    mec='k', mew=.7, ls='none', label=text)
     ax[3].set_xlabel(r'$r_{SC}$')
     ax[3].set_ylabel('Choice probability')
+    r, p = pearsonr(allr[ok], allc[ok])
+    ax[3].annotate(f'r = {r:.3f}\np = {p:.2f}', xy=(.1, 1.), xycoords=ax[3].transAxes,
+                   fontsize=12)
+    ax[3].set_ylim(0.45, 1.05)
     ax[3].legend(frameon=False, fontsize=11, title='Wasmuht et al.',
                  title_fontsize=12)
     # one block per coupling, so the bar shows the colours actually drawn
@@ -1342,6 +1473,7 @@ if __name__ == '__main__':
     #   python wasmuht_reproduction.py best fbp 1.0    loopy BP alone
     # import sys
     # circuit = sys.argv[1] if len(sys.argv) > 1 else 'best'
+    # circuit = 'match'
     # schemes = ([(sys.argv[2], float(sys.argv[3]),
     #               '%s_a%s' % (sys.argv[2].upper(), sys.argv[3]))]
     #             if len(sys.argv) > 3 else SCHEMES)
@@ -1350,7 +1482,8 @@ if __name__ == '__main__':
     #     print('%s on circuit %s: J* = %.3f, J_bi = %.3f, J_mono = %.3f'
     #           % (tag, circuit, JSTAR[kind], J_BI * JSTAR[kind],
     #               J_MONO * JSTAR[kind]), flush=True)
-    #     res = run_all(kind, alpha, recompute=False, verbose=True)
+    #     res = run_all(kind, alpha, recompute=False, verbose=True,
+    #                   bin_ms=1.0, n_nets=8)
     #     suffix = '%s_%s_%s' % (tag, circuit, 'mixed' if MIXED_MU else 'same')
     #     plot_figure_1(res, 'wasmuht_fig1_%s' % suffix)
     #     plot_figure_2(res, 'wasmuht_fig2_%s' % suffix)
@@ -1367,5 +1500,5 @@ if __name__ == '__main__':
     # sweep = run_parameter_sweep(circuit='k20')
     # plot_figure_6(sweep)
     # plot_figure_7(sweep, name='wasmuht_fig7_coupling')
-    sweep = run_coupling_sweep(recompute=False)
+    sweep = run_coupling_sweep(recompute=False, ratios=np.arange(0.5, 2.1, 0.1))
     plot_figure_7(sweep)

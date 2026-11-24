@@ -171,15 +171,15 @@ def plot_bifurcation(J_sweep=np.linspace(-10, 6, 321), B=0.0, save=True):
     ax[1].set(xlabel='coupling J', ylabel='|x* - y*|  (asymmetry)',
               title='competition order parameter')
     # analytic symmetric branch overlay
-    Js = np.linspace(J_sweep[0], J_sweep[-1], 400)
-    for J in Js:
-        for m in symmetric_fp_analytic(J, B):
-            ax[0].plot(J, m, '.', color='tab:red', ms=1.5, zorder=0)
+    # Js = np.linspace(J_sweep[0], J_sweep[-1], 1000)
+    # for J in Js:
+    #     for m in symmetric_fp_analytic(J, B):
+    #         ax[0].plot(J, m, '.', color='tab:red', ms=1.5, zorder=0)
     for a in ax:
         a.axvline(0, color='0.85', lw=0.8)
         a.spines['top'].set_visible(False); a.spines['right'].set_visible(False)
     ax[0].plot([], [], 'ko', ms=4, label='stable'); ax[0].plot([], [], 'x', color='0.7', label='unstable')
-    ax[0].plot([], [], '.', color='tab:red', label='analytic symmetric')
+    # ax[0].plot([], [], '.', color='tab:red', label='analytic symmetric')
     ax[0].legend(frameon=False, fontsize=8)
     fig.tight_layout()
     if save:
@@ -286,6 +286,7 @@ def pitchfork_J(B=0.0, J_hi=12.0):
 
 if __name__ == '__main__':
     B = -1
+    # B = 0
     print(f"\npitchfork onset J* = {pitchfork_J(B):.4f}  (B={B})")
     report_pointwise(J_list=(0., 0.5, 1, 3, 5, 6), B=B)
     scan_multiplicity(J_sweep=np.linspace(0, 12, 121), B=B)
