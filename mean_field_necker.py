@@ -1773,20 +1773,24 @@ def escape_time(j, xi, xj, noise, b=0):
 
 
 def analyze_jump_dynamics(j, b, theta, noise=0.35, tau=0.1, dt=1e-3, t_end=1000,
-                          steps_back=250, steps_front=250):
+                          steps_back=250, steps_front=250, max_switches=200):
     idx_0 = []
     idx_1 = []
     while len(idx_0) < 1 and len(idx_1) < 1:
+        print('Simulating')
         t, vec = solution_mf_sdo_euler(j, b, theta, noise, tau, time_end=t_end, dt=dt)
+        print('Simulated ', len(t), ' steps')
         mean_states = np.clip(np.mean(vec, axis=1), 0, 1)
         mean_states = np.convolve(mean_states, np.ones(1000)/1000, mode='same')
         p_thr = 0.5
         mean_states[mean_states > p_thr] = 1
         mean_states[mean_states < (1-p_thr)] = 0
         mean_states = mean_states[mean_states != p_thr]
+        print('Computing RLE')
         orders = gn.rle(mean_states)
         idx_1 = orders[1][orders[2] == 1]
         idx_0 = orders[1][orders[2] == 0]
+        print('Number of switches: ', len(idx_1)+len(idx_0))
     idx_1 = orders[1][orders[2] == 1]
     idx_1 = idx_1[(idx_1 > steps_back) & (idx_1 < (len(mean_states))-steps_front)]
     idx_0 = orders[1][orders[2] == 0]
@@ -1798,8 +1802,9 @@ def analyze_jump_dynamics(j, b, theta, noise=0.35, tau=0.1, dt=1e-3, t_end=1000,
     mean_vals_nor_array = np.empty((theta.shape[0], len(idx_1), steps_back+steps_front))
     mean_vals_nor_array[:] = np.nan
     conv_window = 5
-    fig, ax = plt.subplots(ncols=5, nrows=4)
+    fig, ax = plt.subplots(ncols=4, nrows=4, figsize=(14,14))
     ax = ax.flatten()
+    idx_1 = idx_1[:max_switches]
     for i in range(len(idx_1)):
         idx = idx_1[i]
         # vals_idx = np.argsort(np.sum(vec[idx - steps_back:idx, :] -
@@ -1818,8 +1823,8 @@ def analyze_jump_dynamics(j, b, theta, noise=0.35, tau=0.1, dt=1e-3, t_end=1000,
         if i < len(ax):
             for k in range(8):
                 ax[i].plot(t[idx_1[i]-steps_back:idx_1[i]+steps_front], mean_vals_1_array[k, i, :])
-                ax[i].set_xlabel('Time (s)')
-                ax[i].set_ylabel('Approx. post.')
+    ax[12].set_xlabel('Time (s)')
+    ax[12].set_ylabel('Approx. post.')
     fig.tight_layout()
     fig.suptitle('J = ' + str(j) + ', B = ' + str(b))
     mean_vals_mean = np.nanmean(mean_vals_1_array, axis=1)
@@ -8623,14 +8628,14 @@ def plot_r2_vs_J(J_values=None, N=4, sigma=0.18, w1=1.0, w2=1.0, b0=0.0,
     
 if __name__ == '__main__':
     print('Mean-Field inference')
-    plot_cue_combination(J=0.1, N=3, sigma=0.07, w1=1.0, w2=1.0,
-                          n_cue_levels=50, cue_range=(-1, 1),
-                          noise=0.03, seed=0,
-                          method='mean_field')
-    plot_cue_combination(J=0.1, N=3, sigma=0.18, w1=1.0, w2=1.0,
-                          n_cue_levels=50, cue_range=(-1, 1),
-                          noise=0.03, seed=0,
-                          method='boltzmann')
+    # plot_cue_combination(J=0.1, N=3, sigma=0.07, w1=1.0, w2=1.0,
+    #                       n_cue_levels=50, cue_range=(-1, 1),
+    #                       noise=0.03, seed=0,
+    #                       method='mean_field')
+    # plot_cue_combination(J=0.1, N=3, sigma=0.18, w1=1.0, w2=1.0,
+    #                       n_cue_levels=50, cue_range=(-1, 1),
+    #                       noise=0.03, seed=0,
+    #                       method='boltzmann')
     # fixed_points_vs_B(J_mono=0.1, J_bis=0.6, n=3,
     #                   iters=400)
     # dummy_psychometric(nreps=1000, pshuf=[1., 0.7, 0.],
@@ -8717,6 +8722,11 @@ if __name__ == '__main__':
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
     # calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
+    analyze_jump_dynamics(j=0.5, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=50_000,
+                          steps_back=250, steps_front=250, max_switches=50)
+    analyze_jump_dynamics(j=1.2, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=500_000,
+                          steps_back=250, steps_front=250, max_switches=50)
+    
     # example_dynamics_hierarchical_theta(theta=gn.THETA_HIER)
     # bifurcation_hierarchical(b=0, varchange='descending')
     # bifurcation_hierarchical(b=0, varchange='ascending')
