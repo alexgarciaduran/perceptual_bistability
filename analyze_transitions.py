@@ -178,7 +178,7 @@ def mf_chain(j, b, theta, noise, tau, n_steps, dt, seed):
     np.random.seed(seed)
     n = theta.shape[0]
     x = np.random.rand(n)
-    out = np.empty((n_steps, n))
+    out = np.empty((n_steps, n), dtype=np.float32)       # float32 to bound memory
     c = noise * np.sqrt(dt / tau)
     for t in range(n_steps):
         field = theta @ (2 * x - 1)
@@ -189,19 +189,19 @@ def mf_chain(j, b, theta, noise, tau, n_steps, dt, seed):
     return out
 
 
-def mf_switches(j, b=0, noise=0.2, tau=0.1, dt=1e-3, t_end=6000, n_chains=8,
+def mf_switches(j, b=0, noise=0.2, tau=0.1, dt=1e-2, t_end=200000, n_chains=10,
                 max_switches=400, steps_back=250, steps_front=250,
                 w_smooth=1000, theta=THETA):
     """Collect mean-spin windows around spontaneous up-switches of the MF SDE."""
     n_steps = int(t_end / dt)
     cap = max_switches // n_chains + 1
-    out = []
-    for seed in range(n_chains):
+    def one_chain(seed):
         q = mf_chain(float(j), float(b), theta, float(noise), float(tau),
                      n_steps, float(dt), seed)
         m = 2 * np.clip(q, 0, 1) - 1
-        out.append(subsample(switch_windows(m, np.mean(m, axis=1),
-                                            steps_back, steps_front, w_smooth), cap))
+        return subsample(switch_windows(m, np.mean(m, axis=1),
+                                        steps_back, steps_front, w_smooth), cap)
+    out = Parallel(n_jobs=3)(delayed(one_chain)(s) for s in range(n_chains))
     out = [w for w in out if len(w)]
     return np.concatenate(out, axis=0) if out else np.empty((0, steps_back + steps_front, theta.shape[0]))
 
@@ -249,17 +249,103 @@ def mf_saddle(j, b=0, theta=THETA, n_seeds=400):
     return best
 
 
-def mf_map(j, b=0, theta=THETA, dt=5e-3, nsteps=12000, delta=1e-2):
+def mf_map(j, b=0, theta=THETA, steps=400000, tol_stop=1e-30, numiters=200,
+           dt=5e-3, noise=0.1):
+    """
+    Minimum-action path (Freidlin-Wentzell), as mean spin (numiters, n).
+
+    Uses the action optimiser (mean_field_necker.minimum_action_path); with
+    enough gradient-descent steps it converges off the diagonal for J>1. This
+    is the correct object where the flow is non-gradient (off-diagonal), unlike
+    the MEP (mf_mep), which equals the MAP only on the gradient subspace.
+    """
+    import mean_field_necker as mf
+    _, x, _, _, _ = mf.minimum_action_path(j, b, noise=noise, theta=theta.astype(int),
+                                           numiters=numiters, dt=dt, steps=steps,
+                                           tol_stop=tol_stop)
+    return 2 * x.detach().numpy() - 1
+
+
+def mf_map_seeded(j, b=0, theta=THETA, eps=0.3, numiters=200, steps=200000,
+                  step_size=1e-5, dt=5e-3):
+    """
+    Action MAP with a lambda=1 (face) seed and no early stop, as q-path.
+
+    The straight diagonal guess sits in the symmetric subspace, which the
+    action descent escapes only slowly for J just above 1. Seeding the
+    midpoints with a face perturbation (zero at the endpoints) and disabling
+    tol_stop lets it converge to the true off-diagonal MAP.
+    """
+    import mean_field_necker as mf
+    import torch
+    n = theta.shape[0]
+    _, v_face = face_eigvects(theta)
+    x1, x2, _ = mf.get_unst_and_stab_fp(j, b)
+    k = np.arange(numiters)
+    slope = (x2 - x1) / numiters
+    x0 = (x1 - x2) + np.outer(k, np.repeat(slope, n))
+    bump = np.sin(np.pi * k / (numiters - 1))
+    x0 = x0 + eps * np.outer(bump, v_face[0] * np.sqrt(n))
+    x0[0], x0[-1] = np.repeat(x1, n), np.repeat(x2, n)
+    x0 = torch.tensor(x0, dtype=torch.float)
+    th = torch.tensor(theta * 1., dtype=torch.float)
+    _, x, _, _ = mf.get_path_between(x0.clone(), j, b, 0.1, th, steps=steps,
+                                     step_size=step_size, dt=dt, tol_stop=-1.)
+    return x.detach().numpy()
+
+
+def plot_map_detail(j_list=(0.6, 1.2, 2.0), b=0, theta=THETA):
+    """Per-node action-MAP trajectories and its projection onto all 8 eigenvectors."""
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    evals, evecs = np.linalg.eigh(theta * 1.0)
+    srt = np.argsort(-evals)
+    evals, evecs = evals[srt], evecs[:, srt]
+    fig, ax = plt.subplots(len(j_list), 2, figsize=(11, 4.0 * len(j_list)))
+    ax = np.atleast_2d(ax)
+    for a in ax.flatten():
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    for r, j in enumerate(j_list):
+        m = mf_map(j, b=b, theta=theta)                   # action MAP, mean spin
+        q = (m + 1) / 2
+        t = np.arange(len(m))
+        proj = m @ evecs                                  # (numiters, 8)
+        for i in range(theta.shape[0]):
+            ax[r, 0].plot(t, q[:, i], lw=1.2)
+        ax[r, 0].set_title('MAP node trajectories, J = {}'.format(j))
+        ax[r, 0].set_xlabel('Path index')
+        ax[r, 0].set_ylabel(r'$q_i$')
+        for k in range(evecs.shape[1]):
+            ax[r, 1].plot(t, proj[:, k], lw=1.8,
+                          label=str(int(round(evals[k]))))
+        ax[r, 1].set_title(r'MAP projection onto eigenvectors, J = {}'.format(j))
+        ax[r, 1].set_xlabel('Path index')
+        ax[r, 1].set_ylabel('projection')
+        ax[r, 1].legend(title='Eigenvalue', ncol=2, frameon=False, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_map_detail.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'fig_map_detail.pdf', dpi=400, bbox_inches='tight')
+    return fig
+
+
+def mf_mep(j, b=0, theta=THETA, dt=5e-3, nsteps=12000, delta=1e-2, uniform=False):
     """
     Minimum-energy path, as mean spin (2*nsteps+1, n).
 
-    Descends the deterministic flow from the index-1 saddle along its
-    unstable manifold into each well, giving a convergent well->saddle->well
-    path. Replaces the stiff, non-converging action optimiser.
+    Descends the deterministic flow from a saddle along its unstable manifold
+    into each well. With uniform=False uses the lowest-F index-1 saddle (which
+    at high J connects a face domain to a well). With uniform=True descends from
+    the symmetric point q=0.5 along the uniform (lambda=3) direction, giving the
+    all-0 -> all-1 path.
     """
-    q = mf_saddle(j, b, theta)
-    w, v = np.linalg.eig(mf_jacobian(q, j, b, theta))
-    u = v[:, np.argmax(w.real)].real
+    if uniform:
+        q = np.full(theta.shape[0], 0.5)
+        w, v = np.linalg.eigh(theta * 1.0)
+        u = v[:, np.argmax(w)]                           # lambda=3 uniform mode
+    else:
+        q = mf_saddle(j, b, theta)
+        w, v = np.linalg.eig(mf_jacobian(q, j, b, theta))
+        u = v[:, np.argmax(w.real)].real
     u = u / np.linalg.norm(u)
     halves = []
     for sgn in (1, -1):
@@ -408,6 +494,279 @@ def plot_norm_panels(j_list=(0.6, 1.3), b=0, theta=THETA, smooth_mf=51,
     fig.tight_layout()
     fig.savefig(SV_FOLDER + 'fig_norm_panels.png', dpi=400, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'fig_norm_panels.pdf', dpi=400, bbox_inches='tight')
+    return fig
+
+
+def plot_nu_and_directions(j_list=(0.6, 1.2), theta=THETA, smooth_mf=21):
+    """
+    ||nu|| vs mu (MF + Gibbs), and the three lambda=1 projections aligned to
+    each switch's leading face. MF comes from the saved noise=0.3 sims.
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    _, v_face = face_eigvects(theta)
+    edges = np.linspace(-1, 1, 25)
+    fig, ax = plt.subplots(len(j_list), 2, figsize=(11, 4.5 * len(j_list)))
+    ax = np.atleast_2d(ax)
+    for a in ax.flatten():
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    dcol = ['darkorange', 'seagreen', 'purple']
+
+    for r, j in enumerate(j_list):
+        mw = smooth_time(np.load(DATA_FOLDER + 'mf_j{}_n0.3_tau0.05.npy'.format(j)), smooth_mf)
+        gw = cached('gibbs_j{}'.format(j), lambda: gibbs_switches(j, theta=theta))
+
+        # --- left: ||nu|| vs mu, MF and Gibbs
+        for w, key, color in [(mw, 'MF', 'firebrick'), (gw, 'Gibbs', 'k')]:
+            m = np.concatenate(list(w))
+            c, mean = bin_mean(np.mean(m, axis=1), projections(m, v_face)[1], edges)
+            ok = ~np.isnan(mean)
+            ax[r, 0].plot(c[ok], mean[ok], color=color, marker='o', ms=3, label=key)
+        ax[r, 0].set_title(r'$\|\nu\|$ vs $\mu$, J = {}'.format(j))
+        ax[r, 0].set_xlabel(r'$\mu$')
+        ax[r, 0].set_ylabel(r'$\|\nu\|$')
+        ax[r, 0].legend(frameon=False)
+
+        # --- right: three lambda=1 projections, aligned to the leading face
+        for w, ls in [(mw, '-'), (gw, '--')]:
+            mus, prs = [], []
+            for win in w:
+                mu = np.mean(win, axis=1)
+                p = win @ v_face.T                       # (T, 3)
+                k = np.argmin(np.abs(mu))                # mu=0 crossing
+                order = np.argsort(-np.abs(p[k]))        # leading face first
+                prs.append(p[:, order] * np.sign(p[k, order[0]]))
+                mus.append(mu)
+            mus, prs = np.concatenate(mus), np.concatenate(prs)
+            for d in range(3):
+                c, mean = bin_mean(mus, prs[:, d], edges)
+                ok = ~np.isnan(mean)
+                ax[r, 1].plot(c[ok], mean[ok], ls, color=dcol[d], lw=2,
+                              label=(None if ls == '--' else 'dir {}'.format(d + 1)))
+        ax[r, 1].set_title(r'aligned $\lambda=1$ projections (-- Gibbs), J = {}'.format(j))
+        ax[r, 1].set_xlabel(r'$\mu$')
+        ax[r, 1].set_ylabel('projection')
+        ax[r, 1].legend(frameon=False)
+
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_nu_directions.png', dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'fig_nu_directions.pdf', dpi=400, bbox_inches='tight')
+    return fig
+
+
+def corrected_map(j, b=0, theta=THETA, numiters=500, steps=300000, dt=5e-3,
+                  step_size=1e-5, noise=0.1, seed=0, seed_dir=None, seed_eps=0.3):
+    """
+    Minimum-action path with the CORRECTED FW residual xdot - (sigmoid - q),
+    i.e. including the -q decay term the original lagrangian omits. Path runs
+    from the all-0 well to the all-1 well. Returns mean spin (numiters, n).
+
+    seed_dir: optional 8-vector (an eigenvector) to seed the midpoints with a
+    sin-bump of amplitude seed_eps, to test whether the path leaves that mode.
+    """
+    import torch
+    np.random.seed(seed); torch.manual_seed(seed)
+    n = theta.shape[0]
+    th = torch.tensor(theta * 1., dtype=torch.float)
+    k = np.arange(numiters)
+    x0 = np.outer(k / (numiters - 1), np.ones(n)) + np.random.randn(numiters, n) * 0.05
+    if seed_dir is not None:
+        bump = np.sin(np.pi * k / (numiters - 1))
+        x0 = x0 + seed_eps * np.outer(bump, seed_dir)
+    x0[0], x0[-1] = np.zeros(n), np.ones(n)
+    x = torch.tensor(x0, dtype=torch.float)
+    for i in range(steps):
+        x.requires_grad_(True)
+        xdot = (x[1:] - x[:-1]) / dt
+        xdot = torch.cat([xdot, xdot[-1:]], 0)
+        fx = (1 / (1 + torch.exp(-2 * j * (2 * torch.matmul(th, x.T) - 3) - 2 * b))).T
+        flow = fx - x
+        S = torch.linalg.norm(xdot - flow) / (2 * noise ** 2)
+        g = torch.autograd.grad(S, x)[0]
+        g[[0, -1]] *= 0
+        x = (x - g * step_size).detach()
+    return 2 * x.numpy() - 1
+
+
+def action_density(m, j, b=0, theta=THETA, dt=5e-3):
+    """Per-point action density |xdot - fx|^2 (same fx as minimum_action_path)."""
+    q = (m + 1) / 2
+    qdot = np.vstack([np.diff(q, axis=0) / dt, (q[-1] - q[-2])[None] / dt])
+    fx = gn.sigmoid(2 * j * (2 * (q @ theta) - 3) + 2 * b)
+    return ((qdot - fx) ** 2).sum(1)
+
+
+def plot_path_analysis(path_m, j, name='path', b=0, theta=THETA):
+    """
+    Four-panel analysis of a transition path (MAP or MEP), given as mean spin:
+    node trajectories, all-8 eigenvector projections, action density vs mu,
+    and the (lambda=3, lambda=-3) phase portrait coloured by density.
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    evals, evecs = np.linalg.eigh(theta * 1.0)
+    srt = np.argsort(-evals)
+    evals, evecs = evals[srt], evecs[:, srt]
+    V3 = evecs[:, 0]
+    m = path_m
+    q = (m + 1) / 2
+    t = np.arange(len(m))
+    proj = m @ evecs
+    dens = action_density(m, j, b, theta)
+    mu = m.mean(1)
+    fig, ax = plt.subplots(2, 3, figsize=(17, 9))
+    for a in ax.flatten():
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+    for i in range(theta.shape[0]):
+        ax[0, 0].plot(t, q[:, i], lw=1.2)
+    ax[0, 0].set_xlabel('path index'); ax[0, 0].set_ylabel(r'$q_i$')
+    ax[0, 0].set_title('{} node trajectories, J={}'.format(name, j))
+    for k in range(evecs.shape[1]):
+        ax[0, 1].plot(t, proj[:, k], lw=1.6, label=str(int(round(evals[k]))))
+    ax[0, 1].set_xlabel('path index'); ax[0, 1].set_ylabel('projection')
+    ax[0, 1].set_title('eigenvector projections')
+    ax[0, 1].legend(title='Eigenvalue', ncol=2, frameon=False, fontsize=9)
+    ax[0, 2].plot(mu, dens, color='firebrick', lw=2)
+    ax[0, 2].set_xlabel(r'$\mu$'); ax[0, 2].set_ylabel(r'action density $|\dot x-f|^2$')
+    ax[0, 2].set_title('where the cost sits')
+    # two phase portraits: (lambda=3, lambda=-3) and (lambda=3, lambda=1)
+    for col, (vy, laby) in enumerate([(evecs[:, -1], '-3'), (evecs[:, 1], '1')]):
+        axc = ax[1, col]
+        uu, ss = np.meshgrid(np.linspace(-2.9, 2.9, 19), np.linspace(-1.6, 1.6, 13))
+        U, S = np.zeros_like(uu), np.zeros_like(ss)
+        for p in range(uu.shape[0]):
+            for c in range(uu.shape[1]):
+                mm = uu[p, c] * V3 + ss[p, c] * vy
+                f = mf_flow(np.clip((mm + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
+                U[p, c] = (2 * f) @ V3; S[p, c] = (2 * f) @ vy
+        axc.quiver(uu, ss, U, S, color='lightgray', alpha=0.8)
+        sc = axc.scatter(m @ V3, m @ vy, c=dens, cmap='viridis', s=16)
+        plt.colorbar(sc, ax=axc, label='density')
+        axc.set_xlabel(r'$\lambda=3$'); axc.set_ylabel(r'$\lambda={}$'.format(laby))
+        axc.set_title(r'$(\lambda=3,\ \lambda={})$ plane'.format(laby))
+    ax[1, 2].axis('off')
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_pathanalysis_{}_j{}.png'.format(name, j), dpi=350, bbox_inches='tight')
+    return fig
+
+
+def plot_overlay_density(paths, labels, j, b=0, theta=THETA, name='MAP_MEP'):
+    """
+    Overlay several paths (list of mean-spin arrays) in the (lambda=3, lambda=-3)
+    plane, coloured by action density, over the projected flow field.
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    w, V = np.linalg.eigh(theta * 1.0)
+    o = np.argsort(-w); V3, Vm3 = V[:, o][:, 0], V[:, o][:, -1]
+    vmax = max(action_density(p, j, b, theta).max() for p in paths)
+    fig, ax = plt.subplots(figsize=(9, 7))
+    uu, ss = np.meshgrid(np.linspace(-2.9, 2.9, 21), np.linspace(-1.6, 1.6, 15))
+    U, S = np.zeros_like(uu), np.zeros_like(ss)
+    for p in range(uu.shape[0]):
+        for c in range(uu.shape[1]):
+            m = uu[p, c] * V3 + ss[p, c] * Vm3
+            f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
+            U[p, c] = (2 * f) @ V3; S[p, c] = (2 * f) @ Vm3
+    ax.quiver(uu, ss, U, S, color='lightgray', alpha=0.8)
+    markers = ['o', 's', '^', 'D']
+    for i, (pth, lab) in enumerate(zip(paths, labels)):
+        d = action_density(pth, j, b, theta)
+        sc = ax.scatter(pth @ V3, pth @ Vm3, c=d, cmap='viridis', vmin=0, vmax=vmax,
+                        s=16, marker=markers[i % 4], label=lab)
+    plt.colorbar(sc, ax=ax, label=r'action density $|\dot x-f|^2$')
+    ax.set_xlabel(r'$\lambda=3$ (magnetization)'); ax.set_ylabel(r'$\lambda=-3$ (bipartite)')
+    ax.set_title('Paths in (uniform, bipartite) plane, J={}'.format(j))
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    ax.legend(loc='upper left')
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_overlay_density_{}_j{}.png'.format(name, j), dpi=400, bbox_inches='tight')
+    return fig
+
+
+def plot_phase_grid(j=2.0, b=0, theta=THETA, path=None, name='MAP'):
+    """
+    Phase portraits of a path for every pair of eigenvalue directions, in a
+    grid, over the projected flow field. Diagonal cells show each mode vs path
+    index. `path` is mean spin (numiters, n); defaults to the action MAP.
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    evals, evecs = np.linalg.eigh(theta * 1.0)
+    srt = np.argsort(-evals)
+    evals, evecs = evals[srt], evecs[:, srt]
+    reps = [0, 1, 4, 7]                                   # lambda = 3, 1, -1, -3
+    labs = [int(round(evals[r])) for r in reps]
+    rng = {3: 2.9, 1: 1.6, -1: 1.6, -3: 1.6}
+    mp = mf_map(j, b=b, theta=theta) if path is None else path
+    proj = mp @ evecs                                    # (numiters, 8)
+    n = len(reps)
+    fig, ax = plt.subplots(n, n, figsize=(13, 13))
+    for a in range(n):
+        for c in range(n):
+            axc = ax[a, c]
+            axc.spines['right'].set_visible(False)
+            axc.spines['top'].set_visible(False)
+            vi, vj = evecs[:, reps[c]], evecs[:, reps[a]]   # x = col mode, y = row mode
+            if a == c:
+                axc.plot(np.arange(len(mp)), proj[:, reps[a]], color='firebrick', lw=2)
+                axc.set_ylabel(r'$\lambda={}$'.format(labs[a]))
+                axc.set_xlabel('path index')
+                continue
+            xs = np.linspace(-rng[labs[c]], rng[labs[c]], 15)
+            ys = np.linspace(-rng[labs[a]], rng[labs[a]], 13)
+            XX, YY = np.meshgrid(xs, ys)
+            U, W = np.zeros_like(XX), np.zeros_like(YY)
+            for p in range(XX.shape[0]):
+                for qd in range(XX.shape[1]):
+                    m = XX[p, qd] * vi + YY[p, qd] * vj
+                    f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
+                    U[p, qd] = (2 * f) @ vi
+                    W[p, qd] = (2 * f) @ vj
+            axc.quiver(XX, YY, U, W, color='gray', alpha=0.5)
+            axc.plot(proj[:, reps[c]], proj[:, reps[a]], color='firebrick', lw=2.5)
+            axc.set_xlabel(r'$\lambda={}$'.format(labs[c]))
+            axc.set_ylabel(r'$\lambda={}$'.format(labs[a]))
+    fig.suptitle('{} phase portraits, J = {}'.format(name, j), y=1.0)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_phase_grid_{}_j{}.png'.format(name, j), dpi=350, bbox_inches='tight')
+    return fig
+
+
+def plot_eigen_traces(j=1.2, theta=THETA, n_show=80, smooth_mf=21):
+    """
+    Per-eigendirection switch traces, MF vs Gibbs. Rows = eigenvalue groups
+    (3, 1, -1, -3); faint lines are single switches, bold is the mean of the
+    projection magnitude (norm for the 3-fold groups, |.| for lambda=+-3).
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    evals, evecs = np.linalg.eigh(theta * 1.0)
+    srt = np.argsort(-evals)
+    evals, evecs = evals[srt], evecs[:, srt]
+    groups = [('$\\lambda=3$', [0], 'signed'), ('$\\lambda=1$', [1, 2, 3], 'norm'),
+              ('$\\lambda=-1$', [4, 5, 6], 'norm'), ('$\\lambda=-3$', [7], 'abs')]
+    mw = smooth_time(np.load(DATA_FOLDER + 'mf_j{}_n0.3_tau0.05.npy'.format(j)), smooth_mf)
+    gw = cached('gibbs_j{}'.format(j), lambda: gibbs_switches(j, theta=theta))
+    fig, ax = plt.subplots(4, 2, figsize=(11, 13), sharex=True)
+    for col, (w, name, mc) in enumerate([(mw, 'MF', 'firebrick'), (gw, 'Gibbs', 'k')]):
+        sel = np.random.choice(len(w), min(n_show, len(w)), replace=False)
+        T = w.shape[1]
+        t = np.arange(T) - T // 2
+        for row, (lab, idx, mode) in enumerate(groups):
+            tr_all = []
+            for s in sel:
+                p = w[s] @ evecs[:, idx]
+                tr = (np.linalg.norm(p, axis=1) if mode == 'norm'
+                      else (np.abs(p[:, 0]) if mode == 'abs' else p[:, 0]))
+                ax[row, col].plot(t, tr, color='gray', alpha=0.15, lw=0.6)
+                tr_all.append(tr)
+            ax[row, col].plot(t, np.mean(tr_all, axis=0), color=mc, lw=2.2)
+            ax[row, col].spines['right'].set_visible(False)
+            ax[row, col].spines['top'].set_visible(False)
+            ax[row, col].set_ylabel(lab)
+            if row == 0:
+                ax[row, col].set_title('{}, J = {}'.format(name, j))
+        ax[3, col].set_xlabel('Samples from switch')
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_eigen_traces_j{}.png'.format(j), dpi=400, bbox_inches='tight')
     return fig
 
 
