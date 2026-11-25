@@ -4475,7 +4475,8 @@ def get_path_between(x, j, b, noise, theta, steps=1000, step_size=1e-1, dt=1,
 
 def lagrangian(x, xdot, j, b, noise, theta, tau=0.1, dt=1e-2, n=3, neg=False):
     fx = 1 / (1 + torch.exp(-2 * j * (2 * torch.matmul(theta, x.T) - n) - 2 * b)) * (-1)**neg
-    lag = torch.norm(xdot.T - fx)/(2*noise**2)
+    flow = fx - x.T                      # MF drift f = sigmoid - q (the -q decay term)
+    lag = torch.linalg.norm(xdot.T - flow) / (2 * noise**2)
     return lag
 
 
@@ -4730,6 +4731,24 @@ def calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=20000,
     ax[1].set_xlabel('Time from switch (s)')
     ax[0].set_ylabel('Projection of activity')
     ax[1].set_ylim(-0.6, 0.6)
+    # projection of the MAP onto ALL 8 eigenvectors over time
+    evals_all, evecs_all = np.linalg.eigh(np.asarray(theta, dtype=float))
+    srt = np.argsort(-evals_all)
+    evals_all, evecs_all = evals_all[srt], evecs_all[:, srt]
+    m_path = 2 * x.detach().numpy() - 1
+    proj_all = m_path @ evecs_all
+    t_path = np.arange(len(m_path)) * dt
+    fig, axp = plt.subplots(1, figsize=(4,3))
+    axp.spines['right'].set_visible(False)
+    axp.spines['top'].set_visible(False)
+    for k in range(evecs_all.shape[1]):
+        axp.plot(t_path, proj_all[:, k], label=str(int(round(evals_all[k]))),
+                 linewidth=2)
+    axp.set_xlabel('Time (s)')
+    axp.set_ylabel('Projection of MAP onto eigenvectors')
+    axp.set_title('J = ' + str(J) + ', B = ' + str(b))
+    axp.legend(title='Eigenvalue', ncol=2)
+    fig.tight_layout()
 
 
 def calc_potential_diff(j=0.5, b=0, noise=0.1, theta=theta, steps=20000,
@@ -8722,7 +8741,9 @@ if __name__ == '__main__':
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
     # calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
     #                               tol_stop=1e-30)
-    analyze_jump_dynamics(j=0.5, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=50_000,
+    # plot_mf_sims_8d(j=2, b=0, theta=theta, noise=0.1,
+    #                 ini_cond=None, step_line_plot=500)
+    analyze_jump_dynamics(j=0.5, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=10_000,
                           steps_back=250, steps_front=250, max_switches=50)
     analyze_jump_dynamics(j=1.2, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=500_000,
                           steps_back=250, steps_front=250, max_switches=50)
