@@ -14,6 +14,7 @@ import gibbs_necker as gn
 from scipy.optimize import fsolve
 from joblib import Parallel, delayed
 from numba import njit
+from tqdm import tqdm
 
 mpl.rcParams['font.size'] = 16
 plt.rcParams['legend.title_fontsize'] = 14
@@ -575,7 +576,7 @@ def corrected_map(j, b=0, theta=THETA, numiters=500, steps=300000, dt=5e-3,
         x0 = x0 + seed_eps * np.outer(bump, seed_dir)
     x0[0], x0[-1] = np.zeros(n), np.ones(n)
     x = torch.tensor(x0, dtype=torch.float)
-    for i in range(steps):
+    for i in tqdm(range(steps)):
         x.requires_grad_(True)
         xdot = (x[1:] - x[:-1]) / dt
         xdot = torch.cat([xdot, xdot[-1:]], 0)
@@ -648,6 +649,45 @@ def plot_path_analysis(path_m, j, name='path', b=0, theta=THETA):
     fig.tight_layout()
     fig.savefig(SV_FOLDER + 'fig_pathanalysis_{}_j{}.png'.format(name, j), dpi=350, bbox_inches='tight')
     return fig
+
+
+def plot_map_vs_mep(mapp, mep, j, theta=THETA):
+    """MAP vs MEP: |lambda=-3| and ||lambda=1|| projections vs magnetization."""
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    w, V = np.linalg.eigh(theta * 1.0)
+    o = np.argsort(-w); Vm3 = V[:, o][:, -1]
+    _, v_face = face_eigvects(theta)
+    fig, ax = plt.subplots(ncols=2, figsize=(11, 4.5))
+    for a in ax:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+    for p, lab, c in [(mapp, 'MAP', 'firebrick'), (mep, 'MEP', 'royalblue')]:
+        mu = p.mean(1)
+        ax[0].plot(mu, np.abs(p @ Vm3), color=c, lw=2, label=lab)
+        ax[1].plot(mu, projections(p, v_face)[1], color=c, lw=2, label=lab)
+    ax[0].set_xlabel(r'$\mu$'); ax[0].set_ylabel(r'$|\lambda=-3|$'); ax[0].set_title('bipartite')
+    ax[1].set_xlabel(r'$\mu$'); ax[1].set_ylabel(r'$\|\lambda=1\|$'); ax[1].set_title('face')
+    ax[0].legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_map_vs_mep_j{}.png'.format(j), dpi=400, bbox_inches='tight')
+    return fig
+
+
+def plot_everything(j, theta=THETA, map_steps=200000):
+    """
+    Compute the corrected-action MAP (all-0 -> all-1) and the uniform MEP once,
+    then produce the whole figure suite for both: path analysis, phase grid,
+    overlay density, and the MAP-vs-MEP projection comparison.
+    """
+    mapp = corrected_map(j, theta=theta, numiters=500, steps=map_steps)
+    mep = mf_mep(j, theta=theta, uniform=True)
+    plot_path_analysis(mapp, j, name='MAP', theta=theta)
+    plot_path_analysis(mep, j, name='MEP', theta=theta)
+    plot_phase_grid(j, theta=theta, path=mapp, name='MAP')
+    plot_phase_grid(j, theta=theta, path=mep, name='MEP')
+    plot_overlay_density([mapp, mep], ['MAP', 'MEP'], j, theta=theta)
+    plot_map_vs_mep(mapp, mep, j, theta=theta)
+    plt.close('all')
+    return mapp, mep
 
 
 def plot_overlay_density(paths, labels, j, b=0, theta=THETA, name='MAP_MEP'):
@@ -856,4 +896,5 @@ def plot_transitions(j_list=(0.6, 1.3), b=0, theta=THETA, recompute=False):
 
 
 if __name__ == '__main__':
-    plot_transitions(j_list=(0.6, 1.3))
+    # plot_transitions(j_list=(0.6, 1.3))
+    plot_everything(j=2.0)
