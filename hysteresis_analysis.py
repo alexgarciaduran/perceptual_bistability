@@ -6784,7 +6784,7 @@ def optimal_eta_and_stimuli(J=1, sigma=0.1, alpha=1, theta=0.05, T=10,
         z=2*J*(2*q-1)+2*B
         
         dq = f(z)-q - sigma**2*p
-        dp = -p*(2*J*fp(z)-1)
+        dp = -p*(4*J*fp(z)-1)
 
         return [dq,dp]
 
@@ -8356,6 +8356,80 @@ def plot_hyst_bis_mono(unique_shuffle=[1., 0.7, 0.], n=4, simulations=False,
     ax5.set_ylabel('Hysteresis width');
     ax5.set_ylim(0, 2.8)
     fig5.tight_layout()
+
+
+def peak_amplitude_prediction(j):
+    """Analytic peak of the optimal NOISE eta*=-2f for f=sigmoid(2j(2x-1))-x
+    at B=0.  Real on the bistable branch j>1, NaN (monostable) otherwise:
+        eta*_peak = w - arctanh(w)/j,   w = sqrt(1 - 1/j).
+    """
+    j = np.asarray(j, dtype=float)
+    peak = np.full_like(j, np.nan)
+    bis = j > 1.0
+    w = np.sqrt(1.0 - 1.0 / j[bis])
+    peak[bis] = w - np.arctanh(w) / j[bis]
+    return peak
+
+
+def peak_stimulus_prediction(j, npts=4000):
+    """Peak of the optimal escape STIMULUS B*(x) for f=sigmoid(2j(2x-1))-x.
+
+    The subjects' kernel is the fluctuating stimulus b(t), not the noise, so
+    (ignoring eta) the escape is stimulus-driven.  The instanton is the same
+    time-reversed relaxation x_dot=-f0, produced by the stimulus
+        B*(x) = 0.5*(logit(2x - s0) - z0),  z0 = 2j(2x-1),  s0 = sigmoid(z0),
+    which is 0 at the well and at the barrier (x=0.5) and a pulse between.
+    Returns max_x B* over the ascent (NaN on the monostable branch j<=1).
+    """
+    j = np.atleast_1d(np.asarray(j, dtype=float))*4
+    out = np.full(j.shape, np.nan)
+    for i, jj in enumerate(j):
+        if jj <= 1.0:
+            continue
+        xL = brentq(lambda x: sigmoid(2 * jj * (2 * x - 1)) - x, 1e-9, 0.5 - 1e-9)
+        xg = np.linspace(xL + 1e-5, 0.5 - 1e-5, npts)
+        z0 = 2 * jj * (2 * xg - 1)
+        s0 = sigmoid(z0)
+        u = np.clip(2 * xg - s0, 1e-12, 1 - 1e-12)
+        bstar = 0.5 * (np.log(u / (1 - u)) - z0)
+        out[i] = np.nanmax(bstar)
+    return out if out.size > 1 else float(out[0])
+
+
+def plot_peak_amplitude_vs_prediction(pshuffles=(1., 0.7, 0.)):
+    """Empirical kernel peak amplitude vs the predicted optimal-stimulus peak.
+
+    Prediction is the peak of the optimal escape stimulus B*(x)
+    (peak_stimulus_prediction), from the per-subject effective coupling
+        j_eff = J1*(1-pshuffle) + J0
+    (fitted params in fitted_params/ndt/*.npy: [J1, J0, B1, sigma, theta]),
+    B assumed 0.  Data: mean_peak_amplitude_per_subject.npy (n_coupling, n_sub).
+    """
+    import glob
+    amp = np.load(DATA_FOLDER + 'mean_peak_amplitude_per_subject.npy')
+    pars = glob.glob(SV_FOLDER + 'fitted_params/ndt/' + '*.npy')
+    j1s = np.array([np.load(p)[0] for p in pars])
+    j0s = np.array([np.load(p)[1] for p in pars])
+    assert len(pars) == amp.shape[1], f'{len(pars)} param files vs {amp.shape[1]} subjects'
+
+    fig, ax = plt.subplots(1, figsize=(5, 4.5))
+    ax.spines[['right', 'top']].set_visible(False)
+    colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(pshuffles)))
+    xall, yall = [], []
+    for i_sh, psh in enumerate(pshuffles):
+        pred = np.atleast_1d(peak_stimulus_prediction(j1s * (1 - psh) + j0s))
+        data = amp[i_sh]
+        ax.plot(pred, data, 'o', color=colors[i_sh], label=f'coupling = {1 - psh:.1f}')
+        m = np.isfinite(pred) & np.isfinite(data)
+        xall.append(pred[m]); yall.append(data[m])
+    xall, yall = np.concatenate(xall), np.concatenate(yall)
+    r, p = pearsonr(xall, yall)
+    ax.annotate(f'r = {r:.2f}\np = {p:.1e}', xy=(0.05, 0.82), xycoords=ax.transAxes)
+    ax.set_xlabel(r'predicted peak stimulus $B^*_{\rm peak}(j_{\rm eff})$')
+    ax.set_ylabel('empirical kernel peak amplitude')
+    ax.legend(frameon=False, title='coupling')
+    fig.tight_layout()
+    return fig
 
 
 def plot_noise_variables_vs_fitted_params(n=4, variable='dominance',
@@ -14917,9 +14991,12 @@ if __name__ == '__main__':
     # simple_optimal_eta_quartic_potential(a=1.)
     # simple_optimal_eta_quartic_potential(a=1.5)
     # optimal_escape_eta_with_all_functional(j=1.3, theta=0., D=0.02)
+    plot_peak_amplitude_vs_prediction(pshuffles=(1., 0.7, 0.))
     # plot_eta()
     # optimal_b_escape(J=1.3, theta=0., k=1)
-    # optimal_eta_and_stimuli(J=1.3, sigma=0.2, alpha=1, theta=0., T=2,
+    # optimal_eta_and_stimuli(J=1.3, sigma=0.2, alpha=2, theta=0.1, T=2,
+    #                         timepoints=1000)
+    # optimal_eta_and_stimuli(J=1.2, sigma=0.2, alpha=2, theta=0.1, T=50,
     #                         timepoints=1000)
     # for k_steps in [10, 30, 60, 90, 15]:
     # for k_steps in [15]:
@@ -15104,19 +15181,19 @@ if __name__ == '__main__':
     #                           avoid_first=True, window_conv=1,
     #                           zscore_number_switches=False, 
     #                           normalize_variables=True, hysteresis_area=True)
-    plot_cv_vs_J(n=1, n_bins=7, min_durations=2, use_log=False,
-                  n_boot=100, seed=0, jstar=1/4, agg='median',
-                  dur_file='all_dominance_durations.pkl')
-    plot_cv_vs_J(n=1, n_bins=8, min_durations=2, use_log=False,
-                  n_boot=100, seed=0, jstar=1/4, agg='median',
-                  dur_file='all_dominance_durations.pkl')
-    plot_cv_vs_J(n=1, n_bins=10, min_durations=2, use_log=False,
-                  n_boot=100, seed=0, jstar=1/4, agg='median',
-                  dur_file='all_dominance_durations.pkl')
-    peak_vs_nbins(n=1, nbins_range=range(4, 19), min_durations=2,
-                  use_log=False, agg='median', n_boot=100, n_seeds=5,
-                  jstar=1/4, dur_file='all_dominance_durations.pkl')
-    # plot_noise_variables_vs_fitted_params(n=1, variable='std_dominance',
+    # plot_cv_vs_J(n=1, n_bins=7, min_durations=2, use_log=False,
+    #               n_boot=100, seed=0, jstar=1/4, agg='median',
+    #               dur_file='all_dominance_durations.pkl')
+    # plot_cv_vs_J(n=1, n_bins=8, min_durations=2, use_log=False,
+    #               n_boot=100, seed=0, jstar=1/4, agg='median',
+    #               dur_file='all_dominance_durations.pkl')
+    # plot_cv_vs_J(n=1, n_bins=10, min_durations=2, use_log=False,
+    #               n_boot=100, seed=0, jstar=1/4, agg='median',
+    #               dur_file='all_dominance_durations.pkl')
+    # peak_vs_nbins(n=1, nbins_range=range(4, 19), min_durations=2,
+    #               use_log=False, agg='median', n_boot=100, n_seeds=5,
+    #               jstar=1/4, dur_file='all_dominance_durations.pkl')
+    # plot_noise_variables_vs_fitted_params(n=1, variable='cv_dominance',
     #                                       fitted_variable='J', full=True)
     # save_5_params_recovery(n_pars=100, sv_folder=SV_FOLDER, i_ini=0)
     # for sims in [1000000]:
