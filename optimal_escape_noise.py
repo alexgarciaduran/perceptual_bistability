@@ -52,21 +52,22 @@ Along the full -1 -> +1 transition eta* is a positive PULSE on the uphill leg
 (-1 -> 0), equal to -2f there, and ~0 on the free downhill leg (0 -> +1).
 
 --------------------------------------------------------------------------
-3. NOISE-DRIVEN vs STIMULUS-DRIVEN  (joint optimum, Section C)
+3. NOISE-DRIVEN vs STIMULUS-DRIVEN  (joint optimum, Fig 3)
 --------------------------------------------------------------------------
-Minimise the control cost   J = 1/2 INT ( eta^2 + b^2 / kappa ) dt
+Minimise the control cost   J = INT [ eta^2/(4D) + b^2/(4 alpha) ] dt
 subject to  x_dot = a(x - x^3) + b + eta ,  x(0) = -1, x(T) = +1.
 
 Pontryagin (costate p):
-        eta* = -p ,      b* = -kappa p = kappa * eta* ,
-        x_dot = a(x - x^3) - (1 + kappa) p ,
+        eta* = -2 D p ,      b* = -2 alpha p = (alpha/D) eta* ,
+        x_dot = a(x - x^3) - 2(D + alpha) p ,
         p_dot = -p * a (1 - 3 x^2) .
 
-kappa is the STIMULUS GAIN (how cheap the stimulus is relative to noise):
-        kappa = 0    -> pure noise-driven (b = 0, eta* = -2f recovered),
-        kappa -> inf -> pure stimulus-driven (eta -> 0),
-        0 < kappa    -> joint; stimulus supplies a fraction kappa/(1+kappa)
-                        of the drive, noise the rest, SAME shape -> no kick.
+alpha is the STIMULUS DIFFUSIVITY (how cheap the stimulus is vs noise):
+        alpha = 0    -> pure noise-driven (b = 0, eta* = -2f recovered),
+        alpha -> inf -> pure stimulus-driven (eta -> 0),
+        0 < alpha    -> joint; stimulus supplies a fraction alpha/(D+alpha)
+                        of the total drive U = -2(D+alpha)p, noise the rest,
+                        SAME trajectory -> no kick.
 
 Run  ``python optimal_escape_noise.py``  to regenerate every figure.
 """
@@ -79,6 +80,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp, quad, cumulative_trapezoid
 from scipy.optimize import root_scalar
 from matplotlib.lines import Line2D
+from tqdm import tqdm
 
 import matplotlib as mpl
 mpl.rcParams['font.size'] = 16
@@ -214,6 +216,31 @@ def full_om_instanton(a=1.0, b=0.0, D=0.1, npts=2000):
     return tau, xg, eta
 
 
+def fullom_well_to_well(a=1.0, b=0.0, D=0.1, npts=4000):
+    """Full-OM well->well path by quadrature with a SINGLE C (b = 0).
+
+    For b = 0 both wells share f'(xL)=f'(xR)=-2a, so the rest condition
+    C = -2D f'(xL) = 4aD holds at BOTH wells and the radicand
+
+        x_dot^2 = f^2 + 2D f' + C = f^2 + 6 a D (1 - x^2)
+
+    is >= 0 on [xL, xR] (zero only at the wells).  The path rests at both
+    wells, crosses the barrier at speed sqrt(6aD), and eta* = x_dot - f rises
+    on the ascent and falls back to 0 on the descent (no plateau).  Robust at
+    any D.  Crossing (x = xbar) aligned at t = 0.
+    """
+    r = wells_and_barrier(a, b)
+    xL, xbar, xR = r[0], r[1], r[-1]
+    C = -2.0 * D * fp(xL, a)
+    xg = np.linspace(xL + 1e-5, xR - 1e-5, npts)
+    rad = np.maximum(f(xg, a, b) ** 2 + 2 * D * fp(xg, a, b) + C, 1e-12)
+    dxdt = np.sqrt(rad)
+    eta = dxdt - f(xg, a, b)
+    t = cumulative_trapezoid(1.0 / dxdt, xg, initial=0.0)
+    t -= np.interp(xbar, xg, t)          # crossing at t = 0
+    return t, xg, eta
+
+
 def committor_eta(a=1.0, b=0.0, D=0.1, x=None, nquad=800):
     """EXACT finite-D switch-conditioned mean noise  <chi|x> = 2 D q'/q.
 
@@ -258,54 +285,52 @@ def ascent_instanton(a=1.0, b=0.0, T=15.0, npts=2000):
     return t, x, eta
 
 
-def figA_compare(a=1.0, b=0.0, D=0.05, T_long=14.0, T_short=4.0):
-    """Reduced (C~0), reduced (finite-T) and full-OM on the -1 -> +1 escape."""
-    tr, xr, etar, Cr = reduced_escape(a, b, T=T_long)
-    tf, xf, etaf, Cf = reduced_escape(a, b, T=T_short)
-    tb, xb, etab, ok = full_functional(a, b, D=D, T=T_long)
+def fig1_escape(a=1.0, b=0.0, D=0.1, T=14.0):
+    """Simple optimal escape: potential, x(t), eta(t)  (3 panels).
 
-    xv = np.linspace(-1.6, 1.6, 300)
-    fig, ax = plt.subplots(2, 2, figsize=(10, 7))
+    Reduced zero-energy instanton (eta* = -2f) overlaid with the full-OM
+    well->well path, shown BOTH ways (they agree at small D):
+      * single-C quadrature  (fullom_well_to_well, robust at any D)
+      * fixed-T BVP          (full_functional)
+    """
+    tr, xr, etar, Cr = reduced_escape(a, b, T=T, full=True)
+    tq, xq, etaq = fullom_well_to_well(a, b, D=D)
+    tb, xb, etab, ok = full_functional(a, b, D=D, T=T, full=True)
 
-    ax[0, 0].plot(xv, V(xv, a, b), "k", lw=2.5)
+    # peak-align the noise pulses (the reduced C~0 instanton is slow near the
+    # wells; aligning the eta peaks at t=0 compares pulse SHAPES fairly).
+    tr = tr - tr[np.argmax(etar)]
+    tq = tq - tq[np.argmax(etaq)]
+    if ok:
+        tb = tb - tb[np.argmax(etab)]
+
+    fig, ax = plt.subplots(1, 3, figsize=(13, 4))
+
+    xv = np.linspace(-1.5, 1.5, 300)
+    ax[0].plot(xv, V(xv, a, b), "k", lw=3)
     for xm in wells_and_barrier(a, b):
-        ax[0, 0].plot(xm, V(xm, a, b), "ro")
-    ax[0, 0].set(xlabel="x", ylabel="V(x)",
-                 title=f"Tilted quartic  (a={a}, b={b}, ΔV={a/4:.3f})")
+        ax[0].plot(xm, V(xm, a, b), "o", color="firebrick", ms=9)
+    ax[0].set(xlabel="x", ylabel="V(x)", title=f"Potential  (a={a}, b={b})")
 
-    ax[0, 1].plot(tr, xr, "k", lw=3, label=f"reduced, C≈0 (T={T_long:g})")
-    ax[0, 1].plot(tf, xf, "--", color="peru", lw=2.5,
-                  label=f"reduced, T={T_short:g} (C={Cf:.3f})")
+    ax[1].plot(tr, xr, "k", lw=3, label="reduced instanton")
+    ax[1].plot(tq, xq, color="firebrick", lw=2.5, label=f"full-OM quadrature (D={D})")
     if ok:
-        ax[0, 1].plot(tb, xb, ":", color="firebrick", lw=2.5,
-                      label=f"full OM (D={D})")
-    ax[0, 1].axhline(0.0, color="gray", ls=":", lw=1)
-    ax[0, 1].set(xlabel="time from crossing", ylabel="x(t)", xlim=(-7, 7),
-                 title="Optimal escape path  (-1 → +1)")
-    ax[0, 1].legend(frameon=False, fontsize=8)
+        ax[1].plot(tb, xb, "--", color="steelblue", lw=2, label="full-OM BVP")
+    ax[1].axhline(0.0, color="gray", ls=":", lw=1)
+    ax[1].set(xlabel="time (η* peak at 0)", ylabel="x(t)", xlim=(-7, 7),
+              title="Optimal escape path  (−1 → +1)")
+    ax[1].legend(frameon=False, fontsize=10)
 
-    ax[1, 0].plot(tr, etar, "k", lw=3, label="reduced C≈0")
-    ax[1, 0].plot(tf, etaf, "--", color="peru", lw=2.5, label=f"reduced T={T_short:g}")
+    ax[2].plot(tr, etar, "k", lw=3, label=r"reduced  $\eta=-2f$")
+    ax[2].plot(tq, etaq, color="firebrick", lw=2.5, label="full-OM quadrature")
     if ok:
-        ax[1, 0].plot(tb, etab, ":", color="firebrick", lw=2.5, label=f"full OM (D={D})")
-    ax[1, 0].axhline(0.0, color="gray", ls=":", lw=1)
-    ax[1, 0].set(xlabel="time from crossing", ylabel="η*(t)", xlim=(-7, 7),
-                 title="Optimal noise η*(t):  pulse up, free fall down")
-    ax[1, 0].legend(frameon=False, fontsize=8)
+        ax[2].plot(tb, etab, "--", color="steelblue", lw=2, label="full-OM BVP")
+    ax[2].axhline(0.0, color="gray", ls=":", lw=1)
+    ax[2].set(xlabel="time (η* peak at 0)", ylabel="η*(t)", xlim=(-7, 7),
+              title="Optimal escape noise")
+    ax[2].legend(frameon=False, fontsize=10)
 
-    ax[1, 1].plot(xr, etar, "k", lw=3, label="reduced C≈0")
-    ax[1, 1].plot(xf, etaf, "--", color="peru", lw=2.5, label=f"reduced T={T_short:g}")
-    if ok:
-        ax[1, 1].plot(xb, etab, ":", color="firebrick", lw=2.5, label=f"full OM (D={D})")
-    xa = np.linspace(wells_and_barrier(a, b)[0], 0, 100)
-    ax[1, 1].plot(xa, -2 * f(xa, a, b), color="steelblue", lw=1.5, alpha=0.7,
-                  label="-2f(x) (ascent)")
-    ax[1, 1].axhline(0.0, color="gray", ls=":", lw=1)
-    ax[1, 1].axvline(0.0, color="gray", ls=":", lw=1)
-    ax[1, 1].set(xlabel="x", ylabel="η*(x)", title="Optimal noise vs position")
-    ax[1, 1].legend(frameon=False, fontsize=8)
-
-    for a_ in ax.ravel():
+    for a_ in ax:
         a_.spines[["right", "top"]].set_visible(False)
     fig.tight_layout()
     return fig
@@ -314,81 +339,61 @@ def figA_compare(a=1.0, b=0.0, D=0.05, T_long=14.0, T_short=4.0):
 # =====================================================================
 #  SECTION B -- dependence on the potential parameters a (barrier) and b (tilt)
 # =====================================================================
-def figB_param_dependence(a_list=np.arange(0.1, 2.01, 0.02),
-                           b_list=None):
-    """Left column: peak / latency / width of eta* vs barrier a (at b = 0).
-    Right column: peak eta* and escape cost vs tilt b (at a = 1), showing the
-    stimulus lowering the noise needed until the well vanishes at b_c.
+def fig2_params(a_vals=(0.5, 1.0, 1.5, 2.0), b_fracs=(0.0, 0.3, 0.6, 0.85),
+                a_list=None, b_list=None):
+    """Explore the potential parameters  (2 rows x 3 cols).
+
+    Top row: vary the barrier a (b = 0).  Bottom row: vary the tilt b (a = 1).
+    Cols: potential V(x) | noise pulse eta*(t) | peak eta* vs the parameter,
+    with the analytic laws  peak = 4a/(3 sqrt3)  (top)  and  2(b_c - b) (bottom).
     """
+    if a_list is None:
+        a_list = np.arange(0.1, 2.01, 0.02)
     if b_list is None:
         b_list = np.linspace(0.0, 0.99 * spinodal(1.0), 60)
-
-    # --- vs a (b = 0) -------------------------------------------------
-    peak, peak_an, auc = [], [], []
-    for a in a_list:
-        Ta = max(6.0, 8.0 / a)
-        t, x, eta = ascent_instanton(a, 0.0, T=Ta, npts=4000)
-        peak.append(eta.max())
-        peak_an.append(4.0 * a / (3.0 * np.sqrt(3.0)))     # 2 f(-1/sqrt3)=4a/3√3
-        auc.append(np.trapz(eta, t))                    # unnormalized width~1/a
-
-    # --- vs b (a = 1) -------------------------------------------------
-    # analytic: peak eta = -2 f(-1/sqrt3) = 2 (b_c - b);  action = 2 (V_bar - V_L)
     bc = spinodal(1.0)
-    peak_b, peak_b_an, action_b = [], [], []
-    for b in b_list:
-        _, _, eta = ascent_instanton(1.0, b, T=max(8.0, 20.0), npts=6000)
-        peak_b.append(eta.max())
-        peak_b_an.append(2.0 * (bc - b))
-        r = wells_and_barrier(1.0, b)
-        action_b.append(2.0 * (V(r[1], 1.0, b) - V(r[0], 1.0, b)))  # 2 ΔV_left
-
-    fig, ax = plt.subplots(2, 3, figsize=(12, 6.5))
-
-    ax[0, 0].plot(a_list, peak, "k", lw=3, label="reduced C=0")
-    ax[0, 0].plot(a_list, peak_an, "--", color="gray", lw=2,
-                  label=r"$4a/(3\sqrt{3})$")
-    ax[0, 0].set(xlabel="a", ylabel="peak η*", title="Peak drive vs a  (∝ a)")
-    ax[0, 0].legend(frameon=False, fontsize=8)
-
-    # pulse shape for several a: amplitude grows (∝a), width shrinks (∝1/a)
-    for a in (0.3, 0.6, 1.0, 1.5):
-        t, x, eta = ascent_instanton(a, 0.0, T=max(6.0, 8.0 / a), npts=4000)
-        ax[0, 1].plot(t, eta, lw=2.5, color=plt.cm.viridis(a / 1.7),
-                      label=f"a={a}")
-    ax[0, 1].set(xlabel="time from peak", ylabel="η*(t)", xlim=(-8, 8),
-                 title="Pulse shape vs a")
-    ax[0, 1].legend(frameon=False, fontsize=8)
-
-    ax[0, 2].plot(a_list, auc, "k", lw=3, label="numeric")
-    ax[0, 2].axhline(2.0, color="gray", ls="--", lw=2,
-                     label=r"$2\,\Delta x=2$")
-    ax[0, 2].set(xlabel="a", ylabel=r"$\int \eta^*\,dt$", ylim=(1.9, 2.1),
-                 title="Pulse area = impulse invariant")
-    ax[0, 2].legend(frameon=False, fontsize=8)
-
-    ax[1, 0].plot(b_list, peak_b, "firebrick", lw=3, label="numeric")
-    ax[1, 0].plot(b_list, peak_b_an, "--", color="gray", lw=2,
-                  label=r"$2(b_c-b)$")
-    ax[1, 0].axvline(bc, color="gray", ls=":", lw=1.5)
-    ax[1, 0].set(xlabel="b (stimulus)", ylabel="peak η*",
-                 title="Noise needed shrinks with tilt")
-    ax[1, 0].legend(frameon=False, fontsize=8)
-    ax[1, 1].plot(b_list, action_b, "firebrick", lw=3)
-    ax[1, 1].axvline(bc, color="gray", ls=":", lw=1.5)
-    ax[1, 1].set(xlabel="b (stimulus)", ylabel=r"$2\,\Delta V_{\rm left}$",
-                 title="Escape action vs tilt")
-
-    # potential tilting with b
     xv = np.linspace(-1.6, 1.6, 300)
-    for bb in np.linspace(0, bc, 5):
-        ax[1, 2].plot(xv, V(xv, 1.0, bb), lw=2,
-                      color=plt.cm.copper(bb / bc), label=f"b={bb:.2f}")
-    ax[1, 2].set(xlabel="x", ylabel="V(x)", title="Potential vs tilt b")
-    ax[1, 2].legend(frameon=False, fontsize=7)
 
-    for a_ in ax.ravel():
-        a_.spines[["right", "top"]].set_visible(False)
+    fig, ax = plt.subplots(2, 3, figsize=(13, 7.5))
+
+    # --- top row: vary a (b = 0) -------------------------------------
+    for a in a_vals:
+        col = plt.cm.viridis(a / 2.2)
+        ax[0, 0].plot(xv, V(xv, a, 0.0), lw=2.5, color=col, label=f"a={a}")
+        t, x, eta = ascent_instanton(a, 0.0, T=max(6.0, 8.0 / a), npts=4000)
+        ax[0, 1].plot(t, eta, lw=2.5, color=col, label=f"a={a}")
+    peak_a = [ascent_instanton(a, 0.0, T=max(6.0, 8.0 / a), npts=4000)[2].max()
+              for a in a_list]
+    ax[0, 2].plot(a_list, peak_a, "k", lw=3, label="numeric")
+    ax[0, 2].plot(a_list, 4.0 * a_list / (3.0 * np.sqrt(3.0)), "--",
+                  color="firebrick", lw=2, label=r"$4a/3\sqrt{3}$")
+    ax[0, 0].set(xlabel="x", ylabel="V(x)", title="Potential vs a  (b=0)")
+    ax[0, 1].set(xlabel="time from peak", ylabel="η*(t)", xlim=(-8, 8),
+                 title="Noise pulse vs a")
+    ax[0, 2].set(xlabel="a", ylabel="peak η*", title="Peak noise vs a")
+
+    # --- bottom row: vary b (a = 1) ----------------------------------
+    for frac in b_fracs:
+        bb = frac * bc
+        col = plt.cm.copper(0.1 + 0.8 * frac)
+        ax[1, 0].plot(xv, V(xv, 1.0, bb), lw=2.5, color=col, label=f"b={bb:.2f}")
+        t, x, eta = ascent_instanton(1.0, bb, T=20.0, npts=6000)
+        ax[1, 1].plot(t, eta, lw=2.5, color=col, label=f"b={bb:.2f}")
+    peak_b = [ascent_instanton(1.0, bb, T=20.0, npts=6000)[2].max()
+              for bb in b_list]
+    ax[1, 2].plot(b_list, peak_b, "k", lw=3, label="numeric")
+    ax[1, 2].plot(b_list, 2.0 * (bc - b_list), "--", color="firebrick", lw=2,
+                  label=r"$2(b_c-b)$")
+    ax[1, 2].axvline(bc, color="gray", ls=":", lw=1.5)
+    ax[1, 0].set(xlabel="x", ylabel="V(x)", title="Potential vs b  (a=1)")
+    ax[1, 1].set(xlabel="time from peak", ylabel="η*(t)", xlim=(-8, 8),
+                 title="Noise pulse vs b")
+    ax[1, 2].set(xlabel="b (tilt)", ylabel="peak η*", title="Peak noise vs b")
+
+    for r in (0, 1):
+        for c in (0, 1, 2):
+            ax[r, c].legend(frameon=False, fontsize=9)
+            ax[r, c].spines[["right", "top"]].set_visible(False)
     fig.tight_layout()
     return fig
 
@@ -396,68 +401,47 @@ def figB_param_dependence(a_list=np.arange(0.1, 2.01, 0.02),
 # =====================================================================
 #  SECTION C -- noise vs stimulus vs joint (additive, no kick)
 # =====================================================================
-def joint_control(a=1.0, kappa=1.0, T=12.0, npts=2000):
-    """Joint noise+stimulus optimum for the additive control.
+def joint_control_alpha(a=1.0, D=0.1, alpha=0.5, T=12.0, npts=2000):
+    """Additive noise+stimulus optimum  (alpha = stimulus diffusivity).
 
-    Substituting the total drive  U = eta + b = -(1+kappa) p  in the Pontryagin
-    equations gives a system INDEPENDENT of kappa:
+    Cost  J = INT [ eta^2/(4D) + b^2/(4 alpha) ] dt ,  x_dot = f + b + eta.
+    Pontryagin gives  eta* = -2D p ,  b* = -2 alpha p ,  p_dot = -p f'(x).
+    The TOTAL drive  U = eta + b = -2(D+alpha) p  equals the reduced instanton
+    drive (U = x_dot - f), INDEPENDENT of the split, so the trajectory x(t) is
+    the same for every alpha; only the allocation changes:
 
-        x_dot = a(x - x^3) + U ,   U_dot = -U f'(x) ,
+        eta* = D U/(D+alpha) ,  b* = alpha U/(D+alpha) ,  p = -U/(2(D+alpha)) .
 
-    which is exactly the reduced instanton (U = sqrt(f^2 + C) - f).  Hence the
-    optimal TRAJECTORY and total drive do not depend on the noise/stimulus
-    split; only the allocation does:
-
-        eta* = U / (1 + kappa) ,   b* = kappa U / (1 + kappa) = kappa * eta* .
-
-    Both channels have the SAME shape, so the escape path is smooth for every
-    kappa (no kick).  Cost  J = 1/2 INT U^2 / (1 + kappa)  falls as stimulus
-    gets cheaper.  Returns t (aligned at the crossing), x, eta, b, cost.
+    Returns t (crossing at 0), x, eta, p, b.
     """
     t, x, U, C = reduced_escape(a, 0.0, T=T, npts=npts, full=True)
-    eta = U / (1.0 + kappa)
-    b = kappa * U / (1.0 + kappa)
-    cost = np.trapz(U ** 2 / (1.0 + kappa), t)
-    return t, x, eta, b, cost, True
+    p = -U / (2.0 * (D + alpha))
+    eta = D * U / (D + alpha)
+    b = alpha * U / (D + alpha)
+    return t, x, eta, p, b
 
 
-def figC_noise_vs_stimulus(a=1.0, kappas=(0.0, 0.5, 2.0, 20.0), T=12.0):
-    """Sweep the stimulus gain kappa from pure-noise to stimulus-dominated.
+def fig3_control(a=1.0, D=0.1, alphas=(0.3, 2.0), T=12.0):
+    """Noise+stimulus optimal control, two alphas (rows).  Cols: x, eta, p, b.
 
-    Trajectories stay smooth throughout (no kick): eta and b are proportional
-    because both act additively on the drift.
+    Same trajectory x(t) for both alphas (additive -> no kick); the stimulus
+    takes a fraction alpha/(D+alpha) of the total drive, the noise the rest.
     """
-    fig, ax = plt.subplots(1, 3, figsize=(12, 3.9))
-    colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(kappas)))
-
-    # trajectory + total drive are the same for every kappa -> draw once
-    t0, x0, eta0, b0, _, _ = joint_control(a, kappa=kappas[0], T=T)
-    U = eta0 + b0
-    ax[0].plot(t0, x0, "k", lw=3)
-    ax[0].axhline(0.0, color="gray", ls=":", lw=1)
-    ax[0].set(xlabel="time from crossing", ylabel="x(t)", xlim=(-6, 6),
-              title="Escape trajectory\n(same for every κ → smooth, no kick)")
-
-    for chan in (1, 2):
-        ax[chan].plot(t0, U, "--", color="gray", lw=1.5,
-                      label=r"total drive $\eta+b$")
-
-    for kap, col in zip(kappas, colors):
-        t, x, eta, b, cost, ok = joint_control(a, kappa=kap, T=T)
-        frac = kap / (1 + kap)
-        lab = ("pure noise (κ=0)" if kap == 0
-               else f"κ={kap:g} (stim {frac*100:.0f}%)")
-        ax[1].plot(t, eta, lw=2.5, color=col, label=lab)
-        ax[2].plot(t, b, lw=2.5, color=col, label=lab)
-
-    ax[1].set(xlabel="time from crossing", ylabel="η(t)", xlim=(-6, 6),
-              title="Noise channel  η* = U/(1+κ)")
-    ax[1].legend(frameon=False, fontsize=7)
-    ax[2].set(xlabel="time from crossing", ylabel="b(t)", xlim=(-6, 6),
-              title="Stimulus channel  b* = κU/(1+κ)")
-    ax[2].legend(frameon=False, fontsize=7)
-    for a_ in ax:
-        a_.spines[["right", "top"]].set_visible(False)
+    nrow = len(alphas)
+    fig, ax = plt.subplots(nrow, 4, figsize=(14, 3.3 * nrow), squeeze=False)
+    cols = ["x(t)", "η(t)", "p(t)", "b(t)"]
+    colors = ["k", "firebrick", "steelblue", "seagreen"]
+    for i, alpha in enumerate(alphas):
+        t, x, eta, p, b = joint_control_alpha(a, D=D, alpha=alpha, T=T)
+        frac = alpha / (D + alpha)
+        for c, (y, col) in enumerate(zip((x, eta, p, b), colors)):
+            ax[i, c].plot(t, y, col, lw=3)
+            ax[i, c].axhline(0.0, color="gray", ls=":", lw=1)
+            ax[i, c].set(xlim=(-6, 6), xlabel="time from crossing")
+            if i == 0:
+                ax[i, c].set_title(cols[c])
+            ax[i, c].spines[["right", "top"]].set_visible(False)
+        ax[i, 0].set_ylabel(f"α={alpha}\n(stim {frac*100:.0f}%)")
     fig.tight_layout()
     return fig
 
@@ -599,11 +583,11 @@ def _kernel_cache_file():
 
 def _run_cells(a_list, frac_list, kd, dt, steps, nwalk, seed):
     cells = {}
-    for a in a_list:
+    for a in tqdm(a_list):
         for frac in frac_list:
             b = round(frac * spinodal(a), 4)
             # D = kd * a
-            c = simulate_switch_kernel(a, b, D=0.05, dt=dt, steps=steps,
+            c = simulate_switch_kernel(a, b, D=0.03, dt=dt, steps=steps,
                                        nwalk=nwalk,
                                        seed=seed + int(1000 * a + 137 * frac))
             cells[(a, frac)] = c
@@ -642,9 +626,9 @@ def _load_cells():
     return cells
 
 
-def figD_sim_vs_theory(a_list=(0.5, 1.0, 1.5), frac_list=(0.0,), kd=0.15,
-                       dt=0.01, steps=1_000_000, nwalk=2000, seed=0,
-                       recompute=True):
+def fig4_sims(a_list=(0.5, 1.0, 1.5), frac_list=(0.0,), kd=0.15,
+              dt=0.05, steps=10_000_000, nwalk=100, seed=0,
+              recompute=False):
     """Validate chi(t) = eta(t) against the instanton on an (a,b) grid.
 
     Compares the switch-triggered noise to BOTH analytic instantons:
@@ -755,7 +739,7 @@ def figD_sim_vs_theory(a_list=(0.5, 1.0, 1.5), frac_list=(0.0,), kd=0.15,
 # =====================================================================
 #  SECTION E -- Hamiltonian phase portrait  (x, p)
 # =====================================================================
-def figE_phase_portrait(a=1.0, b=0.0, D=0.1):
+def fig5_phase(a=1.0, b=0.0, D=0.1):
     """Phase portrait of the escape Hamiltonian  H = p f - D p^2.
 
     Canonical (x, p) plane for  x_dot = f + eta ,  eta = -2D p  (sigma^2=2D):
@@ -814,7 +798,7 @@ def figE_phase_portrait(a=1.0, b=0.0, D=0.1):
     ax.set(xlabel="position x", ylabel="momentum p",
            xlim=(xv[0], xv[-1]), ylim=(-pmax, pmax),
            title=f"Escape Hamiltonian H=pf−Dp²  (a={a}, b={b}, D={D})")
-    ax.legend(handles=handles, frameon=False, fontsize=10, loc="upper right")
+    ax.legend(handles=handles, frameon=False, fontsize=14, loc="upper right")
     ax.spines[["right", "top"]].set_visible(False)
     fig.tight_layout()
     return fig
@@ -826,11 +810,11 @@ def figE_phase_portrait(a=1.0, b=0.0, D=0.1):
 def main():
     os.makedirs(FIGDIR, exist_ok=True)
     figs = {
-        "A_quartic_compare.png": figA_compare(a=1.0, b=0.0, D=0.05),
-        "B_param_dependence.png": figB_param_dependence(),
-        "C_noise_vs_stimulus.png": figC_noise_vs_stimulus(a=1.0),
-        "D_sim_vs_theory.png": figD_sim_vs_theory(),
-        "E_phase_portrait.png": figE_phase_portrait(a=1.0, b=0.0, D=0.1),
+        "1_escape.png": fig1_escape(a=1.0, b=0.0, D=0.1),
+        "2_params.png": fig2_params(),
+        "3_control.png": fig3_control(a=1.0, D=0.1, alphas=(0.3, 2.0)),
+        "4_sims.png": fig4_sims(recompute=False),
+        "5_phase.png": fig5_phase(a=1.0, b=0.0, D=0.1),
     }
     for name, fig in figs.items():
         path = os.path.join(FIGDIR, name)
@@ -841,4 +825,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    figE_phase_portrait(a=1.0, b=0.0, D=0.1)
