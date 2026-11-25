@@ -904,16 +904,8 @@ class ring:
             if tritone:
                 stim_t_1 = stim[0]
             else:
-                # Number of timesteps to look back
-                idx_max = min(t, stim_stamps)
-                # # Exponential kernel
-                # exp_kernel = np.exp(-np.arange(idx_max)/2)[::-1]  # reverse it so recent steps have higher weight
-                # exp_kernel /= exp_kernel.sum()  # normalize so weights sum to 1
-                # # Select the last idx_max timesteps ending at t-1
-                # stim_segment = stim[t-idx_max:t]
-                # # Weighted sum
-                # stim_t_1 = np.sum(stim_segment * exp_kernel[:, None], axis=0)  # assumes stim is 2D: (time, features)
-                stim_t_1 = 1-stim[t]
+                # stimulus from the previous block (one stamp back), not the previous timestep
+                stim_t_1 = stim[max(0, t - stim_stamps)]
             if nstates == 2:
                 if quartet:
                     likelihood = self.get_likelihood_quartet_small_rings(
@@ -3289,11 +3281,11 @@ def experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25,
                     mf_sims = ring(epsilon=0.01, n_dots=8).mean_field_sde(dt=0.1, tau=0.2,
                                                                          n_iters=300, j=j,
                                                                          true=ini_cond,
-                                                                         noise=0.1, plot=False,
+                                                                         noise=0.01, plot=False,
                                                                          discrete_stim=True, s=cont,
                                                                          b=[0, biasnm, 0.], noise_stim=0.0,
                                                                          coh=b_final, nstates=3,
-                                                                         stim_stamps=1, return_all=True)
+                                                                         stim_stamps=20, return_all=True)
                     # p(CW), p(CCW), p(NM)
                     cw = np.mean(mf_sims[:, 0, :], axis=0)
                     cw[cw > 0.5] = 1
@@ -4329,12 +4321,12 @@ if __name__ == '__main__':
     # psychometric_curve_ring(dt=0.01, tau=0.1, n_iters=120, j_list=[0., 4],
     #                         noise=0.1, cohlist=np.arange(0, 0.22, 2e-2),
     #                         nreps=1000, noise_stim=0.2)
+    # experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
+    #                         nsims=10, simulate=True, biasnm=0., j=0.6)
     experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                            nsims=5, simulate=True, biasnm=0., j=0.6)
+                            nsims=100, simulate=True, biasnm=0.5, j=0.6)
     experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                            nsims=5, simulate=True, biasnm=0.5, j=0.6)
-    experiment_simulations(contrast=[0.1, 0.2, 0.3, 0.4], bias=[-1, -0.5, -0.25, 0., 0.25, 0.5, 1],
-                            nsims=5, simulate=True, biasnm=1, j=0.6)
+                            nsims=100, simulate=True, biasnm=1, j=0.6)
     # for biasnm in [0.5]:
     #     print(f'B_NM = {biasnm}')
     #     for j in [0., 0.2, 0.4]:
