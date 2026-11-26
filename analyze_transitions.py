@@ -714,33 +714,147 @@ def plot_map_vs_mep(mapp, mep, j, theta=THETA):
     return fig
 
 
-def plot_everything(j, theta=THETA, map_steps=8000, map_lr=3e-3, map_eig=None):
+def plot_variance_envelope(js=(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0), noise=0.4, theta=THETA):
     """
-    Compute the MAP (squared action + Adam) and the lambda=1 face MEP, then make
-    the full figure suite for both, with the lambda=1 projection emphasised.
+    Transverse-fluctuation std vs the harmonic OU envelope std = noise*sqrt(2/|4J sigma' lam - 1|).
+    Each mode fluctuates around the diagonal as an OU process whose stiffness is the local
+    Jacobian eigenvalue; at the crossing the denominator is |J lam_k - 1|.
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    w, V = np.linalg.eigh(theta * 1.0); o = np.argsort(-w); V = V[:, o]
+    groups = {3: [0], 1: [1, 2, 3], -1: [4, 5, 6], -3: [7]}
+    lam = {3: 3., 1: 1., -1: -1., -3: -3.}
 
-    MAP: minimum_action_path with the SQUARED action and the Adam optimizer,
-         from a line init (optionally seeded along map_eig). Converges cleanly
-         (no step-size overshoot) to the true least-action path.
-    lambda=1 MEP: descend the deterministic flow from the symmetric point q=0.5
-         along a lambda=1 (face) eigenvector -- the two branches roll into the
-         two face domains, i.e. the face-nucleation escape.
+    def envelope(mbar, j, k):
+        s = 1 / (1 + np.exp(-6 * j * mbar)); sp = s * (1 - s)   # sigma'(uniform path)
+        return noise * np.sqrt(2 / np.clip(np.abs(4 * j * sp * lam[k] - 1), 0.02, None))
+
+    def base(curve, t0, w=80):                                 # off-crossing floor (the tails)
+        idx = np.abs(np.arange(len(curve)) - t0) > w
+        return curve[idx].mean() if idx.any() else curve.min()
+
+    data = {}
+    for j in js:
+        win = cached_mf(j, noise=noise)
+        P = win @ V
+        mbar = win.mean((0, 2)); t0 = int(np.argmin(np.abs(mbar)))
+        std = {k: np.sqrt(P[:, :, idx].var(0).mean(1)) for k, idx in groups.items()}
+        data[j] = dict(std=std, mbar=mbar, t0=t0)
+    cmap = mpl.cm.viridis; nrm = mpl.colors.Normalize(min(js), max(js))
+    fig, ax = plt.subplots(1, 3, figsize=(17, 5))
+    for a in ax:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+    for j in [js[1], js[len(js) // 2], js[-2]]:                 # (A) lam=1 excess std(t), baseline at 0
+        d = data[j]; c = cmap(nrm(j)); t0 = d['t0']; t = np.arange(len(d['mbar'])) - t0
+        sm = d['std'][1] - base(d['std'][1], t0)
+        en = envelope(d['mbar'], j, 1); en = en - base(en, t0)
+        ax[0].plot(t, sm, color=c, lw=2.2, label='J={:.1f}'.format(j))
+        ax[0].plot(t, en, color=c, lw=1.4, ls='--')
+    ax[0].set_xlim(-120, 120); ax[0].set_xlabel('samples from switch')
+    ax[0].set_ylabel(r'$\lambda=1$ std $-$ baseline'); ax[0].set_title('measured (-) vs harmonic (- -)')
+    ax[0].legend(frameon=False, fontsize=12)
+    jm = js[len(js) // 2]; d = data[jm]; t0 = d['t0']; ks = [1, -1, -3]; x = np.arange(3)
+    meas = [d['std'][k][t0] - base(d['std'][k], t0) for k in ks]   # (B) ordering at crossing, baselined
+    pred = []
+    for k in ks:
+        e = envelope(d['mbar'], jm, k); pred.append(e[t0] - base(e, t0))
+    ax[1].bar(x - 0.18, meas, 0.36, color='#2c7fb8', label='measured')
+    ax[1].bar(x + 0.18, pred, 0.36, color='#b0b0b0', label='harmonic')
+    ax[1].set_xticks(x); ax[1].set_xticklabels([r'$\lambda=1$', r'$\lambda=-1$', r'$\lambda=-3$'])
+    ax[1].set_ylabel('crossing std $-$ baseline'); ax[1].set_title('mode ordering (J={:.1f})'.format(jm))
+    ax[1].legend(frameon=False, fontsize=12)
+    jar = np.array(js); pm, pp = [], []                          # (C) peak lam=1 excess vs J, baselined
+    for j in js:
+        d2 = data[j]; tt = d2['t0']
+        pm.append(d2['std'][1][tt] - base(d2['std'][1], tt))
+        e = envelope(d2['mbar'], j, 1); pp.append(e[tt] - base(e, tt))
+    ax[2].plot(jar, pm, 'o-', color='#2c7fb8', lw=2, label='measured')
+    ax[2].plot(jar, pp, 's--', color='#777777', lw=1.8, label=r'harmonic $\propto 1/\sqrt{|J-1|}$')
+    ax[2].axvline(1.0, color='k', ls=':', lw=1); ax[2].set_xlabel('J')
+    ax[2].set_ylabel(r'$\lambda=1$ crossing excess'); ax[2].set_title('soft-mode growth toward J=1')
+    ax[2].legend(frameon=False, fontsize=12)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_variance_envelope.png', dpi=400)
+    fig.savefig(SV_FOLDER + 'fig_variance_envelope.pdf', dpi=400)
+    return fig
+
+
+def plot_peak_projection_vs_J(js=(0.4, 0.6, 0.8, 1.0, 1.2, 1.4), theta=THETA):
     """
-    import mean_field_necker as mf
-    _, v_face = face_eigvects(theta)
-    _, x, _, _, _ = mf.minimum_action_path(j, 0, 0.1, theta.astype(int), numiters=500,
-                                           dt=5e-3, steps=map_steps, tol_stop=-1,
-                                           optimizer='adam', step_size=map_lr,
-                                           eig_dir=map_eig)
-    mapp = 2 * x.detach().numpy() - 1
-    mep = mf_mep(j, theta=theta, uniform=True)            # general switching MEP (lambda=3)
-    plot_path_analysis(mapp, j, name='MAP', theta=theta)
+    Peak swing (max - min) of the aligned-mean switch projection per eigenmode vs J, for the
+    mean-field SDE and Gibbs. lambda=3 is the full switch (~6); lambda=1 grows near J=1; the
+    rest stay near 0.
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    w, V = np.linalg.eigh(theta * 1.0); o = np.argsort(-w); V = V[:, o]
+    groups = {3: [0], 1: [1, 2, 3], -1: [4, 5, 6], -3: [7]}
+
+    def peaks(win):
+        P = mean_aligned_switch(win, theta) @ V
+        return {k: max(P[:, i].max() - P[:, i].min() for i in idx) for k, idx in groups.items()}
+
+    colors = {3: 'firebrick', 1: 'seagreen', -1: 'royalblue', -3: 'purple'}
+    fig, ax = plt.subplots(1, 2, figsize=(13, 5), sharey=True)
+    for col, (cache, title) in enumerate([(cached_mf, 'mean field'), (cached_gibbs, 'Gibbs')]):
+        pk = {k: [] for k in groups}
+        for j in js:
+            p = peaks(cache(j))
+            for k in groups:
+                pk[k].append(p[k])
+        for k in groups:
+            ax[col].plot(js, pk[k], 'o-', color=colors[k], lw=2, label=r'$\lambda={}$'.format(k))
+        ax[col].set_xlabel('J'); ax[col].set_title(title)
+        ax[col].spines['right'].set_visible(False); ax[col].spines['top'].set_visible(False)
+    ax[0].set_ylabel('peak projection swing (max - min)'); ax[0].legend(frameon=False, title='mode')
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_peakproj_vs_J.png', dpi=400)
+    fig.savefig(SV_FOLDER + 'fig_peakproj_vs_J.pdf', dpi=400)
+    return fig
+
+
+def plot_everything(j, theta=THETA, recompute=False):
+    """
+    Full figure suite comparing the deterministic routes with the simulated switch.
+
+    Deterministic routes (all [0]->[1]): diagonal (lambda=3), uniform MEP, and the
+    cached gradient-descent MAPs seeded along lambda=-3 (the min-action bipartite
+    instanton) and lambda=1. Simulated switch from cached_mf: the raw ensemble mean
+    (washes out to the diagonal) and the sign-aligned mean (the real lambda=1 bulge).
+    """
+    w, v = np.linalg.eigh(theta * 1.0); V3 = v[:, np.argmax(w)]
+
+    def orient(m):                                        # force lambda=3 increasing (lo->hi)
+        return m[::-1] if (m @ V3)[0] > (m @ V3)[-1] else m
+
+    mapm3_n = cached_map(j, 'lam-3', recompute, theta)           # native direction (hi->lo)
+    map1_n = cached_map(j, 'lam1', recompute, theta)
+    diag_n = cached_map(j, 'diagonal', recompute, theta)
+    mapm3, map1, diag = orient(mapm3_n), orient(map1_n), orient(diag_n)   # lo->hi for plots
+    mep = orient(mf_mep(j, theta=theta, uniform=True))           # standard uniform MEP (flow-timed)
+    win = cached_mf(j)
+    sim_raw = orient(win.mean(0))                               # ensemble mean (-> diagonal)
+    sim_aln = orient(mean_aligned_switch(win, theta))          # sign-aligned mean (lambda=1 bulge)
+
+    # action over time (direct |qdot-f|^2/2sigma^2). Score the deterministic paths in their
+    # NATIVE direction: the action is not time-reversal invariant (reversing -> |qdot+f|^2).
+    plot_action_vs_time([diag_n, mapm3_n, map1_n, sim_raw, sim_aln],
+                        ['diagonal', r'MAP $\lambda$=-3', r'MAP $\lambda$=1', 'sim raw', 'sim aligned'],
+                        j, theta=theta, dts=[5e-3, 5e-3, 5e-3, 1e-2, 1e-2])
+    # action landscapes with the simulated switch overlaid, both transverse planes
+    plot_action_landscape([mapm3, diag, sim_aln], [r'MAP $\lambda$=-3', 'diagonal', 'sim aligned'],
+                          j, theta=theta, name='routes', trans='lam-3')
+    plot_action_landscape([map1, diag, sim_aln], [r'MAP $\lambda$=1', 'diagonal', 'sim aligned'],
+                          j, theta=theta, name='routes', trans='lam1')
+    # averaged sims on the action-landscape eigengrid (drift background)
+    plot_eigengrid(mapm3, [sim_aln], j, theta=theta, name='MAPsim', background='drift')
+    plot_eigengrid(mep, [sim_aln], j, theta=theta, name='MEPsim', background='drift')
+    # detailed per-path views and overlays
+    plot_path_analysis(mapm3, j, name='MAP', theta=theta)
     plot_path_analysis(mep, j, name='MEP', theta=theta)
-    plot_phase_grid(j, theta=theta, path=mapp, name='MAP')
-    plot_phase_grid(j, theta=theta, path=mep, name='MEP')
-    plot_overlay_density([mapp, mep], ['MAP', 'MEP'], j, theta=theta)
-    plot_map_vs_mep(mapp, mep, j, theta=theta)
-    return mapp, mep
+    plot_overlay_density([mapm3, diag, sim_aln], ['MAP', 'diagonal', 'sim'], j, theta=theta)
+    plot_map_vs_mep(mapm3, mep, j, theta=theta)
+    return dict(map_lam3=mapm3, map_lam1=map1, diagonal=diag, mep=mep,
+                sim_raw=sim_raw, sim_aligned=sim_aln)
 
 
 def mode_field(uu, ss, j, b, theta, V3, Vm3, field='drift'):
@@ -794,6 +908,26 @@ def plot_eigengrid(path, sims, j, b=0, theta=THETA, name='MAP', background='flow
     simproj = [s @ evecs for s in sims]
     scol = 'white' if background == 'drift' else 'gray'
     fig, ax = plt.subplots(4, 4, figsize=(15, 15))
+    # precompute the drift backgrounds so every cell shares one colour scale
+    bg, gmax = {}, 0.0
+    for a in range(4):
+        for c in range(4):
+            if a == c:
+                continue
+            vx, vy = evecs[:, reps[c]], evecs[:, reps[a]]
+            XX, YY = np.meshgrid(np.linspace(-rng[labs[c]], rng[labs[c]], ngrid),
+                                 np.linspace(-rng[labs[a]], rng[labs[a]], ngrid))
+            if background == 'drift':
+                Z = np.zeros_like(XX)
+                for p in range(ngrid):
+                    for q in range(ngrid):
+                        m = XX[p, q] * vx + YY[p, q] * vy
+                        f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
+                        Z[p, q] = ((2 * f) ** 2).sum()
+                bg[(a, c)] = (XX, YY, Z); gmax = max(gmax, Z.max())
+            else:
+                bg[(a, c)] = (XX, YY, None)
+    im = None
     for a in range(4):
         for c in range(4):
             axc = ax[a, c]
@@ -802,20 +936,12 @@ def plot_eigengrid(path, sims, j, b=0, theta=THETA, name='MAP', background='flow
             if a == c:
                 axc.plot(np.arange(len(path)), proj[:, reps[a]], color='firebrick', lw=2)
                 for sp in simproj:
-                    axc.plot(np.linspace(0, len(path), len(sp)), sp[:, reps[a]], color='gray', alpha=0.3, lw=0.7)
+                    axc.plot(np.linspace(0, len(path), len(sp)), sp[:, reps[a]], color='gray', alpha=0.9, lw=1.8)
                 axc.set_xlabel('path'); axc.set_ylabel(r'$\lambda={}$'.format(labs[a]))
                 continue
-            xs = np.linspace(-rng[labs[c]], rng[labs[c]], ngrid)
-            ys = np.linspace(-rng[labs[a]], rng[labs[a]], ngrid)
-            XX, YY = np.meshgrid(xs, ys)
+            XX, YY, Z = bg[(a, c)]
             if background == 'drift':
-                Z = np.zeros_like(XX)
-                for p in range(XX.shape[0]):
-                    for q in range(XX.shape[1]):
-                        m = XX[p, q] * vx + YY[p, q] * vy
-                        f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
-                        Z[p, q] = ((2 * f) ** 2).sum()
-                axc.contourf(XX, YY, Z, levels=20, cmap='viridis')
+                im = axc.contourf(XX, YY, Z, levels=np.linspace(0, gmax, 21), cmap='viridis')
             else:
                 qX, qY = np.meshgrid(np.linspace(-rng[labs[c]], rng[labs[c]], 13),
                                      np.linspace(-rng[labs[a]], rng[labs[a]], 11))
@@ -827,27 +953,34 @@ def plot_eigengrid(path, sims, j, b=0, theta=THETA, name='MAP', background='flow
                         U[p, q] = (2 * f) @ vx; W[p, q] = (2 * f) @ vy
                 axc.quiver(qX, qY, U, W, color='lightgray', alpha=0.7)
             for sp in simproj:
-                axc.plot(sp[:, reps[c]], sp[:, reps[a]], color=scol, alpha=0.5, lw=0.7)
+                axc.plot(sp[:, reps[c]], sp[:, reps[a]], color=scol, alpha=0.9, lw=1.8)
             axc.plot(proj[:, reps[c]], proj[:, reps[a]], color='firebrick', lw=2)
             axc.set_xlabel(r'$\lambda={}$'.format(labs[c])); axc.set_ylabel(r'$\lambda={}$'.format(labs[a]))
-    fig.suptitle('{} on {} grid (red=path, gray=sims), J={}'.format(name, background, j), y=1.0)
+    fig.suptitle('{} on {} grid (red=MAP, gray=avg sim), J={}'.format(name, background, j), y=1.0)
     fig.tight_layout()
+    if im is not None:
+        fig.colorbar(im, ax=ax, shrink=0.6, pad=0.02, label=r'drift $|2f|^2$')
     fig.savefig(SV_FOLDER + 'fig_eigengrid_{}_{}_j{}.png'.format(name, background, j), dpi=300, bbox_inches='tight')
     return fig
 
 
 def plot_action_landscape(paths, labels, j, b=0, theta=THETA, name='MAP',
-                          field='drift', ngrid=60, quiver=True):
+                          field='drift', ngrid=60, quiver=True, trans='lam-3'):
     """
-    (lambda=3, lambda=-3) plane coloured by a scalar landscape, with path
-    traces on top. field='drift' -> squared drift |f|^2 (the local cost the FW
-    action integrates); field='energy' -> naive MF energy.
+    (lambda=3, transverse) plane coloured by a scalar landscape, with path traces
+    on top. trans='lam-3' (bipartite) or 'lam1' (face). field='drift' -> squared
+    drift |f|^2 (the local cost the FW action integrates); 'energy' -> MF energy.
     """
     os.makedirs(SV_FOLDER, exist_ok=True)
     w, V = np.linalg.eigh(theta * 1.0)
-    o = np.argsort(-w); V3, Vm3 = V[:, o][:, 0], V[:, o][:, -1]
+    o = np.argsort(-w); V3 = V[:, o][:, 0]
+    if trans == 'lam1':
+        _, v_face = face_eigvects(theta); Vm3 = v_face[0]; ylab = r'$\lambda=1$ (face)'
+    else:
+        Vm3 = V[:, o][:, -1]; ylab = r'$\lambda=-3$ (bipartite)'
+    ymax = max(1.6, max(np.abs(p @ Vm3).max() for p in paths) * 1.1)
     us = np.linspace(-2.9, 2.9, ngrid)
-    ss_ = np.linspace(-1.6, 1.6, ngrid)
+    ss_ = np.linspace(-ymax, ymax, ngrid)
     uu, ss = np.meshgrid(us, ss_)
     Z = mode_field(uu, ss, j, b, theta, V3, Vm3, field)
     fig, ax = plt.subplots(figsize=(9, 6.5))
@@ -862,14 +995,14 @@ def plot_action_landscape(paths, labels, j, b=0, theta=THETA, name='MAP',
                 f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
                 U[p, c] = (2 * f) @ V3; S[p, c] = (2 * f) @ Vm3
         ax.quiver(qu, qs, U, S, color='white', alpha=0.5)
-    colors = ['firebrick', 'orange', 'deepskyblue']
+    colors = ['firebrick', 'orange', 'deepskyblue', 'navy', 'seagreen', 'purple']
     for i, (pth, lab) in enumerate(zip(paths, labels)):
-        ax.plot(pth @ V3, pth @ Vm3, color=colors[i % 3], lw=2.5, label=lab)
-    ax.set_xlabel(r'$\lambda=3$ (magnetization)'); ax.set_ylabel(r'$\lambda=-3$ (bipartite)')
+        ax.plot(pth @ V3, pth @ Vm3, color=colors[i % 6], lw=2.5, label=lab)
+    ax.set_xlabel(r'$\lambda=3$ (magnetization)'); ax.set_ylabel(ylab)
     ax.set_title('{} landscape ({}), J={}'.format(name, field, j))
     ax.legend(loc='upper left')
     fig.tight_layout()
-    fig.savefig(SV_FOLDER + 'fig_landscape_{}_{}_j{}.png'.format(name, field, j), dpi=350, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'fig_landscape_{}_{}_{}_j{}.png'.format(name, trans, field, j), dpi=400, bbox_inches='tight')
     return fig
 
 
@@ -903,6 +1036,64 @@ def plot_overlay_density(paths, labels, j, b=0, theta=THETA, name='MAP_MEP'):
     ax.legend(loc='upper left')
     fig.tight_layout()
     fig.savefig(SV_FOLDER + 'fig_overlay_density_{}_j{}.png'.format(name, j), dpi=400, bbox_inches='tight')
+    return fig
+
+
+def cached_map(j, seed='lam-3', recompute=False, theta=THETA, optimizer='adam'):
+    """Minimum-action path (mean spin), cached. seed: 'lam-3' | 'lam1'.
+
+    Adam (default) with tol_stop=-1 finds the true global MAP (lambda=-3) fast from
+    either seed; its loss is non-monotonic so any finite tol_stop can fire
+    mid-descent. From the lambda=1 seed, Adam's momentum carries it down to a
+    lower-action, more-lambda=3 trajectory in the same lambda=-3 basin (not a
+    failure). Plain GD stays in the higher lambda=1 saddle -- pass optimizer='gd'
+    for that distinct route.
+    """
+    import mean_field_necker as mf
+    w, v = np.linalg.eigh(theta)                       # ascending: [:,0]=lam-3, [:,-2]=lam1
+    eig = None if seed == 'diagonal' else (v[:, 0] if seed == 'lam-3' else v[:, -2])
+    def fn():
+        if optimizer == 'adam':
+            steps, step_size, tol = 60000, 3e-3, -1
+        else:
+            steps, step_size, tol = 400000, 1e-5, 1e-30
+        _, x, _, _, _ = mf.minimum_action_path(j, 0, 0.1, theta.astype(int), numiters=500,
+                                               dt=5e-3, steps=steps, tol_stop=tol,
+                                               init='line', eig_dir=eig, init_noise=0,
+                                               step_size=step_size, optimizer=optimizer)
+        return 2 * x.detach().numpy() - 1
+    return cached('map_{}_j{}'.format(seed, j), fn, recompute)
+
+
+def plot_action_vs_time(paths, labels, j, b=0, theta=THETA, name='actiontime', dts=5e-3, noise=0.1):
+    """
+    Direct Freidlin-Wentzell action density |qdot - f|^2/(2 sigma^2) and its cumulative.
+
+    No resampling: each path keeps its own points and its own dt (scalar or per-path
+    list in dts); the time axis is normalized to each path's own duration (x in [0, 1])
+    so the shapes overlay. Each total S is then that path's genuine action -- the
+    optimiser MAPs recover ~390 (lambda=-3) / ~412 (diagonal) / ~416 (lambda=1).
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    colors = ['firebrick', 'royalblue', 'navy', 'orange', 'purple', 'seagreen']
+    if np.isscalar(dts):
+        dts = [dts] * len(paths)
+    fig, ax = plt.subplots(ncols=2, figsize=(14, 5))
+    for i, (p, lab, pdt) in enumerate(zip(paths, labels, dts)):
+        d = action_density(p, j, b, theta, pdt) / (2 * noise ** 2)
+        tn = np.linspace(0, 1, len(p))
+        ax[0].plot(tn, d, color=colors[i % 6], lw=2, label='{} (S={:.1f})'.format(lab, d.sum() * pdt))
+        ax[1].plot(tn, np.cumsum(d) * pdt, color=colors[i % 6], lw=2, label=lab)
+    ax[0].set_ylabel(r'action density $|\dot q-f|^2/2\sigma^2$')
+    ax[0].set_title('instantaneous action, J={}'.format(j))
+    ax[1].set_ylabel(r'cumulative action $S(t)$'); ax[1].set_title('cumulative action, J={}'.format(j))
+    for a in ax:
+        a.set_xlabel('time (normalized to each duration)')
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+    ax[0].legend(frameon=False, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_{}_j{}.png'.format(name, j), dpi=400, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'fig_{}_j{}.pdf'.format(name, j), dpi=400, bbox_inches='tight')
     return fig
 
 
@@ -1084,4 +1275,9 @@ def plot_transitions(j_list=(0.6, 1.3), b=0, theta=THETA, recompute=False):
 
 if __name__ == '__main__':
     # plot_transitions(j_list=(0.6, 1.3))
-    plot_everything(j=2.0)
+    # plot_eigen_traces(j=1.2, theta=THETA, n_show=80, smooth_mf=21)
+    # plot_everything(j=1.2)
+    # plot_everything(j=0.6)
+    # plot_phase_grid(j=2.0, b=0, theta=THETA, path=None, name='MAP')
+    plot_variance_envelope()
+    plot_peak_projection_vs_J()
