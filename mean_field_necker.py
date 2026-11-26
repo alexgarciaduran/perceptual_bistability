@@ -4474,7 +4474,7 @@ def get_path_between(x, j, b, noise, theta, steps=1000, step_size=1e-1, dt=1,
             print('Minimum action: ' + str(lag.item()))
             break
         action_vals.append(lag.item())
-        if i % 100000 == 0:
+        if i % 100_000 == 0:
             tqdm.write(f" Action {lag.item(): .1f}")
     return t, x, np.stack(xs), action_vals
 
@@ -4491,7 +4491,7 @@ def lagrangian(x, xdot, j, b, noise, theta, tau=0.1, dt=1e-2, n=3, neg=False):
 def action(x, j, b, noise, theta, dt=1e-2, n=3, neg=False):
     xdot = (x[1:] - x[:-1]) / dt
     xdot = torch.cat([xdot, xdot[-1:]], axis=0)
-    lag = lagrangian(x, xdot, j, b, noise, theta, neg=neg)
+    lag = lagrangian(x, xdot, j, b, noise, theta, dt=dt, n=n, neg=neg)   # forward dt (and n)
     return lag
 
 
@@ -4601,16 +4601,118 @@ def plot_mf_sims_8d(j=2, b=0, theta=theta, noise=0,
     ax[0].legend(handles=legendelements, frameon=False)
 
 
+def plot_cumulative_action_maps(j=2, b=0, noise=0.1, init_noise=0,
+                                init='line', numiters=1000,
+                                dt=5e-3, idx_proj=0, proj_mode='dot'):
+    """
+    idx_proj : column of the (descending-sorted) eigenbasis used for the
+               ||.|| axis of the last figure. 0 <-> 'lam_neg_3' (same
+               convention as vm3 == 0 in vm3_list).
+    proj_mode: 'dot'    -> c_k = x . v_k        (as before)
+               'coords' -> x = sum_k c_k v_k    (true coordinates; use this
+                           if theta is not symmetric / eigvects not orthonormal)
+    """
+    path_save = DATA_FOLDER + 'paths_MAP/'
+    vm3_list = [-2, -1, 0, None]
+    arr_action_t = np.zeros((len(vm3_list), numiters-2))
+    x_t = np.zeros((len(vm3_list), numiters, 8))
+    projection = np.zeros((len(vm3_list), numiters, 8))
+    eigvals, eigvects = np.linalg.eig(theta)
+    idx = eigvals.argsort()[::-1]
+    eigvals = eigvals[idx]
+    eigvects = eigvects[:, idx]
+    # theta can come back with a (numerically) complex spectrum
+    if np.iscomplexobj(eigvects):
+        assert np.allclose(eigvects.imag, 0, atol=1e-10), 'complex eigenvectors'
+        eigvals, eigvects = eigvals.real, eigvects.real
+    labs = []
+    theta_tensor = torch.tensor(theta * 1., dtype=torch.float)
+    for i_vm3, vm3 in enumerate(vm3_list):
+        if vm3 is not None and isinstance(vm3, int):
+            if vm3 == 0:
+                vm3_lab = 'lam_neg_3'
+            if vm3 == -2:
+                vm3_lab = 'lam_pos_1'
+            if vm3 == -1:
+                vm3_lab = 'lam_pos_3'
+        else:
+            vm3_lab = ''
+        name_path = path_save + f'MAP_path_J_{j}_init_{vm3_lab}_{init}_noise_{init_noise}_niters_{numiters}.npy'
+        x = torch.tensor(np.load(name_path))
+        ac_t = [action(x[i-1:i+1], j, 0, noise, theta_tensor).item() for i in range(1, numiters-1)]
+        arr_action_t[i_vm3] = ac_t
+        x_t[i_vm3] = x.numpy()
+        vm3_lab = 'diagonal' if vm3_lab == '' else vm3_lab
+        labs.append(vm3_lab)
+        if proj_mode == 'coords':
+            projection[i_vm3] = np.linalg.solve(eigvects, x.numpy().T).T
+        else:
+            projection[i_vm3] = x.numpy() @ eigvects
+
+    time_x = np.arange(numiters) * dt
+    time_a = np.arange(numiters-2) * dt
+    colors = plt.cm.tab10(np.arange(len(vm3_list)))
+
+    # ---------- fig. 1: instantaneous / cumulative cost (unchanged) ----------
+    fig, ax = plt.subplots(ncols=2, figsize=(8, 3.5))
+    for a in ax:
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_xlabel('Time (s)')
+    ax[0].set_ylabel('Instantaneous cost')
+    ax[1].set_ylabel('Cumulative cost')
+    for i in range(len(vm3_list)):
+        ax[0].plot(time_a, arr_action_t[i], label=labs[i], linewidth=3,
+                   color=colors[i])
+        ax[1].plot(time_a, np.cumsum(arr_action_t[i]), label=labs[i],
+                   linewidth=3, color=colors[i])
+    ax[1].legend(frameon=False, title='Init')
+    fig.tight_layout()
+
+    # ---------- fig. 2: projections onto each eigenvector, 1 panel / init ----
+    fig2, ax2 = plt.subplots(ncols=2, nrows=2, figsize=(9, 6),
+                             sharex=True, sharey=True)
+    ax2 = ax2.flatten()
+    ev_colors = plt.cm.viridis(np.linspace(0, .95, 8))
+    for i in range(len(vm3_list)):
+        a = ax2[i]
+        a.spines['right'].set_visible(False)
+        a.spines['top'].set_visible(False)
+        a.set_title(f'Init: {labs[i]}', fontsize=11)
+        for k in range(8):
+            a.plot(time_x, projection[i, :, k], color=ev_colors[k],
+                   linewidth=2, label=rf'$v_{{{k}}}$ ($\lambda$={eigvals[k]:.2f})')
+        a.axhline(0, color='k', linewidth=.6, alpha=.4)
+    for a in ax2[2:]:
+        a.set_xlabel('Time (s)')
+    for a in ax2[::2]:
+        a.set_ylabel('Projection')
+    ax2[0].legend(frameon=False, fontsize=7, ncol=2)
+    fig2.tight_layout()
+
+
 def calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=20000,
-                                  tol_stop=1e-2, numiters=500, dt=5e-3, init='line',
-                                  vm3=None):
+                                  tol_stop=1e-2, numiters=1000, dt=5e-3, init='line',
+                                  vm3=None, init_noise=0.05, step_size=1e-5):
     if vm3 is not None and isinstance(vm3, int):
+        if vm3 == 0:
+            vm3_lab = 'lam_neg_3'
+        if vm3 == -2:
+            vm3_lab = 'lam_pos_1'
+        if vm3 == -1:
+            vm3_lab = 'lam_pos_3'
         vm3 = np.linalg.eigh(theta)[1][:, vm3]
     else:
         vm3 = None
+        vm3_lab = ''
     t, x, xs, x_unstable, action_vals = minimum_action_path(j, b, noise, theta=theta, numiters=numiters, dt=dt,
                                                             steps=steps, tol_stop=tol_stop, init=init,
-                                                            eig_dir=vm3)
+                                                            eig_dir=vm3, init_noise=init_noise, step_size=step_size)
+    path_save = DATA_FOLDER + 'paths_MAP/'
+    os.makedirs(path_save, exist_ok=True)
+    name_path = path_save + f'MAP_path_J_{j}_init_{vm3_lab}_{init}_noise_{init_noise}_niters_{numiters}.npy'
+    np.save(name_path, x.detach().numpy())
+    print('Saved ', name_path)
     J = j
     plt.figure()
     plt.title('J = ' + str(j) + ', B = ' + str(b))
@@ -4742,7 +4844,7 @@ def calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=20000,
     eigvals_p = eigvals[(eigvals == 3) + (eigvals == 1)]
     eigvects_n = eigvects[(eigvals == -3) + (eigvals == -1)]
     eigvals_n = eigvals[(eigvals == -3) + (eigvals == -1)]
-    steps_back = steps_front = 250
+    steps_back = steps_front = numiters // 2
     projections_p = np.zeros((4, steps_back+steps_front))
     projections_n = np.zeros((4, steps_back+steps_front))
     for i in range(4):
@@ -8775,11 +8877,16 @@ if __name__ == '__main__':
     #                            j_list=np.arange(0.6, 1.3, 0.1),
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
     calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
-                                  tol_stop=1e-30, init='line', vm3=0)  # lambda -3
+                                  tol_stop=1e-30, init='line', vm3=0, init_noise=0)  # lambda -3
     calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
-                                  tol_stop=1e-30, init='line', vm3=-2)  # lambda 1
+                                  tol_stop=1e-30, init='line', vm3=-2, init_noise=0)  # lambda 1
     calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
-                                  tol_stop=1e-30, init='line', vm3=None)  # diagonal + noise
+                                  tol_stop=1e-30, init='line', vm3=-1, init_noise=0)  # lambda 3
+    calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
+                                  tol_stop=1e-30, init='line', vm3=None, init_noise=0)  # diagonal + noise
+    plot_cumulative_action_maps(j=2, b=0, noise=0.1, init_noise=0,
+                                    init='line', numiters=1000,
+                                    dt=5e-3)
     # plot_mf_sims_8d(j=2, b=0, theta=theta, noise=0.1,
     #                 ini_cond=None, step_line_plot=500)
     # analyze_jump_dynamics(j=0.5, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=10_000,
