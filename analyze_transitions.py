@@ -218,6 +218,18 @@ def cached(name, fn, recompute=False):
     return arr
 
 
+def cached_gibbs(j, recompute=False, theta=THETA, **kw):
+    """Gibbs switch windows at coupling j, saved to / loaded from DATA_FOLDER."""
+    return cached('sw_gibbs_j{}'.format(j),
+                  lambda: gibbs_switches(j, theta=theta, **kw), recompute)
+
+
+def cached_mf(j, noise=0.4, tau=0.05, recompute=False, theta=THETA, **kw):
+    """MF-SDE switch windows at (j, noise, tau), saved to / loaded from DATA_FOLDER."""
+    return cached('sw_mf_j{}_n{}_tau{}'.format(j, noise, tau),
+                  lambda: mf_switches(j, noise=noise, tau=tau, theta=theta, **kw), recompute)
+
+
 def mf_flow(q, j, b, theta):
     """Deterministic mean-field velocity."""
     return gn.sigmoid(2 * j * (theta @ (2 * q - 1)) + 2 * b) - q
@@ -329,17 +341,24 @@ def plot_map_detail(j_list=(0.6, 1.2, 2.0), b=0, theta=THETA):
     return fig
 
 
-def mf_mep(j, b=0, theta=THETA, dt=5e-3, nsteps=12000, delta=1e-2, uniform=False):
+def mf_mep(j, b=0, theta=THETA, dt=5e-3, nsteps=12000, delta=1e-2, uniform=False,
+           mode_dir=None):
     """
     Minimum-energy path, as mean spin (2*nsteps+1, n).
 
-    Descends the deterministic flow from a saddle along its unstable manifold
-    into each well. With uniform=False uses the lowest-F index-1 saddle (which
-    at high J connects a face domain to a well). With uniform=True descends from
-    the symmetric point q=0.5 along the uniform (lambda=3) direction, giving the
-    all-0 -> all-1 path.
+    Descends the deterministic flow from a seed point along a chosen direction
+    into each well:
+      mode_dir given -- descend from the symmetric point q=0.5 along that
+                        eigenvector of theta (e.g. a lambda=1 face mode). This is
+                        the "escape along mode_dir": the two branches roll into
+                        the two attractors on either side of that direction.
+      uniform=True   -- same but along the lambda=3 (uniform) mode (all-0->all-1).
+      else           -- lowest-F index-1 saddle (face-domain <-> well at high J).
     """
-    if uniform:
+    if mode_dir is not None:
+        q = np.full(theta.shape[0], 0.5)
+        u = np.asarray(mode_dir, dtype=float)
+    elif uniform:
         q = np.full(theta.shape[0], 0.5)
         w, v = np.linalg.eigh(theta * 1.0)
         u = v[:, np.argmax(w)]                           # lambda=3 uniform mode
@@ -556,7 +575,7 @@ def plot_nu_and_directions(j_list=(0.6, 1.2), theta=THETA, smooth_mf=21):
 
 
 def corrected_map(j, b=0, theta=THETA, numiters=500, steps=300000, dt=5e-3,
-                  step_size=1e-5, noise=0.1, seed=0, seed_dir=None, seed_eps=0.3):
+                  step_size=1e-4, noise=0.1, seed=0, seed_dir=None, seed_eps=0.3):
     """
     Minimum-action path with the CORRECTED FW residual xdot - (sigmoid - q),
     i.e. including the -q decay term the original lagrangian omits. Path runs
@@ -586,15 +605,38 @@ def corrected_map(j, b=0, theta=THETA, numiters=500, steps=300000, dt=5e-3,
         g = torch.autograd.grad(S, x)[0]
         g[[0, -1]] *= 0
         x = (x - g * step_size).detach()
+        if i % 10000 == 0:
+            tqdm.write(f" Action {S.detach().float(): .1f}")
     return 2 * x.numpy() - 1
 
 
 def action_density(m, j, b=0, theta=THETA, dt=5e-3):
-    """Per-point action density |xdot - fx|^2 (same fx as minimum_action_path)."""
+    """Per-point action density |qdot - (sigmoid - q)|^2 (corrected MF drift)."""
     q = (m + 1) / 2
     qdot = np.vstack([np.diff(q, axis=0) / dt, (q[-1] - q[-2])[None] / dt])
-    fx = gn.sigmoid(2 * j * (2 * (q @ theta) - 3) + 2 * b)
-    return ((qdot - fx) ** 2).sum(1)
+    flow = gn.sigmoid(2 * j * (2 * (q @ theta) - 3) + 2 * b) - q   # f = sigmoid - q
+    return ((qdot - flow) ** 2).sum(1)
+
+
+def plot_instantaneous_cost(paths, labels, j, b=0, theta=THETA, name='cost', dt=5e-3):
+    """Instantaneous action density |qdot-(sigmoid-q)|^2 vs mu and vs time, per path."""
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    colors = ['firebrick', 'royalblue', 'orange', 'seagreen']
+    fig, ax = plt.subplots(ncols=2, figsize=(12, 4.6))
+    for a in ax:
+        a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+    for i, (p, lab) in enumerate(zip(paths, labels)):
+        d = action_density(p, j, b, theta)
+        mu = p.mean(1)
+        ax[0].plot(mu, d, color=colors[i % 4], lw=2, label=lab)
+        ax[1].plot(np.arange(len(p)) * dt, d, color=colors[i % 4], lw=2, label=lab)
+    ax[0].set_xlabel(r'$\mu$'); ax[0].set_ylabel(r'cost $|\dot q-(\sigma-q)|^2$')
+    ax[0].set_title('instantaneous cost vs magnetization')
+    ax[1].set_xlabel('time (s)'); ax[1].set_ylabel('cost'); ax[1].set_title('vs time')
+    ax[0].legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_instcost_{}_j{}.png'.format(name, j), dpi=400, bbox_inches='tight')
+    return fig
 
 
 def plot_path_analysis(path_m, j, name='path', b=0, theta=THETA):
@@ -672,22 +714,163 @@ def plot_map_vs_mep(mapp, mep, j, theta=THETA):
     return fig
 
 
-def plot_everything(j, theta=THETA, map_steps=200000):
+def plot_everything(j, theta=THETA, map_steps=8000, map_lr=3e-3, map_eig=None):
     """
-    Compute the corrected-action MAP (all-0 -> all-1) and the uniform MEP once,
-    then produce the whole figure suite for both: path analysis, phase grid,
-    overlay density, and the MAP-vs-MEP projection comparison.
+    Compute the MAP (squared action + Adam) and the lambda=1 face MEP, then make
+    the full figure suite for both, with the lambda=1 projection emphasised.
+
+    MAP: minimum_action_path with the SQUARED action and the Adam optimizer,
+         from a line init (optionally seeded along map_eig). Converges cleanly
+         (no step-size overshoot) to the true least-action path.
+    lambda=1 MEP: descend the deterministic flow from the symmetric point q=0.5
+         along a lambda=1 (face) eigenvector -- the two branches roll into the
+         two face domains, i.e. the face-nucleation escape.
     """
-    mapp = corrected_map(j, theta=theta, numiters=500, steps=map_steps)
-    mep = mf_mep(j, theta=theta, uniform=True)
+    import mean_field_necker as mf
+    _, v_face = face_eigvects(theta)
+    _, x, _, _, _ = mf.minimum_action_path(j, 0, 0.1, theta.astype(int), numiters=500,
+                                           dt=5e-3, steps=map_steps, tol_stop=-1,
+                                           optimizer='adam', step_size=map_lr,
+                                           eig_dir=map_eig)
+    mapp = 2 * x.detach().numpy() - 1
+    mep = mf_mep(j, theta=theta, uniform=True)            # general switching MEP (lambda=3)
     plot_path_analysis(mapp, j, name='MAP', theta=theta)
     plot_path_analysis(mep, j, name='MEP', theta=theta)
     plot_phase_grid(j, theta=theta, path=mapp, name='MAP')
     plot_phase_grid(j, theta=theta, path=mep, name='MEP')
     plot_overlay_density([mapp, mep], ['MAP', 'MEP'], j, theta=theta)
     plot_map_vs_mep(mapp, mep, j, theta=theta)
-    plt.close('all')
     return mapp, mep
+
+
+def mode_field(uu, ss, j, b, theta, V3, Vm3, field='drift'):
+    """Scalar field over the (lambda=3, lambda=-3) plane for a landscape plot."""
+    Z = np.zeros_like(uu)
+    for p in range(uu.shape[0]):
+        for c in range(uu.shape[1]):
+            m = uu[p, c] * V3 + ss[p, c] * Vm3
+            if field == 'energy':                  # naive MF energy -1/2 m^T th m
+                Z[p, c] = -0.5 * m @ theta @ m
+            else:                                  # squared drift |f|^2 (mean spin)
+                f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
+                Z[p, c] = ((2 * f) ** 2).sum()
+    return Z
+
+
+def mean_aligned_switch(windows, theta=THETA):
+    """
+    Average switch, aligned so they don't cancel. Each window is projected onto
+    the eigenbasis; the lambda=3 (order-parameter) sign is aligned by its value
+    in the end well, and every transverse mode by its sign at the mu=0 crossing;
+    then averaged and mapped back to node space (T, n).
+    """
+    w, V = np.linalg.eigh(theta * 1.0)
+    o = np.argsort(-w); V = V[:, o]
+    Ps = []
+    for win in windows:
+        P = win @ V                                   # (T, n) projections
+        k = np.argmin(np.abs(win.mean(1)))            # crossing
+        sign = np.sign(P[k])
+        sign[0] = np.sign(P[-1, 0])                   # lambda=3: align by end well
+        Ps.append(P * sign)
+    return np.mean(Ps, axis=0) @ V.T                  # back to node space
+
+
+def plot_eigengrid(path, sims, j, b=0, theta=THETA, name='MAP', background='flow', ngrid=40):
+    """
+    Grid of eigenvalue-pair projections (lambda=3,1,-1,-3). Each off-diagonal
+    cell shows the deterministic `path` (red) and the simulated switches `sims`
+    (gray) over a background that is either the flow field (background='flow')
+    or the squared-drift landscape (background='drift'). Diagonal cells show
+    each mode vs path index.
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    evals, evecs = np.linalg.eigh(theta * 1.0)
+    o = np.argsort(-evals); evals, evecs = evals[o], evecs[:, o]
+    reps = [0, 1, 4, 7]
+    labs = [int(round(evals[r])) for r in reps]
+    rng = {3: 2.9, 1: 1.6, -1: 1.6, -3: 1.6}
+    proj = path @ evecs
+    simproj = [s @ evecs for s in sims]
+    scol = 'white' if background == 'drift' else 'gray'
+    fig, ax = plt.subplots(4, 4, figsize=(15, 15))
+    for a in range(4):
+        for c in range(4):
+            axc = ax[a, c]
+            axc.spines['right'].set_visible(False); axc.spines['top'].set_visible(False)
+            vx, vy = evecs[:, reps[c]], evecs[:, reps[a]]
+            if a == c:
+                axc.plot(np.arange(len(path)), proj[:, reps[a]], color='firebrick', lw=2)
+                for sp in simproj:
+                    axc.plot(np.linspace(0, len(path), len(sp)), sp[:, reps[a]], color='gray', alpha=0.3, lw=0.7)
+                axc.set_xlabel('path'); axc.set_ylabel(r'$\lambda={}$'.format(labs[a]))
+                continue
+            xs = np.linspace(-rng[labs[c]], rng[labs[c]], ngrid)
+            ys = np.linspace(-rng[labs[a]], rng[labs[a]], ngrid)
+            XX, YY = np.meshgrid(xs, ys)
+            if background == 'drift':
+                Z = np.zeros_like(XX)
+                for p in range(XX.shape[0]):
+                    for q in range(XX.shape[1]):
+                        m = XX[p, q] * vx + YY[p, q] * vy
+                        f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
+                        Z[p, q] = ((2 * f) ** 2).sum()
+                axc.contourf(XX, YY, Z, levels=20, cmap='viridis')
+            else:
+                qX, qY = np.meshgrid(np.linspace(-rng[labs[c]], rng[labs[c]], 13),
+                                     np.linspace(-rng[labs[a]], rng[labs[a]], 11))
+                U, W = np.zeros_like(qX), np.zeros_like(qY)
+                for p in range(qX.shape[0]):
+                    for q in range(qX.shape[1]):
+                        m = qX[p, q] * vx + qY[p, q] * vy
+                        f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
+                        U[p, q] = (2 * f) @ vx; W[p, q] = (2 * f) @ vy
+                axc.quiver(qX, qY, U, W, color='lightgray', alpha=0.7)
+            for sp in simproj:
+                axc.plot(sp[:, reps[c]], sp[:, reps[a]], color=scol, alpha=0.5, lw=0.7)
+            axc.plot(proj[:, reps[c]], proj[:, reps[a]], color='firebrick', lw=2)
+            axc.set_xlabel(r'$\lambda={}$'.format(labs[c])); axc.set_ylabel(r'$\lambda={}$'.format(labs[a]))
+    fig.suptitle('{} on {} grid (red=path, gray=sims), J={}'.format(name, background, j), y=1.0)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_eigengrid_{}_{}_j{}.png'.format(name, background, j), dpi=300, bbox_inches='tight')
+    return fig
+
+
+def plot_action_landscape(paths, labels, j, b=0, theta=THETA, name='MAP',
+                          field='drift', ngrid=60, quiver=True):
+    """
+    (lambda=3, lambda=-3) plane coloured by a scalar landscape, with path
+    traces on top. field='drift' -> squared drift |f|^2 (the local cost the FW
+    action integrates); field='energy' -> naive MF energy.
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    w, V = np.linalg.eigh(theta * 1.0)
+    o = np.argsort(-w); V3, Vm3 = V[:, o][:, 0], V[:, o][:, -1]
+    us = np.linspace(-2.9, 2.9, ngrid)
+    ss_ = np.linspace(-1.6, 1.6, ngrid)
+    uu, ss = np.meshgrid(us, ss_)
+    Z = mode_field(uu, ss, j, b, theta, V3, Vm3, field)
+    fig, ax = plt.subplots(figsize=(9, 6.5))
+    im = ax.contourf(uu, ss, Z, levels=30, cmap='viridis')
+    plt.colorbar(im, ax=ax, label=(r'energy' if field == 'energy' else r'drift $|f|^2$'))
+    if quiver:
+        qu, qs = np.meshgrid(np.linspace(-2.9, 2.9, 19), np.linspace(-1.6, 1.6, 13))
+        U = np.zeros_like(qu); S = np.zeros_like(qs)
+        for p in range(qu.shape[0]):
+            for c in range(qu.shape[1]):
+                m = qu[p, c] * V3 + qs[p, c] * Vm3
+                f = mf_flow(np.clip((m + 1) / 2, 1e-4, 1 - 1e-4), j, b, theta)
+                U[p, c] = (2 * f) @ V3; S[p, c] = (2 * f) @ Vm3
+        ax.quiver(qu, qs, U, S, color='white', alpha=0.5)
+    colors = ['firebrick', 'orange', 'deepskyblue']
+    for i, (pth, lab) in enumerate(zip(paths, labels)):
+        ax.plot(pth @ V3, pth @ Vm3, color=colors[i % 3], lw=2.5, label=lab)
+    ax.set_xlabel(r'$\lambda=3$ (magnetization)'); ax.set_ylabel(r'$\lambda=-3$ (bipartite)')
+    ax.set_title('{} landscape ({}), J={}'.format(name, field, j))
+    ax.legend(loc='upper left')
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_landscape_{}_{}_j{}.png'.format(name, field, j), dpi=350, bbox_inches='tight')
+    return fig
 
 
 def plot_overlay_density(paths, labels, j, b=0, theta=THETA, name='MAP_MEP'):
@@ -747,7 +930,11 @@ def plot_phase_grid(j=2.0, b=0, theta=THETA, path=None, name='MAP'):
             axc.spines['top'].set_visible(False)
             vi, vj = evecs[:, reps[c]], evecs[:, reps[a]]   # x = col mode, y = row mode
             if a == c:
-                axc.plot(np.arange(len(mp)), proj[:, reps[a]], color='firebrick', lw=2)
+                yv = proj[:, reps[a]]
+                axc.plot(np.arange(len(mp)), yv, color='firebrick', lw=2)
+                if yv.max() - yv.min() < 2e-3:        # flatten 1e-16 noise
+                    c0 = 0.5 * (yv.max() + yv.min())
+                    axc.set_ylim(c0 - 1e-3, c0 + 1e-3)
                 axc.set_ylabel(r'$\lambda={}$'.format(labs[a]))
                 axc.set_xlabel('path index')
                 continue
