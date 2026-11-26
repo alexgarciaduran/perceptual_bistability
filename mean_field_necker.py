@@ -4445,38 +4445,46 @@ def mu_k_eigval(j, b, kernel, k):
 
 
 def get_path_between(x, j, b, noise, theta, steps=1000, step_size=1e-1, dt=1,
-                     num_prints=15, num_stashes=80, tol_stop=1e-2, neg=False):
+                     num_prints=15, num_stashes=80, tol_stop=1e-2, neg=False,
+                     optimizer='adam'):
     t = np.linspace(0, len(x) - 1, len(x)) * dt
-    print_on = np.linspace(0, int(np.sqrt(steps)), num_prints).astype(np.int32) ** 2  # print more early on
     stash_on = np.linspace(0, int(np.sqrt(steps)), num_stashes).astype(np.int32) ** 2
     xs = []
     action_vals = []
-    for i in range(steps):
-        # Compute action gradient with respect to x
-        x.requires_grad_(True)  # Ensure x has requires_grad=True
-        lag = action(x, j, b, noise, theta, dt=dt, n=3, neg=neg)
-        grad_x = torch.autograd.grad(lag, x, allow_unused=False)[0]  # Only take the gradient wrt x
-
-        grad_x[[0, -1]] *= 0  # Fix first and last coordinates by zeroing their gradients
-        x = x - grad_x * step_size  # Update x
-
-        if i in print_on:
-            print('step={:04d}, S={:.4e}'.format(i, lag.item()))
+    if optimizer == 'adam':
+        x = x.clone().detach().requires_grad_(True)   # leaf tensor for Adam
+        opt = torch.optim.Adam([x], lr=step_size)
+    for i in tqdm(range(steps)):
+        if optimizer == 'adam':
+            opt.zero_grad()
+            lag = action(x, j, b, noise, theta, dt=dt, n=3, neg=neg)
+            lag.backward()
+            x.grad[[0, -1]] = 0           # keep endpoints fixed
+            opt.step()
+        else:                             # plain gradient descent
+            x.requires_grad_(True)
+            lag = action(x, j, b, noise, theta, dt=dt, n=3, neg=neg)
+            grad_x = torch.autograd.grad(lag, x, allow_unused=False)[0]
+            grad_x[[0, -1]] *= 0
+            x = x - grad_x * step_size
         if i in stash_on:
             xs.append(x.clone().detach().numpy())
         if i > 0 and np.abs(lag.item() - action_vals[-1]) <= tol_stop:
             print('Reached stop tolerance ' + str(tol_stop))
             print('Minimum action: ' + str(lag.item()))
-            # print(action_vals[-1])
             break
         action_vals.append(lag.item())
+        if i % 100000 == 0:
+            tqdm.write(f" Action {lag.item(): .1f}")
     return t, x, np.stack(xs), action_vals
 
 
 def lagrangian(x, xdot, j, b, noise, theta, tau=0.1, dt=1e-2, n=3, neg=False):
     fx = 1 / (1 + torch.exp(-2 * j * (2 * torch.matmul(theta, x.T) - n) - 2 * b)) * (-1)**neg
     flow = fx - x.T                      # MF drift f = sigmoid - q (the -q decay term)
-    lag = torch.linalg.norm(xdot.T - flow) / (2 * noise**2)
+    # SQUARED action: gradient vanishes at the minimum, so the descent converges
+    # cleanly (the un-squared norm has unit-magnitude gradient and overshoots).
+    lag = torch.sum((xdot.T - flow)**2) * dt / (2 * noise**2)
     return lag
 
 
@@ -4488,22 +4496,43 @@ def action(x, j, b, noise, theta, dt=1e-2, n=3, neg=False):
 
 
 def minimum_action_path(j, b, noise, theta, numiters=100, dt=1e-2, steps=1000,
-                        tol_stop=1e-2, neg=False):
+                        tol_stop=1e-2, neg=False, init='line', init_noise=0.05,
+                        eig_dir=None, eig_eps=0.3, step_size=1e-6, optimizer='gd'):
+    """
+    init: how to build the initial path x0 (numiters x n_nodes); endpoints are
+    always clamped to the two stable fixed points.
+      'line'      -- straight line between the wells (+ gaussian init_noise)
+      'quadratic' -- quadratic profile s**2 between the wells
+      callable    -- init(s) with s in [0, 1] returns the scalar profile x1->x2
+    eig_dir: optional eigenvector of theta added as a sin-bump (zero at the
+             endpoints) of amplitude eig_eps, to seed a symmetry-broken mode.
+    """
     x_stable_1, x_stable_2, x_unstable = get_unst_and_stab_fp(j, b)
-    slope = (x_stable_2-x_stable_1)/numiters
-    # line from A to B with gaussian noise
-    x0 = torch.randn((numiters, theta.shape[0]), requires_grad=True)*0.05 +\
-        torch.arange(numiters, dtype=torch.float, requires_grad=True).reshape(-1, 1)*(slope) +\
-            x_stable_1-x_stable_2
-    x_stable_1 = np.repeat(x_stable_1, theta.shape[0])  # +np.random.randn(theta.shape[0])*1e-3
-    x_stable_2 = np.repeat(x_stable_2, theta.shape[0])
-    x_unstable = np.repeat(x_unstable, theta.shape[0])
-    x0[0] = torch.tensor(x_stable_1)
-    x0[-1] = torch.tensor(x_stable_2)
+    n = theta.shape[0]
+    s = np.linspace(0, 1, numiters)
+    if init == 'line':
+        profile = x_stable_1 + (x_stable_2 - x_stable_1) * s
+    elif init == 'quadratic':
+        profile = x_stable_1 + (x_stable_2 - x_stable_1) * s ** 2
+    elif callable(init):
+        print('Eigen-direction')
+        profile = np.array([init(si) for si in s], dtype=float)
+    else:
+        raise ValueError("init must be 'line', 'quadratic' or a callable")
+    x0 = np.repeat(profile[:, None], n, axis=1)            # (numiters, n)
+    if init == 'line' and init_noise:
+        x0 = x0 + np.random.randn(numiters, n) * init_noise
+    if eig_dir is not None:
+        bump = np.sin(np.pi * s)                           # 0 at both ends
+        x0 = x0 + eig_eps * np.outer(bump, np.asarray(eig_dir, dtype=float))
+    x0[0] = np.repeat(x_stable_1, n)
+    x0[-1] = np.repeat(x_stable_2, n)
+    x0 = torch.tensor(x0, dtype=torch.float)
     theta = torch.tensor(theta * 1., dtype=torch.float)
-    t, x, xs, action_vals = get_path_between(x0.clone(), j, b, noise, theta, steps=steps, step_size=1e-5, dt=dt,
-                                             tol_stop=tol_stop, neg=neg)
-    return t, x, xs, x_unstable, action_vals
+    t, x, xs, action_vals = get_path_between(x0.clone(), j, b, noise, theta, steps=steps,
+                                             step_size=step_size, dt=dt, tol_stop=tol_stop,
+                                             neg=neg, optimizer=optimizer)
+    return t, x, xs, np.repeat(x_unstable, n), action_vals
 
 
 def reduced_symmetric_2d_system(j, b, t_end=10, dt=5e-3, noise=0.1,
@@ -4573,9 +4602,15 @@ def plot_mf_sims_8d(j=2, b=0, theta=theta, noise=0,
 
 
 def calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=20000,
-                                  tol_stop=1e-2, numiters=500, dt=5e-3):
+                                  tol_stop=1e-2, numiters=500, dt=5e-3, init='line',
+                                  vm3=None):
+    if vm3 is not None and isinstance(vm3, int):
+        vm3 = np.linalg.eigh(theta)[1][:, vm3]
+    else:
+        vm3 = None
     t, x, xs, x_unstable, action_vals = minimum_action_path(j, b, noise, theta=theta, numiters=numiters, dt=dt,
-                                                            steps=steps, tol_stop=tol_stop)
+                                                            steps=steps, tol_stop=tol_stop, init=init,
+                                                            eig_dir=vm3)
     J = j
     plt.figure()
     plt.title('J = ' + str(j) + ', B = ' + str(b))
@@ -8739,14 +8774,18 @@ if __name__ == '__main__':
     # psychometric_mf_analytical(t_dur=1000000, noiselist=[0.05, 0.08, 0.1, 0.15],
     #                            j_list=np.arange(0.6, 1.3, 0.1),
     #                            b_list=np.arange(-0.2, 0.2, 5e-3))
-    # calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
-    #                               tol_stop=1e-30)
+    calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
+                                  tol_stop=1e-30, init='line', vm3=0)  # lambda -3
+    calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
+                                  tol_stop=1e-30, init='line', vm3=-2)  # lambda 1
+    calc_min_action_path_and_plot(j=2, b=0, noise=0.1, theta=theta, steps=400000,
+                                  tol_stop=1e-30, init='line', vm3=None)  # diagonal + noise
     # plot_mf_sims_8d(j=2, b=0, theta=theta, noise=0.1,
     #                 ini_cond=None, step_line_plot=500)
-    analyze_jump_dynamics(j=0.5, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=10_000,
-                          steps_back=250, steps_front=250, max_switches=50)
-    analyze_jump_dynamics(j=1.2, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=500_000,
-                          steps_back=250, steps_front=250, max_switches=50)
+    # analyze_jump_dynamics(j=0.5, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=10_000,
+    #                       steps_back=250, steps_front=250, max_switches=50)
+    # analyze_jump_dynamics(j=1.2, b=0, theta=theta, noise=0.25, tau=0.05, dt=1e-2, t_end=500_000,
+    #                       steps_back=250, steps_front=250, max_switches=50)
     
     # example_dynamics_hierarchical_theta(theta=gn.THETA_HIER)
     # bifurcation_hierarchical(b=0, varchange='descending')
