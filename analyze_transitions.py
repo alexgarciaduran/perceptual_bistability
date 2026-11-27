@@ -812,6 +812,129 @@ def plot_peak_projection_vs_J(js=(0.4, 0.6, 0.8, 1.0, 1.2, 1.4), theta=THETA):
     return fig
 
 
+def nucleation_chain(j, face=(0, 0, 0, 0, 1, 1, 1, 1), theta=THETA, dt=5e-3, nsteps=15000):
+    """
+    Deterministic [0] -> face-domain -> [1] path (flow-MEP chain) through the two face saddles,
+    computed in the symmetric (face-value y, rest-value z) 2-D invariant subspace. Returns the
+    mean-spin path, or None if the face domain is not a stable attractor at this J (J < ~1.7).
+    """
+    face = np.asarray(face, bool)
+    lift = lambda y, z: np.where(face, y, z)
+    def f2(yz):
+        fl = mf_flow(lift(yz[0], yz[1]), j, 0, theta); return np.array([fl[face].mean(), fl[~face].mean()])
+    def jac2(s, h=1e-6):
+        J = np.zeros((2, 2))
+        for i in range(2):
+            d = np.zeros(2); d[i] = h; J[:, i] = (f2(s + d) - f2(s - d)) / (2 * h)
+        return J
+    idx2 = lambda s: int((np.linalg.eigvals(jac2(s)).real > 0).sum())
+    fps = []                                            # all 2-D fixed points (grid of seeds)
+    for y0 in np.linspace(0.03, 0.97, 9):
+        for z0 in np.linspace(0.03, 0.97, 9):
+            s, _, ok, _ = fsolve(f2, [y0, z0], full_output=True)
+            if ok == 1 and np.max(np.abs(f2(s))) < 1e-9 and (0 <= s).all() and (s <= 1).all():
+                if not any(np.linalg.norm(s - u) < 1e-4 for u in fps):
+                    fps.append(s)
+    attr = [s for s in fps if idx2(s) == 0]; sadd = [s for s in fps if idx2(s) == 1]
+    if len(attr) < 4:
+        return None
+    near = lambda pt: attr[int(np.argmin([np.linalg.norm(pt - a) for a in attr]))]
+    ll, hl, hh = near([0.02, 0.02]), near([0.98, 0.02]), near([0.98, 0.98])
+    def descend(S):
+        wv, vv = np.linalg.eig(jac2(S)); u = np.real(vv[:, np.argmax(wv.real)]); u = u / np.linalg.norm(u)
+        out = []
+        for sgn in (1, -1):
+            p = S + sgn * 1e-3 * u; tr = [p.copy()]
+            for _ in range(nsteps):
+                p = p + dt * f2(p); tr.append(p.copy())
+                if np.max(np.abs(f2(p))) < 1e-8:
+                    break
+            out.append(np.array(tr))
+        return out
+    def leg(A, B):                                      # the saddle whose flow connects A and B
+        for S in sadd:
+            d = descend(S); e = [o[-1] for o in d]
+            if (min(np.linalg.norm(e[0] - A), np.linalg.norm(e[1] - A)) < 0.05 and
+                    min(np.linalg.norm(e[0] - B), np.linalg.norm(e[1] - B)) < 0.05):
+                return d, e
+        return None
+    c1, c2 = leg(ll, hl), leg(hl, hh)
+    if c1 is None or c2 is None:
+        return None
+    d1, e1 = c1; d2, e2 = c2
+    a = int(np.argmin([np.linalg.norm(e1[0] - ll), np.linalg.norm(e1[1] - ll)]))
+    s1lo, s1F = d1[a], d1[1 - a]
+    b = int(np.argmin([np.linalg.norm(e2[0] - hh), np.linalg.norm(e2[1] - hh)]))
+    s2hi, s2F = d2[b], d2[1 - b]
+    yz = np.vstack([s1lo[::-1], s1F, s2F[::-1], s2hi])   # [0] -> S1 -> F -> S2 -> [1]
+    return 2 * np.array([lift(y, z) for y, z in yz]) - 1
+
+
+def plot_nucleation_grid(js=(1.7, 2.0, 2.5, 3.0), face=(0, 0, 0, 0, 1, 1, 1, 1), theta=THETA):
+    """Eigenmode projections (lam=3,1,-1,-3) of the deterministic nucleation chain, grid over J."""
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    w, V = np.linalg.eigh(theta * 1.0); o = np.argsort(-w); V = V[:, o]
+    reps = {3: 0, 1: 1, -1: 4, -3: 7}; modes = [3, 1, -1, -3]
+    chains = [(jv, nucleation_chain(jv, face, theta)) for jv in js]
+    chains = [(jv, m) for jv, m in chains if m is not None]
+    fig, ax = plt.subplots(len(modes), len(chains), figsize=(3.2 * len(chains), 2.5 * len(modes)),
+                           sharey='row', squeeze=False)
+    for col, (jv, m) in enumerate(chains):
+        P = m @ V; s = np.linspace(0, 1, len(m))
+        for row, k in enumerate(modes):
+            a = ax[row][col]
+            a.plot(s, P[:, reps[k]], color='firebrick', lw=2)
+            a.axhline(0, color='k', lw=0.6, alpha=0.4)
+            a.spines['right'].set_visible(False); a.spines['top'].set_visible(False)
+            if row == 0:
+                a.set_title('J = {:.1f}'.format(jv))
+            if col == 0:
+                a.set_ylabel(r'$\lambda={}$'.format(k))
+            if row == len(modes) - 1:
+                a.set_xlabel('path progress')
+    fig.suptitle('nucleation chain  [0] -> face -> [1],  eigenmode projections', y=1.0)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_nucleation_grid.png', dpi=350, bbox_inches='tight')
+    fig.savefig(SV_FOLDER + 'fig_nucleation_grid.pdf', dpi=350, bbox_inches='tight')
+    return fig
+
+
+def plot_noise_sweep(js=(0.5, 0.7, 0.9, 1.1), noises=(0.25, 0.3, 0.4), theta=THETA, n_chains=8):
+    """
+    lambda=1 crossing-excess vs noise, one line per J. Below J=1 the excursion is a soft-mode
+    fluctuation and scales ~ noise (extrapolating to 0); above J=1 it is nucleation and departs
+    from the linear law. Lower noise -> rarer switches, so t_end is raised (capped by memory:
+    mf_chain stores the whole trajectory, so each chain's (t_end/dt, 8) array must stay < ~1 GB).
+    """
+    os.makedirs(SV_FOLDER, exist_ok=True)
+    w, V = np.linalg.eigh(theta * 1.0); o = np.argsort(-w); V = V[:, o]
+    def base(curve, t0, wd=80):
+        idx = np.abs(np.arange(len(curve)) - t0) > wd
+        return curve[idx].mean() if idx.any() else curve.min()
+    tend = {0.25: 300000, 0.3: 300000, 0.4: 200000, 0.5: 150000}
+    res = {j: [] for j in js}; counts = {j: [] for j in js}
+    for j in js:
+        for nz in noises:
+            win = cached_mf(j, noise=nz, t_end=tend.get(nz, 300000), n_chains=n_chains, theta=theta)
+            P = win @ V; mbar = win.mean((0, 2)); t0 = int(np.argmin(np.abs(mbar)))
+            std1 = np.sqrt(P[:, :, [1, 2, 3]].var(0).mean(1))
+            res[j].append(std1[t0] - base(std1, t0)); counts[j].append(len(win))
+            print('J={:.1f} noise={:.2f}: switches={} excess={:.3f}'.format(j, nz, len(win), res[j][-1]))
+    cmap = mpl.cm.viridis; nrm = mpl.colors.Normalize(min(js), max(js)); nz = np.array(noises)
+    fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    for j in js:
+        ax.plot(nz, res[j], 'o-', color=cmap(nrm(j)), lw=2, label='J={:.1f}'.format(j))
+    ax.axhline(0, color='k', lw=0.6)
+    ax.set_xlabel('noise'); ax.set_ylabel(r'$\lambda=1$ crossing excess')
+    ax.set_title('fluctuation (J<1, $\\propto$ noise) vs nucleation (J>1)')
+    ax.set_xlim(0, max(noises) * 1.05); ax.legend(frameon=False, title='coupling')
+    ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(SV_FOLDER + 'fig_noise_sweep.png', dpi=400)
+    fig.savefig(SV_FOLDER + 'fig_noise_sweep.pdf', dpi=400)
+    return fig
+
+
 def plot_everything(j, theta=THETA, recompute=False):
     """
     Full figure suite comparing the deterministic routes with the simulated switch.
@@ -1275,8 +1398,9 @@ def plot_transitions(j_list=(0.6, 1.3), b=0, theta=THETA, recompute=False):
 
 if __name__ == '__main__':
     # plot_transitions(j_list=(0.6, 1.3))
-    # plot_eigen_traces(j=1.2, theta=THETA, n_show=80, smooth_mf=21)
-    # plot_everything(j=1.2)
+    plot_eigen_traces(j=1.2, theta=THETA, n_show=80, smooth_mf=21)
+    # plot_eigen_traces(j=0.6, theta=THETA, n_show=80, smooth_mf=21)
+    plot_everything(j=1.2)
     # plot_everything(j=0.6)
     # plot_phase_grid(j=2.0, b=0, theta=THETA, path=None, name='MAP')
     plot_variance_envelope()
