@@ -892,11 +892,30 @@ def plot_nucleation_grid(js=(1.7, 2.0, 2.5, 3.0), face=(0, 0, 0, 0, 1, 1, 1, 1),
                 a.set_ylabel(r'$\lambda={}$'.format(k))
             if row == len(modes) - 1:
                 a.set_xlabel('path progress')
+            yv = P[:, reps[k]]
+            if yv.max() - yv.min() < 2e-3:        # flatten 1e-16 noise
+                c0 = 0.5 * (yv.max() + yv.min())
+                a.set_ylim(c0 - 1e-3, c0 + 1e-3)
     fig.suptitle('nucleation chain  [0] -> face -> [1],  eigenmode projections', y=1.0)
     fig.tight_layout()
     fig.savefig(SV_FOLDER + 'fig_nucleation_grid.png', dpi=350, bbox_inches='tight')
     fig.savefig(SV_FOLDER + 'fig_nucleation_grid.pdf', dpi=350, bbox_inches='tight')
     return fig
+
+
+def plot_nucleation_eigengrid(j, face=(0, 0, 0, 0, 1, 1, 1, 1), theta=THETA,
+                              background='drift', with_sim=False):
+    """
+    The deterministic nucleation chain [0] -> face -> [1] drawn on the eigenmode-pair grid
+    (plot_eigengrid) over the drift landscape. Needs J >~ 1.7 (stable face domain). with_sim
+    overlays the aligned mean switch, which needs cached_mf at this J.
+    """
+    m = nucleation_chain(j, face, theta)
+    if m is None:
+        print('No stable face-domain chain at J={:.2f} (need J >~ 1.7).'.format(j))
+        return None
+    sims = [mean_aligned_switch(cached_mf(j), theta)] if with_sim else []
+    return plot_eigengrid(m, sims, j, theta=theta, name='nucleation', background=background)
 
 
 def plot_noise_sweep(js=(0.5, 0.7, 0.9, 1.1), noises=(0.25, 0.3, 0.4), theta=THETA, n_chains=8):
@@ -1079,7 +1098,7 @@ def plot_eigengrid(path, sims, j, b=0, theta=THETA, name='MAP', background='flow
                 axc.plot(sp[:, reps[c]], sp[:, reps[a]], color=scol, alpha=0.9, lw=1.8)
             axc.plot(proj[:, reps[c]], proj[:, reps[a]], color='firebrick', lw=2)
             axc.set_xlabel(r'$\lambda={}$'.format(labs[c])); axc.set_ylabel(r'$\lambda={}$'.format(labs[a]))
-    fig.suptitle('{} on {} grid (red=MAP, gray=avg sim), J={}'.format(name, background, j), y=1.0)
+    fig.suptitle('{} on {} grid (red=path, gray=avg sim), J={}'.format(name, background, j), y=1.0)
     fig.tight_layout()
     if im is not None:
         fig.colorbar(im, ax=ax, shrink=0.6, pad=0.02, label=r'drift $|2f|^2$')
@@ -1398,10 +1417,13 @@ def plot_transitions(j_list=(0.6, 1.3), b=0, theta=THETA, recompute=False):
 
 if __name__ == '__main__':
     # plot_transitions(j_list=(0.6, 1.3))
-    plot_eigen_traces(j=1.2, theta=THETA, n_show=80, smooth_mf=21)
+    # plot_eigen_traces(j=1.2, theta=THETA, n_show=80, smooth_mf=21)
+    plot_nucleation_grid(js=(1.7, 2.0, 2.5, 3.0), face=(0, 0, 0, 0, 1, 1, 1, 1), theta=THETA)
     # plot_eigen_traces(j=0.6, theta=THETA, n_show=80, smooth_mf=21)
-    plot_everything(j=1.2)
+    # plot_everything(j=1.2)
     # plot_everything(j=0.6)
     # plot_phase_grid(j=2.0, b=0, theta=THETA, path=None, name='MAP')
-    plot_variance_envelope()
-    plot_peak_projection_vs_J()
+    # plot_variance_envelope()
+    # plot_peak_projection_vs_J()
+    # plot_n_fixed_points()
+    plot_nucleation_eigengrid(2.5, with_sim=True) 
